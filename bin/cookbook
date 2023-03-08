@@ -1,0 +1,30 @@
+#!/bin/bash
+set -e
+
+command=$1
+cookbook_name=$2
+bin_dir="$(dirname "$0"})"
+cookbooks_base_dir=$(cd "${bin_dir}/../cookbooks";pwd)
+
+case "${command}" in
+"create")
+  cookbook_base_dir=${cookbooks_base_dir}/${cookbook_name}
+  echo "creating cookbook ${cookbook_name} in ${cookbook_base_dir}"
+  mkdir -p "${cookbook_base_dir}/files"
+  mkdir -p "${cookbook_base_dir}/templates"
+
+  for file in "${cookbook_base_dir}/files/.keep" "${cookbook_base_dir}/templates/.keep" "${cookbook_base_dir}/default.rb";
+
+  do    if ! [ -f ${file} ]; then
+            touch ${file}
+            echo "created ${file}"
+        fi
+  done
+
+  echo "done"
+  ;;
+*)
+  echo "command required: e.g. cookbook crete cookbook_name"
+  exit 1
+  ;;
+esac
