@@ -24,6 +24,12 @@ when 'darwin'
     action :remove
     only_if { FileTest.exist?("#{node[:homebrew][:prefix]}/bin/aws") }
   end
+
+  add_profile "dot-zsh" do
+    bash_content <<"EOM"
+complete -C '/usr/local/bin/aws_completer' aws
+EOM
+  end
 else
   raise "Unsupported platform: #{node[:platform]}"
 end

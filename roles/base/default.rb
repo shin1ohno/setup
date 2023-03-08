@@ -46,3 +46,4 @@ include_cookbook 'awscli'
 include_cookbook 'rbenv'
 include_cookbook "nodejs"
 include_cookbook "zsh"
+include_cookbook "dot-zsh"

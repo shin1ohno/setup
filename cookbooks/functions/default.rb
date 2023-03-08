@@ -68,7 +68,7 @@ define :add_profile, bash_content: nil, fish_content: nil, priority: 50 do
   end
 end
 
-define :git_clone, name: nil, uri: nil, cwd: nil, user: nil, not_if: nil do
+define :git_clone, uri: nil, cwd: nil, user: nil, not_if: nil do
   execute "git clone #{params[:uri]}" do
     action :run
     cwd params[:cwd]
