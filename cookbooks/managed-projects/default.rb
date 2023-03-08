@@ -8,9 +8,9 @@ directory node[:managed_projects][:root] do
 end
 
 node[:managed_projects][:repos].each do |repo|
-  execute "git clone #{repo[:uri]}" do
+  git_clone repo[:name] do
+    name repo[:name]
+    uri repo[:uri]
     cwd node[:managed_projects][:root]
-    user node[:managed_projects][:user]
-    not_if "test -e #{node[:managed_projects][:root]}/#{repo[:name]}"
   end
 end

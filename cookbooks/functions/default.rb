@@ -52,7 +52,7 @@ define :add_profile, bash_content: nil, fish_content: nil, priority: 50 do
     content bash_content
   end
 
-  if ENV['CPAD2_ENABLE_FISH'] == '1'
+  if ENV['SETUP_FISH'] == '1'
     fish_content = params[:fish_content]
 
     unless fish_content
@@ -65,5 +65,14 @@ define :add_profile, bash_content: nil, fish_content: nil, priority: 50 do
       mode '644'
       content fish_content
     end
+  end
+end
+
+define :git_clone, name: nil, uri: nil, cwd: nil, user: nil, not_if: nil do
+  execute "git clone #{params[:uri]}" do
+    action :run
+    cwd params[:cwd]
+    user params[:user] || node[:setup][:user]
+    not_if params[:not_if] || "test -e #{params[:cwd]}/#{params[:name]}"
   end
 end
