@@ -7,7 +7,7 @@ node_versions = %w(16 17 18 19).map(&:to_s)
 node_versions.each do |node_version|
   execute "$HOME/.volta/bin/volta install node@#{node_version}" do
     user node_user
-    not_if "$HOME/.volta/bin/volta list --format plain -d node | grep -q \"node@#{node_version}\""
+    not_if "$HOME/.volta/bin/volta list --format plain node | grep -q \"node@#{node_version}\""
   end
 end
 
