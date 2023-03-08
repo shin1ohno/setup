@@ -1,0 +1,4 @@
+bin/mitamae
+bin/mitamae-*
+bin/*.tar.gz
+bin/*.zip
