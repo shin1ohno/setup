@@ -11,8 +11,8 @@ when 'darwin'
   end
 
   add_profile 'java' do
-    bash_content "export JAVA_HOME=$(/usr/libexec/java_home -v 11)\n"
-    fish_content "set -gx JAVA_HOME (/usr/libexec/java_home -v 11)\n"
+    bash_content "export JAVA_HOME=$(/usr/libexec/java_home -v 17)\n"
+    fish_content "set -gx JAVA_HOME (/usr/libexec/java_home -v 17)\n"
   end
 when 'ubuntu'
   include_cookbook 'apt-source-corretto'
