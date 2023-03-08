@@ -1,0 +1,5 @@
+#!/bin/sh
+export RBENV_ROOT=<%= node[:rbenv][:root] %>
+export PATH="$RBENV_ROOT/shims:$RBENV_ROOT/bin:$PATH"
+
+exec $RBENV_ROOT/bin/rbenv "$@"
