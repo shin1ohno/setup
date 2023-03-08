@@ -47,3 +47,5 @@ include_cookbook 'rbenv'
 include_cookbook "nodejs"
 include_cookbook "zsh"
 include_cookbook "dot-zsh"
+include_cookbook "tmux"
+include_cookbook "dot-tmux"
