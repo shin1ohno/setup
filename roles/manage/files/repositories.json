@@ -1,0 +1,8 @@
+{
+  "repositories": [
+    {
+      "name": "setup",
+      "uri": "git@github.com:shin1ohno/setup.git"
+    }
+  ]
+}
