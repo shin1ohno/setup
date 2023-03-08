@@ -12,6 +12,13 @@
   end
 end
 
+template "#{node[:setup][:root]}/profile" do
+  owner node[:setup][:uer]
+  group node[:setup][:group]
+  mode '644'
+  source 'templates/profile'
+end
+
 if node[:platform] == 'darwin'
   include_cookbook 'homebrew'
 end
@@ -37,3 +44,5 @@ include_cookbook 'autoconf'
 include_cookbook 'envchain'
 include_cookbook 'awscli'
 include_cookbook 'rbenv'
+
+include_cookbook "nodejs"
