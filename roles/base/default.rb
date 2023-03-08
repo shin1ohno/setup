@@ -44,5 +44,5 @@ include_cookbook 'autoconf'
 include_cookbook 'envchain'
 include_cookbook 'awscli'
 include_cookbook 'rbenv'
-
 include_cookbook "nodejs"
+include_cookbook "zsh"
