@@ -15,3 +15,5 @@ execute "$HOME/.volta/bin/volta install yarn" do
   user node_user
   not_if "test -e \"$HOME/.volta/bin/yarn\""
 end
+
+include_cookbook "pm2"

@@ -1,0 +1,14 @@
+package "fzf"
+
+add_profile "fzf" do
+  bash_content <<"EOM"
+if [[ ! "$PATH" == */opt/homebrew/opt/fzf/bin* ]]; then
+  PATH="${PATH:+${PATH}:}/opt/homebrew/opt/fzf/bin"
+fi
+[[ $- == *i* ]] && source "/opt/homebrew/opt/fzf/shell/completion.zsh" 2> /dev/null
+source "/opt/homebrew/opt/fzf/shell/key-bindings.zsh"
+export FZF_COMPLETION_TRIGGER='``'
+export FZF_DEFAULT_COMMAND='fd --type file'
+export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+EOM
+end
