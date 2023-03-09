@@ -16,15 +16,30 @@ python-lsp-server[all] pylsp-mypy pyls-isort
 pylint flake8
 vim-vint
 ).each do |requirement|
-  execute "$(pyenv prefix)/bin/pip install -U #{requirement}" do
+  execute "(pyenv prefix)/bin/pip install -U #{requirement}" do
     not_if "$(pyenv prefix)/bin/pip list | fgrep -q #{requirement.split("[")[0]}"
   end
 end
 
-execute "$HOME/.volta/bin/npm install -g vim-language-server" do
-  not_if "which vim-language-server"
-  cwd ENV["HOME"]
+
+%w(
+  vim-language-server
+  typescript
+  typescript-language-server
+  @tailwindcss/language-server
+).each do |requirement|
+  execute "$HOME/.volta/bin/npm install -g #{requirement}" do
+    if requirement == "@tailwindcss/language-server"
+      requirement = "tailwindcss-language-server"
+    elsif requirement == "typescript"
+      requirement = "tsserver"
+    end
+    not_if "which #{requirement}"
+    cwd ENV["HOME"]
+  end
 end
+
+package "lua-language-server"
 
 execute "git pull" do
   cwd "#{ENV["HOME"]}/.config/nvim"
