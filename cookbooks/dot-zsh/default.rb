@@ -14,6 +14,12 @@ function select-history() {
   CURSOR=$#BUFFER
 }
 zle -N select-history
+EOM
+end
+
+add_profile "dot-zsh" do
+  priority 60 #ensure to load after the oh-my-zsh
+  bash_content <<"EOM"
 bindkey '^r' select-history
 EOM
 end
