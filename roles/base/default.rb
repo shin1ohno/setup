@@ -23,12 +23,11 @@ if node[:platform] == 'darwin'
   include_cookbook 'homebrew'
 end
 
+include_cookbook "zsh"
+
 include_cookbook 'build-essential'
-
 include_cookbook 'jdk'
-
 include_cookbook 'git'
-
 include_cookbook 'terraform'
 
 # for ruby
@@ -44,8 +43,8 @@ include_cookbook 'autoconf'
 include_cookbook 'envchain'
 include_cookbook 'awscli'
 include_cookbook 'rbenv'
+
 include_cookbook "nodejs"
-include_cookbook "zsh"
 include_cookbook "dot-zsh"
 include_cookbook "tmux"
 include_cookbook "dot-tmux"
