@@ -20,4 +20,4 @@ end
   end
 end
 
-execute "python -m pip install --upgrade pip"
+execute "$(pyenv prefix)/pip install --upgrade pip"
