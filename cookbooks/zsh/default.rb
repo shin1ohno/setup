@@ -14,3 +14,7 @@ end
 execute "sudo chsh -s #{zsh_path} #{node[:setup][:user]}" do
   not_if !zsh_path || "test $SHELL == #{zsh_path}"
 end
+
+execute "echo '. ~/.setup_shin1ohno/profile' >> ~/.zshrc" do
+  not_if "fgrep -q '. ~/.setup_shin1ohno/profile' ~/.zshrc"
+end
