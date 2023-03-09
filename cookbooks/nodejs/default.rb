@@ -16,7 +16,7 @@ execute "$HOME/.volta/bin/volta install yarn" do
   not_if "test -e \"$HOME/.volta/bin/yarn\""
 end
 
-execute "npm upgrade -g" do
+execute "$HOME/.volta/bin/npm upgrade -g" do
   cwd ENV["HOME"]
 end
 
