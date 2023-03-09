@@ -9,5 +9,11 @@ export ARCHPREFERENCE=arm64
 alias bri="envchain bricolage bundle exec bricolage"
 autoload -U bashcompinit
 bashcompinit
+function select-history() {
+  BUFFER=$(history -n -r 1 | fzf-tmux -d --reverse --no-sort +m --query "$LBUFFER" --prompt="History > ")
+  CURSOR=$#BUFFER
+}
+zle -N select-history
+bindkey '^r' select-history
 EOM
 end
