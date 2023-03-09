@@ -14,8 +14,8 @@ end
     not_if "pyenv versions | grep #{version}"
   end
 
-  execute "pyenv global #{version} && python -m ensurepip --upgrade && pip install argcomplete" do
-    not_if "pip list | grep argcomplete"
+  execute "pyenv global #{version} && $(pyenv prefix)/bin/python -m ensurepip --upgrade &&  $(pyenv prefix)/bin/pip install argcomplete" do
+    not_if "$(pyenv prefix)/bin/pip list | fgrep -q argcomplete"
     cwd ENV["HOME"]
   end
 end
