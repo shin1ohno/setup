@@ -21,7 +21,7 @@ vim-vint
   end
 end
 
-execute "npm install -g vim-language-server" do
+execute "$HOME/.volta/bin/npm install -g vim-language-server" do
   not_if "which vim-language-server"
   cwd ENV["HOME"]
 end
