@@ -2,7 +2,7 @@
 
 return if node[:platform] != "darwin"
 
-%w(aerial                          imageoptim
+%w(aerial                       imageoptim
 alacritty                       jetbrains-toolbox
 kindle                          backblaze
 around                          zoom
