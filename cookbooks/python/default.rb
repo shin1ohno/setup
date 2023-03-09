@@ -15,7 +15,9 @@ end
   end
 
   execute "pyenv global #{version} && python -m ensurepip --upgrade && pip install argcomplete" do
-    not_if "which argcomplete"
+    not_if "pip list | grep argcomplete"
     cwd ENV["HOME"]
   end
 end
+
+execute "python -m pip install --upgrade pip"
