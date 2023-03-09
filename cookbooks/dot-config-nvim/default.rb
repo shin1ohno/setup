@@ -16,8 +16,8 @@ python-lsp-server[all] pylsp-mypy pyls-isort
 pylint flake8
 vim-vint
 ).each do |requirement|
-  execute "pip install -U #{requirement}" do
-    not_if "pip list | fgrep -q #{requirement.split("[")[0]}"
+  execute "$(pyenv prefix)/bin/pip install -U #{requirement}" do
+    not_if "$(pyenv prefix)/bin/pip list | fgrep -q #{requirement.split("[")[0]}"
   end
 end
 
