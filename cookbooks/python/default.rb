@@ -10,7 +10,11 @@ add_profile "pyenv" do
 end
 
 %w(3.9.9).each do |version|
-  execute "pyenv install #{version} && python -m ensurepip --upgrade" do
-    not_if "pyenv versions | grep #{version} && which pip"
+  execute "pyenv install #{version}" do
+    not_if "pyenv versions | grep #{version}"
+  end
+
+  execute "pyenv global #{version} && python -m ensurepip --upgrade" do
+    not_if "which pip"
   end
 end
