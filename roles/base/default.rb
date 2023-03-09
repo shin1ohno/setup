@@ -22,7 +22,7 @@ end
 if node[:platform] == 'darwin'
   include_cookbook 'homebrew'
 end
-
+include_cookbook "tree"
 include_cookbook "zsh"
 
 include_cookbook 'build-essential'
