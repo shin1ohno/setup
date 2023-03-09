@@ -4,12 +4,12 @@ return if node[:platform] != "darwin"
 
 %w(aerial                          imageoptim
 alacritty                       jetbrains-toolbox
-kindle
-around
+kindle                          backblaze
+around                          zoom
 balenaetcher                    monodraw
-mqtt-explorer
+mqtt-explorer                   lunar
 charles                         obs
-rapidapi
+rapidapi                        launchcontrol
 docker                          roon
 figma                           syntax-highlight
 firefox                         transmit
