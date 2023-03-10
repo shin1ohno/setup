@@ -23,8 +23,8 @@ node.reverse_merge!(
   },
 )
 
-include_cookbook 'mac-settings'
 include_role 'base'
+include_cookbook 'mac-settings'
 include_role "manage"
 include_cookbook "mac-apps"
 
