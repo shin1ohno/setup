@@ -13,6 +13,8 @@ rapidapi                        launchcontrol
 docker                          roon
 figma                           syntax-highlight
 firefox                         transmit
+tidal                           focus
+via                             tableau
 grammarly).each do |app|
   execute "brew reinstall --cask #{app}" do
     not_if "brew list | fgrep -q #{app}"
