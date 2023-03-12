@@ -1,13 +1,15 @@
+# frozen_string_literal: true
+
 case node[:platform]
-when 'ubuntu'
-  package 'awscli'
-when 'arch'
-  package 'aws-cli'
-when 'darwin'
+when "ubuntu"
+  package "awscli"
+when "arch"
+  package "aws-cli"
+when "darwin"
   directory "#{node[:setup][:root]}/awscli" do
     owner node[:setup][:user]
     group node[:setup][:group]
-    mode '755'
+    mode "755"
   end
 
   pkg_path = "#{node[:setup][:root]}/awscli/AWSCLIV2.pkg"
@@ -17,10 +19,10 @@ when 'darwin'
   end
 
   execute "sudo -p 'Enter your password to install awscli: ' installer -pkg #{pkg_path.shellescape} -target /" do
-    not_if { FileTest.directory?('/usr/local/aws-cli') }
+    not_if { FileTest.directory?("/usr/local/aws-cli") }
   end
 
-  package 'awscli' do
+  package "awscli" do
     action :remove
     only_if { FileTest.exist?("#{node[:homebrew][:prefix]}/bin/aws") }
   end

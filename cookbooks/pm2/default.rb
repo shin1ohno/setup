@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 execute "$HOME/.volta/bin/npm install -g pm2" do
   not_if "which pm2"
   cwd ENV["HOME"]

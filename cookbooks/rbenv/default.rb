@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 node.reverse_merge!(
   rbenv: {
-    root: '/usr/share/rbenv',
+    root: "/usr/share/rbenv",
   },
 )
 
-if node[:platform] == 'darwin'
+if node[:platform] == "darwin"
   node.reverse_merge!(
     rbenv: {
       ruby_configure_opts: %W[
@@ -21,7 +23,7 @@ if node[:platform] == 'darwin'
         --without-gmp
         --enable-shared
         --enable-pthread
-      ].join(' '),
+      ].join(" "),
     },
   )
 else
@@ -34,7 +36,7 @@ else
         --disable-install-doc
         --enable-shared
         --enable-pthread
-      ].join(' '),
+      ].join(" "),
     },
   )
 end
@@ -56,7 +58,7 @@ execute "mv #{node[:rbenv][:root]} #{backup_path}" do
 end
 
 git node[:rbenv][:root] do
-  repository 'https://github.com/rbenv/rbenv.git'
+  repository "https://github.com/rbenv/rbenv.git"
   user node[:setup][:user]
   not_if "test -d #{node[:rbenv][:root]}"
 end
@@ -68,9 +70,9 @@ Dir.glob("#{node[:rbenv][:root]}/{versions,shims,sources}").each do |dir|
   end
 end
 
-include_cookbook 'rbenv::commands'
+include_cookbook "rbenv::commands"
 
-rbenv_user = ENV['SUDO_USER'] || ENV.fetch('USER')
+rbenv_user = ENV["SUDO_USER"] || ENV.fetch("USER")
 rbenv_group = run_command("id -g -n #{rbenv_user}").stdout.strip
 %W[
 #{node[:rbenv][:root]}/plugins
@@ -81,19 +83,19 @@ rbenv_group = run_command("id -g -n #{rbenv_user}").stdout.strip
   directory path do
     owner rbenv_user
     group rbenv_group
-    mode '755'
+    mode "755"
   end
 end
 
 file "#{node[:rbenv][:root]}/version" do
-  content 'system'
+  content "system"
   owner rbenv_user
   group rbenv_group
   not_if "test -f #{node[:rbenv][:root]}/version"
 end
 
 git "#{node[:rbenv][:root]}/plugins/ruby-build" do
-  repository 'https://github.com/rbenv/ruby-build.git'
+  repository "https://github.com/rbenv/ruby-build.git"
   user rbenv_user
   not_if "test -d #{node[:rbenv][:root]}/plugins/ruby-build"
 end
@@ -106,7 +108,7 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
     if params[:env]
       "env #{params[:env]}"
     else
-      ''
+      ""
     end
 
   execute "rbenv-install-#{version}" do
@@ -130,7 +132,7 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
   gems.each do |g|
     gem_package g do
       user rbenv_user
-      gem_binary ['env', "PATH=#{node[:setup][:root]}/rbenv:/usr/bin:/bin", "RBENV_VERSION=#{version}", "RBENV_ROOT=#{node[:rbenv][:root]}", 'rbenv', 'exec', 'gem']
+      gem_binary %W[env PATH=#{node[:setup][:root]}/rbenv:/usr/bin:/bin RBENV_VERSION=#{version} RBENV_ROOT=#{node[:rbenv][:root]} rbenv exec gem]
       if bundler_version
         version bundler_version
       end
@@ -138,8 +140,8 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
   end
 end
 
-add_profile 'bundler' do
-  if node[:platform] == 'darwin'
+add_profile "bundler" do
+  if node[:platform] == "darwin"
     bash_content "export BUNDLE_JOBS=$(/usr/sbin/sysctl -n hw.ncpu)\n"
     fish_content "set -gx BUNDLE_JOBS (sysctl -n hw.ncpu)\n"
   else

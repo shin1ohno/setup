@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 package "autojump"
 
 add_profile "autojump" do

@@ -39,7 +39,7 @@ define :add_profile, bash_content: nil, fish_content: nil, priority: 50 do
   bash_content = params[:bash_content]
 
   unless bash_content
-    raise 'add_profile requires bash_content'
+    raise "add_profile requires bash_content"
   end
 
   priority = params[:priority]
@@ -48,21 +48,21 @@ define :add_profile, bash_content: nil, fish_content: nil, priority: 50 do
   file "#{node[:setup][:root]}/profile.d/#{priority}-#{name}.sh" do
     owner node[:setup][:user]
     group node[:setup][:group]
-    mode '644'
+    mode "644"
     content bash_content
   end
 
-  if ENV['SETUP_FISH'] == '1'
+  if ENV["SETUP_FISH"] == "1"
     fish_content = params[:fish_content]
 
     unless fish_content
-      raise 'add_profile requires fish_content'
+      raise "add_profile requires fish_content"
     end
 
     file "#{node[:setup][:root]}/profile.d/#{priority}-#{name}.fish" do
       owner node[:setup][:user]
       group node[:setup][:group]
-      mode '644'
+      mode "644"
       content fish_content
     end
   end

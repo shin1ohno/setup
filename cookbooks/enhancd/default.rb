@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 git_clone "enhancd" do
   cwd node[:setup][:root]
   uri "https://github.com/b4b4r07/enhancd.git"

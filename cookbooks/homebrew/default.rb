@@ -1,4 +1,6 @@
-if run_command('which brew', error: false).exit_status != 0 &&
+# frozen_string_literal: true
+
+if run_command("which brew", error: false).exit_status != 0 &&
   FileTest.directory?(node[:homebrew][:prefix]) &&
   FileTest.exist?("#{node[:setup][:root]}/profile.d/10-homebrew.sh")
   MItamae.logger.error("Homebrew is installed but `brew` can't be searched from PATH.")
@@ -9,8 +11,8 @@ end
 remote_file "#{node[:setup][:root]}/homebrew-install.sh" do
   owner node[:setup][:user]
   group node[:setup][:group]
-  mode '755'
-  source 'files/install.sh'
+  mode "755"
+  source "files/install.sh"
 end
 
 # Hit ENTER automatically when asked to install CLI tools.
@@ -19,4 +21,4 @@ execute "echo | env HAVE_SUDO_ACCESS=0 #{node[:setup][:root]}/homebrew-install.s
   not_if "test -f #{node[:homebrew][:prefix]}/bin/brew"
 end
 
-include_recipe 'environment'
+include_recipe "environment"

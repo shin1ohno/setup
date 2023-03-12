@@ -1,5 +1,7 @@
-#client only recipes/cookbooks
+# frozen_string_literal: true
 
-include_cookbook 'mac-settings'
+# client only recipes/cookbooks
+
+include_cookbook "mac-settings"
 include_cookbook "mac-apps"
 include_role "manage"

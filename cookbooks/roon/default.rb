@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 case node[:platform]
-when 'darwin'
+when "darwin"
   directory "#{node[:setup][:root]}/roon" do
     owner node[:setup][:user]
     group node[:setup][:group]
-    mode '755'
+    mode "755"
   end
 
   dmg_path = "#{node[:setup][:root]}/roon/Roon.dmg"
