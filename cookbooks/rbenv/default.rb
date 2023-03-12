@@ -121,11 +121,19 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
     not_if { FileTest.exist?(head_path) && File.readlink(head_path) == version }
   end
 
-  gem_package 'bundler' do
-    user rbenv_user
-    gem_binary ['env', "PATH=#{node[:setup][:root]}/rbenv:/usr/bin:/bin", "RBENV_VERSION=#{version}", "RBENV_ROOT=#{node[:rbenv][:root]}", 'rbenv', 'exec', 'gem']
-    if bundler_version
-      version bundler_version
+  execute "#{node[:rbenv][:root]}/bin/rbenv global #{node[:rbenv][:global_version]}" do
+    not_if { node[:rbenv][:global_version].nil? }
+  end
+
+  gems = node[:rbenv][:global_gems] || ["bundler"]
+
+  gems.each do |g|
+    gem_package g do
+      user rbenv_user
+      gem_binary ['env', "PATH=#{node[:setup][:root]}/rbenv:/usr/bin:/bin", "RBENV_VERSION=#{version}", "RBENV_ROOT=#{node[:rbenv][:root]}", 'rbenv', 'exec', 'gem']
+      if bundler_version
+        version bundler_version
+      end
     end
   end
 end
