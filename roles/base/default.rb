@@ -31,6 +31,12 @@ include_cookbook 'git'
 include_cookbook 'terraform'
 
 # for ruby
+node.reverse_merge!(
+  rbenv: {
+    global_version: "3.2",
+    global_gems: %w(bundler rubocop itamae)
+  }
+)
 include_cookbook 'gdbm'
 include_cookbook 'berkeley-db'
 include_cookbook 'libffi'
