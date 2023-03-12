@@ -1,0 +1,14 @@
+# This is Git's per-user configuration file.
+[user]
+  name = Shini'chi Ohno
+  email = ohno@cookpad.com
+[alias]
+  st = status
+[fetch]
+  prune = true
+[init]
+  defaultBranch = main
+[color]
+  ui = true
+[pull]
+  rebase = true
