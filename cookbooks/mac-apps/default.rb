@@ -10,7 +10,7 @@ balenaetcher                    monodraw
 mqtt-explorer                   lunar
 charles                         obs
 rapidapi                        launchcontrol
-docker                          roon
+docker                          ron
 figma                           syntax-highlight
 firefox                         transmit
 tidal
@@ -21,4 +21,9 @@ grammarly).each do |app|
   end
 end
 
+execute "sudo -p 'enter password to install fdautil to /usr/local/bin/: ' cp -rp /Applications/LaunchControl.app/Contents/MacOS/fdautil /usr/local/bin/fdautil" do
+  not_if { File.exist?("/usr/local/bin/fdautil") }
+end
+
 include_cookbook "roon"
+include_cookbook "roon-server"
