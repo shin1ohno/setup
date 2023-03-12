@@ -35,7 +35,7 @@ include_cookbook "terraform"
 node.reverse_merge!(
   rbenv: {
     global_version: "3.2",
-    global_gems: %w(bundler rubocop rubocop-rails rubocop-minitest rubocop-packaging rubocop-performance)
+    global_gems: %w(bundler rubocop rubocop-rails rubocop-minitest rubocop-packaging rubocop-performance itamae ed25519 bcrypt_pbkdf)
   }
 )
 include_cookbook "gdbm"
