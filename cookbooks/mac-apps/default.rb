@@ -20,3 +20,5 @@ grammarly).each do |app|
     not_if "brew list | fgrep -q #{app}"
   end
 end
+
+include_cookbook "roon"
