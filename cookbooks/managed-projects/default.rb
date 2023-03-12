@@ -3,7 +3,7 @@
 directory node[:managed_projects][:root] do
   owner node[:managed_projects][:user]
   group node[:managed_projects][:group]
-  mode '755'
+  mode "755"
   action :create
 end
 

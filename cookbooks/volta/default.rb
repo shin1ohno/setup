@@ -1,11 +1,13 @@
+# frozen_string_literal: true
+
 remote_file "#{node[:setup][:root]}/volta-install.sh" do
   owner node[:setup][:user]
   group node[:setup][:group]
-  mode '755'
-  source 'files/install.sh'
+  mode "755"
+  source "files/install.sh"
 end
 
-volta_user = ENV['SUDO_USER'] || ENV.fetch('USER')
+volta_user = ENV["SUDO_USER"] || ENV.fetch("USER")
 execute "bash #{node[:setup][:root]}/volta-install.sh --skip-setup" do
   user volta_user
   not_if "test -e \"$HOME/.volta/bin/volta\""

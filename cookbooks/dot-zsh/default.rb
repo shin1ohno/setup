@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 include_cookbook "typewritten"
 include_cookbook "oh-my-zsh"
 
@@ -18,7 +20,7 @@ EOM
 end
 
 add_profile "dot-zsh" do
-  priority 60 #ensure to load after the oh-my-zsh
+  priority 60 # ensure to load after the oh-my-zsh
   bash_content <<"EOM"
 bindkey '^r' select-history
 EOM

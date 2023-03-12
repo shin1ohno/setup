@@ -3,7 +3,7 @@
 repos_file = "#{File.dirname(__FILE__)}/files/repositories.json"
 repos = JSON.parse(File.read(repos_file))["repositories"]
 l_repos_file = "#{File.dirname(__FILE__)}/files/repositories.local.json"
-repos = repos.concat(JSON.parse(File.read(l_repos_file))["repositories"]) if File.exists?(l_repos_file)
+repos = repos.concat(JSON.parse(File.read(l_repos_file))["repositories"]) if File.exist?(l_repos_file)
 
 node.reverse_merge!(
   managed_projects: {

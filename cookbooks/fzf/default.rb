@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 package "fzf"
 
 add_profile "fzf" do

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 git_clone "ohmyzsh" do
   uri "https://github.com/ohmyzsh/ohmyzsh.git"
   cwd node[:setup][:root]

@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 directory "#{ENV["HOME"]}/.config/" do
   owner node[:setup][:user]
   group node[:setup][:group]
-  mode '755'
+  mode "755"
   action :create
 end
 

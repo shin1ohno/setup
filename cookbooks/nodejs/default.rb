@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 include_cookbook "volta"
 
-node_user = ENV['SUDO_USER'] || ENV.fetch('USER')
+node_user = ENV["SUDO_USER"] || ENV.fetch("USER")
 
 node_versions = %w(16 17 18 19).map(&:to_s)
 

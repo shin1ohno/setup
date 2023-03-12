@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 package "typewritten"
 
-add_profile 'homebrew' do
+add_profile "homebrew" do
   bash_content <<"EOM"
 ZSH_THEME=""
 TYPEWRITTEN_PROMPT_LAYOUT="pure"

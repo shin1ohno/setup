@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 install_package "zsh" do
   darwin "zsh"
 end
@@ -5,7 +7,7 @@ end
 zsh_path = case node[:platform]
            when "darwin"
              "#{node[:homebrew][:prefix]}/bin/zsh"
-           end
+end
 
 execute " sudo echo #{zsh_path} | sudo tee -a /etc/shells > /dev/null" do
   not_if "grep -q #{zsh_path} /etc/shells"
