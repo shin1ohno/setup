@@ -125,6 +125,7 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
 
   execute "#{node[:rbenv][:root]}/bin/rbenv global #{node[:rbenv][:global_version]}" do
     not_if { node[:rbenv][:global_version].nil? }
+    only_if "test $(#{node[:rbenv][:root]}/bin/rbenv global) != #{node[:rbenv][:global_version]}"
   end
 
   gems = node[:rbenv][:global_gems] || ["bundler"]
