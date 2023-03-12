@@ -43,6 +43,7 @@ include_cookbook 'autoconf'
 include_cookbook 'envchain'
 include_cookbook 'awscli'
 include_cookbook 'rbenv'
+include_cookbook "ruby32"
 
 include_cookbook "nodejs"
 include_cookbook "dot-zsh"
