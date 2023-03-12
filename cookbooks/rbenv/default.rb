@@ -110,7 +110,7 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
     end
 
   execute "rbenv-install-#{version}" do
-    command "sudo -u #{rbenv_user} -E #{env} #{node[:setup][:root]}/rbenv/ckpd-rbenv-install-ruby #{version} #{headof} > /tmp/rbenv-install-#{version}.log 2>&1"
+    command "sudo -u #{rbenv_user} -E #{env} #{node[:setup][:root]}/rbenv/rbenv install #{version} > /tmp/rbenv-install-#{version}.log 2>&1"
     not_if "test -d #{node[:rbenv][:root]}/versions/#{version}"
   end
 
