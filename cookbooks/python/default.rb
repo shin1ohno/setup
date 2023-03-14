@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
-package "pyenv"
+execute "curl https://pyenv.run | bash" do
+  not_if { File.exists? "#{ENV["HOME"]}/.pyenv" }
+end
 
 add_profile "pyenv" do
   bash_content <<~EOS
@@ -12,14 +14,14 @@ add_profile "pyenv" do
 end
 
 %w(3.9.9).each do |version|
-  execute "pyenv install #{version}" do
-    not_if "pyenv versions | grep #{version}"
+  execute "$HOME/.pyenv/bin/pyenv install #{version}" do
+    not_if "$HOME/.pyenv/bin/pyenv versions | grep #{version}"
   end
 
-  execute "pyenv global #{version} && $(pyenv prefix)/bin/python -m ensurepip --upgrade &&  $(pyenv prefix)/bin/pip install argcomplete" do
-    not_if "$(pyenv prefix)/bin/pip list | fgrep -q argcomplete"
+  execute "$HOME/.pyenv/bin/pyenv global #{version} && $HOME/.pyenv/shims/python -m ensurepip --upgrade && $HOME/.pyenv/bin/pyenv rehash && $HOME/.pyenv/shims/pip install argcomplete" do
+    not_if "$HOME/.pyenv/shims/pip list | fgrep -q argcomplete"
     cwd ENV["HOME"]
   end
 end
 
-execute "$(pyenv prefix)/bin/pip install --upgrade pip"
+execute "$HOME/.pyenv/shims/pip install --upgrade pip"
