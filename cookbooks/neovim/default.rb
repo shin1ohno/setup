@@ -1,3 +1,9 @@
 # frozen_string_literal: true
 
-package "neovim"
+if node[:platform] == "ubuntu"
+  execute "snap install nvim --edge && apt-get install python3-pynvim && apt-get remove neovim" do
+    not_if "snap list | grep -q neovim"
+  end
+else
+  package "neovim"
+end
