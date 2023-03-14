@@ -2,6 +2,7 @@
 
 install_package "zsh" do
   darwin "zsh"
+  ubuntu "zsh"
 end
 
 zsh_path = case node[:platform]
