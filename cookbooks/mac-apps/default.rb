@@ -10,7 +10,7 @@ balenaetcher                    monodraw
 mqtt-explorer                   lunar
 charles                         obs
 rapidapi                        launchcontrol
-docker                          ron
+docker
 figma                           syntax-highlight
 firefox                         transmit
 tidal
