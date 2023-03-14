@@ -53,6 +53,7 @@ include_cookbook "rbenv"
 include_cookbook "ruby32"
 include_cookbook "ruby31"
 
+include_cookbook "rust"
 include_cookbook "nodejs"
 include_cookbook "dot-zsh"
 include_cookbook "tmux"
