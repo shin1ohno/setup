@@ -9,4 +9,5 @@ template "/etc/apt/sources.list.d/corretto.list" do
   group "root"
   mode "0644"
   notifies :run, "execute[apt-get update]"
+  not_if { File.exists? "/etc/apt/sources.list.d/corretto.list" }
 end
