@@ -7,10 +7,29 @@ remote_file "#{node[:setup][:root]}/volta-install.sh" do
   source "files/install.sh"
 end
 
-volta_user = ENV["SUDO_USER"] || ENV.fetch("USER")
-execute "bash #{node[:setup][:root]}/volta-install.sh --skip-setup" do
-  user volta_user
-  not_if "test -e \"$HOME/.volta/bin/volta\""
+if node[:platform] == "ubuntu"
+  git_clone "volta" do
+    uri "https://github.com/volta-cli/volta.git"
+    cwd node[:setup][:root]
+  end
+
+  execute "$HOME/.cargo/bin/cargo build --release" do
+    not_if { File.exists? "" }
+    cwd "#{node[:setup][:root]}/volta"
+  end
+
+  %w(volta volta-migrate volta-shim).each do |b|
+    execute "cp #{b} $HOME/.volta/bin/" do
+      cwd "#{node[:setup][:root]}/volta/target/release"
+      not_if { File.exists? "#{ENV["HOME"]}/.volta/bin/#{b}" }
+    end
+  end
+else
+  volta_user = ENV["SUDO_USER"] || ENV.fetch("USER")
+  execute "bash #{node[:setup][:root]}/volta-install.sh --skip-setup" do
+    user volta_user
+    not_if "test -e \"$HOME/.volta/bin/volta\""
+  end
 end
 
 add_profile "volta" do
