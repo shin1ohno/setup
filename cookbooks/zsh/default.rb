@@ -8,6 +8,8 @@ end
 zsh_path = case node[:platform]
            when "darwin"
              "#{node[:homebrew][:prefix]}/bin/zsh"
+           when "ubuntu"
+             "/usr/bin/zsh"
 end
 
 execute " sudo echo #{zsh_path} | sudo tee -a /etc/shells > /dev/null" do
