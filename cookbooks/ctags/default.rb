@@ -1,3 +1,7 @@
 # frozen_string_literal: true
 
-package "ctags"
+if node[:platform] == "ubuntu"
+  package "universal-ctags"
+else
+  package "ctags"
+end
