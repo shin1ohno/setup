@@ -29,7 +29,7 @@ include_cookbook "zsh"
 include_cookbook "build-essential"
 include_cookbook "jdk"
 include_cookbook "git"
-include_cookbook "terraform"
+include_cookbook "terraform" if node[:platform] == "darwin"
 
 # for ruby
 node.reverse_merge!(
