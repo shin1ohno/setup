@@ -18,6 +18,13 @@ if node[:platform] == "ubuntu"
     cwd "#{node[:setup][:root]}/volta"
   end
 
+  directory "#{ENV["HOME"]}/.volta/bin" do
+    user  node[:setup][:user]
+    group node[:setup][:user]
+    action :create
+    mode "744"
+  end
+
   %w(volta volta-migrate volta-shim).each do |b|
     execute "cp #{b} $HOME/.volta/bin/" do
       cwd "#{node[:setup][:root]}/volta/target/release"
