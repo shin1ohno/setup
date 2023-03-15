@@ -11,3 +11,7 @@ template "/etc/apt/sources.list.d/corretto.list" do
   notifies :run, "execute[apt-get update]"
   not_if { File.exists? "/etc/apt/sources.list.d/corretto.list" }
 end
+
+execute "apt-get update" do
+  not_if { File.exists? "/etc/apt/sources.list.d/corretto.list" }
+end
