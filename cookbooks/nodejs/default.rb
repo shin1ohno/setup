@@ -23,3 +23,4 @@ execute "$HOME/.volta/bin/npm upgrade -g" do
 end
 
 include_cookbook "pm2"
+include_cookbook "typescript"
