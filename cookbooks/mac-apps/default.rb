@@ -13,7 +13,7 @@ rapidapi                        launchcontrol
 docker
 figma                           syntax-highlight
 firefox                         transmit
-tidal
+tidal                           karabiner-elements
 via                             tableau
 grammarly).each do |app|
   execute "brew reinstall --cask #{app}" do
