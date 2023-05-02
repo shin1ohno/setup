@@ -29,10 +29,10 @@ when "darwin"
     group node[:setup][:group]
     mode "755"
     source "files/com.roon.server.plist"
-    not_if { FileTest.directory?("/Library/LaunchDaemons/com.roon.server.plist") }
+    not_if { File.exist?("/Library/LaunchDaemons/com.roon.server.plist") }
   end
 
   execute "sudo cp -rp #{node[:setup][:root]}/roon/com.roon.server.plist /Library/LaunchDaemons/com.roon.server.plist" do
-    not_if { FileTest.directory?("/Library/LaunchDaemons/com.roon.server.plist") }
+    not_if { FileTest.exist?("/Library/LaunchDaemons/com.roon.server.plist") }
   end
 end
