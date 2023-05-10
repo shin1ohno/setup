@@ -8,8 +8,13 @@ directory "#{ENV["HOME"]}/.config/" do
 end
 
 git_clone "nvim" do
-  uri "https://github.com/jdhao/nvim-config.git nvim"
+  uri "https://github.com/AstroNvim/AstroNvim nvim"
   cwd "#{ENV["HOME"]}/.config/"
+end
+
+git_clone "user" do
+  uri "git@github.com:shin1ohno/AstroNvimUserOpts.git user"
+  cwd "#{ENV["HOME"]}/.config/nvim/lua/"
 end
 
 %w(
@@ -23,8 +28,6 @@ vim-vint
   end
 end
 
-
-unless node[:platform] == "ubuntu"
 %w(
   typescript
   typescript-language-server
@@ -41,6 +44,3 @@ unless node[:platform] == "ubuntu"
   end
 end
 
-execute "git pull" do
-  cwd "#{ENV["HOME"]}/.config/nvim"
-end
