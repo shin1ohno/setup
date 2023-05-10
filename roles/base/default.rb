@@ -55,6 +55,7 @@ include_cookbook "ruby31"
 
 include_cookbook "rust"
 include_cookbook "nodejs"
+include_cookbook "haskell"
 include_cookbook "dot-zsh"
 include_cookbook "tmux"
 include_cookbook "dot-tmux"
