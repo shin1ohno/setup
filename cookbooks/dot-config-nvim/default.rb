@@ -47,3 +47,5 @@ end
 execute "git pull" do
   cwd "#{ENV["HOME"]}/.config/nvim/lua/user"
 end
+
+execute "nvim --headless -c 'quitall'"
