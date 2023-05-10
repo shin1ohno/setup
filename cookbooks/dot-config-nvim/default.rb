@@ -26,7 +26,6 @@ end
 
 unless node[:platform] == "ubuntu"
 %w(
-  vim-language-server
   typescript
   typescript-language-server
   @tailwindcss/language-server
@@ -40,9 +39,6 @@ unless node[:platform] == "ubuntu"
     not_if "which #{requirement}"
     cwd ENV["HOME"]
   end
-end
-
-package "lua-language-server"
 end
 
 execute "git pull" do
