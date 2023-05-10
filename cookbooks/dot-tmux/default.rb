@@ -15,9 +15,9 @@ remote_file "#{ENV["HOME"]}/.tmux.conf.local" do
   group node[:setup][:group]
   mode "755"
   source "files/.tmux.conf.local"
-  not_if { File.exist?("#{ENV["HOME"]}/.tmux.conf.local") }
 end
 
 execute "git pull" do
   cwd "#{node[:setup][:root]}/.tmux"
 end
+
