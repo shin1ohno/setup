@@ -2,6 +2,7 @@
 
 package "git"
 package "git-lfs"
+package "lazygit"
 
 remote_file "#{ENV["HOME"]}/.gitconfig" do
   owner node[:setup][:user]
