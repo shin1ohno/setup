@@ -1,5 +1,5 @@
 execute "curl https://sh.rustup.rs -sSf | sh -s -- --no-modify-path -y" do
-  not_if { File.exists? "$HOME/.cargo/" }
+  not_if { File.exists? "$HOME/.cargo/env" }
 end
 
 add_profile "cargo" do
