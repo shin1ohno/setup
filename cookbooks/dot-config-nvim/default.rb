@@ -14,7 +14,7 @@ end
 
 git_clone "user" do
   uri "git@github.com:shin1ohno/AstroNvimUserOpts.git user"
-  cwd "#{env["home"]}/.config/nvim/lua/"
+  cwd "#{ENV["HOME"]}/.config/nvim/lua/"
 end
 
 %w(
@@ -45,5 +45,5 @@ end
 end
 
 execute "git pull" do
-  cwd "#{env["home"]}/.config/nvim/lua/user"
+  cwd "#{ENV["HOME"]}/.config/nvim/lua/user"
 end
