@@ -1,23 +1,17 @@
 # frozen_string_literal: true
 
-git_clone ".tmux" do
-  cwd node[:setup][:root]
-  uri "https://github.com/gpakosz/.tmux.git"
-end
-
-link "#{ENV["HOME"]}/.tmux.conf" do
-  to "#{node[:setup][:root]}/.tmux/.tmux.conf"
-  not_if { File.exist?("#{ENV["HOME"]}/.tmux.conf") }
-end
-
-remote_file "#{ENV["HOME"]}/.tmux.conf.local" do
+directory "#{ENV["HOME"]}/.config/tmux" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
-  source "files/.tmux.conf.local"
+  action :create
 end
 
-execute "git pull" do
-  cwd "#{node[:setup][:root]}/.tmux"
+execute "git init && git remote add origin git@github.com:shin1ohno/tmux.git && git pull --rebase origin main && git push --set-upstream origin main" do
+  cwd "#{ENV["HOME"]}/.config/tmux"
+  not_if { File.exists? "#{ENV["HOME"]}/.config/tmux" }
 end
 
+execute "git pull --rebase origin main" do
+  cwd "#{ENV["HOME"]}/.config/tmux"
+end
