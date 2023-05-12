@@ -2,7 +2,7 @@
 
 package "git"
 package "git-lfs"
-package "lazygit"
+package "lazygit" if node[:platform] == "darwin"
 package "gh"
 
 remote_file "#{ENV["HOME"]}/.gitconfig" do
