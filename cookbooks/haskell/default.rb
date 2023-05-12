@@ -8,7 +8,7 @@ else
     not_if 'which stack > /dev/null'
   end
 
-  execute "curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh" do
+  execute "curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 BOOTSTRAP_HASKELL_GHC_VERSION=latest BOOTSTRAP_HASKELL_CABAL_VERSION=latest BOOTSTRAP_HASKELL_INSTALL_STACK=0 BOOTSTRAP_HASKELL_INSTALL_HLS=1 BOOTSTRAP_HASKELL_ADJUST_BASHRC=P sh" do
     not_if "which ghcup"
   end
 end
