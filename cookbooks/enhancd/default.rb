@@ -5,6 +5,10 @@ git_clone "enhancd" do
   uri "https://github.com/b4b4r07/enhancd.git"
 end
 
+execute "git pull" do
+  cwd "#{node[:setup][:root]}/enhancd"
+end
+
 add_profile "enhancd" do
   bash_content <<~EOS
     source "#{node[:setup][:root]}/enhancd/init.sh"
