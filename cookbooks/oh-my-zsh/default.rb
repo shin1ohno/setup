@@ -25,7 +25,7 @@ export UPDATE_ZSH_DAYS=1
 ENABLE_CORRECTION="true"
 COMPLETION_WAITING_DOTS="true"
 DISABLE_UNTRACKED_FILES_DIRTY="true"
-plugins=(ruby vi-mode z zsh-autosuggestions zsh-syntax-highlighting)
+plugins=(ruby vi-mode z zsh-autosuggestions zsh-syntax-highlighting ssh-agent)
 source $ZSH/oh-my-zsh.sh
 export LANG=en_US.UTF-8
 if [[ -n $SSH_CONNECTION ]]; then
