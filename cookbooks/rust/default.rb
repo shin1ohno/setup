@@ -6,7 +6,7 @@ add_profile "cargo" do
   bash_content 'source "$HOME/.cargo/env"'
 end
 
-execute "rustup update stable"
-execute "cargo install bottom --locked" do
+execute "$HOME/.cargo/bin/rustup update stable"
+execute "$HOME/.cargo/bin/cargo install bottom --locked" do
   not_if "which btm"
 end
