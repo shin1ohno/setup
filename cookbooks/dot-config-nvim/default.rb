@@ -48,4 +48,8 @@ execute "git pull" do
   cwd "#{ENV["HOME"]}/.config/nvim/lua/user"
 end
 
+execute "curl -Ls -o #{ENV["HOME"]}/.local/bin/im-select https://github.com/daipeihust/im-select/blob/8080ad18f20218d1b6b5ef81d26cc5452d56b165/im-select-mac/out/apple/im-select && chmod 777 #{ENV["HOME"]}/.local/bin/im-select" do
+  not_if "which im-select"
+end
+
 execute "nvim --headless -c 'quitall'"
