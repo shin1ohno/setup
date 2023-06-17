@@ -9,7 +9,7 @@ end
 
 execute "git init && git remote add origin git@github.com:shin1ohno/tmux.git && git pull --rebase origin main && git push --set-upstream origin main" do
   cwd "#{ENV["HOME"]}/.config/tmux"
-  not_if { File.exists? "#{ENV["HOME"]}/.config/tmux" }
+  not_if { File.exists? "#{ENV["HOME"]}/.config/tmux/.git" }
 end
 
 execute "git pull --rebase origin main" do

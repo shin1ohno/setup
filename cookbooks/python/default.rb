@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 execute "curl https://pyenv.run | bash" do
-  not_if { File.exists? "#{ENV["HOME"]}/.pyenv" }
+  not_if { File.exists? "#{ENV["HOME"]}/.pyenv/bin" }
 end
 
 add_profile "pyenv" do
