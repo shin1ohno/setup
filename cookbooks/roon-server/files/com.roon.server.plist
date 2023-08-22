@@ -18,7 +18,7 @@
 	<array>
 		<string>/usr/local/bin/fdautil</string>
 		<string>exec</string>
-		<string>/Applications/RoonServer.app/Contents/MacOS/RoonServer</string>
+		<string>/Applications/Roon.app/Contents/RoonServer.app/Contents/MacOS/RoonServer</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
