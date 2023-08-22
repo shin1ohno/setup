@@ -26,4 +26,3 @@ execute "sudo -p 'enter password to install fdautil to /usr/local/bin/: ' cp -rp
 end
 
 include_cookbook "roon"
-include_cookbook "roon-server"
