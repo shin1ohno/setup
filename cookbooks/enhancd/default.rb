@@ -10,6 +10,7 @@ execute "git pull" do
 end
 
 add_profile "enhancd" do
+  priority 99
   bash_content <<~EOS
     source "#{node[:setup][:root]}/enhancd/init.sh"
   EOS
