@@ -54,6 +54,6 @@ execute "curl -Ls -o #{ENV["HOME"]}/.local/bin/im-select https://github.com/daip
   not_if "which im-select"
 end
 
-execute "chmod 777 /Users/shin1ohno/.local/bin/im-select"
+execute "chmod 777 #{ENV["HOME"]/.local/bin/im-select"
 
 execute "nvim --headless -c 'quitall'"
