@@ -12,7 +12,7 @@ else
     not_if "which ghcup"
   end
   
-add_profile "pm2" do
+add_profile "ghcup" do
   bash_content <<'EOM'
     export PATH="~/.ghcup/bin:$PATH"
 EOM
