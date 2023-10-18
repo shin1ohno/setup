@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-execute "$HOME/.volta/bin/npm install -g pm2" do
+execute "$HOME/.volta/bin/npm install -g pm2 && $HOME/.volta/bin/pm2 startup" do
   not_if "which pm2"
   cwd ENV["HOME"]
 end
