@@ -20,9 +20,19 @@ template "#{node[:setup][:root]}/profile" do
   source "templates/profile"
 end
 
+node.reverse_merge!(
+  rbenv: {
+    root: "#{ENV['HOME']}/.rbenv",
+  },
+  go: {
+    versions: %w(go1.21.3 go1.20.9)
+  }
+)
+
 if node[:platform] == "darwin"
   include_cookbook "homebrew"
 end
+
 include_cookbook "tree"
 include_cookbook "zsh"
 
