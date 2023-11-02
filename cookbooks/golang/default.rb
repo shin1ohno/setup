@@ -1,4 +1,12 @@
 # frozen_string_literal: true
+#
+execute "install dependencies" do
+  command <<-EOH
+    sudo apt update
+    sudo apt install curl git mercurial make binutils bison gcc build-essential
+  EOH
+  not_if "which gvm"
+end
 
 remote_file "#{node[:setup][:root]}/gvm-install.sh" do
   owner node[:setup][:user]
@@ -18,10 +26,10 @@ add_profile "gvm" do
   BASH
 end
 
-execute "gvm install go1.19 -B" do
+execute "source $HOME/.gvm/scripts/gvm && gvm install go1.19 -B" do
   not_if "test -d $HOME/.gvm/gos/go1.19"
 end
 
-execute "gvm use go1.19 --default" do
- not_if "test -e $HOME/.gvm/environments/default"
+execute "source $HOME/.gvm/scripts/gvm && gvm use go1.19 --default" do
+  not_if "test -e $HOME/.gvm/environments/default"
 end
