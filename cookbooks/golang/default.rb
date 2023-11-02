@@ -23,5 +23,5 @@ execute "gvm install go1.19 -B" do
 end
 
 execute "gvm use go1.19 --default" do
-  not_if "test -e $HOME/.gvm/environments/default"
+ not_if "test -e $HOME/.gvm/environments/default"
 end
