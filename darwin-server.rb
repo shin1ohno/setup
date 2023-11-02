@@ -14,9 +14,6 @@ node.reverse_merge!(
     user: user,
     group: "staff",
   },
-  rbenv: {
-    root: "#{ENV['HOME']}/.rbenv",
-  },
   homebrew: {
     # Set prefix to /opt/homebrew on M1 Mac because Homebrew has changed the default prefix to /opt/homebrew on M1 Mac.
     # https://github.com/Homebrew/install/blob/b62804e014a2d31216e074398411069688517a79/install.sh#L30-L32

@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-#
+
 execute "install dependencies" do
   command <<-EOH
     sudo apt update
@@ -26,10 +26,22 @@ add_profile "gvm" do
   BASH
 end
 
-execute "source $HOME/.gvm/scripts/gvm && gvm install go1.19 -B" do
-  not_if "test -d $HOME/.gvm/gos/go1.19"
+go_versions = node[:go][:versions]
+go_default_version = go_versions[0]
+
+go_versions.each do |v|
+  execute "install Go version: #{v}" do
+    command <<-EOH
+    source ~/.gvm/scripts/gvm
+    gvm install #{v}
+  EOH
+    not_if "gvm list | grep #{v}"
+  end
 end
 
-execute "source $HOME/.gvm/scripts/gvm && gvm use go1.19 --default" do
-  not_if "test -e $HOME/.gvm/environments/default"
+execute "Go version: #{go_default_version} as default" do
+  command <<-EOH
+    source ~/.gvm/scripts/gvm
+    gvm use #{go_default_version} --default
+  EOH
 end
