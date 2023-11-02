@@ -2,9 +2,13 @@
 
 case node[:platform]
 when "ubuntu"
-  package "awscli"
+  package "awscli" do
+    user "root"
+  end
 when "arch"
-  package "aws-cli"
+  package "aws-cli" do
+    user "root"
+  end
 when "darwin"
   directory "#{node[:setup][:root]}/awscli" do
     owner node[:setup][:user]

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 if node[:platform] == "ubuntu"
-  execute "snap install nvim --edge --classic && apt-get install python3-pynvim" do
+  execute "sudo snap install nvim --edge --classic && sudo apt-get install python3-pynvim" do
     not_if "which nvim"
   end
 else

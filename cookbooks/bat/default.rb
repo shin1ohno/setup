@@ -1,6 +1,13 @@
 # frozen_string_literal: true
 
-package "bat"
+case node[:platform]
+  when "darwin"
+    package "bat"
+  else
+  package "bat" do
+    user "root"
+  end
+end
 
 directory "#{ENV["HOME"]}/.config/bat" do
   owner node[:setup][:user]
