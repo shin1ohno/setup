@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
-execute "install dependencies" do
-  command <<-EOH
-    sudo apt update
-    sudo apt install curl git mercurial make binutils bison gcc build-essential
-  EOH
-  not_if "which gvm"
+unless node[:platform] == "darwin"
+  execute "install dependencies" do
+    command <<-EOH
+      sudo apt update
+      sudo apt install curl git mercurial make binutils bison gcc build-essential
+    EOH
+    not_if "which gvm"
+  end
 end
 
 remote_file "#{node[:setup][:root]}/gvm-install.sh" do

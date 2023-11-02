@@ -25,10 +25,17 @@ end
 MItamae::RecipeContext.send(:include, RecipeHelper)
 
 define :install_package, darwin: nil, ubuntu: nil, arch: nil do
-  pkgs = params[node[:platform].to_sym]
+  platform = node[:platform]
+  pkgs = params[platform.to_sym]
   if pkgs
     Array(pkgs).each do |pkg|
-      package pkg
+      if platform == "darwin"
+        package pkg
+      else
+        package pkg do
+          user "root"
+        end
+      end
     end
   else
     raise "Unsupported platform #{node[:platform]}"

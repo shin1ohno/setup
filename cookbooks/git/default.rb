@@ -1,10 +1,21 @@
 # frozen_string_literal: true
 
-package "git"
-package "git-lfs"
-package "lazygit" if node[:platform] == "darwin"
-package "gh"
-
+if node[:platform] == "darwin"
+  package "git"
+  package "git-lfs"
+  package "lazygit"
+  package "gh"
+else
+  package "git" do
+    user "root"
+  end
+  package "git-lfs" do
+    user "root"
+  end
+  package "gh" do
+    user "root"
+  end
+end
 remote_file "#{ENV["HOME"]}/.gitconfig" do
   owner node[:setup][:user]
   group node[:setup][:group]

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-package "fzf"
-
 git_clone "fzf-git.sh" do
   cwd node[:setup][:root]
   uri "git@github.com:junegunn/fzf-git.sh.git"
@@ -13,6 +11,8 @@ end
 
 case node[:platform]
 when "darwin"
+package "fzf"
+
 add_profile "fzf" do
   bash_content <<-EOM
 if [[ ! "$PATH" == */opt/homebrew/opt/fzf/bin* ]]; then
@@ -43,6 +43,9 @@ EOM
 end
 
 when "ubuntu"
+  package "fzf" do
+    user "root"
+  end
 add_profile "fzf" do
   bash_content <<-EOM
 [[ $- == *i* ]] && source "/usr/share/doc/fzf/examples/key-bindings.zsh" 2> /dev/null

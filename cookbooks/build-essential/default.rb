@@ -4,8 +4,14 @@ case node[:platform]
 when "darwin"
   # Xcode. Unmanaged
 when "ubuntu"
-  package "build-essential"
-  package "bison"
+  package "build-essential" do
+    user "root"
+  end
+
+  package "bison" do
+    user "root"
+  end
+  
 when "arch"
   package "base-devel"
 else

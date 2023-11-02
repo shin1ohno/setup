@@ -1,7 +1,14 @@
 # frozen_string_literal: true
 
-if node[:platform] == "ubuntu"
-  package "universal-ctags"
-else
+case node[:platform]
+when "ubuntu"
+  package "universal-ctags" do
+    user "root"
+  end
+when "darwin"
   package "ctags"
+else
+  package "ctags" do
+    user "root"
+  end
 end
