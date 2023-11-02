@@ -43,7 +43,6 @@ end
 
 execute "Go version: #{go_default_version} as default" do
   command <<-EOH
-    source ~/.gvm/scripts/gvm
-    gvm use #{go_default_version} --default
+    . $HOME/.gvm/scripts/env/use #{go_default_version} --default
   EOH
 end
