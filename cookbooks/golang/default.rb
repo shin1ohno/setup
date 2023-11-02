@@ -42,7 +42,8 @@ go_versions.each do |v|
 end
 
 execute "Go version: #{go_default_version} as default" do
+  #not sure why but we need bash not sh here
   command <<-EOH
-    . $HOME/.gvm/scripts/env/use #{go_default_version} --default
+    /bin/bash $HOME/.gvm/scripts/env/use #{go_default_version} --default
   EOH
 end
