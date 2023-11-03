@@ -26,6 +26,12 @@ node.reverse_merge!(
   },
   go: {
     versions: %w(go1.21.3 go1.20.9)
+  },
+  nodejs: {
+    versions: %w(16 17 18 19)
+  },
+  python: {
+    versions: %w(3.9.9 3.12.0)
   }
 )
 
