@@ -1,7 +1,7 @@
 # This is Git's per-user configuration file.
 [user]
   name = Shin'ichi Ohno
-  email = ohno@cookpad.com
+  email = shin1ohno@gmail.com
 [alias]
   st = status
 [fetch]
