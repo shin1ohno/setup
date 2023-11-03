@@ -13,7 +13,7 @@ add_profile "pyenv" do
   EOS
 end
 
-%w(3.9.9).each do |version|
+node[:python][:versions].each do |version|
   execute "$HOME/.pyenv/bin/pyenv install #{version}" do
     not_if "$HOME/.pyenv/bin/pyenv versions | grep #{version}"
   end
