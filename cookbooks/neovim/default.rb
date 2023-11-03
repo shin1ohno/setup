@@ -30,7 +30,7 @@ if node[:platform] == "ubuntu"
       make CMAKE_BUILD_TYPE=RelWithDebInfo
       sudo make install
     EOH
-    cwd neoivm_root
+    cwd neovim_root
     not_if "which nvim"
   end
 else
