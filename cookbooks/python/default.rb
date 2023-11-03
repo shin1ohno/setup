@@ -14,8 +14,20 @@ add_profile "pyenv" do
 end
 
 node[:python][:versions].each do |version|
-  execute "$HOME/.pyenv/bin/pyenv install #{version}" do
-    not_if "$HOME/.pyenv/bin/pyenv versions | grep #{version}"
+  if node[:platform] == "darwin" && version == "3.12.0"
+    execute "openssl homebrew fix" do
+      command "source $HOME/.bash_profile"
+      command <<~EOS
+      brew uninstall --ignore-dependencies openssl@1.1                                                           setup -> main
+      env CONFIGURE_OPTS='--enable-optimizations' pyenv install 3.12.0
+      brew install openssl@1.1
+      EOS
+      not_if "$HOME/.pyenv/bin/pyenv versions | grep #{version}"
+    end
+  else
+    execute "$HOME/.pyenv/bin/pyenv install #{version}" do
+      not_if "$HOME/.pyenv/bin/pyenv versions | grep #{version}"
+    end
   end
 
   execute "$HOME/.pyenv/bin/pyenv global #{version} && $HOME/.pyenv/shims/python -m ensurepip --upgrade && $HOME/.pyenv/bin/pyenv rehash && $HOME/.pyenv/shims/pip install argcomplete" do
