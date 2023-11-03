@@ -1,5 +1,4 @@
 execute "curl https://sh.rustup.rs -sSf | sh -s -- --no-modify-path -y" do
-  user "root"
   not_if { File.exists? "#{ENV["HOME"]}/.cargo/env" }
 end
 
