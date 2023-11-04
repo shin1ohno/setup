@@ -20,9 +20,9 @@ if node[:platform] == "ubuntu"
   end
 
   execute "Download the latest stable neovim" do
-    command "curl -O https://github.com/neovim/neovim/releases/download/stable/nvim-linux64.tar.gz"
+    command "curl -OL https://github.com/neovim/neovim/archive/refs/tags/stable.tar.gz && tar xfzv stable.tar.gz"
     cwd neovim_root
-    not_if "test -d #{neovim_root}/nvim-linux64"
+    not_if "test -d #{neovim_root}/neovim-stable"
   end
 
   execute "build and install neovim" do
@@ -30,7 +30,7 @@ if node[:platform] == "ubuntu"
       make CMAKE_BUILD_TYPE=RelWithDebInfo
       sudo make install
     EOH
-    cwd neovim_root
+    cwd "#{neovim_root}/neovim-stable"
     not_if "which nvim"
   end
 else
