@@ -7,11 +7,6 @@ when "ubuntu"
   package "build-essential" do
     user "root"
   end
-
-  package "bison" do
-    user "root"
-  end
-  
 when "arch"
   package "base-devel"
 else
