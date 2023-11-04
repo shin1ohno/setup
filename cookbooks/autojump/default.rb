@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
-package "autojump"
+package "autojump" do
+  user node[:platform] == "darwin" ? node[:setup][:user] : "root"
+end
 
 add_profile "autojump" do
   bash_content <<"EOF"
