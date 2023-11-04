@@ -34,10 +34,9 @@ go_default_version = go_versions[0]
 go_versions.each do |v|
   execute "install Go version: #{v}" do
     command <<-EOH
-    source ~/.gvm/scripts/gvm
     gvm install #{v}
   EOH
-    not_if "gvm list | grep #{v}"
+    not_if "~/.gvm/bin/gvm list | grep #{v}"
   end
 end
 
