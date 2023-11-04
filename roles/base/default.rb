@@ -35,17 +35,16 @@ node.reverse_merge!(
   }
 )
 
-if node[:platform] == "darwin"
-  include_cookbook "homebrew"
-end
+
+include_cookbook "homebrew" if node[:platform] == "darwin"
 
 include_cookbook "tree"
 include_cookbook "zsh"
 
-include_cookbook "build-essential"
+include_cookbook "build-essential" unless node[:platform] == "darwin"
 include_cookbook "jdk"
 include_cookbook "git"
-include_cookbook "terraform" if node[:platform] == "darwin"
+include_cookbook "terraform"
 
 # for ruby
 node.reverse_merge!(
