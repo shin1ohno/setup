@@ -30,6 +30,7 @@ node.reverse_merge!(
 )
 
 include_role "base"
+include_role "manage"
 include_cookbook "autoconf"
 include_cookbook "bluez"
 include_cookbook "zeroconf"
