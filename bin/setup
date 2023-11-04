@@ -8,9 +8,22 @@ bin_dir="$(dirname "$0")"
 if ! [ -f "${bin_dir}/${mitamae_cache}" ]; then
   case "$(uname)" in
     "Linux")
-      mitamae_bin="mitamae-x86_64-linux"
-      download_url="https://github.com/itamae-kitchen/mitamae/releases/download/v${mitamae_version}/${mitamae_bin}.tar.gz"
-      mitamae_sha256="c251f2587717c7b9c8ef6cec8af3ab607ed065f4bdf4b5060cd85693dbd6f75e"
+      case "$(uname -m)" in
+        "x86_64")
+          mitamae_bin="mitamae-x86_64-linux"
+          download_url="https://github.com/itamae-kitchen/mitamae/releases/download/v${mitamae_version}/${mitamae_bin}.tar.gz"
+          mitamae_sha256="c251f2587717c7b9c8ef6cec8af3ab607ed065f4bdf4b5060cd85693dbd6f75e"
+          ;;
+        "aarch64")
+          mitamae_bin="mitamae-aarch64-linux"
+          download_url="https://github.com/itamae-kitchen/mitamae/releases/download/v${mitamae_version}/${mitamae_bin}.tar.gz"
+          mitamae_sha256="058828b242416816c69011ad1ffc7cbba57d64054e739804521f1dfd3d08656c"
+          ;;
+        *)
+          echo "unexpected machine name: $(uname -m)"
+          exit 1
+          ;;
+      esac
       ;;
     "Darwin")
       case "$(uname -m)" in
