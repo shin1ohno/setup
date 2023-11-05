@@ -11,5 +11,6 @@ else
       sudo apt update && sudo apt install terraform
     EOF
     user "root"
+    not_if "which terraform"
   end
 end
