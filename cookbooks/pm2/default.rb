@@ -7,6 +7,7 @@ end
 
 execute "sudo env PATH=$PATH:#{ENV['HOME']}/.volta/tools/image/node/20.9.0/bin #{ENV['HOME']}/.volta/tools/image/packages/pm2/lib/node_modules/pm2/bin/pm2 startup systemd -u shin1ohno --hp #{ENV['HOME']}" do
   cwd ENV["HOME"]
+  not_if "systemctl list-unit-files | grep pm2-$USER.service | grep enabled"
 end
 
 add_profile "pm2" do
