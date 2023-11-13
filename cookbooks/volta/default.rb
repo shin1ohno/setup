@@ -44,6 +44,7 @@ add_profile "volta" do
   bash_content <<-BASH
 export VOLTA_HOME=$HOME/.volta
 export PATH="$VOLTA_HOME/bin:$PATH"
+eval "$(volta completions zsh)"
   BASH
   fish_content <<-FISH
 set -gx VOLTA_HOME $HOME/.volta
