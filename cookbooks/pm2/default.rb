@@ -1,7 +1,11 @@
 # frozen_string_literal: true
 
-execute "$HOME/.volta/bin/npm install -g pm2 && $HOME/.volta/bin/pm2 startup" do
+execute "$HOME/.volta/bin/npm install -g pm2" do
   not_if "which pm2"
+  cwd ENV["HOME"]
+end
+
+execute "sudo env PATH=$PATH:#{ENV['HOME']}/.volta/tools/image/node/20.9.0/bin #{ENV['HOME']}/.volta/tools/image/packages/pm2/lib/node_modules/pm2/bin/pm2 startup systemd -u shin1ohno --hp #{ENV['HOME']}" do
   cwd ENV["HOME"]
 end
 
