@@ -5,9 +5,15 @@ execute "$HOME/.volta/bin/npm install -g pm2" do
   cwd ENV["HOME"]
 end
 
-execute "sudo env PATH=$PATH:#{ENV['HOME']}/.volta/tools/image/node/20.9.0/bin #{ENV['HOME']}/.volta/tools/image/packages/pm2/lib/node_modules/pm2/bin/pm2 startup systemd -u shin1ohno --hp #{ENV['HOME']}" do
-  cwd ENV["HOME"]
-  not_if "systemctl list-unit-files | grep pm2-$USER.service | grep enabled"
+if node[:platform] == "darwin"
+  execute "sudo env PATH=$PATH:#{ENV['HOME']}/.volta/tools/image/node/20.9.0/bin #{ENV['HOME']}/.volta/tools/image/packages/pm2/lib/node_modules/pm2/bin/pm2 startup launchd -u $USER --hp #{ENV['HOME']}" do
+    not_if "launchctl list | grep pm2-$USER"
+  end
+else
+  execute "sudo env PATH=$PATH:#{ENV['HOME']}/.volta/tools/image/node/20.9.0/bin #{ENV['HOME']}/.volta/tools/image/packages/pm2/lib/node_modules/pm2/bin/pm2 startup systemd -u $USER --hp #{ENV['HOME']}" do
+    cwd ENV["HOME"]
+    not_if "systemctl list-unit-files | grep pm2-$USER.service | grep enabled"
+  end
 end
 
 add_profile "pm2" do
