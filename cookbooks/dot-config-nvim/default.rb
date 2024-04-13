@@ -52,10 +52,11 @@ execute "mkdir -p ~/.local/bin" do
   not_if "test -d ~/.local/bin"
 end
 
-execute "curl -Ls -o #{ENV["HOME"]}/.local/bin/im-select https://github.com/daipeihust/im-select/blob/8080ad18f20218d1b6b5ef81d26cc5452d56b165/im-select-mac/out/apple/im-select" do
-  not_if "which im-select"
+case node[:platform]
+when "darwin"
+  execute "brew tap daipeihust/tap && brew install im-select" do
+    not_if "which im-select"
+  end
 end
-
-execute "chmod 777 #{ENV["HOME"]}/.local/bin/im-select"
 
 execute "nvim --headless -c 'quitall'"
