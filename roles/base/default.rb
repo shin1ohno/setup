@@ -31,7 +31,7 @@ node.reverse_merge!(
     versions: %w(16 17 18 19 20)
   },
   python: {
-    versions: %w(3.9.9 3.12.0)
+    versions: %w(3.11.5 3.9.9)
   }
 )
 
