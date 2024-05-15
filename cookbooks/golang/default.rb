@@ -4,7 +4,7 @@ unless node[:platform] == "darwin"
   execute "install dependencies" do
     command <<-EOH
       sudo apt update
-      sudo apt install curl git mercurial make binutils bison gcc build-essential golang
+      sudo apt install -y curl git mercurial make binutils bison gcc build-essential golang
     EOH
     not_if "which gvm"
   end
