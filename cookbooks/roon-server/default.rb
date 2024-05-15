@@ -32,7 +32,7 @@ when "ubuntu"
   end
 
   execute script_path do
-    user node[:setup][:user]
+    user "root"
     not_if "test -e /opt/RoonServer"
   end
 end
