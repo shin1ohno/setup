@@ -1,12 +1,9 @@
 # frozen_string_literal: true
 
-unless node[:platform] == "darwin"
-  execute "install dependencies" do
-    command <<-EOH
-      sudo apt update
-      sudo apt install -y curl git mercurial make binutils bison gcc build-essential golang
-    EOH
-    not_if "which gvm"
+if node[:platform] == "ubuntu"
+  %w(curl git mercurial make binutils bison gcc build-essential golang
+  ).each do |pkg|
+    package pkg
   end
 end
 
