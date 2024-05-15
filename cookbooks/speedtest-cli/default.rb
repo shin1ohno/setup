@@ -24,6 +24,6 @@ when "ubuntu"
   end
 end
 
-package "speedtest" do
+package "speedtest-cli" do
   not_if "which speedtest"
 end
