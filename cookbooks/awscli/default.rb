@@ -14,7 +14,7 @@ when "ubuntu"
     not_if { FileTest.exist?(archive_path) }
   end
 
-  exeute "unzip #{archive_path.shellescape} -d #{node[:setup][:root]}/awscli" do
+  execute "unzip #{archive_path.shellescape} -d #{node[:setup][:root]}/awscli" do
     not_if { FileTest.exist?("#{node[:setup][:root]}/awscli/aws") }
   end
 
