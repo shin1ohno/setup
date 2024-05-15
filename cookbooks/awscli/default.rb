@@ -1,21 +1,27 @@
 # frozen_string_literal: true
+directory "#{node[:setup][:root]}/awscli" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+end
+
 
 case node[:platform]
 when "ubuntu"
-  package "awscli" do
-    user "root"
-  end
-when "arch"
-  package "aws-cli" do
-    user "root"
-  end
-when "darwin"
-  directory "#{node[:setup][:root]}/awscli" do
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "755"
+  archive_path = "#{node[:setup][:root]}/awscli/awscliv2.zip"
+
+  execute "curl --silent --fail https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o #{archive_path.shellescape}" do
+    not_if { FileTest.exist?(archive_path) }
   end
 
+  exeute "unzip #{archive_path.shellescape} -d #{node[:setup][:root]}/awscli" do
+    not_if { FileTest.exist?("#{node[:setup][:root]}/awscli/aws") }
+  end
+
+  execute "sudo -p 'Enter your password to install awscli: ' #{node[:setup][:root]}/awscli/aws/install" do
+    not_if "which aws"
+  end
+when "darwin"
   pkg_path = "#{node[:setup][:root]}/awscli/AWSCLIV2.pkg"
 
   execute "curl --silent --fail https://awscli.amazonaws.com/AWSCLIV2.pkg -o #{pkg_path.shellescape}" do
