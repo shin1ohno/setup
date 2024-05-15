@@ -50,7 +50,7 @@ include_cookbook "terraform"
 node.reverse_merge!(
   rbenv: {
     global_version: "3.2",
-    global_gems: %w(bundler rubocop rubocop-rails rubocop-minitest rubocop-packaging rubocop-performance itamae ed25519 bcrypt_pbkdf)
+    global_gems: %w(bundler itamae ed25519 bcrypt_pbkdf)
   }
 )
 include_cookbook "gdbm"
@@ -83,7 +83,6 @@ include_cookbook "python"
 include_cookbook "ctags"
 include_cookbook "neovim"
 include_cookbook "dot-config-nvim"
-include_cookbook "thefuck"
 include_cookbook "fd"
 include_cookbook "fzf"
 include_cookbook "bat"
@@ -93,4 +92,3 @@ include_cookbook "enhancd"
 include_cookbook "gotop"
 include_cookbook "ssh"
 include_cookbook "dot-config-alacritty"
-include_cookbook "speedtest-cli"
