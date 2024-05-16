@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
-case node[:platform]
-when "darwin"
+if node[:platform] == "darwin"
   remote_file "#{node[:setup][:root]}/roon/com.roon.server.plist" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -11,12 +10,14 @@ when "darwin"
 
   execute "sudo cp #{node[:setup][:root]}/roon/com.roon.server.plist /Library/LaunchDaemons/com.roon.server.plist"
   execute "sudo chown root:wheel /Library/LaunchDaemons/com.roon.server.plist" 
-when "ubuntu"
+else
   %w(curl ffmpeg cifs-utils).each do |pkg| 
-    package pkg
+    package pkg do
+      user "root"
+    end
   end
  
-  directory "#{node[:setup][:root]}/roon" do
+  directory "#{node[:setup][:root]}/roon-server" do
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "755"
