@@ -9,6 +9,9 @@ end
 case node[:platform]
 when "ubuntu"
   archive_path = "#{node[:setup][:root]}/awscli/awscliv2.zip"
+  package "unzip" do
+    user "root"
+  end
 
   execute "curl --silent --fail https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o #{archive_path.shellescape}" do
     not_if { FileTest.exist?(archive_path) }
