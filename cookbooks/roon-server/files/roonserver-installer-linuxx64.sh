@@ -179,7 +179,7 @@ function install {
     #
     # Double-check with user that this is what they want
     #
-    confirm "Do you want to install $PACKAGE_NAME on this machine?"
+    # confirm "Do you want to install $PACKAGE_NAME on this machine?"
 
     echo ""
     echo "Downloading $PACKAGE_FILE to $TMPDIR/$PACKAGE_FILE"
