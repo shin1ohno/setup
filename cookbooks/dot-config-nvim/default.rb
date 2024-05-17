@@ -8,13 +8,8 @@ directory "#{ENV["HOME"]}/.config/" do
 end
 
 git_clone "nvim" do
-  uri "https://github.com/AstroNvim/AstroNvim nvim"
+  uri "git@github.com:shin1ohno/astro.git nvim"
   cwd "#{ENV["HOME"]}/.config/"
-end
-
-git_clone "user" do
-  uri "git@github.com:shin1ohno/AstroNvimUserOpts.git user"
-  cwd "#{ENV["HOME"]}/.config/nvim/lua/"
 end
 
 %w(
@@ -45,7 +40,7 @@ end
 end
 
 execute "git pull" do
-  cwd "#{ENV["HOME"]}/.config/nvim/lua/user"
+  cwd "#{ENV["HOME"]}/.config/nvim/"
 end
 
 execute "mkdir -p ~/.local/bin" do
