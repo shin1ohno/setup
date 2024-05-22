@@ -1,5 +1,5 @@
 package "neofetch" do
-  user "root"
+  user (node[:platform] == "darwin" ? node[:user] : "root")
   not_if "which neofetch"
 end
 
