@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
 if node[:platform] == "darwin"
-  package "terraform"
+  execute "brew tap hashicorp/tap && brew update" do
+    not_if "brew tap | grep hashicorp/tap"
+  end
+  package "hashicorp/tap/terraform"
   return
 else
   execute "install terraform" do
