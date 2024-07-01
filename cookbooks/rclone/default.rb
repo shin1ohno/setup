@@ -6,7 +6,7 @@ remote_file "#{node[:setup][:root]}/rclone-install.sh" do
 end
 
 execute "RCLONE_NO_UPDATE_PROFILE=1 #{node[:setup][:root]}/rclone-install.sh" do
-  not_if "test -d #{ENV['HOME']}/.rclone"
+  not_if "which rclone"
   user "root"
 end
 
