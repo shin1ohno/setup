@@ -72,6 +72,7 @@ include_cookbook "nodejs"
 include_cookbook "haskell"
 include_cookbook "golang"
 
+include_cookbook "mosh"
 include_cookbook "skicka"
 include_cookbook "tnef"
 include_cookbook "lazygit"
