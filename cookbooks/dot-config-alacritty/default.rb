@@ -7,9 +7,9 @@ directory "#{ENV["HOME"]}/.config/alacritty" do
   action :create
 end
 
-remote_file "#{ENV["HOME"]}/.config/alacritty/alacritty.yml" do
+remote_file "#{ENV["HOME"]}/.config/alacritty/alacritty.toml" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
-  source "files/alacritty.yml"
+  source "files/alacritty.toml"
 end
