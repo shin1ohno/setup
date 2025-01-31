@@ -27,7 +27,6 @@ add_profile "gvm" do
   priority 60 # Make sure this is loaded after nodebrew
   bash_content <<-BASH
   source $HOME/.gvm/scripts/gvm
-  gvm use #{go_default_version}
   BASH
 end
 
