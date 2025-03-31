@@ -25,13 +25,13 @@ node.reverse_merge!(
     root: "#{ENV['HOME']}/.rbenv",
   },
   go: {
-    versions: %w(go1.21.3 go1.20.9)
+    versions: %w(go1.22.3 go1.21.8)
   },
   nodejs: {
-    versions: %w(16 17 18 19 20)
+    versions: %w(18 20 21)
   },
   python: {
-    versions: %w(3.11.5 3.9.9)
+    versions: %w(3.12.2 3.11.8)
   }
 )
 
@@ -49,7 +49,7 @@ include_cookbook "terraform"
 # for ruby
 node.reverse_merge!(
   rbenv: {
-    global_version: "3.2",
+    global_version: "3.3",
     global_gems: %w(bundler itamae ed25519 bcrypt_pbkdf)
   }
 )
@@ -64,8 +64,8 @@ include_cookbook "zlib"
 include_cookbook "envchain" if node[:platform] == "darwin"
 include_cookbook "awscli"
 include_cookbook "rbenv"
+include_cookbook "ruby33"
 include_cookbook "ruby32"
-include_cookbook "ruby31"
 
 include_cookbook "rust"
 include_cookbook "nodejs"
