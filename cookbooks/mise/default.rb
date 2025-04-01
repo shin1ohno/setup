@@ -14,10 +14,14 @@ end
 add_profile "mise" do
   bash_content <<~EOS
     # mise-en-place tool version manager
-    ~/.local/bin/mise activate zsh | source
+    if [ -f "$HOME/.local/bin/mise" ]; then
+      eval "$($HOME/.local/bin/mise activate zsh)"
+    fi
   EOS
   fish_content <<~FISH
     # mise-en-place tool version manager
-    ~/.local/bin/mise activate fish | source
+    if test -f "$HOME/.local/bin/mise"
+      eval ($HOME/.local/bin/mise activate fish)
+    end
   FISH
 end
