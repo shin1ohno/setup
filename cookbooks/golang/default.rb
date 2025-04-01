@@ -35,7 +35,7 @@ go_versions.each do |v|
     command <<-EOH
     gvm install #{v}
   EOH
-    not_if "~/.gvm/bin/gvm list | grep #{v}"
+    not_if "#{ENV['HOME']}/.gvm/bin/gvm list | grep #{v}"
   end
 end
 
