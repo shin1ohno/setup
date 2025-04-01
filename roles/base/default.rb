@@ -14,7 +14,7 @@
 end
 
 template "#{node[:setup][:root]}/profile" do
-  owner node[:setup][:uer]
+  owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
   source "templates/profile"
