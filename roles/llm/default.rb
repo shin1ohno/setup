@@ -3,8 +3,6 @@
 # LLM (Large Language Models) role
 # This role includes all LLM-related tools and configurations
 
-include_recipe "cookbooks/functions/default"
-
 # Include only essential configurations and dependencies for LLM tools
 # Rather than including the entire base role
 
