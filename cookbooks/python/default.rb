@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 execute "curl https://pyenv.run | bash" do
-  not_if { File.exists? "#{ENV["HOME"]}/.pyenv/bin" }
+  not_if { File.exists? "#{ENV['HOME']}/.pyenv/bin" }
 end
 
 add_profile "pyenv" do
@@ -32,7 +32,7 @@ node[:python][:versions].each do |version|
 
   execute "$HOME/.pyenv/bin/pyenv global #{version} && $HOME/.pyenv/shims/python -m ensurepip --upgrade && $HOME/.pyenv/bin/pyenv rehash && $HOME/.pyenv/shims/pip install argcomplete" do
     not_if "$HOME/.pyenv/shims/pip list | fgrep -q argcomplete"
-    cwd ENV["HOME"]
+    cwd ENV['HOME']
   end
 end
 

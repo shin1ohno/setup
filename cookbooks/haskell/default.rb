@@ -14,7 +14,7 @@ else
   
 add_profile "ghcup" do
   bash_content <<'EOM'
-    export PATH="~/.ghcup/bin:$PATH"
+    export PATH="$HOME/.ghcup/bin:$PATH"
 EOM
 end
 end
