@@ -1,6 +1,13 @@
 # frozen_string_literal: true
 
-execute "curl https://pyenv.run | bash" do
+remote_file "#{node[:setup][:root]}/pyenv-install.sh" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  source "files/install.sh"
+end
+
+execute "#{node[:setup][:root]}/pyenv-install.sh" do
   not_if { File.exists? "#{ENV['HOME']}/.pyenv/bin" }
 end
 
