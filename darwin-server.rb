@@ -25,4 +25,5 @@ node.reverse_merge!(
 include_role "base"
 include_role "client"
 include_role "manage"
+include_role "llm"
 
