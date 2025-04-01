@@ -1,0 +1,1 @@
+Redirecting to https://raw.githubusercontent.com/commercialhaskell/stack/stable/etc/scripts/get-stack.sh

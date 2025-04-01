@@ -1,4 +1,11 @@
-execute "curl https://sh.rustup.rs -sSf | sh -s -- --no-modify-path -y" do
+remote_file "#{node[:setup][:root]}/rust-install.sh" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  source "files/install.sh"
+end
+
+execute "#{node[:setup][:root]}/rust-install.sh -y --no-modify-path" do
   not_if { File.exists? "#{ENV["HOME"]}/.cargo/env" }
 end
 
