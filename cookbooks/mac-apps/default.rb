@@ -5,17 +5,16 @@ return if node[:platform] != "darwin"
 %w(imageoptim
 alacritty                       jetbrains-toolbox
 kindle                          backblaze
-around                          zoom
+zoom
 balenaetcher                    monodraw
-mqtt-explorer                   lunar
+mqtt-explorer
 charles                         obs
 rapidapi                        launchcontrol
-docker                          google-chrome
-figma                           syntax-highlight
+google-chrome
+figma
 firefox                         transmit
 tidal                           karabiner-elements
-via                             tableau
-grammarly).each do |app|
+via).each do |app|
   execute "brew reinstall --cask #{app}" do
     not_if "brew list | fgrep -q #{app}"
   end
