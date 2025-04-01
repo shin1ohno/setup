@@ -18,4 +18,3 @@ end
 
 include_cookbook "pm2"
 include_cookbook "typescript"
-include_cookbook "mcp-hub"
