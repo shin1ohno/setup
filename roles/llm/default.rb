@@ -24,5 +24,6 @@ include_cookbook "mise"
 # LLM specific tools
 include_cookbook "mcp-hub"
 include_cookbook "claude-code"
+include_cookbook "ollama"
 
 # Add any LLM-specific configurations below
