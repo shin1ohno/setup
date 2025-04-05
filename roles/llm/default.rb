@@ -26,5 +26,4 @@ include_cookbook "mcp-hub"
 include_cookbook "claude-code"
 include_cookbook "ollama"
 include_cookbook "llama-3-elyza-jp"
-
-# Add any LLM-specific configurations below
+include_cookbook "tfmcp"
