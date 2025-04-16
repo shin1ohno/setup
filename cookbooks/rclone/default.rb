@@ -5,8 +5,21 @@ remote_file "#{node[:setup][:root]}/rclone-install.sh" do
   source "files/install.sh"
 end
 
-execute "RCLONE_NO_UPDATE_PROFILE=1 #{node[:setup][:root]}/rclone-install.sh" do
-  not_if "which rclone"
-  user "root"
+if node[:platform] == "darwin"
+  package "macfuse"
+  execute "installing rclone" do
+    command <<-EOF
+      cd #{node[:setup][:root]} && \
+      git clone https://github.com/rclone/rclone.git && \
+      cd rclone && \
+      make GOTAGS=cmount
+    EOF
+    not_if "which rclone"
+  end
+else #linux
+  execute "RCLONE_NO_UPDATE_PROFILE=1 #{node[:setup][:root]}/rclone-install.sh" do
+    not_if "which rclone"
+    user "root"
+  end
 end
 
