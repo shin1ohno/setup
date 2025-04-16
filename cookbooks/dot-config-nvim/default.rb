@@ -53,5 +53,3 @@ when "darwin"
     not_if "which im-select"
   end
 end
-
-execute "nvim --headless -c 'quitall'"
