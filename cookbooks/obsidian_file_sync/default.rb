@@ -64,7 +64,7 @@ fi
 # Sync function with bidirectional sync
 sync_obsidian() {
   log "Starting bidirectional sync of Obsidian vault"
-  rclone bisync "${REMOTE_NAME}:${REMOTE_PATH}" "$SOURCE_DIR" --verbose --create-empty-src-dirs --exclude ".obsidian/workspace.json" --exclude ".trash/**" 2>&1 | tee -a "$LOG_FILE"
+  rclone bisync "$SOURCE_DIR" "${REMOTE_NAME}:${REMOTE_PATH}" --create-empty-src-dirs --exclude ".obsidian/workspace.json" --exclude ".trash/**" 2>&1 | tee -a "$LOG_FILE"
   
   log "Sync completed"
 }
