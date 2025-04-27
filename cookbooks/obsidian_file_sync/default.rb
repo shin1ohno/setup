@@ -82,7 +82,6 @@ if node[:platform] != "darwin"
   directory "#{ENV['HOME']}/.config/systemd/user" do
     owner node[:setup][:user]
     mode "755"
-    recursive true
   end
 
   # Create the systemd service
