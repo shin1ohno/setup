@@ -77,102 +77,6 @@ EOM
   not_if "test -f #{node[:setup][:root]}/obsidian_sync/sync.sh"
 end
 
-# Create systemd user service and timer if on Linux (non-macOS)
-if node[:platform] != "darwin"
-  directory "#{ENV['HOME']}/.config/systemd/user" do
-    owner node[:setup][:user]
-    mode "755"
-    recursive true
-  end
-
-  # Create the systemd service
-  file "#{ENV['HOME']}/.config/systemd/user/obsidian-sync.service" do
-    owner node[:setup][:user]
-    mode "644"
-    content <<-EOM
-[Unit]
-Description=Obsidian Vault Synchronization Service
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=#{node[:setup][:root]}/obsidian_sync/sync.sh
-
-[Install]
-WantedBy=default.target
-EOM
-    not_if "test -f #{ENV['HOME']}/.config/systemd/user/obsidian-sync.service"
-  end
-
-  # Create the systemd timer
-  file "#{ENV['HOME']}/.config/systemd/user/obsidian-sync.timer" do
-    owner node[:setup][:user]
-    mode "644"
-    content <<-EOM
-[Unit]
-Description=Run Obsidian sync periodically
-
-[Timer]
-OnBootSec=5min
-OnUnitActiveSec=15min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOM
-    not_if "test -f #{ENV['HOME']}/.config/systemd/user/obsidian-sync.timer"
-  end
-
-  # Enable and start the timer
-  execute "enable obsidian sync timer" do
-    command "systemctl --user daemon-reload && systemctl --user enable obsidian-sync.timer && systemctl --user start obsidian-sync.timer"
-    only_if "which systemctl"
-    only_if "test -f #{ENV['HOME']}/.config/systemd/user/obsidian-sync.timer"
-  end
-else
-  # Create launchd plist on macOS
-  directory "#{ENV['HOME']}/Library/LaunchAgents" do
-    owner node[:setup][:user]
-    mode "755"
-  end
-
-  file "#{ENV['HOME']}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist" do
-    owner node[:setup][:user]
-    mode "644"
-    content <<-EOM
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.shin1ohno.obsidian-sync</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>#{node[:setup][:root]}/obsidian_sync/sync.sh</string>
-    </array>
-    <key>StartInterval</key>
-    <integer>900</integer>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>#{node[:setup][:root]}/obsidian_sync/stdout.log</string>
-    <key>StandardErrorPath</key>
-    <string>#{node[:setup][:root]}/obsidian_sync/stderr.log</string>
-</dict>
-</plist>
-EOM
-    not_if "test -f #{ENV['HOME']}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist"
-  end
-
-  # Load the launchd job
-  execute "load obsidian sync launchd job" do
-    command "launchctl load #{ENV['HOME']}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist"
-    only_if "which launchctl"
-    not_if "launchctl list | grep com.shin1ohno.obsidian-sync"
-  end
-end
-
 # Create a README file with usage instructions
 file "#{node[:setup][:root]}/obsidian_sync/README.md" do
   owner node[:setup][:user]
@@ -194,16 +98,12 @@ This script synchronizes your Obsidian vault between devices using rclone.
    - For Dropbox, select "dropbox" as the type
    - Follow the prompts to authorize access
 
-3. The sync is configured to run automatically:
-   - On Linux: Every 15 minutes via systemd timer
-   - On macOS: Every 15 minutes via launchd
-
-4. To run a manual sync:
+3. To run a manual sync:
    ```
    #{node[:setup][:root]}/obsidian_sync/sync.sh
    ```
 
-5. Logs are stored in:
+4. Logs are stored in:
    ```
    #{node[:setup][:root]}/obsidian_sync/sync.log
    ```
@@ -211,7 +111,6 @@ This script synchronizes your Obsidian vault between devices using rclone.
 ## Customization
 
 Edit the sync script to change:
-- Sync frequency: Edit the timer/launchd configuration
 - Sync directory: Change SOURCE_DIR in the script
 - Remote name: Change REMOTE_NAME in the script
 
