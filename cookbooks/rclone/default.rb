@@ -6,7 +6,10 @@ remote_file "#{node[:setup][:root]}/rclone-install.sh" do
 end
 
 if node[:platform] == "darwin"
-  package "macfuse"
+  package "macfuse" do
+    not_if "test -d /Library/Filesystems/macfuse.fs"
+  end
+  
   execute "installing rclone" do
     command <<-EOF
       cd #{node[:setup][:root]} && \
