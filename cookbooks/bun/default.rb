@@ -12,10 +12,14 @@ execute "#{node[:setup][:root]}/bun-install.sh" do
 end
 
 add_profile "bun" do
-  bash_content 'export BUN_INSTALL="$HOME/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"'
+  bash_content <<-END 
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+[ -s "/Users/sh1/.bun/_bun" ] && source "/Users/sh1/.bun/_bun"
+END
 end
 
 execute "$HOME/.bun/bin/bun upgrade" do
   only_if { File.exists? "#{ENV['HOME']}/.bun/bin/bun" }
 end
+
