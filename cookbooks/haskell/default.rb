@@ -27,10 +27,10 @@ _HASKELL_INSTALL_HLS=1 BOOTSTRAP_HASKELL_ADJUST_BASHRC=P #{node[:setup][:root]}/
     not_if "which ghcup"
   end
   
-add_profile "ghcup" do
-  bash_content <<'EOM'
-    export PATH="$HOME/.ghcup/bin:$PATH"
+  add_profile "ghcup" do
+    bash_content <<'EOM'
+  [ -f "/home/shin1ohno/.ghcup/env" ] && . "/home/shin1ohno/.ghcup/env" # ghcup-env
 EOM
-end
+  end
 end
 
