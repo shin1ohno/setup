@@ -36,7 +36,7 @@ fi
 # List directory files when changing directory
 function chpwd() {
   emulate -L zsh
-  tree -L 1
+  tree -La 1
 }
 EOM
 end
