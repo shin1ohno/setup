@@ -1,7 +1,7 @@
-# This is Git's per-user configuration file.
 [user]
   name = Shin'ichi Ohno
   email = shin1ohno@gmail.com
+  signingkey = 59E8544A4001372A
 [alias]
   st = status
 [fetch]
@@ -12,3 +12,7 @@
   ui = true
 [pull]
   rebase = true
+[url "git@github.com:"]
+  insteadOf = https://github.com/
+[commit]
+	gpgsign = true
