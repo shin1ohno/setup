@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # This is the bootstrap Unix installer served by `https://get.volta.sh`.
-# Its responsibility is to query the system to determine what OS (and in the
-# case of Linux, what OpenSSL version) the system has, fetch and install the
-# appropriate build of Volta, and modify the user's profile.
+# Its responsibility is to query the system to determine what OS the system
+# has, fetch and install the appropriate build of Volta, and modify the user's
+# profile.
 
 # NOTE: to use an internal company repo, change how this determines the latest version
 get_latest_release() {
@@ -23,7 +23,7 @@ download_release_from_repo() {
   local download_file="$tmpdir/$filename"
   local archive_url="$(release_url)/download/v$version/$filename"
 
-  curl --progress-bar --show-error --location --fail "$archive_url" --output "$download_file" --write-out '%{filename_effective}'
+  curl --progress-bar --show-error --location --fail "$archive_url" --output "$download_file" --write-out "$download_file"
 }
 
 usage() {
@@ -120,28 +120,24 @@ upgrade_is_ok() {
   return 0
 }
 
-# returns the os name to be used in the packaged release,
-# including the openssl info if necessary
+# returns the os name to be used in the packaged release
 parse_os_info() {
   local uname_str="$1"
-  local openssl_version="$2"
+  local arch="$(uname -m)"
 
   case "$uname_str" in
     Linux)
-      parsed_version="$(parse_openssl_version "$openssl_version")"
-      exit_code="$?"
-      if [ "$exit_code" != 0 ]; then
-        return "$exit_code"
+      if [ "$arch" == "x86_64" ]; then
+        echo "linux"
+      elif [ "$arch" == "aarch64" ]; then
+        echo "linux-arm"
+      else
+        error "Releases for architectures other than x64 and arm are not currently supported."
+        return 1
       fi
-
-      echo "linux-openssl-$parsed_version"
       ;;
     Darwin)
-      if [ "$(uname -m)" == "arm64" ]; then
-        echo "macos-aarch64"
-      else
-        echo "macos"
-      fi
+      echo "macos"
       ;;
     *)
       return 1
@@ -177,41 +173,6 @@ element_in() {
     [ "$element" == "$match" ] && return 0
   done
   return 1
-}
-
-# parse the OpenSSL version from the input text
-# for most distros, we only care about MAJOR.MINOR, with the exception of RHEL/CENTOS,
-parse_openssl_version() {
-  local version_str="$1"
-
-  # array containing the SSL libraries that are supported
-  # would be nice to use a bash 4.x associative array, but bash 3.x is the default on OSX
-  SUPPORTED_SSL_LIBS=( 'OpenSSL' )
-
-  # use regex to get the library name and version
-  # typical version string looks like 'OpenSSL 1.0.1e-fips 11 Feb 2013'
-  if [[ "$version_str" =~ ^([^\ ]*)\ ([0-9]+\.[0-9]+) ]]
-  then
-    # check that the lib is supported
-    libname="${BASH_REMATCH[1]}"
-    major_minor="${BASH_REMATCH[2]}"
-    if ! element_in "$libname" "${SUPPORTED_SSL_LIBS[@]}"
-    then
-      error "Releases for '$libname' not currently supported. Supported libraries are: ${SUPPORTED_SSL_LIBS[@]}."
-      return 1
-    fi
-
-    # for version 1.0.x, check for RHEL/CentOS style OpenSSL SONAME (.so.10)
-    if [ "$major_minor" == "1.0" ] && [ -f "/usr/lib64/libcrypto.so.10" ]; then
-      echo "rhel"
-    else
-      echo "$major_minor"
-    fi
-    return 0
-  else
-    error "Could not determine OpenSSL version for '$version_str'."
-    return 1
-  fi
 }
 
 create_tree() {
@@ -359,9 +320,8 @@ download_release() {
   local version="$1"
 
   local uname_str="$(uname -s)"
-  local openssl_version="$(openssl version)"
   local os_info
-  os_info="$(parse_os_info "$uname_str" "$openssl_version")"
+  os_info="$(parse_os_info "$uname_str")"
   if [ "$?" != 0 ]; then
     error "The current operating system ($uname_str) does not appear to be supported by Volta."
     return 1
@@ -384,28 +344,6 @@ install_from_file() {
   # extract the files to the specified directory
   tar -xf "$archive" -C "$install_dir"/bin
 }
-
-check_architecture() {
-  local version="$1"
-  local arch="$2"
-
-  if [[ "$version" != "local"* ]]; then
-    case "$arch" in
-      x86_64)
-        return 0
-        ;;
-      arm64)
-        if [ "$(uname -s)" = "Darwin" ]; then
-          return 0
-        fi
-        ;;
-    esac
-
-    error "Sorry! Volta currently only provides pre-built binaries for x86_64 architectures."
-    return 1
-  fi
-}
-
 
 # return if sourced (for testing the functions above)
 return 0 2>/dev/null
@@ -453,7 +391,5 @@ do
       ;;
   esac
 done
-
-check_architecture "$version_to_install" "$(uname -m)" || exit 1
 
 install_version "$version_to_install" "$install_dir" "$should_run_setup"
