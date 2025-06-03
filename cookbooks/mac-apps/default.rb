@@ -9,7 +9,7 @@ return if node[:platform] != "darwin"
   firefox                   ghostty
   google-chrome             imageoptim
   iterm2                    jetbrains-toolbox
-  karabiner-elements        kindle
+  karabiner-elements        
   launchcontrol             monodraw
   microsoft-teams           mqtt-explorer
   obsidian                  obs

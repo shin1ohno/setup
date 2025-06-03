@@ -2,13 +2,11 @@
 
 case node[:platform]
 when "darwin"
-  include_cookbook "homebrew-cask-versions"
-
-  execute "brew reinstall --cask corretto11" do
+  execute "brew reinstall --cask corretto@11" do
     not_if %q{/usr/libexec/java_home --verbose 2>&1 | fgrep -q '"Amazon Corretto 11"'}
   end
 
-  execute "brew reinstall --cask corretto17" do
+  execute "brew reinstall --cask corretto@17" do
     not_if %q{/usr/libexec/java_home --verbose 2>&1 | fgrep -q '"Amazon Corretto 17"'}
   end
 

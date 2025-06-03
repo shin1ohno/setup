@@ -6,6 +6,8 @@ when 'darwin'
     action :install
     not_if 'which ollama > /dev/null 2>&1'
   end
+
+  execute "brew services restart ollama"
 else # Linux
   remote_file "#{node[:setup][:root]}/ollama-install-linux.sh" do
     owner node[:setup][:user]
