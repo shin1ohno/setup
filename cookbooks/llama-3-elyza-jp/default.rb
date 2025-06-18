@@ -1,3 +1,6 @@
+result = run_command("ollama list | fgrep -q 'elyza:jp8b'", error: false)
+return if result.exit_status == 0
+
 model_dir = "#{ENV['HOME']}/models/llm/llama-3-elyza-jp"
 
 directory model_dir do
