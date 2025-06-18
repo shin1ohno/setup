@@ -12,10 +12,16 @@ node.reverse_merge!(
   }
 )
 
-include_role "base"
-include_role "manage"
-include_role "network"
+# Include modular roles
+include_role "core"
+include_role "programming"
 include_role "llm"
+include_role "extras"
+
+# Legacy roles for backwards compatibility
+include_role "manage" # Managed projects setup
+include_role "network" # Network configuration
+include_role "server" # Server-specific setup
 
 include_cookbook "bluez"
 include_cookbook "zeroconf"

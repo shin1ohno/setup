@@ -22,5 +22,16 @@ node.reverse_merge!(
   },
 )
 
-include_role "base"
+# Include modular roles
+include_role "core"
+include_role "programming"
+include_role "llm"
+include_role "extras"
+
+# Legacy roles for backwards compatibility
+include_role "manage" # Managed projects setup
+
+# macOS-specific client setup (integrated from client role)
+include_cookbook "mac-settings"
+include_cookbook "mac-apps"
 
