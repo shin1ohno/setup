@@ -7,15 +7,31 @@ on:
     branches: [ main ]
   workflow_dispatch:
     inputs:
-      run_full_install:
-        description: 'Run full installation test (not just dry-run)'
+      test_level:
+        description: 'Level of installation testing'
         required: false
-        default: false
-        type: boolean
+        default: 'dry-run'
+        type: choice
+        options:
+        - 'dry-run'
+        - 'core-tools'
+        - 'essential-cookbooks'
+        - 'language-runtimes'
+        - 'all-cookbooks'
+      platform:
+        description: 'Target platform for testing'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+        - 'both'
+        - 'macos-only'
+        - 'linux-only'
 
 jobs:
   test-macos:
     runs-on: macos-latest
+    if: ${{ github.event.inputs.platform != 'linux-only' }}
     steps:
     - uses: actions/checkout@v4
     
@@ -45,8 +61,8 @@ jobs:
         sudo chmod 777 /tmp
         ./bin/mitamae local darwin.rb --dry-run
         
-    - name: Test partial installation (core tools only)
-      if: ${{ github.event.inputs.run_full_install == 'true' }}
+    - name: Test core tools installation
+      if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
         sudo chmod 777 /tmp
         cat > test_core_install.rb << 'EOF'
@@ -54,8 +70,102 @@ jobs:
         include_cookbook "homebrew"
         include_cookbook "git"
         include_cookbook "zsh"
+        include_cookbook "tree"
+        include_cookbook "wget"
         EOF
         ./bin/mitamae local test_core_install.rb
+        
+    - name: Verify core tools
+      if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        which git && git --version
+        which zsh && zsh --version  
+        which tree && tree --version
+        which wget && wget --version
+        which brew && brew --version
+        
+    - name: Test essential cookbooks
+      if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        sudo chmod 777 /tmp
+        cat > test_essential.rb << 'EOF'
+        include_recipe "cookbooks/functions/default.rb"
+        include_cookbook "fzf"
+        include_cookbook "bat"
+        include_cookbook "ripgrep"
+        include_cookbook "fd"
+        include_cookbook "tmux"
+        include_cookbook "neovim"
+        include_cookbook "terraform"
+        EOF
+        ./bin/mitamae local test_essential.rb
+        
+    - name: Verify essential tools
+      if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        which fzf && fzf --version
+        which bat && bat --version
+        which rg && rg --version
+        which fd && fd --version
+        which tmux && tmux -V
+        which nvim && nvim --version | head -1
+        which terraform && terraform version
+        
+    - name: Test language runtimes
+      if: ${{ github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      timeout-minutes: 45
+      run: |
+        sudo chmod 777 /tmp
+        cat > test_languages.rb << 'EOF'
+        include_recipe "cookbooks/functions/default.rb"
+        include_cookbook "nodejs"
+        include_cookbook "python"
+        include_cookbook "golang"
+        include_cookbook "rust"
+        EOF
+        ./bin/mitamae local test_languages.rb
+        
+    - name: Verify language runtimes
+      if: ${{ github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        which node && node --version || echo "Node.js not found"
+        which python3 && python3 --version || echo "Python not found"
+        which go && go version || echo "Go not found"
+        which cargo && cargo --version || echo "Rust/Cargo not found"
+        
+    - name: Test all cookbooks (full installation)
+      if: ${{ github.event.inputs.test_level == 'all-cookbooks' }}
+      timeout-minutes: 120
+      run: |
+        sudo chmod 777 /tmp
+        ./bin/mitamae local darwin.rb
+        
+    - name: Verify full installation
+      if: ${{ github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        echo "=== macOS Installed Tools Verification ==="
+        echo "Package managers:"
+        which brew && brew --version || echo "❌ Homebrew not found"
+        
+        echo -e "\nCore tools:"
+        which git && git --version || echo "❌ Git not found"
+        which zsh && zsh --version || echo "❌ Zsh not found"
+        which tmux && tmux -V || echo "❌ Tmux not found"
+        
+        echo -e "\nDevelopment tools:"  
+        which nvim && nvim --version | head -1 || echo "❌ Neovim not found"
+        which terraform && terraform version || echo "❌ Terraform not found"
+        
+        echo -e "\nModern CLI tools:"
+        which fzf && fzf --version || echo "❌ fzf not found" 
+        which bat && bat --version || echo "❌ bat not found"
+        which rg && rg --version || echo "❌ ripgrep not found"
+        
+        echo -e "\nLanguage runtimes:"
+        which node && node --version || echo "❌ Node.js not found"
+        which python3 && python3 --version || echo "❌ Python not found"
+        which go && go version || echo "❌ Go not found"
+        which cargo && cargo --version || echo "❌ Rust not found"
       
     - name: Verify setup structure
       run: |
@@ -68,6 +178,7 @@ jobs:
 
   test-linux:
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.platform != 'macos-only' }}
     container:
       image: ubuntu:22.04
       options: --user root
@@ -99,8 +210,8 @@ jobs:
         export USER=runner
         ./bin/mitamae local linux.rb --dry-run
         
-    - name: Test partial installation (core tools only)
-      if: ${{ github.event.inputs.run_full_install == 'true' }}
+    - name: Test core tools installation
+      if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
         export USER=runner
         cat > test_core_install.rb << 'EOF'
@@ -108,15 +219,105 @@ jobs:
         include_cookbook "git"
         include_cookbook "zsh"
         include_cookbook "tree"
+        include_cookbook "wget"
+        include_cookbook "build-essential"
         EOF
         ./bin/mitamae local test_core_install.rb
         
-    - name: Verify core installations
-      if: ${{ github.event.inputs.run_full_install == 'true' }}
+    - name: Verify core tools
+      if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
-        which git && git --version || echo "git not found"
-        which zsh && zsh --version || echo "zsh not found"
-        which tree && tree --version || echo "tree not found"
+        which git && git --version
+        which zsh && zsh --version
+        which tree && tree --version
+        which wget && wget --version
+        which gcc && gcc --version | head -1
+        
+    - name: Test essential cookbooks
+      if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        export USER=runner
+        cat > test_essential.rb << 'EOF'
+        include_recipe "cookbooks/functions/default.rb"
+        include_cookbook "fzf"
+        include_cookbook "bat"
+        include_cookbook "ripgrep"
+        include_cookbook "fd"
+        include_cookbook "tmux"
+        include_cookbook "neovim"
+        include_cookbook "terraform"
+        include_cookbook "docker-engine"
+        EOF
+        ./bin/mitamae local test_essential.rb
+        
+    - name: Verify essential tools
+      if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        which fzf && fzf --version || echo "fzf not found"
+        which bat && bat --version || echo "bat not found"
+        which rg && rg --version || echo "ripgrep not found"
+        which fd && fd --version || echo "fd not found"
+        which tmux && tmux -V || echo "tmux not found"
+        which nvim && nvim --version | head -1 || echo "neovim not found"
+        which terraform && terraform version || echo "terraform not found"
+        which docker && docker --version || echo "docker not found"
+        
+    - name: Test language runtimes
+      if: ${{ github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      timeout-minutes: 45
+      run: |
+        export USER=runner
+        cat > test_languages.rb << 'EOF'
+        include_recipe "cookbooks/functions/default.rb"
+        include_cookbook "nodejs"
+        include_cookbook "python"
+        include_cookbook "golang"
+        include_cookbook "rust"
+        EOF
+        ./bin/mitamae local test_languages.rb
+        
+    - name: Verify language runtimes
+      if: ${{ github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        which node && node --version || echo "Node.js not found"
+        which python3 && python3 --version || echo "Python not found"
+        which go && go version || echo "Go not found"
+        which cargo && cargo --version || echo "Rust/Cargo not found"
+        
+    - name: Test all cookbooks (full installation)
+      if: ${{ github.event.inputs.test_level == 'all-cookbooks' }}
+      timeout-minutes: 120
+      run: |
+        export USER=runner
+        ./bin/mitamae local linux.rb
+        
+    - name: Verify full installation
+      if: ${{ github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        echo "=== Linux Installed Tools Verification ==="
+        echo "Build tools:"
+        which gcc && gcc --version | head -1 || echo "❌ GCC not found"
+        
+        echo -e "\nCore tools:"
+        which git && git --version || echo "❌ Git not found"
+        which zsh && zsh --version || echo "❌ Zsh not found"
+        which tmux && tmux -V || echo "❌ Tmux not found"
+        
+        echo -e "\nDevelopment tools:"  
+        which nvim && nvim --version | head -1 || echo "❌ Neovim not found"
+        which terraform && terraform version || echo "❌ Terraform not found"
+        which docker && docker --version || echo "❌ Docker not found"
+        
+        echo -e "\nModern CLI tools:"
+        which fzf && fzf --version || echo "❌ fzf not found" 
+        which bat && bat --version || echo "❌ bat not found"
+        which rg && rg --version || echo "❌ ripgrep not found"
+        
+        echo -e "\nLanguage runtimes:"
+        which node && node --version || echo "❌ Node.js not found"
+        which python3 && python3 --version || echo "❌ Python not found"
+        which go && go version || echo "❌ Go not found"
+        which cargo && cargo --version || echo "❌ Rust not found"
       
     - name: Verify setup structure
       run: |
