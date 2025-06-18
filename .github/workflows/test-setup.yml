@@ -40,18 +40,18 @@ jobs:
     - name: Test individual roles in dry-run mode
       run: |
         export TMPDIR=$HOME/tmp
-        echo 'include_role "core"' > test_core.rb && ./bin/mitamae local test_core.rb --dry-run
-        echo 'include_role "programming"' > test_programming.rb && ./bin/mitamae local test_programming.rb --dry-run
-        echo 'include_role "llm"' > test_llm.rb && ./bin/mitamae local test_llm.rb --dry-run
-        echo 'include_role "network"' > test_network.rb && ./bin/mitamae local test_network.rb --dry-run
-        echo 'include_role "extras"' > test_extras.rb && ./bin/mitamae local test_extras.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "core"' > test_core.rb && ./bin/mitamae local test_core.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "programming"' > test_programming.rb && ./bin/mitamae local test_programming.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "llm"' > test_llm.rb && ./bin/mitamae local test_llm.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "network"' > test_network.rb && ./bin/mitamae local test_network.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "extras"' > test_extras.rb && ./bin/mitamae local test_extras.rb --dry-run
         
     - name: Test individual cookbooks
       run: |
         export TMPDIR=$HOME/tmp
-        echo 'include_cookbook "git"' > test_git.rb && ./bin/mitamae local test_git.rb --dry-run
-        echo 'include_cookbook "homebrew"' > test_homebrew.rb && ./bin/mitamae local test_homebrew.rb --dry-run
-        echo 'include_cookbook "zsh"' > test_zsh.rb && ./bin/mitamae local test_zsh.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_cookbook "git"' > test_git.rb && ./bin/mitamae local test_git.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_cookbook "homebrew"' > test_homebrew.rb && ./bin/mitamae local test_homebrew.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_cookbook "zsh"' > test_zsh.rb && ./bin/mitamae local test_zsh.rb --dry-run
 
   test-linux:
     runs-on: ubuntu-latest
@@ -86,19 +86,19 @@ jobs:
     - name: Test individual roles in dry-run mode
       run: |
         export TMPDIR=$HOME/tmp
-        echo 'include_role "core"' > test_core.rb && ./bin/mitamae local test_core.rb --dry-run
-        echo 'include_role "programming"' > test_programming.rb && ./bin/mitamae local test_programming.rb --dry-run
-        echo 'include_role "llm"' > test_llm.rb && ./bin/mitamae local test_llm.rb --dry-run
-        echo 'include_role "network"' > test_network.rb && ./bin/mitamae local test_network.rb --dry-run
-        echo 'include_role "extras"' > test_extras.rb && ./bin/mitamae local test_extras.rb --dry-run
-        echo 'include_role "server"' > test_server.rb && ./bin/mitamae local test_server.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "core"' > test_core.rb && ./bin/mitamae local test_core.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "programming"' > test_programming.rb && ./bin/mitamae local test_programming.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "llm"' > test_llm.rb && ./bin/mitamae local test_llm.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "network"' > test_network.rb && ./bin/mitamae local test_network.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "extras"' > test_extras.rb && ./bin/mitamae local test_extras.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_role "server"' > test_server.rb && ./bin/mitamae local test_server.rb --dry-run
         
     - name: Test individual cookbooks
       run: |
         export TMPDIR=$HOME/tmp
-        echo 'include_cookbook "git"' > test_git.rb && ./bin/mitamae local test_git.rb --dry-run
-        echo 'include_cookbook "zsh"' > test_zsh.rb && ./bin/mitamae local test_zsh.rb --dry-run
-        echo 'include_cookbook "nodejs"' > test_nodejs.rb && ./bin/mitamae local test_nodejs.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_cookbook "git"' > test_git.rb && ./bin/mitamae local test_git.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_cookbook "zsh"' > test_zsh.rb && ./bin/mitamae local test_zsh.rb --dry-run
+        echo -e 'include_cookbook "functions"\ninclude_cookbook "nodejs"' > test_nodejs.rb && ./bin/mitamae local test_nodejs.rb --dry-run
 
   syntax-check:
     runs-on: ubuntu-latest
@@ -165,14 +165,14 @@ jobs:
       run: |
         # This should fail gracefully
         export TMPDIR=$HOME/tmp
-        echo 'include_cookbook "nonexistent_cookbook"' > test_invalid_cookbook.rb
+        echo -e 'include_cookbook "functions"\ninclude_cookbook "nonexistent_cookbook"' > test_invalid_cookbook.rb
         ./bin/mitamae local test_invalid_cookbook.rb --dry-run || echo "Expected failure for nonexistent cookbook"
         
     - name: Test error handling - invalid role
       run: |
         # This should fail gracefully
         export TMPDIR=$HOME/tmp
-        echo 'include_role "nonexistent_role"' > test_invalid_role.rb
+        echo -e 'include_cookbook "functions"\ninclude_role "nonexistent_role"' > test_invalid_role.rb
         ./bin/mitamae local test_invalid_role.rb --dry-run || echo "Expected failure for nonexistent role"
         
     - name: Check mitamae version compatibility
