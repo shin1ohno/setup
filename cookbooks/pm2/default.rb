@@ -5,13 +5,17 @@ execute "$HOME/.volta/bin/npm install -g pm2" do
   cwd ENV["HOME"]
 end
 
+c = "sudo env PATH=$PATH:#{ENV['HOME']}/.volta/bin #{ENV['HOME']}/.volta/tools/image/packages/pm2/lib/node_modules/pm2/bin/pm2 startup launchd -u $USER --hp #{ENV['HOME']}" 
+
 if node[:platform] == "darwin"
-  execute "sudo env PATH=$PATH:#{ENV['HOME']}/.volta/bin #{ENV['HOME']}/.volta/tools/image/packages/pm2/lib/node_modules/pm2/bin/pm2 startup launchd -u $USER --hp #{ENV['HOME']}" do
-    not_if "launchctl list | grep pm2-$USER"
+  execute "setup pm2" do
+    command c
+    not_if "test -f ~/Library/LaunchAgents/pm2.$USER.plist"
   end
 else
-  execute "sudo env PATH=$PATH:#{ENV['HOME']}/.volta/bin #{ENV['HOME']}/.volta/tools/image/packages/pm2/lib/node_modules/pm2/bin/pm2 startup systemd -u $USER --hp #{ENV['HOME']}" do
+  execute "setup pm2" do
     cwd ENV["HOME"]
+    command c
     not_if "systemctl list-unit-files | grep pm2-$USER.service | grep enabled"
   end
 end
