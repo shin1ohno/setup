@@ -18,6 +18,7 @@ on:
         - 'essential-cookbooks'
         - 'language-runtimes'
         - 'all-cookbooks'
+        - 'sudo-full-install'
       platform:
         description: 'Target platform for testing'
         required: false
@@ -166,6 +167,55 @@ jobs:
         which python3 && python3 --version || echo "❌ Python not found"
         which go && go version || echo "❌ Go not found"
         which cargo && cargo --version || echo "❌ Rust not found"
+        
+    - name: Test sudo full installation (darwin.rb)
+      if: ${{ github.event.inputs.test_level == 'sudo-full-install' }}
+      timeout-minutes: 180
+      run: |
+        sudo chmod 777 /tmp
+        echo "=== Starting sudo ./bin/mitamae local darwin.rb ==="
+        sudo ./bin/mitamae local darwin.rb
+        
+    - name: Verify sudo installation
+      if: ${{ github.event.inputs.test_level == 'sudo-full-install' }}
+      run: |
+        echo "=== macOS Sudo Installation Verification ==="
+        echo "System-wide installations:"
+        
+        echo -e "\nPackage managers:"
+        which brew && brew --version || echo "❌ Homebrew not found"
+        
+        echo -e "\nCore system tools:"
+        which git && git --version || echo "❌ Git not found"
+        which zsh && zsh --version || echo "❌ Zsh not found"
+        which tmux && tmux -V || echo "❌ Tmux not found"
+        
+        echo -e "\nDevelopment tools:"  
+        which nvim && nvim --version | head -1 || echo "❌ Neovim not found"
+        which terraform && terraform version || echo "❌ Terraform not found"
+        
+        echo -e "\nModern CLI tools:"
+        which fzf && fzf --version || echo "❌ fzf not found" 
+        which bat && bat --version || echo "❌ bat not found"
+        which rg && rg --version || echo "❌ ripgrep not found"
+        which fd && fd --version || echo "❌ fd not found"
+        
+        echo -e "\nLanguage runtimes:"
+        which node && node --version || echo "❌ Node.js not found"
+        which python3 && python3 --version || echo "❌ Python not found"
+        which go && go version || echo "❌ Go not found"
+        which cargo && cargo --version || echo "❌ Rust not found"
+        which ruby && ruby --version || echo "❌ Ruby not found"
+        
+        echo -e "\nLLM Tools:"
+        which claude-code && claude-code --version || echo "❌ Claude Code not found"
+        which ollama && ollama --version || echo "❌ Ollama not found"
+        
+        echo -e "\nSetup directories:"
+        ls -la ~/.setup_shin1ohno/ 2>/dev/null || echo "❌ Setup directory not found"
+        
+        echo -e "\nProfile scripts:"
+        ls -la ~/.setup_shin1ohno/profile.d/ 2>/dev/null | head -10 || echo "❌ Profile directory not found"
       
     - name: Verify setup structure
       run: |
@@ -318,6 +368,59 @@ jobs:
         which python3 && python3 --version || echo "❌ Python not found"
         which go && go version || echo "❌ Go not found"
         which cargo && cargo --version || echo "❌ Rust not found"
+        
+    - name: Test sudo full installation (linux.rb)
+      if: ${{ github.event.inputs.test_level == 'sudo-full-install' }}
+      timeout-minutes: 180
+      run: |
+        export USER=runner
+        echo "=== Starting sudo ./bin/mitamae local linux.rb ==="
+        sudo -E ./bin/mitamae local linux.rb
+        
+    - name: Verify sudo installation
+      if: ${{ github.event.inputs.test_level == 'sudo-full-install' }}
+      run: |
+        echo "=== Linux Sudo Installation Verification ==="
+        echo "System-wide installations:"
+        
+        echo -e "\nBuild tools:"
+        which gcc && gcc --version | head -1 || echo "❌ GCC not found"
+        which make && make --version | head -1 || echo "❌ Make not found"
+        
+        echo -e "\nCore system tools:"
+        which git && git --version || echo "❌ Git not found"
+        which zsh && zsh --version || echo "❌ Zsh not found"
+        which tmux && tmux -V || echo "❌ Tmux not found"
+        
+        echo -e "\nDevelopment tools:"  
+        which nvim && nvim --version | head -1 || echo "❌ Neovim not found"
+        which terraform && terraform version || echo "❌ Terraform not found"
+        which docker && docker --version || echo "❌ Docker not found"
+        
+        echo -e "\nModern CLI tools:"
+        which fzf && fzf --version || echo "❌ fzf not found" 
+        which bat && bat --version || echo "❌ bat not found"
+        which rg && rg --version || echo "❌ ripgrep not found"
+        which fd && fd --version || echo "❌ fd not found"
+        
+        echo -e "\nLanguage runtimes:"
+        which node && node --version || echo "❌ Node.js not found"
+        which python3 && python3 --version || echo "❌ Python not found"
+        which go && go version || echo "❌ Go not found"
+        which cargo && cargo --version || echo "❌ Rust not found"
+        which ruby && ruby --version || echo "❌ Ruby not found"
+        
+        echo -e "\nLLM Tools:"
+        which ollama && ollama --version || echo "❌ Ollama not found"
+        
+        echo -e "\nSetup directories:"
+        ls -la /home/runner/.setup_shin1ohno/ 2>/dev/null || echo "❌ Setup directory not found"
+        
+        echo -e "\nProfile scripts:"
+        ls -la /home/runner/.setup_shin1ohno/profile.d/ 2>/dev/null | head -10 || echo "❌ Profile directory not found"
+        
+        echo -e "\nSystem services:"
+        systemctl is-active docker 2>/dev/null || echo "❌ Docker service not active"
       
     - name: Verify setup structure
       run: |
