@@ -5,6 +5,13 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      run_full_install:
+        description: 'Run full installation test (not just dry-run)'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   test-macos:
@@ -37,6 +44,16 @@ jobs:
         # Create writable temp directory  
         sudo chmod 777 /tmp
         ./bin/mitamae local darwin.rb --dry-run
+        
+    - name: Test partial installation (core tools only)
+      if: ${{ github.event.inputs.run_full_install == 'true' }}
+      run: |
+        sudo chmod 777 /tmp
+        echo 'include_recipe "cookbooks/functions/default.rb"
+include_cookbook "homebrew"
+include_cookbook "git"
+include_cookbook "zsh"' > test_core_install.rb
+        ./bin/mitamae local test_core_install.rb
       
     - name: Verify setup structure
       run: |
@@ -79,6 +96,23 @@ jobs:
       run: |
         export USER=runner
         ./bin/mitamae local linux.rb --dry-run
+        
+    - name: Test partial installation (core tools only)
+      if: ${{ github.event.inputs.run_full_install == 'true' }}
+      run: |
+        export USER=runner
+        echo 'include_recipe "cookbooks/functions/default.rb"
+include_cookbook "git"
+include_cookbook "zsh"
+include_cookbook "tree"' > test_core_install.rb
+        ./bin/mitamae local test_core_install.rb
+        
+    - name: Verify core installations
+      if: ${{ github.event.inputs.run_full_install == 'true' }}
+      run: |
+        which git && git --version || echo "git not found"
+        which zsh && zsh --version || echo "zsh not found"
+        which tree && tree --version || echo "tree not found"
       
     - name: Verify setup structure
       run: |
