@@ -33,15 +33,16 @@ end
 go_versions.each do |v|
   execute "install Go version: #{v}" do
     command <<-EOH
-    gvm install #{v}
+    source $HOME/.gvm/scripts/gvm && gvm install #{v}
   EOH
-    not_if "#{ENV['HOME']}/.gvm/bin/gvm list | grep #{v}"
+    not_if "test -d #{ENV['HOME']}/.gvm/gos/#{v}"
   end
 end
 
 execute "Go version: #{go_default_version} as default" do
   #not sure why but we need bash not sh here
   command <<-EOH
-    /bin/bash $HOME/.gvm/scripts/env/use #{go_default_version} --default
+    source $HOME/.gvm/scripts/gvm && gvm use #{go_default_version} --default
   EOH
+  not_if "source $HOME/.gvm/scripts/gvm && gvm list | grep '=>' | grep #{go_default_version}"
 end
