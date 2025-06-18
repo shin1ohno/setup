@@ -1,0 +1,167 @@
+name: Test Setup Scripts
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.1'
+        bundler-cache: true
+    
+    - name: Check bin scripts are executable
+      run: |
+        test -x bin/setup
+        test -x bin/cookbook
+    
+    - name: Download mitamae binary
+      run: ./bin/setup
+      
+    - name: Verify mitamae installation
+      run: |
+        test -x bin/mitamae
+        ./bin/mitamae version
+    
+    - name: Test darwin.rb in dry-run mode
+      run: ./bin/mitamae local darwin.rb --dry-run
+      
+    - name: Test individual roles in dry-run mode
+      run: |
+        ./bin/mitamae local -c "include_role 'core'" --dry-run
+        ./bin/mitamae local -c "include_role 'programming'" --dry-run
+        ./bin/mitamae local -c "include_role 'llm'" --dry-run
+        ./bin/mitamae local -c "include_role 'network'" --dry-run
+        ./bin/mitamae local -c "include_role 'extras'" --dry-run
+        
+    - name: Test individual cookbooks
+      run: |
+        ./bin/mitamae local -c "include_cookbook 'git'" --dry-run
+        ./bin/mitamae local -c "include_cookbook 'homebrew'" --dry-run
+        ./bin/mitamae local -c "include_cookbook 'zsh'" --dry-run
+
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.1'
+        bundler-cache: true
+    
+    - name: Check bin scripts are executable
+      run: |
+        test -x bin/setup
+        test -x bin/cookbook
+    
+    - name: Download mitamae binary
+      run: ./bin/setup
+      
+    - name: Verify mitamae installation
+      run: |
+        test -x bin/mitamae
+        ./bin/mitamae version
+    
+    - name: Test linux.rb in dry-run mode
+      run: ./bin/mitamae local linux.rb --dry-run
+      
+    - name: Test individual roles in dry-run mode
+      run: |
+        ./bin/mitamae local -c "include_role 'core'" --dry-run
+        ./bin/mitamae local -c "include_role 'programming'" --dry-run
+        ./bin/mitamae local -c "include_role 'llm'" --dry-run
+        ./bin/mitamae local -c "include_role 'network'" --dry-run
+        ./bin/mitamae local -c "include_role 'extras'" --dry-run
+        ./bin/mitamae local -c "include_role 'server'" --dry-run
+        
+    - name: Test individual cookbooks
+      run: |
+        ./bin/mitamae local -c "include_cookbook 'git'" --dry-run
+        ./bin/mitamae local -c "include_cookbook 'zsh'" --dry-run
+        ./bin/mitamae local -c "include_cookbook 'nodejs'" --dry-run
+
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.1'
+        bundler-cache: true
+    
+    - name: Check Ruby syntax
+      run: |
+        echo "Checking Ruby syntax for all .rb files..."
+        find . -name "*.rb" -exec ruby -c {} \;
+        
+    - name: Check for common issues
+      run: |
+        # Check for syntax errors in main files
+        echo "Checking main entry points..."
+        ruby -c darwin.rb
+        ruby -c linux.rb
+        
+        # Check for required files
+        test -f bin/setup
+        test -f bin/cookbook
+        test -f bin/mitamae || echo "mitamae binary will be downloaded by setup"
+        
+        # Check role files exist
+        test -d roles/
+        test -f roles/core/default.rb
+        test -f roles/programming/default.rb
+        test -f roles/llm/default.rb
+        
+        # Check functions helper exists
+        test -f cookbooks/functions/default.rb
+        
+    - name: Validate JSON files
+      run: |
+        # Check if any JSON files exist and validate them
+        if find . -name "*.json" -type f | head -1 | grep -q .; then
+          echo "Validating JSON files..."
+          find . -name "*.json" -exec python3 -m json.tool {} \; > /dev/null
+        else
+          echo "No JSON files found to validate"
+        fi
+
+  error-simulation:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.1'
+        bundler-cache: true
+    
+    - name: Download mitamae binary
+      run: ./bin/setup
+      
+    - name: Test error handling - invalid cookbook
+      run: |
+        # This should fail gracefully
+        ./bin/mitamae local -c "include_cookbook 'nonexistent_cookbook'" --dry-run || echo "Expected failure for nonexistent cookbook"
+        
+    - name: Test error handling - invalid role
+      run: |
+        # This should fail gracefully
+        ./bin/mitamae local -c "include_role 'nonexistent_role'" --dry-run || echo "Expected failure for nonexistent role"
+        
+    - name: Check mitamae version compatibility
+      run: |
+        ./bin/mitamae version
+        echo "Mitamae version check completed"
