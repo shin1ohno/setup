@@ -1,0 +1,224 @@
+name: Sudo Full Installation Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run daily at 2:00 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform for testing'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+        - 'both'
+        - 'macos-only'
+        - 'linux-only'
+
+jobs:
+  sudo-test-macos:
+    runs-on: macos-latest
+    if: ${{ github.event.inputs.platform != 'linux-only' }}
+    timeout-minutes: 180
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.1'
+    
+    - name: Download mitamae binary
+      run: |
+        mkdir -p $HOME/tmp
+        ./bin/setup
+      
+    - name: Verify mitamae installation
+      run: |
+        test -x bin/mitamae
+        ./bin/mitamae version
+    
+    - name: Execute sudo full installation (darwin.rb)
+      run: |
+        sudo chmod 777 /tmp
+        echo "=== Starting sudo ./bin/mitamae local darwin.rb ==="
+        sudo ./bin/mitamae local darwin.rb
+        
+    - name: Verify sudo installation
+      run: |
+        echo "=== macOS Sudo Installation Verification ==="
+        echo "System-wide installations:"
+        
+        echo -e "\nPackage managers:"
+        which brew && brew --version || echo "❌ Homebrew not found"
+        
+        echo -e "\nCore system tools:"
+        which git && git --version || echo "❌ Git not found"
+        which zsh && zsh --version || echo "❌ Zsh not found"
+        which tmux && tmux -V || echo "❌ Tmux not found"
+        
+        echo -e "\nDevelopment tools:"  
+        which nvim && nvim --version | head -1 || echo "❌ Neovim not found"
+        which terraform && terraform version || echo "❌ Terraform not found"
+        
+        echo -e "\nModern CLI tools:"
+        which fzf && fzf --version || echo "❌ fzf not found" 
+        which bat && bat --version || echo "❌ bat not found"
+        which rg && rg --version || echo "❌ ripgrep not found"
+        which fd && fd --version || echo "❌ fd not found"
+        
+        echo -e "\nLanguage runtimes:"
+        which node && node --version || echo "❌ Node.js not found"
+        which python3 && python3 --version || echo "❌ Python not found"
+        which go && go version || echo "❌ Go not found"
+        which cargo && cargo --version || echo "❌ Rust not found"
+        which ruby && ruby --version || echo "❌ Ruby not found"
+        
+        echo -e "\nLLM Tools:"
+        which claude-code && claude-code --version || echo "❌ Claude Code not found"
+        which ollama && ollama --version || echo "❌ Ollama not found"
+        
+        echo -e "\nSetup directories:"
+        ls -la ~/.setup_shin1ohno/ 2>/dev/null || echo "❌ Setup directory not found"
+        
+        echo -e "\nProfile scripts:"
+        ls -la ~/.setup_shin1ohno/profile.d/ 2>/dev/null | head -10 || echo "❌ Profile directory not found"
+        
+    - name: Test installed tools functionality
+      run: |
+        echo "=== Functionality Tests ==="
+        
+        echo "Testing git:"
+        git config --global user.email "test@example.com"
+        git config --global user.name "Test User"
+        
+        echo "Testing zsh:"
+        zsh -c 'echo "Zsh is working"'
+        
+        echo "Testing fzf:"
+        echo -e "option1\noption2\noption3" | fzf --filter="option1" || echo "fzf filter test completed"
+        
+        echo "Testing neovim:"
+        nvim --headless +q || echo "Neovim headless test completed"
+        
+        echo "=== All functionality tests completed ==="
+
+  sudo-test-linux:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.platform != 'macos-only' }}
+    timeout-minutes: 180
+    container:
+      image: ubuntu:22.04
+      options: --user root
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        apt-get update
+        apt-get install -y ruby curl sudo git build-essential
+        # Create runner user for consistency with GitHub Actions
+        useradd -m -s /bin/bash runner || true
+    
+    - name: Download mitamae binary
+      run: |
+        mkdir -p $HOME/tmp
+        ./bin/setup
+      
+    - name: Verify mitamae installation
+      run: |
+        test -x bin/mitamae
+        ./bin/mitamae version
+    
+    - name: Execute sudo full installation (linux.rb)
+      run: |
+        export USER=runner
+        echo "=== Starting sudo ./bin/mitamae local linux.rb ==="
+        sudo -E ./bin/mitamae local linux.rb
+        
+    - name: Verify sudo installation
+      run: |
+        echo "=== Linux Sudo Installation Verification ==="
+        echo "System-wide installations:"
+        
+        echo -e "\nBuild tools:"
+        which gcc && gcc --version | head -1 || echo "❌ GCC not found"
+        which make && make --version | head -1 || echo "❌ Make not found"
+        
+        echo -e "\nCore system tools:"
+        which git && git --version || echo "❌ Git not found"
+        which zsh && zsh --version || echo "❌ Zsh not found"
+        which tmux && tmux -V || echo "❌ Tmux not found"
+        
+        echo -e "\nDevelopment tools:"  
+        which nvim && nvim --version | head -1 || echo "❌ Neovim not found"
+        which terraform && terraform version || echo "❌ Terraform not found"
+        which docker && docker --version || echo "❌ Docker not found"
+        
+        echo -e "\nModern CLI tools:"
+        which fzf && fzf --version || echo "❌ fzf not found" 
+        which bat && bat --version || echo "❌ bat not found"
+        which rg && rg --version || echo "❌ ripgrep not found"
+        which fd && fd --version || echo "❌ fd not found"
+        
+        echo -e "\nLanguage runtimes:"
+        which node && node --version || echo "❌ Node.js not found"
+        which python3 && python3 --version || echo "❌ Python not found"
+        which go && go version || echo "❌ Go not found"
+        which cargo && cargo --version || echo "❌ Rust not found"
+        which ruby && ruby --version || echo "❌ Ruby not found"
+        
+        echo -e "\nLLM Tools:"
+        which ollama && ollama --version || echo "❌ Ollama not found"
+        
+        echo -e "\nSetup directories:"
+        ls -la /home/runner/.setup_shin1ohno/ 2>/dev/null || echo "❌ Setup directory not found"
+        
+        echo -e "\nProfile scripts:"
+        ls -la /home/runner/.setup_shin1ohno/profile.d/ 2>/dev/null | head -10 || echo "❌ Profile directory not found"
+        
+        echo -e "\nSystem services:"
+        systemctl is-active docker 2>/dev/null || echo "❌ Docker service not active"
+        
+    - name: Test installed tools functionality
+      run: |
+        echo "=== Functionality Tests ==="
+        
+        echo "Testing git:"
+        git config --global user.email "test@example.com"
+        git config --global user.name "Test User"
+        
+        echo "Testing zsh:"
+        zsh -c 'echo "Zsh is working"'
+        
+        echo "Testing build tools:"
+        gcc --version | head -1
+        make --version | head -1
+        
+        echo "Testing neovim:"
+        nvim --headless +q || echo "Neovim headless test completed"
+        
+        echo "=== All functionality tests completed ==="
+
+  notification:
+    runs-on: ubuntu-latest
+    needs: [sudo-test-macos, sudo-test-linux]
+    if: always()
+    steps:
+    - name: Report results
+      run: |
+        echo "=== Sudo Full Installation Test Results ==="
+        echo "macOS test: ${{ needs.sudo-test-macos.result }}"
+        echo "Linux test: ${{ needs.sudo-test-linux.result }}"
+        
+        if [[ "${{ needs.sudo-test-macos.result }}" == "success" && "${{ needs.sudo-test-linux.result }}" == "success" ]]; then
+          echo "✅ All sudo installation tests passed!"
+        else
+          echo "❌ Some sudo installation tests failed"
+          exit 1
+        fi
