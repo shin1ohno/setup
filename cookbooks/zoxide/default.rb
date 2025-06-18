@@ -8,7 +8,7 @@ end
 # Hit ENTER automatically when asked to install CLI tools.
 # HAVE_SUDO_ACCESS=0 is required to skip `sudo` capability check.
 execute "echo | env #{node[:setup][:root]}/zoxide-install.sh" do
-  not_if "which z"
+  not_if "which zoxide"
 end
 
 add_profile "zoxide" do
