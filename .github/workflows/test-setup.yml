@@ -34,10 +34,9 @@ jobs:
     
     - name: Test darwin.rb in dry-run mode
       run: |
-        mkdir -p $HOME/tmp
-        TMPDIR=$HOME/tmp ./bin/mitamae local darwin.rb --dry-run
-      env:
-        TMPDIR: ${{ runner.temp }}
+        # Create writable temp directory  
+        sudo chmod 777 /tmp
+        ./bin/mitamae local darwin.rb --dry-run
       
     - name: Verify setup structure
       run: |
@@ -75,10 +74,9 @@ jobs:
     
     - name: Test linux.rb in dry-run mode
       run: |
-        mkdir -p $HOME/tmp
-        TMPDIR=$HOME/tmp ./bin/mitamae local linux.rb --dry-run
-      env:
-        TMPDIR: ${{ runner.temp }}
+        # Create writable temp directory
+        sudo chmod 777 /tmp
+        ./bin/mitamae local linux.rb --dry-run
       
     - name: Verify setup structure
       run: |
@@ -152,11 +150,10 @@ jobs:
       
     - name: Test basic mitamae functionality
       run: |
+        sudo chmod 777 /tmp
         echo "Testing basic mitamae dry-run without recipes..."
         echo '' > empty_test.rb
-        TMPDIR=${{ runner.temp }} ./bin/mitamae local empty_test.rb --dry-run
-      env:
-        TMPDIR: ${{ runner.temp }}
+        ./bin/mitamae local empty_test.rb --dry-run
         
     - name: Check mitamae version compatibility
       run: |
