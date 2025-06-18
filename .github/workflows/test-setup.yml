@@ -23,7 +23,9 @@ jobs:
         test -x bin/cookbook
     
     - name: Download mitamae binary
-      run: ./bin/setup
+      run: |
+        mkdir -p $HOME/tmp
+        ./bin/setup
       
     - name: Verify mitamae installation
       run: |
@@ -31,10 +33,13 @@ jobs:
         ./bin/mitamae version
     
     - name: Test darwin.rb in dry-run mode
-      run: ./bin/mitamae local darwin.rb --dry-run
+      run: |
+        export TMPDIR=$HOME/tmp
+        ./bin/mitamae local darwin.rb --dry-run
       
     - name: Test individual roles in dry-run mode
       run: |
+        export TMPDIR=$HOME/tmp
         ./bin/mitamae local -c 'include_role "core"' --dry-run
         ./bin/mitamae local -c 'include_role "programming"' --dry-run
         ./bin/mitamae local -c 'include_role "llm"' --dry-run
@@ -43,6 +48,7 @@ jobs:
         
     - name: Test individual cookbooks
       run: |
+        export TMPDIR=$HOME/tmp
         ./bin/mitamae local -c 'include_cookbook "git"' --dry-run
         ./bin/mitamae local -c 'include_cookbook "homebrew"' --dry-run
         ./bin/mitamae local -c 'include_cookbook "zsh"' --dry-run
@@ -63,7 +69,9 @@ jobs:
         test -x bin/cookbook
     
     - name: Download mitamae binary
-      run: ./bin/setup
+      run: |
+        mkdir -p $HOME/tmp
+        ./bin/setup
       
     - name: Verify mitamae installation
       run: |
@@ -71,10 +79,13 @@ jobs:
         ./bin/mitamae version
     
     - name: Test linux.rb in dry-run mode
-      run: ./bin/mitamae local linux.rb --dry-run
+      run: |
+        export TMPDIR=$HOME/tmp
+        ./bin/mitamae local linux.rb --dry-run
       
     - name: Test individual roles in dry-run mode
       run: |
+        export TMPDIR=$HOME/tmp
         ./bin/mitamae local -c 'include_role "core"' --dry-run
         ./bin/mitamae local -c 'include_role "programming"' --dry-run
         ./bin/mitamae local -c 'include_role "llm"' --dry-run
@@ -84,6 +95,7 @@ jobs:
         
     - name: Test individual cookbooks
       run: |
+        export TMPDIR=$HOME/tmp
         ./bin/mitamae local -c 'include_cookbook "git"' --dry-run
         ./bin/mitamae local -c 'include_cookbook "zsh"' --dry-run
         ./bin/mitamae local -c 'include_cookbook "nodejs"' --dry-run
@@ -145,7 +157,9 @@ jobs:
         ruby-version: '3.1'
     
     - name: Download mitamae binary
-      run: ./bin/setup
+      run: |
+        mkdir -p $HOME/tmp
+        ./bin/setup
       
     - name: Test error handling - invalid cookbook
       run: |
