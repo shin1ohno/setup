@@ -49,10 +49,12 @@ jobs:
       if: ${{ github.event.inputs.run_full_install == 'true' }}
       run: |
         sudo chmod 777 /tmp
-        echo 'include_recipe "cookbooks/functions/default.rb"
-include_cookbook "homebrew"
-include_cookbook "git"
-include_cookbook "zsh"' > test_core_install.rb
+        cat > test_core_install.rb << 'EOF'
+        include_recipe "cookbooks/functions/default.rb"
+        include_cookbook "homebrew"
+        include_cookbook "git"
+        include_cookbook "zsh"
+        EOF
         ./bin/mitamae local test_core_install.rb
       
     - name: Verify setup structure
@@ -101,10 +103,12 @@ include_cookbook "zsh"' > test_core_install.rb
       if: ${{ github.event.inputs.run_full_install == 'true' }}
       run: |
         export USER=runner
-        echo 'include_recipe "cookbooks/functions/default.rb"
-include_cookbook "git"
-include_cookbook "zsh"
-include_cookbook "tree"' > test_core_install.rb
+        cat > test_core_install.rb << 'EOF'
+        include_recipe "cookbooks/functions/default.rb"
+        include_cookbook "git"
+        include_cookbook "zsh"
+        include_cookbook "tree"
+        EOF
         ./bin/mitamae local test_core_install.rb
         
     - name: Verify core installations
