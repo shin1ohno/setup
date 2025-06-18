@@ -59,6 +59,8 @@ jobs:
       run: |
         apt-get update
         apt-get install -y ruby curl
+        # Create runner user for consistency with GitHub Actions
+        useradd -m -s /bin/bash runner || true
     
     - name: Check bin scripts are executable
       run: |
@@ -74,7 +76,9 @@ jobs:
         ./bin/mitamae version
     
     - name: Test linux.rb in dry-run mode
-      run: ./bin/mitamae local linux.rb --dry-run
+      run: |
+        export USER=runner
+        ./bin/mitamae local linux.rb --dry-run
       
     - name: Verify setup structure
       run: |
