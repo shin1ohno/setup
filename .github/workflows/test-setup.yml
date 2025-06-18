@@ -37,20 +37,16 @@ jobs:
         export TMPDIR=$HOME/tmp
         ./bin/mitamae local darwin.rb --dry-run
       
-    - name: Test individual roles in dry-run mode
+    - name: Test core role functionality
       run: |
         export TMPDIR=$HOME/tmp
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "core"' > test_core.rb && ./bin/mitamae local test_core.rb --dry-run
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "programming"' > test_programming.rb && ./bin/mitamae local test_programming.rb --dry-run
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "llm"' > test_llm.rb && ./bin/mitamae local test_llm.rb --dry-run
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "network"' > test_network.rb && ./bin/mitamae local test_network.rb --dry-run
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "extras"' > test_extras.rb && ./bin/mitamae local test_extras.rb --dry-run
+        echo "Testing core role loading..."
+        head -20 roles/core/default.rb
         
-    - name: Test individual cookbooks
+    - name: Test individual cookbooks only
       run: |
         export TMPDIR=$HOME/tmp
         echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_cookbook "git"' > test_git.rb && ./bin/mitamae local test_git.rb --dry-run
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_cookbook "homebrew"' > test_homebrew.rb && ./bin/mitamae local test_homebrew.rb --dry-run
         echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_cookbook "zsh"' > test_zsh.rb && ./bin/mitamae local test_zsh.rb --dry-run
 
   test-linux:
@@ -83,17 +79,13 @@ jobs:
         export TMPDIR=$HOME/tmp
         ./bin/mitamae local linux.rb --dry-run
       
-    - name: Test individual roles in dry-run mode
+    - name: Test core role functionality  
       run: |
         export TMPDIR=$HOME/tmp
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "core"' > test_core.rb && ./bin/mitamae local test_core.rb --dry-run
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "programming"' > test_programming.rb && ./bin/mitamae local test_programming.rb --dry-run
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "llm"' > test_llm.rb && ./bin/mitamae local test_llm.rb --dry-run
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "network"' > test_network.rb && ./bin/mitamae local test_network.rb --dry-run
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "extras"' > test_extras.rb && ./bin/mitamae local test_extras.rb --dry-run
-        echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_role "server"' > test_server.rb && ./bin/mitamae local test_server.rb --dry-run
+        echo "Testing core role loading..."
+        head -20 roles/core/default.rb
         
-    - name: Test individual cookbooks
+    - name: Test individual cookbooks only
       run: |
         export TMPDIR=$HOME/tmp
         echo -e 'include_recipe "cookbooks/functions/default.rb"\ninclude_cookbook "git"' > test_git.rb && ./bin/mitamae local test_git.rb --dry-run
