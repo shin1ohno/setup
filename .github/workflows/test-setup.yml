@@ -35,17 +35,17 @@ jobs:
       
     - name: Test individual roles in dry-run mode
       run: |
-        ./bin/mitamae local -c "include_role 'core'" --dry-run
-        ./bin/mitamae local -c "include_role 'programming'" --dry-run
-        ./bin/mitamae local -c "include_role 'llm'" --dry-run
-        ./bin/mitamae local -c "include_role 'network'" --dry-run
-        ./bin/mitamae local -c "include_role 'extras'" --dry-run
+        ./bin/mitamae local -c 'include_role "core"' --dry-run
+        ./bin/mitamae local -c 'include_role "programming"' --dry-run
+        ./bin/mitamae local -c 'include_role "llm"' --dry-run
+        ./bin/mitamae local -c 'include_role "network"' --dry-run
+        ./bin/mitamae local -c 'include_role "extras"' --dry-run
         
     - name: Test individual cookbooks
       run: |
-        ./bin/mitamae local -c "include_cookbook 'git'" --dry-run
-        ./bin/mitamae local -c "include_cookbook 'homebrew'" --dry-run
-        ./bin/mitamae local -c "include_cookbook 'zsh'" --dry-run
+        ./bin/mitamae local -c 'include_cookbook "git"' --dry-run
+        ./bin/mitamae local -c 'include_cookbook "homebrew"' --dry-run
+        ./bin/mitamae local -c 'include_cookbook "zsh"' --dry-run
 
   test-linux:
     runs-on: ubuntu-latest
@@ -75,18 +75,18 @@ jobs:
       
     - name: Test individual roles in dry-run mode
       run: |
-        ./bin/mitamae local -c "include_role 'core'" --dry-run
-        ./bin/mitamae local -c "include_role 'programming'" --dry-run
-        ./bin/mitamae local -c "include_role 'llm'" --dry-run
-        ./bin/mitamae local -c "include_role 'network'" --dry-run
-        ./bin/mitamae local -c "include_role 'extras'" --dry-run
-        ./bin/mitamae local -c "include_role 'server'" --dry-run
+        ./bin/mitamae local -c 'include_role "core"' --dry-run
+        ./bin/mitamae local -c 'include_role "programming"' --dry-run
+        ./bin/mitamae local -c 'include_role "llm"' --dry-run
+        ./bin/mitamae local -c 'include_role "network"' --dry-run
+        ./bin/mitamae local -c 'include_role "extras"' --dry-run
+        ./bin/mitamae local -c 'include_role "server"' --dry-run
         
     - name: Test individual cookbooks
       run: |
-        ./bin/mitamae local -c "include_cookbook 'git'" --dry-run
-        ./bin/mitamae local -c "include_cookbook 'zsh'" --dry-run
-        ./bin/mitamae local -c "include_cookbook 'nodejs'" --dry-run
+        ./bin/mitamae local -c 'include_cookbook "git"' --dry-run
+        ./bin/mitamae local -c 'include_cookbook "zsh"' --dry-run
+        ./bin/mitamae local -c 'include_cookbook "nodejs"' --dry-run
 
   syntax-check:
     runs-on: ubuntu-latest
@@ -150,12 +150,12 @@ jobs:
     - name: Test error handling - invalid cookbook
       run: |
         # This should fail gracefully
-        ./bin/mitamae local -c "include_cookbook 'nonexistent_cookbook'" --dry-run || echo "Expected failure for nonexistent cookbook"
+        ./bin/mitamae local -c 'include_cookbook "nonexistent_cookbook"' --dry-run || echo "Expected failure for nonexistent cookbook"
         
     - name: Test error handling - invalid role
       run: |
         # This should fail gracefully
-        ./bin/mitamae local -c "include_role 'nonexistent_role'" --dry-run || echo "Expected failure for nonexistent role"
+        ./bin/mitamae local -c 'include_role "nonexistent_role"' --dry-run || echo "Expected failure for nonexistent role"
         
     - name: Check mitamae version compatibility
       run: |
