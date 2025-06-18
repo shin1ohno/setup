@@ -58,7 +58,7 @@ jobs:
     - name: Install dependencies
       run: |
         apt-get update
-        apt-get install -y ruby curl
+        apt-get install -y ruby curl sudo git build-essential
         # Create runner user for consistency with GitHub Actions
         useradd -m -s /bin/bash runner || true
     
