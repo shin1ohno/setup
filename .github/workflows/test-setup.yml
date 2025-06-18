@@ -34,6 +34,7 @@ jobs:
     
     - name: Test darwin.rb in dry-run mode
       run: |
+        mkdir -p $HOME/tmp
         export TMPDIR=$HOME/tmp
         ./bin/mitamae local darwin.rb --dry-run
       
@@ -73,6 +74,7 @@ jobs:
     
     - name: Test linux.rb in dry-run mode
       run: |
+        mkdir -p $HOME/tmp
         export TMPDIR=$HOME/tmp
         ./bin/mitamae local linux.rb --dry-run
       
@@ -148,6 +150,7 @@ jobs:
       
     - name: Test basic mitamae functionality
       run: |
+        mkdir -p $HOME/tmp
         export TMPDIR=$HOME/tmp
         echo "Testing basic mitamae dry-run without recipes..."
         echo '' > empty_test.rb
