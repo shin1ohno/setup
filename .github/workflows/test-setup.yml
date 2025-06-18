@@ -49,13 +49,16 @@ jobs:
 
   test-linux:
     runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+      options: --user root
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: '3.1'
+    - name: Install dependencies
+      run: |
+        apt-get update
+        apt-get install -y ruby curl
     
     - name: Check bin scripts are executable
       run: |
@@ -63,9 +66,7 @@ jobs:
         test -x bin/cookbook
     
     - name: Download mitamae binary
-      run: |
-        mkdir -p $HOME/tmp
-        ./bin/setup
+      run: ./bin/setup
       
     - name: Verify mitamae installation
       run: |
@@ -73,10 +74,7 @@ jobs:
         ./bin/mitamae version
     
     - name: Test linux.rb in dry-run mode
-      run: |
-        # Create writable temp directory
-        sudo chmod 777 /tmp
-        ./bin/mitamae local linux.rb --dry-run
+      run: ./bin/mitamae local linux.rb --dry-run
       
     - name: Verify setup structure
       run: |
