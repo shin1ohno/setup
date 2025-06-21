@@ -18,10 +18,3 @@ include_cookbook "zk"
 # Containerization and virtualization
 include_cookbook "docker-engine" unless node[:platform] == "darwin"
 
-# Server-specific setup
-directory "#{ENV["HOME"]}/deploy}" do
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "755"
-  action :create
-end

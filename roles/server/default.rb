@@ -2,7 +2,7 @@
 
 # server only recipes/cookbooks
 
-directory "#{ENV["HOME"]}/deploy}" do
+directory "#{ENV["HOME"]}/deploy" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
