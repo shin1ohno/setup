@@ -4,6 +4,7 @@
   signingkey = 59E8544A4001372A
 [alias]
   st = status
+  co = checkout
 [fetch]
   prune = true
 [init]
