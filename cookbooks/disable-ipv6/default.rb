@@ -1,9 +1,12 @@
 # Disable IPv6 via sysctl
-remote_file "/etc/sysctl.d/99-disable-ipv6.conf" do
-  source "files/99-disable-ipv6.conf"
-  owner "root"
-  group "root"
-  mode "644"
+execute "copy ipv6 sysctl" do
+  command <<~BASH
+    cp #{File.expand_path("../files/99-disable-ipv6.conf", __FILE__)} /etc/sysctl.d/99-disable-ipv6.conf
+    chown root:root /etc/sysctl.d/99-disable-ipv6.conf
+    chmod 644 /etc/sysctl.d/99-disable-ipv6.conf
+  BASH
+  user "root"
+  not_if "test -f /etc/sysctl.d/99-disable-ipv6.conf && diff -q #{File.expand_path("../files/99-disable-ipv6.conf", __FILE__)} /etc/sysctl.d/99-disable-ipv6.conf"
 end
 
 # Apply sysctl settings immediately
