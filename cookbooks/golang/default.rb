@@ -32,7 +32,7 @@ end
 
 go_versions.each do |v|
   execute "install Go version: #{v}" do
-    command "/bin/bash -c '. $HOME/.gvm/scripts/gvm && gvm install #{v}'"
+    command "/bin/bash -c '. $HOME/.gvm/scripts/gvm && gvm install #{v} -B'"
     not_if "test -d #{ENV['HOME']}/.gvm/gos/#{v}"
   end
 end

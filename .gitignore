@@ -3,3 +3,4 @@ bin/mitamae-*
 bin/*.tar.gz
 bin/*.zip
 .env
+.claude/settings.local.json

@@ -12,7 +12,7 @@ execute "Initialise tmux config directory" do
     git init &&\n
     git remote add origin git@github.com:shin1ohno/tmux.git &&\n
     git pull --rebase origin main &&\n
-    git push --set-upstream origin main &&\n 
+    git push --set-upstream origin main 
 EOF
   cwd "#{ENV["HOME"]}/.config/tmux"
   not_if { File.exists? "#{ENV["HOME"]}/.config/tmux/.git" }
