@@ -5,11 +5,11 @@ return if node[:platform] != "darwin"
 %w(
   alacritty                 balenaetcher
   backblaze                 charles
-  claude                    figma
-  firefox                   ghostty
-  google-chrome             imageoptim
-  iterm2                    jetbrains-toolbox
-  karabiner-elements        
+  claude                    docker-desktop
+  figma                     firefox
+  ghostty                   google-chrome
+  imageoptim                iterm2
+  jetbrains-toolbox         karabiner-elements        
   launchcontrol             monodraw
   microsoft-teams           mqtt-explorer
   notion                    obsidian
