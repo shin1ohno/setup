@@ -16,6 +16,8 @@ add_profile "claude-code" do
   bash_content <<~BASH
     # Claude Code - Anthropic's AI coding assistant
     export CLAUDE_CODE_HOME="$HOME/.config/claude-code"
+    alias claude="/Users/sh1/.claude/local/claude"
+
     # Add Claude Code auto-completion
     if [ -f "$HOME/.config/claude-code/claude_completion.sh" ]; then
       source "$HOME/.config/claude-code/claude_completion.sh"
@@ -24,6 +26,7 @@ add_profile "claude-code" do
   fish_content <<~FISH
     # Claude Code - Anthropic's AI coding assistant
     set -gx CLAUDE_CODE_HOME $HOME/.config/claude-code
+    alias claude="/Users/sh1/.claude/local/claude"
     # Add Claude Code auto-completion
     if test -f "$HOME/.config/claude-code/claude_completion.fish"
       source "$HOME/.config/claude-code/claude_completion.fish"
