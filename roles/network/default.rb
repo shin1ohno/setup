@@ -11,4 +11,7 @@ include_cookbook "iperf3"
 
 # Remote access and file transfer
 include_cookbook "mosh"
-include_cookbook "rclone"
+
+unless node[:platform] == "darwin"
+  include_cookbook "rclone"
+end
