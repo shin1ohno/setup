@@ -26,6 +26,7 @@ node.reverse_merge!(
 include_role "core"
 include_role "programming"
 include_role "llm"
+include_role "network"
 include_role "extras"
 
 # Legacy roles for backwards compatibility
