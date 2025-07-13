@@ -12,8 +12,8 @@ This cookbook installs and configures the [fzf-tab](https://github.com/Aloxaf/fz
 ## Dependencies
 
 This cookbook depends on:
-- `fzf` cookbook (already included in the base role)
-- `zsh` cookbook (already included in the base role)
+- `fzf` cookbook (already included in the core role)
+- `zsh` cookbook (already included in the core role)
 
 ## Usage
 
