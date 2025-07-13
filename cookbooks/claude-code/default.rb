@@ -5,6 +5,7 @@
 
 # Ensure Node.js is installed via volta
 include_cookbook "nodejs"
+include_cookbook "mcp"
 
 # Install Claude Code
 execute "$HOME/.volta/bin/npm install -g @anthropic-ai/claude-code" do
@@ -34,10 +35,29 @@ add_profile "claude-code" do
   FISH
 end
 
+execute "mcp setup" do
+  not_if "claude mcp list | grep -q o3"
+  command <<~BASH
+    claude mcp add o3-high -s user -e SEARCH_CONTEXT_SIZE=high -e REASONING_EFFORT=high -- npx o3-search-mcp
+    claude mcp add o3 -s user -e SEARCH_CONTEXT_SIZE=medium -e REASONING_EFFORT=medium -- npx o3-search-mcp
+    claude mcp add o3-low -s user -e SEARCH_CONTEXT_SIZE=low -e REASONING_EFFORT=low -- npx o3-search-mcp
+  BASH
+end
+
 # Create config directory if it doesn't exist
-directory "#{ENV['HOME']}/.config/claude-code" do
+directory "#{ENV['HOME']}/.claude" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
   action :create
+end
+
+%w(CLAUDE.md settings.json).each do |file_name|
+  remote_file "#{ENV['HOME']}/.claude/#{file_name}" do
+    source "files/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
 end
