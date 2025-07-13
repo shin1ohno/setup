@@ -23,7 +23,15 @@ This file contains my personal preferences for Claude Code.
 
 ## Using o3
 
-You have three o3 mcps installed. Leverage their web search capability which enable you to get to know the latest information. They have general knowledge and high reasoning capabililty.
+You have three o3 mcps installed(o3-high, o3, o3-low). They have general knowledge and high reasoning capabililty.
+
+### How to use o3
+
+Use mcps depending on the complexity of the task.
+
+### When to use o3
+
+Make sure to use o3 when you want to search or fetch something from the web.
 
 ## Using Gemini AI
 
