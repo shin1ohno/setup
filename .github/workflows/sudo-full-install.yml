@@ -47,7 +47,8 @@ jobs:
       run: |
         sudo chmod 777 /tmp
         echo "=== Starting sudo ./bin/mitamae local darwin.rb ==="
-        sudo ./bin/mitamae local darwin.rb
+        # Set HOME environment variable for sudo to maintain user environment
+        sudo -E HOME=$HOME ./bin/mitamae local darwin.rb
         
     - name: Verify sudo installation
       run: |
@@ -138,8 +139,10 @@ jobs:
     - name: Execute sudo full installation (linux.rb)
       run: |
         export USER=runner
+        export HOME=/home/runner
         echo "=== Starting sudo ./bin/mitamae local linux.rb ==="
-        sudo -E ./bin/mitamae local linux.rb
+        # Ensure HOME and USER are properly set for sudo
+        sudo -E USER=$USER HOME=$HOME ./bin/mitamae local linux.rb
         
     - name: Verify sudo installation
       run: |
