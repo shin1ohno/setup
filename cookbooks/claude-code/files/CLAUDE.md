@@ -6,7 +6,6 @@ This file contains my personal preferences for Claude Code.
 
 - Please communicate in Japanese
 - Git commit messages and comments in source code should be in English
-- Please never include things like "Generated with [Claude Code](https://claude.ai/code)" or "Co-Authored-By: Claude <noreply@anthropic.com>" in git commit messages
 - Always ensure files end with a newline character (`\n`)
 - Follow existing code conventions and patterns in each project
 - Prefer editing existing files over creating new ones
@@ -80,3 +79,23 @@ Use gemini -p when:
   - The CLI will include file contents directly in the context
 - Gemini's context window can handle entire codebases that would overflow Claude's context
 - When checking implementations, be specific about what you're looking for to get accurate results # Using Gemini CLI for Large Codebase Analysis
+
+### Git Commit
+
+- Please never include things like "Generated with [Claude Code](https://claude.ai/code)" or "Co-Authored-By: Claude <noreply@anthropic.com>" in git commit messages
+
+#### First Line (Summary)
+
+- Try to keep total length under 50 characters
+- Start with `{component_name}: ` prefix when possible
+  - Component name can be shortened filename or directory name
+  - Omit prefix if it would make the line too long
+- Use imperative mood (e.g., "Add feature" not "Added feature")
+- Use more contextful verbs than "Change", "Add", "Fix" or "Update"
+- Try to explain the "why" of the change, not just the "what"
+
+#### Additional Lines
+
+- Leave second line empty
+- Add detailed explanation, background, or reasoning in subsequent lines
+- Include relevant context that helps reviewers understand the change
