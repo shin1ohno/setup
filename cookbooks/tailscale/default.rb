@@ -6,6 +6,6 @@ remote_file "#{node[:setup][:root]}/tailscale.sh" do
 end
 
 execute "#{node[:setup][:root]}/tailscale.sh" do
-  not_if "test -f /usr/bin/tailscale"
+  not_if "which tailscale"
 end
 
