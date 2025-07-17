@@ -10,13 +10,13 @@ return if node[:platform] != "darwin"
   ghostty                   google-chrome
   imageoptim                iterm2
   jetbrains-toolbox         karabiner-elements        
-  launchcontrol             monodraw
-  microsoft-teams           mqtt-explorer
-  notion                    obsidian
-  obs                       rapidapi
-  tailscale                 tidal
-  transmit                  via
-  zoom
+  kiro                      launchcontrol
+  monodraw                  microsoft-teams
+  mqtt-explorer             notion
+  obsidian                  obs
+  rapidapi                  tailscale
+  tidal                     transmit
+  via                       zoom
 ).each do |app|
   execute "brew reinstall --cask #{app}" do
     not_if "brew list | fgrep -q #{app}"
