@@ -17,7 +17,7 @@ add_profile "claude-code" do
   bash_content <<~BASH
     # Claude Code - Anthropic's AI coding assistant
     export CLAUDE_CODE_HOME="$HOME/.config/claude-code"
-    alias claude="/Users/sh1/.claude/local/claude"
+    alias claude="$HOME/.claude/local/claude"
 
     # Add Claude Code auto-completion
     if [ -f "$HOME/.config/claude-code/claude_completion.sh" ]; then
@@ -27,7 +27,7 @@ add_profile "claude-code" do
   fish_content <<~FISH
     # Claude Code - Anthropic's AI coding assistant
     set -gx CLAUDE_CODE_HOME $HOME/.config/claude-code
-    alias claude="/Users/sh1/.claude/local/claude"
+    alias claude="$HOME/.claude/local/claude"
     # Add Claude Code auto-completion
     if test -f "$HOME/.config/claude-code/claude_completion.fish"
       source "$HOME/.config/claude-code/claude_completion.fish"
@@ -44,7 +44,6 @@ execute "mcp setup" do
   BASH
 end
 
-# Create config directory if it doesn't exist
 directory "#{ENV['HOME']}/.claude" do
   owner node[:setup][:user]
   group node[:setup][:group]
@@ -60,4 +59,12 @@ end
     mode "644"
     action :create
   end
+end
+
+remote_file "#{ENV['HOME']}/.claude-agents.json" do
+  source "files/claude-agents.json"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  action :create
 end
