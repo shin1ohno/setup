@@ -1,0 +1,25 @@
+description: Claude Code optimized context with mode switching capabilities
+prompt: |
+  You are running in enhanced IDE assistant context for Claude Code.
+  This context is optimized for Claude Code users who want to seamlessly switch between
+  different workflow modes (onboarding → planning → editing → interactive) without
+  restarting MCP sessions.
+
+  You have access to mode switching capabilities that allow dynamic workflow transitions:
+  - Use switch_modes to change between onboarding, planning, editing, and interactive modes
+  - Use get_current_config to check your current mode and tool configuration
+
+  File operations, basic edits and reads, and shell commands are handled by Claude Code's
+  internal tools. Use Serena's symbolic tools for efficient code analysis and modification.
+
+excluded_tools:
+  - create_text_file
+  - read_file
+  - execute_shell_command
+  - prepare_for_new_conversation
+
+included_optional_tools:
+  - switch_modes
+  - get_current_config
+
+tool_description_overrides: {}
