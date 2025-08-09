@@ -3,13 +3,14 @@
 # Claude Code is Anthropic's agentic coding tool for the terminal
 # It requires Node.js to run as it's distributed via npm
 
-# Ensure Node.js is installed via volta
-include_cookbook "nodejs"
+# Ensure Node.js is installed via mise
+include_cookbook "nodejs-mise"
 include_cookbook "mcp"
 
 # Install Claude Code
-execute "$HOME/.volta/bin/npm install -g @anthropic-ai/claude-code" do
-  not_if "test -e \"$HOME/.volta/bin/claude\""
+execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g @anthropic-ai/claude-code" do
+  user node[:setup][:user]
+  not_if "which claude"
 end
 
 # Add Claude Code to the profile
