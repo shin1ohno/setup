@@ -4,7 +4,7 @@
 # It requires Node.js to run as it's distributed via npm
 
 # Ensure Node.js is installed via mise
-include_cookbook "nodejs-mise"
+include_cookbook "nodejs"
 include_cookbook "mcp"
 
 # Install Claude Code

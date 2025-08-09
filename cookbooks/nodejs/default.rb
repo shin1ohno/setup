@@ -1,20 +1,51 @@
 # frozen_string_literal: true
 
-include_cookbook "volta"
+# Node.js installation using mise
+# This cookbook replaces volta-based Node.js management with mise
 
-node[:nodejs][:versions].each do |node_version|
-  execute "$HOME/.volta/bin/volta install node@#{node_version}" do
-    not_if "$HOME/.volta/bin/volta list --format plain node | grep -q \"node@#{node_version}\""
+# Ensure mise is installed
+include_cookbook "mise"
+
+# Install Node.js versions configured in node attributes
+node[:nodejs][:versions].each do |version|
+  execute "mise install node@#{version}" do
+    user node[:setup][:user]
+    not_if "$HOME/.local/bin/mise list node | grep -q '#{version}'"
   end
 end
 
-execute "$HOME/.volta/bin/volta install yarn" do
-  not_if "test -e \"$HOME/.volta/bin/yarn\""
+# Set default Node.js version to the first in the list
+default_version = node[:nodejs][:versions].first
+execute "mise use --global node@#{default_version}" do
+  user node[:setup][:user]
+  not_if "$HOME/.local/bin/mise list node | grep -q '\\* #{default_version}'"
 end
 
-execute "$HOME/.volta/bin/npm upgrade -g" do
-  cwd ENV["HOME"]
+# Install yarn globally using corepack
+execute "export PATH=$HOME/.local/share/mise/shims:$PATH && corepack enable" do
+  user node[:setup][:user]
+  not_if "which yarn"
 end
 
-include_cookbook "pm2"
-include_cookbook "typescript"
+# Install pnpm globally using corepack
+execute "export PATH=$HOME/.local/share/mise/shims:$PATH && corepack enable pnpm" do
+  user node[:setup][:user]
+  not_if "which pnpm"
+end
+
+# Ensure npm is up to date
+execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm upgrade -g npm" do
+  user node[:setup][:user]
+end
+
+# Add Node.js related environment setup
+add_profile "nodejs" do
+  bash_content <<~BASH
+    # Node.js managed by mise
+    export PATH="$HOME/.local/share/mise/shims:$PATH"
+    
+    # Enable corepack for yarn and pnpm
+    export COREPACK_ENABLE_STRICT=0
+  BASH
+  priority 70
+end

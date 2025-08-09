@@ -11,6 +11,8 @@ execute "sh #{node[:setup][:root]}/mise-install.sh" do
   not_if "which mise"
 end
 
+execute "mise self-update"
+
 add_profile "mise" do
   bash_content <<~EOS
     # mise-en-place tool version manager
