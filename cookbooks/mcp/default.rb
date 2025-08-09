@@ -1,5 +1,5 @@
 # Ensure Node.js is installed via mise
-include_cookbook "nodejs-mise"
+include_cookbook "nodejs"
 
 mcp_commands = %w(o3-search-mcp mcp-hub)
 

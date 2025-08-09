@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # Ensure Node.js is installed via mise for language servers
-include_cookbook "nodejs-mise"
+include_cookbook "nodejs"
 
 directory "#{ENV["HOME"]}/.config/" do
   owner node[:setup][:user]

@@ -17,7 +17,7 @@ node.reverse_merge!(
     versions: %w(go1.22.3 go1.21.8)
   },
   nodejs: {
-    versions: %w(18 20 21)
+    versions: %w(lts 18 20 21)
   },
   python: {
     versions: %w(3.12.2 3.11.8)
@@ -38,7 +38,7 @@ include_cookbook "ruby32"
 
 # Other programming languages
 include_cookbook "rust"
-include_cookbook "nodejs-mise"
+include_cookbook "nodejs"
 include_cookbook "haskell"
 include_cookbook "golang"
 

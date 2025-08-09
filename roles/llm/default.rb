@@ -12,7 +12,7 @@ include_cookbook "llama-3-elyza-jp"
 include_cookbook "tfmcp"
 
 # Additional Node.js tooling for LLM workflows
-# Volta removed - Node.js is now managed by mise via nodejs-mise cookbook
+# Volta removed - Node.js is now managed by mise via nodejs cookbook
 include_cookbook "bun"
 include_cookbook "mcp"
 include_cookbook "serena"

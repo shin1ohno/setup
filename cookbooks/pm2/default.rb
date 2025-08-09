@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # Ensure Node.js is installed via mise
-include_cookbook "nodejs-mise"
+include_cookbook "nodejs"
 
 execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g pm2" do
   user node[:setup][:user]
