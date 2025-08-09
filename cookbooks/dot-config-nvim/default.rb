@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Ensure Node.js is installed via mise for language servers
+include_cookbook "nodejs-mise"
+
 directory "#{ENV["HOME"]}/.config/" do
   owner node[:setup][:user]
   group node[:setup][:group]
@@ -28,7 +31,8 @@ end
   typescript-language-server
   @tailwindcss/language-server
 ).each do |requirement|
-  execute "$HOME/.volta/bin/npm install -g #{requirement}" do
+  execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g #{requirement}" do
+    user node[:setup][:user]
     if requirement == "@tailwindcss/language-server"
       requirement = "tailwindcss-language-server"
     elsif requirement == "typescript"
