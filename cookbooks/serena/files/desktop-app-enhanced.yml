@@ -1,0 +1,20 @@
+description: Desktop app context with full tool access and mode switching
+prompt: |
+  You are running in enhanced desktop app context with full Serena capabilities.
+  This context provides access to all Serena tools including file operations,
+  symbolic code analysis, and workflow mode switching.
+
+  You can seamlessly transition between different workflow modes:
+  - Onboarding: Initial project understanding and setup
+  - Planning: Code analysis and design phase
+  - Editing: Active code implementation
+  - Interactive: User collaboration mode
+  - No-onboarding: Continue previous work
+
+excluded_tools: []
+
+included_optional_tools:
+  - switch_modes
+  - get_current_config
+
+tool_description_overrides: {}
