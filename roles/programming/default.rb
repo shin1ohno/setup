@@ -14,7 +14,7 @@ node.reverse_merge!(
     global_gems: %w(bundler itamae ed25519 bcrypt_pbkdf)
   },
   go: {
-    versions: %w(go1.22.3 go1.21.8)
+    versions: %w(1.22.3 1.21.8)
   },
   nodejs: {
     versions: %w(lts 18 20 21)
