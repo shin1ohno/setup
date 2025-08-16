@@ -11,7 +11,9 @@ execute "sh #{node[:setup][:root]}/mise-install.sh" do
   not_if "which mise"
 end
 
-execute "mise self-update"
+execute "$HOME/.local/bin/mise self-update" do
+  only_if { File.exists? "$HOME/.local/bin/mise" }
+end
 
 add_profile "mise" do
   bash_content <<~EOS

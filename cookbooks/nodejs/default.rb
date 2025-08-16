@@ -8,7 +8,7 @@ include_cookbook "mise"
 
 # Install Node.js versions configured in node attributes
 node[:nodejs][:versions].each do |version|
-  execute "mise install node@#{version}" do
+  execute "$HOME/.local/bin/mise install node@#{version}" do
     user node[:setup][:user]
     not_if "$HOME/.local/bin/mise list node | grep -q '#{version}'"
   end
@@ -16,7 +16,7 @@ end
 
 # Set default Node.js version to the first in the list
 default_version = node[:nodejs][:versions].first
-execute "mise use --global node@#{default_version}" do
+execute "$HOME/.local/bin/mise use --global node@#{default_version}" do
   user node[:setup][:user]
   not_if "$HOME/.local/bin/mise list node | grep -q '\\* #{default_version}'"
 end
