@@ -15,8 +15,8 @@ end
 
 # Install Serena using uvx
 execute "install serena" do
-  command "uvx --from git+https://github.com/oraios/serena serena --help"
-  not_if "uvx --from git+https://github.com/oraios/serena serena --help"
+  command "$HOME/.local/bin/uvx --from git+https://github.com/oraios/serena serena --help"
+  not_if "$HOME/.local/bin/uvx --from git+https://github.com/oraios/serena serena --help"
   user node[:setup][:user]
 end
 
@@ -26,9 +26,9 @@ end
 # Add Serena MCP server to Claude Code configuration
 execute "add serena mcp to claude code" do
   command <<~CMD
-    claude mcp add serena -- uvx --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant-enhanced --mode onboarding --project '$(pwd)'
+    export PATH=$HOME/.local/share/mise/shims:$PATH && $HOME/.claude/local/claude mcp add serena -- uvx --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant-enhanced --mode onboarding --project '$(pwd)'
   CMD
-  not_if "claude mcp list | grep serena"
+  not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && $HOME/.claude/local/claude mcp list | grep serena"
   user node[:setup][:user]
 end
 
