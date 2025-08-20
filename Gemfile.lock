@@ -1,11 +1,88 @@
 GEM
   remote: https://rubygems.org/
   specs:
+    ast (2.4.3)
+    backport (1.2.0)
+    benchmark (0.4.1)
+    diff-lcs (1.6.2)
+    jaro_winkler (1.6.1)
+    json (2.13.2)
+    kramdown (2.5.1)
+      rexml (>= 3.3.9)
+    kramdown-parser-gfm (1.1.0)
+      kramdown (~> 2.0)
+    language_server-protocol (3.17.0.5)
+    lint_roller (1.1.0)
+    logger (1.7.0)
+    nokogiri (1.18.9-arm64-darwin)
+      racc (~> 1.4)
+    nokogiri (1.18.9-x86_64-linux-gnu)
+      racc (~> 1.4)
+    observer (0.1.2)
+    ostruct (0.6.3)
+    parallel (1.27.0)
+    parser (3.3.9.0)
+      ast (~> 2.4.1)
+      racc
+    prism (1.4.0)
+    racc (1.8.1)
+    rainbow (3.1.1)
+    rbs (3.6.1)
+      logger
+    regexp_parser (2.11.2)
+    reverse_markdown (3.0.0)
+      nokogiri
+    rexml (3.4.1)
+    rubocop (1.79.2)
+      json (~> 2.3)
+      language_server-protocol (~> 3.17.0.2)
+      lint_roller (~> 1.1.0)
+      parallel (~> 1.10)
+      parser (>= 3.3.0.2)
+      rainbow (>= 2.2.2, < 4.0)
+      regexp_parser (>= 2.9.3, < 3.0)
+      rubocop-ast (>= 1.46.0, < 2.0)
+      ruby-progressbar (~> 1.7)
+      unicode-display_width (>= 2.4.0, < 4.0)
+    rubocop-ast (1.46.0)
+      parser (>= 3.3.7.2)
+      prism (~> 1.4)
+    ruby-progressbar (1.13.0)
+    solargraph (0.56.2)
+      backport (~> 1.2)
+      benchmark (~> 0.4)
+      bundler (~> 2.0)
+      diff-lcs (~> 1.4)
+      jaro_winkler (~> 1.6, >= 1.6.1)
+      kramdown (~> 2.3)
+      kramdown-parser-gfm (~> 1.1)
+      logger (~> 1.6)
+      observer (~> 0.1)
+      ostruct (~> 0.6)
+      parser (~> 3.0)
+      prism (~> 1.4)
+      rbs (~> 3.6.1)
+      reverse_markdown (~> 3.0)
+      rubocop (~> 1.38)
+      thor (~> 1.0)
+      tilt (~> 2.0)
+      yard (~> 0.9, >= 0.9.24)
+      yard-solargraph (~> 0.1)
+    thor (1.4.0)
+    tilt (2.6.1)
+    unicode-display_width (3.1.5)
+      unicode-emoji (~> 4.0, >= 4.0.4)
+    unicode-emoji (4.0.4)
+    yard (0.9.37)
+    yard-solargraph (0.1.0)
+      yard (~> 0.9)
 
 PLATFORMS
   arm64-darwin-22
+  x86_64-linux
 
 DEPENDENCIES
+  solargraph
 
 BUNDLED WITH
    2.4.6

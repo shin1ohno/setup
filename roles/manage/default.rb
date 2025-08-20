@@ -7,7 +7,7 @@ repos = repos.concat(JSON.parse(File.read(l_repos_file))["repositories"]) if Fil
 
 node.reverse_merge!(
   managed_projects: {
-    root: "#{ENV['HOME']}/ManagedProjects",
+    root: "#{ENV["HOME"]}/ManagedProjects",
     user: node[:setup][:user],
     group: node[:setup][:group],
     repos: repos.map { |r| r.keys.map { |k| [k.to_sym, r[k]] } }.map(&:to_h)

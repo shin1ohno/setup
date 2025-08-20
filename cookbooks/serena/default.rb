@@ -33,7 +33,7 @@ execute "add serena mcp to claude code" do
 end
 
 # Create a helper script for Serena MCP initial setup and project switching
-file "#{ENV['HOME']}/.local/bin/serena-mcp-setup" do
+file "#{ENV["HOME"]}/.local/bin/serena-mcp-setup" do
   content <<~SCRIPT
     #!/bin/bash
     # Helper script for Serena MCP initial setup and project switching
@@ -100,20 +100,20 @@ add_profile "serena" do
 end
 
 # Create contexts directory for Serena configurations
-directory "#{ENV['HOME']}/.serena" do
+directory "#{ENV["HOME"]}/.serena" do
   mode "0755"
   owner node[:setup][:user]
   group node[:setup][:group]
 end
 
-directory "#{ENV['HOME']}/.serena/contexts" do
+directory "#{ENV["HOME"]}/.serena/contexts" do
   mode "0755"
   owner node[:setup][:user]
   group node[:setup][:group]
 end
 
 # Create Claude Code optimized context with mode switching
-file "#{ENV['HOME']}/.serena/contexts/ide-assistant-enhanced.yml" do
+file "#{ENV["HOME"]}/.serena/contexts/ide-assistant-enhanced.yml" do
   content <<~YAML
     description: Claude Code optimized context with mode switching capabilities
     prompt: |
@@ -147,7 +147,7 @@ file "#{ENV['HOME']}/.serena/contexts/ide-assistant-enhanced.yml" do
 end
 
 # Create desktop app enhanced context
-file "#{ENV['HOME']}/.serena/contexts/desktop-app-enhanced.yml" do
+file "#{ENV["HOME"]}/.serena/contexts/desktop-app-enhanced.yml" do
   content <<~YAML
     description: Desktop app context with full tool access and mode switching
     prompt: |

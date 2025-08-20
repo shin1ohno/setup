@@ -10,7 +10,7 @@ end
 user = ENV["USER"]
 node.reverse_merge!(
   setup: {
-    root: "#{ENV['HOME']}/.setup_shin1ohno",
+    root: "#{ENV["HOME"]}/.setup_shin1ohno",
     user: user,
     group: "staff",
   },

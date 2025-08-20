@@ -7,7 +7,7 @@
 include_cookbook "rclone"
 
 # Create base sync directory for Obsidian vaults
-directory "#{ENV['HOME']}/obsidian" do
+directory "#{ENV["HOME"]}/obsidian" do
   owner node[:setup][:user]
   mode "755"
 end
@@ -79,13 +79,13 @@ end
 
 # Create systemd user service and timer if on Linux (non-macOS)
 if node[:platform] != "darwin"
-  directory "#{ENV['HOME']}/.config/systemd/user" do
+  directory "#{ENV["HOME"]}/.config/systemd/user" do
     owner node[:setup][:user]
     mode "755"
   end
 
   # Create the systemd service
-  file "#{ENV['HOME']}/.config/systemd/user/obsidian-sync.service" do
+  file "#{ENV["HOME"]}/.config/systemd/user/obsidian-sync.service" do
     owner node[:setup][:user]
     mode "644"
     content <<-EOM
@@ -101,11 +101,11 @@ ExecStart=#{node[:setup][:root]}/obsidian_sync/sync.sh
 [Install]
 WantedBy=default.target
 EOM
-    not_if "test -f #{ENV['HOME']}/.config/systemd/user/obsidian-sync.service"
+    not_if "test -f #{ENV["HOME"]}/.config/systemd/user/obsidian-sync.service"
   end
 
   # Create the systemd timer
-  file "#{ENV['HOME']}/.config/systemd/user/obsidian-sync.timer" do
+  file "#{ENV["HOME"]}/.config/systemd/user/obsidian-sync.timer" do
     owner node[:setup][:user]
     mode "644"
     content <<-EOM
@@ -120,23 +120,23 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOM
-    not_if "test -f #{ENV['HOME']}/.config/systemd/user/obsidian-sync.timer"
+    not_if "test -f #{ENV["HOME"]}/.config/systemd/user/obsidian-sync.timer"
   end
 
   # Enable and start the timer
   execute "enable obsidian sync timer" do
     command "systemctl --user daemon-reload && systemctl --user enable obsidian-sync.timer && systemctl --user start obsidian-sync.timer"
     only_if "which systemctl"
-    only_if "test -f #{ENV['HOME']}/.config/systemd/user/obsidian-sync.timer"
+    only_if "test -f #{ENV["HOME"]}/.config/systemd/user/obsidian-sync.timer"
   end
 else
   # Create launchd plist on macOS
-  directory "#{ENV['HOME']}/Library/LaunchAgents" do
+  directory "#{ENV["HOME"]}/Library/LaunchAgents" do
     owner node[:setup][:user]
     mode "755"
   end
 
-  file "#{ENV['HOME']}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist" do
+  file "#{ENV["HOME"]}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist" do
     owner node[:setup][:user]
     mode "644"
     content <<-EOM
@@ -161,12 +161,12 @@ else
 </dict>
 </plist>
 EOM
-    not_if "test -f #{ENV['HOME']}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist"
+    not_if "test -f #{ENV["HOME"]}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist"
   end
 
   # Load the launchd job
   execute "load obsidian sync launchd job" do
-    command "launchctl load #{ENV['HOME']}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist"
+    command "launchctl load #{ENV["HOME"]}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist"
     only_if "which launchctl"
     not_if "launchctl list | grep com.shin1ohno.obsidian-sync"
   end

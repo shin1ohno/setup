@@ -17,7 +17,7 @@ remote_file "#{node[:setup][:root]}/gvm-install.sh" do
 end
 
 execute "GVM_NO_UPDATE_PROFILE=1 #{node[:setup][:root]}/gvm-install.sh" do
-  not_if "test -d #{ENV['HOME']}/.gvm"
+  not_if "test -d #{ENV["HOME"]}/.gvm"
 end
 
 go_versions = node[:go][:versions]
@@ -33,7 +33,7 @@ end
 go_versions.each do |v|
   execute "install Go version: #{v}" do
     command "/bin/bash -c '. $HOME/.gvm/scripts/gvm && gvm install #{v} -B'"
-    not_if "test -d #{ENV['HOME']}/.gvm/gos/#{v}"
+    not_if "test -d #{ENV["HOME"]}/.gvm/gos/#{v}"
   end
 end
 

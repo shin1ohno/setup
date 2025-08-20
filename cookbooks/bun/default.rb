@@ -8,7 +8,7 @@ remote_file "#{node[:setup][:root]}/bun-install.sh" do
 end
 
 execute "#{node[:setup][:root]}/bun-install.sh" do
-  not_if { File.exists? "#{ENV['HOME']}/.bun/bin/bun" }
+  not_if { File.exists? "#{ENV["HOME"]}/.bun/bin/bun" }
 end
 
 add_profile "bun" do
@@ -20,6 +20,6 @@ END
 end
 
 execute "$HOME/.bun/bin/bun upgrade" do
-  only_if { File.exists? "#{ENV['HOME']}/.bun/bin/bun" }
+  only_if { File.exists? "#{ENV["HOME"]}/.bun/bin/bun" }
 end
 

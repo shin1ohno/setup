@@ -12,7 +12,7 @@ else
   end
 
   execute "#{node[:setup][:root]}/stack-install.sh" do
-    not_if 'which stack > /dev/null'
+    not_if "which stack > /dev/null"
   end
 
   remote_file "#{node[:setup][:root]}/ghcup-install.sh" do

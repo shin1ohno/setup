@@ -55,14 +55,14 @@ else
     not_if "test -x #{node[:setup][:root]}/bin/zk"
   end
 # Create initial zk config directory
-  directory "#{ENV['HOME']}/.config/zk" do
+  directory "#{ENV["HOME"]}/.config/zk" do
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "755"
   end
 
   # Create a basic config file if it doesn't exist
-  file "#{ENV['HOME']}/.config/zk/config.toml" do
+  file "#{ENV["HOME"]}/.config/zk/config.toml" do
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
@@ -87,6 +87,6 @@ else
   link-format = "[[{{id}}]]"
   link-format-with-title = "[[{{id}}|{{title}}]]"
   EOM
-    not_if "test -f #{ENV['HOME']}/.config/zk/config.toml"
+    not_if "test -f #{ENV["HOME"]}/.config/zk/config.toml"
   end
 end
