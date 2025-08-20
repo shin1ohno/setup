@@ -9,7 +9,7 @@ include_cookbook "build-essential" unless node[:platform] == "darwin"
 # Version configuration
 node.reverse_merge!(
   rbenv: {
-    root: "#{ENV['HOME']}/.rbenv",
+    root: "#{ENV["HOME"]}/.rbenv",
     global_version: "3.3",
     global_gems: %w(bundler itamae ed25519 bcrypt_pbkdf)
   },

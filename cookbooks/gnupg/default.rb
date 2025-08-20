@@ -6,21 +6,21 @@ install_package "gnupg" do
 end
 
 # Create .gnupg directory with proper permissions
-execute "mkdir -p #{ENV['HOME']}/.gnupg" do
-  not_if { Dir.exist?("#{ENV['HOME']}/.gnupg") }
+execute "mkdir -p #{ENV["HOME"]}/.gnupg" do
+  not_if { Dir.exist?("#{ENV["HOME"]}/.gnupg") }
 end
 
-execute "chmod 700 #{ENV['HOME']}/.gnupg" do
-  only_if { Dir.exist?("#{ENV['HOME']}/.gnupg") }
+execute "chmod 700 #{ENV["HOME"]}/.gnupg" do
+  only_if { Dir.exist?("#{ENV["HOME"]}/.gnupg") }
 end
 
 # Add configuration for macOS to use pinentry-mac
 if node[:platform] == "darwin"
-  template "#{ENV['HOME']}/.gnupg/gpg-agent.conf" do
+  template "#{ENV["HOME"]}/.gnupg/gpg-agent.conf" do
     owner node[:setup][:user]
     mode "600"
     source "templates/gpg-agent.conf"
-    not_if { File.exist?("#{ENV['HOME']}/.gnupg/gpg-agent.conf") }
+    not_if { File.exist?("#{ENV["HOME"]}/.gnupg/gpg-agent.conf") }
   end
 
   package "pinentry-mac"

@@ -9,7 +9,7 @@ execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g pm2" 
   cwd ENV["HOME"]
 end
 
-c = "sudo env PATH=$PATH:#{ENV['HOME']}/.local/share/mise/shims $(which pm2) startup launchd -u $USER --hp #{ENV['HOME']}" 
+c = "sudo env PATH=$PATH:#{ENV["HOME"]}/.local/share/mise/shims $(which pm2) startup launchd -u $USER --hp #{ENV["HOME"]}" 
 
 if node[:platform] == "darwin"
   execute "setup pm2" do

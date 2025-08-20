@@ -12,7 +12,7 @@ execute "sh #{node[:setup][:root]}/mise-install.sh" do
 end
 
 execute "$HOME/.local/bin/mise self-update" do
-  only_if { File.exists? "$HOME/.local/bin/mise" }
+  only_if { File.exists? "#{ENV["HOME"]}/.local/bin/mise" }
 end
 
 add_profile "mise" do

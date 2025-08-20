@@ -45,7 +45,7 @@ execute "mcp setup" do
   BASH
 end
 
-directory "#{ENV['HOME']}/.claude" do
+directory "#{ENV["HOME"]}/.claude" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
@@ -53,7 +53,7 @@ directory "#{ENV['HOME']}/.claude" do
 end
 
 %w(CLAUDE.md settings.json).each do |file_name|
-  remote_file "#{ENV['HOME']}/.claude/#{file_name}" do
+  remote_file "#{ENV["HOME"]}/.claude/#{file_name}" do
     source "files/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -62,7 +62,7 @@ end
   end
 end
 
-remote_file "#{ENV['HOME']}/.claude-agents.json" do
+remote_file "#{ENV["HOME"]}/.claude-agents.json" do
   source "files/claude-agents.json"
   owner node[:setup][:user]
   group node[:setup][:group]
