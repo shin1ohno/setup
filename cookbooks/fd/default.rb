@@ -3,13 +3,13 @@
 case node[:platform] 
 when "ubuntu"
   package "fd-find" do
-    user "root"
+    user node[:setup][:user]
   end
 when "darwin"
   package "fd"
 else
   package "fd" do
-    user "root"
+    user node[:setup][:user]
   end
 end
 

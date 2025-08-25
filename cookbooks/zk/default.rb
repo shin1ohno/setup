@@ -32,7 +32,7 @@ when "ubuntu", "debian"
 when "arch"
   # For Arch Linux, try to install from AUR
   package "zk" do
-    user "root"
+    user node[:setup][:user]
   end
 else
   # Generic installation for other platforms

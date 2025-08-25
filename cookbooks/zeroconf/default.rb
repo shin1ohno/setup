@@ -1,5 +1,5 @@
 ## frozen_string_literal: true
 
 package "avahi-daemon" do
-  user "root"
+  user node[:setup][:user]
 end

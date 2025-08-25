@@ -1,5 +1,5 @@
 package "samba" do
-  user "root"
+  user node[:setup][:user]
 end
 
 remote_file "/etc/samba/smb.conf" do
@@ -7,10 +7,10 @@ remote_file "/etc/samba/smb.conf" do
   owner "root"
   group "root"
   mode "0644"
-  user "root"
+  user node[:setup][:user]
   not_if "test -e /etc/samba/smb.conf"
 end
 
 execute "service smbd restart" do
-  user "root"
+  user node[:setup][:user]
 end

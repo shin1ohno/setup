@@ -1,8 +1,8 @@
 package "bluez" do
-  user "root"
+  user node[:setup][:user]
 end
 
 package "bluetooth" do
-  user "root"
+  user node[:setup][:user]
 end
 
