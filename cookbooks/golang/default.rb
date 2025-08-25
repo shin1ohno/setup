@@ -4,7 +4,7 @@ if node[:platform] == "ubuntu"
   %w(curl git mercurial make binutils bison gcc build-essential golang
   ).each do |pkg|
     package pkg do
-      user "root"
+      user node[:setup][:user]
     end
   end
 end

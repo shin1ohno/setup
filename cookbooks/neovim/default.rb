@@ -4,13 +4,13 @@ neovim_root = "#{node[:setup][:root]}/neovim"
 
 if node[:platform] == "ubuntu"
   execute "apt-get update" do
-    user "root"
+    user node[:setup][:user]
   end
 
   # Install dependencies
   %w(ninja-build gettext libtool libtool-bin autoconf automake cmake g++ pkg-config unzip curl).each do |pkg|
     package pkg do
-      user "root"
+      user node[:setup][:user]
     end
   end
 

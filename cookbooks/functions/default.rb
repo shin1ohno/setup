@@ -33,7 +33,7 @@ define :install_package, darwin: nil, ubuntu: nil, arch: nil do
         package pkg
       else
         package pkg do
-          user "root"
+          user node[:setup][:user]
         end
       end
     end

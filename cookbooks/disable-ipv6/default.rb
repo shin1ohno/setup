@@ -5,14 +5,14 @@ execute "copy ipv6 sysctl" do
     chown root:root /etc/sysctl.d/99-disable-ipv6.conf
     chmod 644 /etc/sysctl.d/99-disable-ipv6.conf
   BASH
-  user "root"
+  user node[:setup][:user]
   not_if "test -f /etc/sysctl.d/99-disable-ipv6.conf && diff -q #{File.expand_path("../files/99-disable-ipv6.conf", __FILE__)} /etc/sysctl.d/99-disable-ipv6.conf"
 end
 
 # Apply sysctl settings immediately
 execute "apply-ipv6-disable" do
   command "sysctl -p /etc/sysctl.d/99-disable-ipv6.conf"
-  user "root"
+  user node[:setup][:user]
   not_if "sysctl net.ipv6.conf.all.disable_ipv6 | grep -q '= 1'"
 end
 
@@ -24,7 +24,7 @@ execute "disable-ipv6-grub" do
       update-grub
     fi
   BASH
-  user "root"
+  user node[:setup][:user]
   only_if "test -f /etc/default/grub"
   not_if "grep -q 'ipv6.disable=1' /etc/default/grub"
 end
@@ -36,6 +36,6 @@ execute "disable-ipv6-networkmanager" do
       nmcli connection modify "$(nmcli -t -f NAME connection show --active | head -n1)" ipv6.method "disabled" 2>/dev/null || true
     fi
   BASH
-  user "root"
+  user node[:setup][:user]
   only_if "command -v nmcli"
 end

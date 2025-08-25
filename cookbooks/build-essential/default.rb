@@ -5,7 +5,7 @@ when "darwin"
   # Xcode. Unmanaged
 when "ubuntu"
   package "build-essential" do
-    user "root"
+    user node[:setup][:user]
   end
 when "arch"
   package "base-devel"
