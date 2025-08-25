@@ -44,7 +44,7 @@ end
 
 when "ubuntu"
   package "fzf" do
-    user node[:setup][:user]
+    user node[:setup][:install_user]
   end
 add_profile "fzf" do
   bash_content <<-EOM

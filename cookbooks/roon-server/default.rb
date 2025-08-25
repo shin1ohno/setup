@@ -13,7 +13,7 @@ if node[:platform] == "darwin"
 else
   %w(curl ffmpeg cifs-utils).each do |pkg| 
     package pkg do
-      user node[:setup][:user]
+      user node[:setup][:install_user]
     end
   end
  
@@ -33,7 +33,7 @@ else
   end
 
   execute script_path do
-    user node[:setup][:user]
+    user node[:setup][:install_user]
     not_if "test -e /opt/RoonServer"
   end
 end

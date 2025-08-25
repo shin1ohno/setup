@@ -10,7 +10,7 @@ template "/etc/apt/sources.list.d/corretto.list" do
   mode "0644"
   notifies :run, "execute[apt-get update]"
   not_if { File.exists? "/etc/apt/sources.list.d/corretto.list" }
-  user node[:setup][:user]
+  user node[:setup][:install_user]
 end
 
 execute "sudo apt-get update" do

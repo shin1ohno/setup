@@ -3,6 +3,6 @@ if node[:platform] == "darwin"
   package "ripgrep"
 else
   package "ripgrep" do
-    user node[:setup][:user]
+    user node[:setup][:install_user]
   end
 end
