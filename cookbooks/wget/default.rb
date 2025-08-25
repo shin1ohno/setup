@@ -5,7 +5,7 @@ when "darwin"
   package "wget"
 else # Linux
   package "wget" do
-    user node[:setup][:user]
+    user node[:setup][:install_user]
   end
 end
 

@@ -1,5 +1,5 @@
 package "sshpass" do
-  user node[:setup][:user]
+  user node[:setup][:install_user]
   not_if "which sshpass"
 end
 

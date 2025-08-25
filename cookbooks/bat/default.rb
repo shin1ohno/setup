@@ -5,7 +5,7 @@ case node[:platform]
     package "bat"
   else
   package "bat" do
-    user node[:setup][:user]
+    user node[:setup][:install_user]
   end
 end
 
