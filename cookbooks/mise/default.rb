@@ -16,7 +16,7 @@ execute "$HOME/.local/bin/mise self-update" do
 end
 
 # Install usage tool for mise completions
-execute "mise use -g usage" do
+execute "$HOME/.local/bin/mise use -g usage" do
   user node[:setup][:user]
   not_if "$HOME/.local/bin/mise list usage | grep -q 'usage'"
 end
@@ -28,7 +28,7 @@ directory "#{ENV['HOME']}/.local/share/bash-completion/completions" do
   mode "755"
 end
 
-execute "mise completion bash --include-bash-completion-lib > #{ENV['HOME']}/.local/share/bash-completion/completions/mise" do
+execute "$HOME/.local/bin/mise completion bash --include-bash-completion-lib > #{ENV['HOME']}/.local/share/bash-completion/completions/mise" do
   user node[:setup][:user]
   not_if "test -f #{ENV['HOME']}/.local/share/bash-completion/completions/mise"
 end
@@ -40,7 +40,7 @@ directory "#{ENV['HOME']}/.local/share/zsh/site-functions" do
   mode "755"
 end
 
-execute "mise completion zsh > #{ENV['HOME']}/.local/share/zsh/site-functions/_mise" do
+execute "$HOME/.local/bin/mise completion zsh > #{ENV['HOME']}/.local/share/zsh/site-functions/_mise" do
   user node[:setup][:user]
   not_if "test -f #{ENV['HOME']}/.local/share/zsh/site-functions/_mise"
 end
@@ -52,7 +52,7 @@ directory "#{ENV['HOME']}/.config/fish/completions" do
   only_if "which fish"
 end
 
-execute "mise completion fish > #{ENV['HOME']}/.config/fish/completions/mise.fish" do
+execute "$HOME/.local/bin/mise completion fish > #{ENV['HOME']}/.config/fish/completions/mise.fish" do
   user node[:setup][:user]
   not_if "test -f #{ENV['HOME']}/.config/fish/completions/mise.fish"
   only_if "which fish"
