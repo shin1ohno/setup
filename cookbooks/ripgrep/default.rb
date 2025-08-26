@@ -1,8 +1,11 @@
-# frozen_string_literal: true
-if node[:platform] == "darwin"
-  package "ripgrep"
-else
-  package "ripgrep" do
-    user node[:setup][:install_user]
-  end
+include_cookbook "mise"
+
+execute "mise install ripgrep@latest" do
+  user node[:setup][:user]
+  not_if "$HOME/.local/bin/mise list ripgrep | grep -q 'ripgrep'"
+end
+
+execute "mise use --global ripgrep@latest" do
+  user node[:setup][:user]
+  not_if "$HOME/.local/bin/mise list ripgrep | grep -q '\\* '"
 end

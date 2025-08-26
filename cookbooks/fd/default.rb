@@ -1,15 +1,13 @@
-# frozen_string_literal: true
+# Ensure mise is installed
+include_cookbook "mise"
 
-case node[:platform] 
-when "ubuntu"
-  package "fd-find" do
-    user node[:setup][:install_user]
-  end
-when "darwin"
-  package "fd"
-else
-  package "fd" do
-    user node[:setup][:install_user]
-  end
+# Install fd using mise
+execute "mise install fd@latest" do
+  not_if "$HOME/.local/bin/mise list fd | grep -q 'fd'"
+end
+
+# Set fd as globally available
+execute "mise use --global fd@latest" do
+  not_if "$HOME/.local/bin/mise list fd | grep -q '\\* '"
 end
 
