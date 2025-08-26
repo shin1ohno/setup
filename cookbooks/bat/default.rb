@@ -1,13 +1,13 @@
 include_cookbook "mise"
 
 # Install bat using mise
-execute "mise install bat@latest" do
+execute "$HOME/.local/bin/mise install bat@latest" do
   user node[:setup][:user]
   not_if "$HOME/.local/bin/mise list bat | grep -q 'bat'"
 end
 
 # Set bat as globally available
-execute "mise use --global bat@latest" do
+execute "$HOME/.local/bin/mise use --global bat@latest" do
   user node[:setup][:user]
   not_if "$HOME/.local/bin/mise list bat | grep -q '\\* '"
 end
