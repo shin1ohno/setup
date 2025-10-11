@@ -11,7 +11,7 @@ execute "sh #{node[:setup][:root]}/mise-install.sh" do
   not_if "which mise"
 end
 
-execute "$HOME/.local/bin/mise self-update" do
+execute "$HOME/.local/bin/mise self-update -y" do
   only_if { File.exists? "#{ENV["HOME"]}/.local/bin/mise" }
 end
 
