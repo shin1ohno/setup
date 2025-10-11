@@ -37,4 +37,5 @@ include_role "manage" # Managed projects setup
 # macOS-specific client setup (integrated from client role)
 include_cookbook "mac-settings"
 include_cookbook "mac-apps"
+include_cookbook "macism"
 
