@@ -2,8 +2,8 @@
 
 return unless node[:platform] == "darwin"
 
-execute "brew tap laishulu/macism" do
-  not_if "brew tap | grep laishulu/macism"
+execute "brew tap laishulu/homebrew" do
+  not_if "brew tap | grep laishulu/homebrew"
 end
 
 package "macism" do
