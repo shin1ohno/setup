@@ -7,6 +7,7 @@
 # LLM specific tools
 include_cookbook "claude-code"
 include_cookbook "gemini-cli"
+include_cookbook "codex-cli"
 include_cookbook "ollama"
 include_cookbook "llama-3-elyza-jp"
 include_cookbook "tfmcp"
