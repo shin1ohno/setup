@@ -38,4 +38,5 @@ include_role "manage" # Managed projects setup
 include_cookbook "mac-settings"
 include_cookbook "mac-apps"
 include_cookbook "macism"
+include_cookbook "altserver"
 
