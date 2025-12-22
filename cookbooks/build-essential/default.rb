@@ -2,7 +2,7 @@
 
 case node[:platform]
 when "darwin"
-  # Xcode. Unmanaged
+  include_cookbook "xcode"
 when "ubuntu"
   package "build-essential" do
     user node[:setup][:install_user]
