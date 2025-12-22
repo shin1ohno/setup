@@ -37,11 +37,12 @@ add_profile "claude-code" do
 end
 
 execute "mcp setup" do
-  not_if "claude mcp list | grep -q o3"
+  claude_path = "#{ENV["HOME"]}/.claude/local/claude"
+  not_if "#{claude_path} mcp list | grep -q o3"
   command <<~BASH
-    claude mcp add o3-high -s user -e SEARCH_CONTEXT_SIZE=high -e REASONING_EFFORT=high -- npx o3-search-mcp
-    claude mcp add o3 -s user -e SEARCH_CONTEXT_SIZE=medium -e REASONING_EFFORT=medium -- npx o3-search-mcp
-    claude mcp add o3-low -s user -e SEARCH_CONTEXT_SIZE=low -e REASONING_EFFORT=low -- npx o3-search-mcp
+    #{claude_path} mcp add o3-high -s user -e SEARCH_CONTEXT_SIZE=high -e REASONING_EFFORT=high -- npx o3-search-mcp
+    #{claude_path} mcp add o3 -s user -e SEARCH_CONTEXT_SIZE=medium -e REASONING_EFFORT=medium -- npx o3-search-mcp
+    #{claude_path} mcp add o3-low -s user -e SEARCH_CONTEXT_SIZE=low -e REASONING_EFFORT=low -- npx o3-search-mcp
   BASH
 end
 
