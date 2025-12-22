@@ -3,8 +3,8 @@
 # Programming role: Programming languages and development environments
 # This role installs various programming languages and their toolchains
 
-# Build tools (for Linux)
-include_cookbook "build-essential" unless node[:platform] == "darwin"
+# Build tools (includes Xcode for macOS, build-essential for Linux)
+include_cookbook "build-essential"
 
 # Version configuration
 node.reverse_merge!(
