@@ -17,4 +17,5 @@ include_cookbook "tfmcp"
 # Volta removed - Node.js is now managed by mise via nodejs cookbook
 include_cookbook "bun"
 include_cookbook "mcp"
+include_cookbook "notion"
 include_cookbook "serena"
