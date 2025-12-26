@@ -39,6 +39,7 @@ include_cookbook "ruby32"
 # Other programming languages
 include_cookbook "rust"
 include_cookbook "nodejs"
+include_cookbook "pm2"
 include_cookbook "haskell"
 include_cookbook "golang"
 
