@@ -13,7 +13,7 @@ return if node[:platform] != "darwin"
   karabiner-elements        kiro
   launchcontrol             monodraw
   microsoft-teams           mqtt-explorer
-  notion                    obsidian
+  obsidian
   obs                       rapidapi
   tailscale                 tidal
   transmit                  via
