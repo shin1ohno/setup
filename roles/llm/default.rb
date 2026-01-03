@@ -6,6 +6,7 @@
 
 # LLM specific tools
 include_cookbook "claude-code"
+include_cookbook "claude-code-spec-workflow"
 include_cookbook "gemini-cli"
 include_cookbook "codex-cli"
 include_cookbook "ollama"
