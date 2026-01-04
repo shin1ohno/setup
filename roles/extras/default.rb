@@ -11,6 +11,7 @@ include_cookbook "dot-config-nvim"
 include_cookbook "lazygit"
 
 # File utilities and knowledge tools
+include_cookbook "imgcat"
 include_cookbook "skicka"
 include_cookbook "tnef"
 include_cookbook "zk"
