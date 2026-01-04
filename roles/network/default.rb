@@ -7,6 +7,7 @@ include_cookbook "iperf3"
 
 # Remote access and file transfer
 include_cookbook "mosh"
+include_cookbook "eternal-terminal"
 include_cookbook "sshpass"
 
 unless node[:platform] == "darwin"
