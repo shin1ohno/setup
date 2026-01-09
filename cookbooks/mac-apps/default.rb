@@ -9,12 +9,12 @@ return if node[:platform] != "darwin"
   docker-desktop            figma
   firefox                   ghostty
   google-chrome             imageoptim
-  iterm2                    jetbrains-toolbox
-  karabiner-elements        kiro
-  launchcontrol             monodraw
-  microsoft-teams           mqtt-explorer
-  obsidian
-  obs                       rapidapi
+  insta360-link-controller  iterm2
+  jetbrains-toolbox         karabiner-elements
+  kiro                      launchcontrol
+  microsoft-teams           monodraw
+  mqtt-explorer             obs
+  obsidian                  rapidapi
   tailscale                 tidal
   transmit                  via
   zoom
