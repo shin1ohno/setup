@@ -5,7 +5,7 @@ when "darwin"
   include_cookbook "xcode"
 when "ubuntu"
   package "build-essential" do
-    user node[:setup][:install_user]
+    user node[:setup][:system_user]
   end
 when "arch"
   package "base-devel"

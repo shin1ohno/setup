@@ -17,7 +17,7 @@ when "darwin"
 when "ubuntu"
   include_cookbook "apt-source-corretto"
   package "java-common" do
-    user node[:setup][:install_user]
+    user node[:setup][:system_user]
   end
 else
   raise "Unsupported platform: #{node[:platform]}"

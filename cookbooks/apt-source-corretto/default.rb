@@ -5,12 +5,12 @@ execute "curl -LSsf https://apt.corretto.aws/corretto.key | sudo apt-key add -" 
 end
 
 template "/etc/apt/sources.list.d/corretto.list" do
-  owner "root"
-  group "root"
+  user node[:setup][:system_user]
+  owner node[:setup][:system_user]
+  group node[:setup][:system_group]
   mode "0644"
   notifies :run, "execute[apt-get update]"
   not_if { File.exists? "/etc/apt/sources.list.d/corretto.list" }
-  user node[:setup][:install_user]
 end
 
 execute "sudo apt-get update" do

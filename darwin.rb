@@ -13,8 +13,8 @@ node.reverse_merge!(
     root: "#{ENV["HOME"]}/.setup_shin1ohno",
     user: user,
     group: "staff",
-    install_user: user,
-    install_group: "staff",
+    system_user: "root",
+    system_group: "wheel",
   },
   homebrew: {
     # Set prefix to /opt/homebrew on M1 Mac because Homebrew has changed the default prefix to /opt/homebrew on M1 Mac.

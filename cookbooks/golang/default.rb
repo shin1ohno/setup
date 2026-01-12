@@ -10,7 +10,7 @@ include_cookbook "mise"
 if node[:platform] == "ubuntu"
   %w(curl git mercurial make binutils bison gcc build-essential).each do |pkg|
     package pkg do
-      user node[:setup][:install_user]
+      user node[:setup][:system_user]
     end
   end
 end

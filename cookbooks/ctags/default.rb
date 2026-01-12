@@ -3,12 +3,12 @@
 case node[:platform]
 when "ubuntu"
   package "universal-ctags" do
-    user node[:setup][:install_user]
+    user node[:setup][:system_user]
   end
 when "darwin"
   package "ctags"
 else
   package "ctags" do
-    user node[:setup][:install_user]
+    user node[:setup][:system_user]
   end
 end

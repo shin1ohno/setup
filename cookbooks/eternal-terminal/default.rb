@@ -17,16 +17,35 @@ when "darwin"
   # Apple Silicon Macs use /opt/homebrew, Intel Macs use /usr/local
   etserver_path = node[:homebrew][:machine] == "arm64" ? "/opt/homebrew/bin/etserver" : "/usr/local/bin/etserver"
 
-  template "/Library/LaunchDaemons/homebrew.mxcl.et.plist" do
-    owner "root"
-    group "wheel"
+  directory "#{node[:setup][:root]}/eternal-terminal" do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+  end
+
+  template "#{node[:setup][:root]}/eternal-terminal/homebrew.mxcl.et.plist" do
+    owner node[:setup][:user]
+    group node[:setup][:group]
     mode "644"
     action :create
     variables(etserver_path: etserver_path)
     source "templates/homebrew.mxcl.et.plist.erb"
   end
 
+  execute "copy etserver launch daemon" do
+    user node[:setup][:system_user]
+    command "cp #{node[:setup][:root]}/eternal-terminal/homebrew.mxcl.et.plist /Library/LaunchDaemons/homebrew.mxcl.et.plist"
+    not_if "test -f /Library/LaunchDaemons/homebrew.mxcl.et.plist"
+  end
+
+  execute "set etserver launch daemon ownership" do
+    user node[:setup][:system_user]
+    command "chown #{node[:setup][:system_user]}:#{node[:setup][:system_group]} /Library/LaunchDaemons/homebrew.mxcl.et.plist"
+    only_if "test -f /Library/LaunchDaemons/homebrew.mxcl.et.plist"
+  end
+
   execute "load etserver daemon" do
+    user node[:setup][:system_user]
     command "launchctl load -w /Library/LaunchDaemons/homebrew.mxcl.et.plist"
     not_if "launchctl list | grep -q homebrew.mxcl.et"
   end
