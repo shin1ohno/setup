@@ -1,10 +1,12 @@
 # AltServer Cookbook
 
-This cookbook installs the necessary macOS applications to enable JIT-enabled UTM on iOS/iPadOS devices via AltStore PAL.
+This cookbook installs the necessary macOS applications to enable JIT-enabled UTM on iOS devices via AltStore PAL.
 
 ## Background
 
-As of December 2025, Japan now supports alternative app marketplaces on iOS/iPadOS. This enables installing AltStore PAL and JIT-enabled apps like UTM for running virtual machines at full speed.
+As of December 2025, Japan now supports alternative app marketplaces on iOS. This enables installing AltStore PAL and JIT-enabled apps like UTM for running virtual machines at full speed.
+
+**Note**: In Japan, only iPhone is supported. iPadOS is not available.
 
 ## What This Cookbook Installs
 
@@ -21,7 +23,7 @@ A command-line tool from the [Jitterbug project](https://github.com/osy/Jitterbu
 ## Prerequisites
 
 - macOS with Homebrew installed
-- iOS/iPadOS 26.2 or later on your device
+- iPhone with iOS 26.2 or later (iPadOS not supported in Japan)
 - Japanese Apple ID (for AltStore PAL access in Japan)
 
 ## Usage
@@ -38,9 +40,9 @@ Or run directly:
 ./bin/mitamae local darwin.rb
 ```
 
-## iOS/iPadOS Setup Steps
+## iOS Setup Steps
 
-After running this cookbook on your Mac, follow these steps on your iOS/iPadOS device:
+After running this cookbook on your Mac, follow these steps on your iPhone:
 
 ### Step 1: Install AltStore PAL
 
