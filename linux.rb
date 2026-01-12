@@ -9,8 +9,8 @@ node.reverse_merge!(
     root: "#{ENV["HOME"]}/.setup_shin1ohno",
     user: user,
     group: group,
-    install_user: "root",
-    install_group: "root",
+    system_user: "root",
+    system_group: "root",
   }
 )
 

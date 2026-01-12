@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 package "mosh" do
-  user (node[:platform] == "darwin" ? node[:user] : "root")
+  user (node[:platform] == "darwin" ? node[:setup][:user] : node[:setup][:system_user])
 end
 
 if node[:platform] == "darwin"
@@ -12,7 +12,7 @@ if node[:platform] == "darwin"
   # Create symlink in /usr/local/bin (SIP prevents /usr/bin)
   execute "create mosh-server symlink" do
     command "ln -sf #{mosh_server_path} /usr/local/bin/mosh-server"
-    user "root"
+    user node[:setup][:system_user]
     only_if "test -f #{mosh_server_path}"
     not_if "test -L /usr/local/bin/mosh-server"
   end
@@ -20,7 +20,7 @@ if node[:platform] == "darwin"
   # Enable PermitUserEnvironment in sshd_config
   execute "enable sshd PermitUserEnvironment" do
     command "sed -i '' 's/^#PermitUserEnvironment no/PermitUserEnvironment yes/' /etc/ssh/sshd_config"
-    user "root"
+    user node[:setup][:system_user]
     only_if "grep -q '^#PermitUserEnvironment no' /etc/ssh/sshd_config"
   end
 
@@ -42,21 +42,21 @@ if node[:platform] == "darwin"
   # Enable Remote Login (SSH) - required for mosh connections
   execute "enable remote login for mosh" do
     command "systemsetup -setremotelogin on"
-    user "root"
+    user node[:setup][:system_user]
     not_if "systemsetup -getremotelogin | grep -q 'On'"
   end
 
   # Add mosh-server to firewall allow list
   execute "add mosh-server to firewall" do
     command "/usr/libexec/ApplicationFirewall/socketfilterfw --add #{mosh_server_path}"
-    user "root"
+    user node[:setup][:system_user]
     only_if "test -f #{mosh_server_path}"
     not_if "/usr/libexec/ApplicationFirewall/socketfilterfw --listapps | grep -q mosh-server"
   end
 
   execute "unblock mosh-server in firewall" do
     command "/usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp #{mosh_server_path}"
-    user "root"
+    user node[:setup][:system_user]
     only_if "test -f #{mosh_server_path}"
   end
 end

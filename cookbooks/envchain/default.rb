@@ -6,7 +6,7 @@ when "darwin"
 when "arch"
   include_cookbook "arch-wanko-cc"
   package "envchain" do
-    user node[:setup][:install_user]
+    user node[:setup][:system_user]
   end
 when "ubuntu"
   #skip!

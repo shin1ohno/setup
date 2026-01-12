@@ -8,12 +8,21 @@ if node[:platform] == "darwin"
     source "files/com.roon.server.plist"
   end
 
-  execute "sudo cp #{node[:setup][:root]}/roon/com.roon.server.plist /Library/LaunchDaemons/com.roon.server.plist"
-  execute "sudo chown root:wheel /Library/LaunchDaemons/com.roon.server.plist" 
+  execute "copy roon launch daemon" do
+    user node[:setup][:system_user]
+    command "cp #{node[:setup][:root]}/roon/com.roon.server.plist /Library/LaunchDaemons/com.roon.server.plist"
+    not_if "test -f /Library/LaunchDaemons/com.roon.server.plist"
+  end
+
+  execute "set roon launch daemon ownership" do
+    user node[:setup][:system_user]
+    command "chown #{node[:setup][:system_user]}:#{node[:setup][:system_group]} /Library/LaunchDaemons/com.roon.server.plist"
+    only_if "test -f /Library/LaunchDaemons/com.roon.server.plist"
+  end 
 else
   %w(curl ffmpeg cifs-utils).each do |pkg| 
     package pkg do
-      user node[:setup][:install_user]
+      user node[:setup][:system_user]
     end
   end
  
@@ -33,7 +42,7 @@ else
   end
 
   execute script_path do
-    user node[:setup][:install_user]
+    user node[:setup][:system_user]
     not_if "test -e /opt/RoonServer"
   end
 end

@@ -6,13 +6,13 @@ if node[:platform] == "darwin"
   package "gh"
 else
   package "git" do
-    user node[:setup][:install_user]
+    user node[:setup][:system_user]
   end
   package "git-lfs" do
-    user node[:setup][:install_user]
+    user node[:setup][:system_user]
   end
   package "gh" do
-    user node[:setup][:install_user]
+    user node[:setup][:system_user]
   end
 end
 

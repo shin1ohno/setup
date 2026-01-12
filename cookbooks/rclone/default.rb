@@ -22,7 +22,7 @@ if node[:platform] == "darwin"
 else #linux
   execute "RCLONE_NO_UPDATE_PROFILE=1 #{node[:setup][:root]}/rclone-install.sh" do
     not_if "which rclone"
-    user node[:setup][:install_user]
+    user node[:setup][:system_user]
   end
 end
 
