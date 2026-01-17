@@ -6,6 +6,6 @@ mcp_commands = %w(o3-search-mcp mcp-hub)
 mcp_commands.each do |com|
   execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g #{com}" do
     user node[:setup][:user]
-    not_if "which #{com}"
+    not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g #{com}"
   end
 end

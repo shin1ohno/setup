@@ -10,7 +10,7 @@ include_cookbook "mcp"
 # Install Claude Code
 execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g @anthropic-ai/claude-code" do
   user node[:setup][:user]
-  not_if "which claude"
+  not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g @anthropic-ai/claude-code"
 end
 
 # Add Claude Code to the profile

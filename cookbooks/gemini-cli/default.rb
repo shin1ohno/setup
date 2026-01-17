@@ -9,6 +9,6 @@ include_cookbook "nodejs"
 # Install Gemini CLI globally via npm
 execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g @google/gemini-cli" do
   user node[:setup][:user]
-  not_if "which gemini"
+  not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g @google/gemini-cli"
 end
 
