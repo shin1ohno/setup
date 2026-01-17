@@ -33,12 +33,7 @@ end
 ).each do |requirement|
   execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g #{requirement}" do
     user node[:setup][:user]
-    if requirement == "@tailwindcss/language-server"
-      requirement = "tailwindcss-language-server"
-    elsif requirement == "typescript"
-      requirement = "tsserver"
-    end
-    not_if "which #{requirement}"
+    not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g #{requirement}"
     cwd ENV["HOME"]
   end
 end

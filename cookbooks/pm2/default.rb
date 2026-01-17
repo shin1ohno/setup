@@ -5,7 +5,7 @@ include_cookbook "nodejs"
 
 execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g pm2" do
   user node[:setup][:user]
-  not_if "which pm2"
+  not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g pm2"
   cwd ENV["HOME"]
 end
 
