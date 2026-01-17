@@ -11,7 +11,7 @@ end
 add_profile "yamaha-network" do
   bash_content <<~'BASH'
     # Retrieve RTX router admin password from AWS SSM Parameter Store
-    rtx-pass() {
+    rtx-admin-pass() {
       aws ssm get-parameter \
         --name "/rtx-routers/$1/admin_password" \
         --with-decryption \
