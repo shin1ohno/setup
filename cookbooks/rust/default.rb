@@ -15,5 +15,5 @@ end
 
 execute "$HOME/.cargo/bin/rustup update stable"
 execute "$HOME/.cargo/bin/cargo install bottom --locked" do
-  not_if "which btm"
+  not_if "$HOME/.cargo/bin/cargo install --list | grep -q '^bottom '"
 end

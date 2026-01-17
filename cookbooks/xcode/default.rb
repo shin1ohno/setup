@@ -21,12 +21,12 @@ end
 # Install xcodes CLI for Xcode version management
 # Use homebrew-core formula (has pre-built bottles, no Xcode required)
 execute "brew install xcodes" do
-  not_if "which xcodes"
+  not_if "brew list xcodes"
 end
 
 # Install aria2 for faster parallel downloads
 execute "brew install aria2" do
-  not_if "which aria2c"
+  not_if "brew list aria2"
 end
 
 # Accept Xcode license if Xcode.app is installed
