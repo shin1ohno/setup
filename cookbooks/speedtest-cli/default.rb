@@ -5,10 +5,10 @@ when "darwin"
   end
 
   package "speedtest"
-when "ubuntu" 
+when "ubuntu"
   execute "Install speedtest-cli" do
     command "pip install speedtest-cli"
-    not_if "which speedtest"
+    not_if "pip list | grep -q speedtest-cli"
   end
 end
 

@@ -21,6 +21,6 @@ end
 execute "Install tfmcp using cargo" do
   command "$HOME/.cargo/bin/cargo install tfmcp --locked"
   user node[:setup][:user]
-  not_if "which tfmcp || test -f $HOME/.cargo/bin/tfmcp"
+  not_if "$HOME/.cargo/bin/cargo install --list | grep -q '^tfmcp '"
 end
 
