@@ -23,7 +23,7 @@ if node[:platform] == "darwin"
     not_if { File.exist?("#{ENV["HOME"]}/.gnupg/gpg-agent.conf") }
   end
 
-  package "pinentry-mac"
+  package "pinentry"  # includes pinentry-tty and pinentry-curses
 end
 
 # Add GnuPG to profile
