@@ -50,6 +50,7 @@ include_cookbook "dot-tmux"
 include_cookbook "fonts"
 include_cookbook "dot-config-alacritty"
 include_cookbook "neofetch"
+include_cookbook "pbcopy" # OSC 52 clipboard for Linux
 
 # Security and encryption
 include_cookbook "gnupg"
