@@ -55,14 +55,17 @@ when "ubuntu"
   execute "add eternal-terminal ppa" do
     command "add-apt-repository -y ppa:jgmath2000/et"
     not_if "grep -q 'jgmath2000/et' /etc/apt/sources.list.d/*.list 2>/dev/null"
+    user node[:setup][:system_user]
   end
 
   execute "apt-get update for eternal-terminal" do
     command "apt-get update"
     not_if "which et"
+    user node[:setup][:system_user]
   end
 
   package "et" do
+    user node[:setup][:system_user]
     action :install
   end
 
@@ -70,6 +73,7 @@ when "ubuntu"
   execute "enable etserver service" do
     command "systemctl enable --now et.service"
     not_if "systemctl is-active et.service"
+    user node[:setup][:system_user]
   end
 
 when "debian"
@@ -81,14 +85,17 @@ when "debian"
       curl -sSL https://github.com/MisterTea/debian-et/raw/master/et.gpg -o /etc/apt/keyrings/et.gpg
     BASH
     not_if "test -f /etc/apt/sources.list.d/et.list"
+    user node[:setup][:system_user]
   end
 
   execute "apt update for eternal-terminal" do
     command "apt-get update"
     not_if "which et"
+    user node[:setup][:system_user]
   end
 
   package "et" do
+    user node[:setup][:system_user]
     action :install
   end
 
@@ -96,11 +103,13 @@ when "debian"
   execute "enable etserver service" do
     command "systemctl enable --now et.service"
     not_if "systemctl is-active et.service"
+    user node[:setup][:system_user]
   end
 
 when "arch"
   # Install via pacman on Arch Linux
   package "eternal-terminal" do
+    user node[:setup][:system_user]
     action :install
   end
 
@@ -108,6 +117,7 @@ when "arch"
   execute "enable etserver service" do
     command "systemctl enable --now et.service"
     not_if "systemctl is-active et.service"
+    user node[:setup][:system_user]
   end
 end
 
