@@ -9,6 +9,7 @@ include_cookbook "iperf3"
 include_cookbook "mosh"
 include_cookbook "eternal-terminal"
 include_cookbook "sshpass"
+include_cookbook "osc52-clipboard"
 
 unless node[:platform] == "darwin"
   include_cookbook "rclone"
