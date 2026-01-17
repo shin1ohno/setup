@@ -13,3 +13,6 @@ include_cookbook "sshpass"
 unless node[:platform] == "darwin"
   include_cookbook "rclone"
 end
+
+# Network device management
+include_cookbook "yamaha-network"
