@@ -19,5 +19,16 @@ add_profile "yamaha-network" do
         --output text \
         --profile sh1admn
     }
+
+    # Retrieve RTX router user password from AWS SSM Parameter Store
+    # Usage: rtx-user-pass <router_name> <username>
+    rtx-user-pass() {
+      aws ssm get-parameter \
+        --name "/rtx-routers/$1/user_password/$2" \
+        --with-decryption \
+        --query 'Parameter.Value' \
+        --output text \
+        --profile sh1admn
+    }
   BASH
 end
