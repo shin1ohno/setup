@@ -30,7 +30,7 @@ file "#{node[:setup][:root]}/obsidian_sync/sync.sh" do
 SOURCE_DIR="${HOME}/obsidian"
 REMOTE_NAME="icloud"
 REMOTE_PATH="Obsidian"
-LOG_FILE="${HOME}/.setup_shin1ohno/obsidian_sync/sync.log"
+LOG_FILE="#{node[:setup][:root]}/obsidian_sync/sync.log"
 
 # Log function
 log() {
@@ -136,7 +136,7 @@ else
     mode "755"
   end
 
-  file "#{ENV["HOME"]}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist" do
+  file "#{ENV["HOME"]}/Library/LaunchAgents/com.#{node[:setup][:user]}.obsidian-sync.plist" do
     owner node[:setup][:user]
     mode "644"
     content <<-EOM
@@ -145,7 +145,7 @@ else
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.shin1ohno.obsidian-sync</string>
+    <string>com.#{node[:setup][:user]}.obsidian-sync</string>
     <key>ProgramArguments</key>
     <array>
         <string>#{node[:setup][:root]}/obsidian_sync/sync.sh</string>
@@ -161,14 +161,14 @@ else
 </dict>
 </plist>
 EOM
-    not_if "test -f #{ENV["HOME"]}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist"
+    not_if "test -f #{ENV["HOME"]}/Library/LaunchAgents/com.#{node[:setup][:user]}.obsidian-sync.plist"
   end
 
   # Load the launchd job
   execute "load obsidian sync launchd job" do
-    command "launchctl load #{ENV["HOME"]}/Library/LaunchAgents/com.shin1ohno.obsidian-sync.plist"
+    command "launchctl load #{ENV["HOME"]}/Library/LaunchAgents/com.#{node[:setup][:user]}.obsidian-sync.plist"
     only_if "which launchctl"
-    not_if "launchctl list | grep com.shin1ohno.obsidian-sync"
+    not_if "launchctl list | grep com.#{node[:setup][:user]}.obsidian-sync"
   end
 end
 

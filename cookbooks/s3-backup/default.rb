@@ -457,8 +457,8 @@ file "#{setup_root}/bin/s3-backup.README.md" do
 
     3. Test the backup:
        ```bash
-       ~/.setup_shin1ohno/bin/s3-backup status
-       ~/.setup_shin1ohno/bin/s3-backup backup
+       #{setup_root}/bin/s3-backup status
+       #{setup_root}/bin/s3-backup backup
        ```
 
     4. Enable daily backups:

@@ -24,6 +24,6 @@ execute "touch #{ENV["HOME"]}/.zshrc" do
   not_if { File.exist?("#{ENV["HOME"]}/.zshrc") }
 end
 
-execute "echo '. ~/.setup_shin1ohno/profile' >> ~/.zshrc" do
-  not_if "fgrep -q '. ~/.setup_shin1ohno/profile' ~/.zshrc"
+execute "echo '. #{node[:setup][:root]}/profile' >> ~/.zshrc" do
+  not_if "fgrep -q '. #{node[:setup][:root]}/profile' ~/.zshrc"
 end

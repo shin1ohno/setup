@@ -10,6 +10,9 @@ end
 
 add_profile "yamaha-network" do
   bash_content <<~'BASH'
+    # AWS profile for RTX router management (override with RTX_AWS_PROFILE env var)
+    : "${RTX_AWS_PROFILE:=default}"
+
     # Retrieve RTX router admin password from AWS SSM Parameter Store
     rtx-admin-pass() {
       aws ssm get-parameter \
@@ -17,7 +20,7 @@ add_profile "yamaha-network" do
         --with-decryption \
         --query 'Parameter.Value' \
         --output text \
-        --profile sh1admn
+        --profile "${RTX_AWS_PROFILE}"
     }
 
     # Retrieve RTX router user password from AWS SSM Parameter Store
@@ -28,7 +31,7 @@ add_profile "yamaha-network" do
         --with-decryption \
         --query 'Parameter.Value' \
         --output text \
-        --profile sh1admn
+        --profile "${RTX_AWS_PROFILE}"
     }
   BASH
 end
