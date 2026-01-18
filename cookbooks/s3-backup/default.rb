@@ -144,8 +144,8 @@ file "#{setup_root}/bin/s3-backup" do
         local temp_dir
         temp_dir=$(mktemp -d)
 
-        # Ensure temp directory is cleaned up on exit
-        trap 'rm -rf "$temp_dir"' EXIT
+        # Ensure temp directory is cleaned up on function return
+        trap '[[ -n "${temp_dir:-}" ]] && rm -rf "$temp_dir"' RETURN
 
         log_info "Starting backup: $backup_name"
 
@@ -259,7 +259,7 @@ file "#{setup_root}/bin/s3-backup" do
         mkdir -p "$restore_dir"
         local temp_dir
         temp_dir=$(mktemp -d)
-        trap 'rm -rf "$temp_dir"' EXIT
+        trap '[[ -n "${temp_dir:-}" ]] && rm -rf "$temp_dir"' RETURN
 
         local s3_path="s3://${S3_BUCKET}/${S3_PREFIX}/${backup_file}"
         local encrypted_file="${temp_dir}/${backup_file}"
