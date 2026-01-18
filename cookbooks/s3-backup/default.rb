@@ -430,13 +430,9 @@ if node[:platform] != "darwin"
     TIMER
   end
 
-  # Reload systemd
-  execute "systemctl --user daemon-reload" do
-    user user
-  end
-
-  # Note: Timer is not automatically enabled
+  # Note: systemctl --user requires D-Bus session, cannot run in mitamae context
   # User should run after configuring ~/.config/s3-backup/config:
+  #   systemctl --user daemon-reload
   #   systemctl --user enable --now s3-backup.timer
 end
 
@@ -467,6 +463,7 @@ file "#{setup_root}/bin/s3-backup.README.md" do
 
     4. Enable daily backups:
        ```bash
+       systemctl --user daemon-reload
        systemctl --user enable --now s3-backup.timer
        ```
 
