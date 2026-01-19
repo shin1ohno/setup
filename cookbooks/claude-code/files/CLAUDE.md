@@ -2,15 +2,14 @@
 
 This file contains my personal preferences for Claude Code.
 
-## General Instructions
+## Critical Rules
 
-- Please communicate in Japanese
-- Git commit messages and comments in source code should be in English
+These rules must always be followed:
+
+- Communicate in Japanese
+- Git commit messages and source code comments must be in English
 - Always ensure files end with a newline character (`\n`)
-- Follow existing code conventions and patterns in each project
-- Prefer editing existing files over creating new ones
-- Create a SESSION_PROGRESS.md document at the project root. Always record plans and achievements here, and constantly refer to and update it as we progress. Consider to split SESSION_PROGRESS.md appropriately to conserve tokens
-- Please make the most of Gemini and o3 as good consultants. I have written their respective characters and access methods below for your reference
+- Never include "Generated with Claude Code" or "Co-Authored-By: Claude" in git commits
 
 ## Code Quality Standards
 
@@ -18,84 +17,49 @@ This file contains my personal preferences for Claude Code.
 - Do not leave empty lines containing only whitespace
 - Write clean, readable code that follows language conventions
 - Use consistent indentation and formatting
-- Do not use mock data in the production code
+- Do not use mock data in production code
 
-## Using o3
+## General Preferences
 
-You have three o3 mcps installed(o3-high, o3, o3-low). They have general knowledge and high reasoning capabililty.
+- Follow existing code conventions and patterns in each project
+- Prefer editing existing files over creating new ones
+- Create a SESSION_PROGRESS.md document at the project root to record plans and achievements; split it appropriately to conserve tokens
 
-### How to use o3
+## Spec Workflow
 
-Use mcps depending on the complexity of the task.
+When spec-workflow MCP is available, use it for feature development:
 
-### When to use o3
+- Run tasks in parallel whenever possible to maximize efficiency
+- Complete one task at a time, then commit changes before moving to the next
+- Each task completion should result in a git commit
 
-Make sure to use o3 when you want to search or fetch something from the web.
+## Using o3 MCP
 
-## Using Gemini AI
+Three o3 MCPs are available with different reasoning levels:
 
-When analyzing large codebases or multiple files that might exceed context limits or you want to search the web, use the Gemini CLI with its massive context window. Use `gemini -p` to leverage Google Gemini's large context capacity.
+| MCP | Use Case |
+|-----|----------|
+| `o3-high` | Complex architectural decisions, difficult debugging |
+| `o3` | General reasoning, moderate complexity tasks |
+| `o3-low` | Quick lookups, simple questions |
 
-## File and Directory Inclusion Syntax
+Use o3 when:
+- Searching or fetching information from the web
+- Need external knowledge beyond training data
+- Want a second opinion on complex problems
 
-Use the `@` syntax to include files and directories in your Gemini prompts. The paths should be relative to WHERE you run the
-gemini command:
+## Git Commit Format
 
-### How to use
+### First Line (Summary)
 
-- Single file analysis: gemini -p "@src/main.py Explain this file's purpose and structure"
-- Multiple files: gemini -p "@package.json @src/index.js Analyze the dependencies used in the code"
-- Entire directory: gemini -p "@src/ Summarize the architecture of this codebase"
-- Multiple directories: gemini -p "@src/ @tests/ Analyze test coverage for the source code"
-- Current directory and subdirectories: gemini -p "@./ Give me an overview of this entire project"
-- Web search: gemini -p "WebSearch: oauth 2.0 security best practices rfc"
-
-### Implementation Verification Examples
-
-Check if a feature is implemented: gemini -p "@src/ @lib/ Has dark mode been implemented in this codebase? Show me the relevant files and functions"
-Verify authentication implementation: gemini -p "@src/ @middleware/ Is JWT authentication implemented? List all auth-related endpoints and middleware"
-Check for specific patterns: gemini -p "@src/ Are there any React hooks that handle WebSocket connections? List them with file paths"
-Verify error handling: gemini -p "@src/ @api/ Is proper error handling implemented for all API endpoints? Show examples of try-catch blocks"
-Check for rate limiting: gemini -p "@backend/ @middleware/ Is rate limiting implemented for the API? Show the implementation details"
-Verify caching strategy: gemini -p "@src/ @lib/ @services/ Is Redis caching implemented? List all cache-related functions and their usage"
-Check for specific security measures: gemini -p "@src/ @api/ Are SQL injection protections implemented? Show how user inputs are sanitized"
-Verify test coverage for features: gemini -p "@src/payment/ @tests/ Is the payment processing module fully tested? List all test cases"
-
-### When to Use Gemini CLI
-
-Use gemini -p when:
-
-- Analyzing entire codebases or large directories
-- Comparing multiple large files
-- Need to understand project-wide patterns or architecture
-- Current context window is insufficient for the task
-- Working with files totaling more than 100KB
-- Verifying if specific features, patterns, or security measures are implemented
-- Checking for the presence of certain coding patterns across the entire codebase
-
-### Important Notes
-
-- Paths in @ syntax are relative to your current working directory when invoking gemini
-  - The CLI will include file contents directly in the context
-- Gemini's context window can handle entire codebases that would overflow Claude's context
-- When checking implementations, be specific about what you're looking for to get accurate results # Using Gemini CLI for Large Codebase Analysis
-
-### Git Commit
-
-- Please never include things like "Generated with [Claude Code](https://claude.ai/code)" or "Co-Authored-By: Claude <noreply@anthropic.com>" in git commit messages
-
-#### First Line (Summary)
-
-- Try to keep total length under 50 characters
-- Start with `{component_name}: ` prefix when possible
-  - Component name can be shortened filename or directory name
-  - Omit prefix if it would make the line too long
+- Keep under 50 characters
+- Start with `{component}: ` prefix when possible (shortened filename or directory)
 - Use imperative mood (e.g., "Add feature" not "Added feature")
-- Use more contextful verbs than "Change", "Add", "Fix" or "Update"
-- Try to explain the "why" of the change, not just the "what"
+- Prefer contextful verbs over generic "Change", "Add", "Fix", "Update"
+- Explain the "why", not just the "what"
 
-#### Additional Lines
+### Body (Optional)
 
 - Leave second line empty
-- Add detailed explanation, background, or reasoning in subsequent lines
-- Include relevant context that helps reviewers understand the change
+- Add detailed explanation, background, or reasoning
+- Include context that helps reviewers understand the change
