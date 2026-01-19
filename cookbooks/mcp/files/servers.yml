@@ -70,3 +70,4 @@ mcp_servers:
       - "serena"
       - "--config"
       - "${HOME}/.serena/config.yml"
+
