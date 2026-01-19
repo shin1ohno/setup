@@ -22,27 +22,19 @@ directory "#{ENV["HOME"]}/.codex" do
   action :create
 end
 
-# Collect ManagedProjects directories for trust configuration
-managed_projects_dir = "#{ENV["HOME"]}/ManagedProjects"
-trusted_projects = [ENV["HOME"]]
+# Generate codex config.toml using shell script
+# This uses the same servers.yml as mcp cookbook
+mcp_yaml_path = File.join(File.dirname(__FILE__), "..", "mcp", "files", "servers.yml")
+generator_script = File.join(File.dirname(__FILE__), "files", "generate_config.sh")
+output_path = "#{ENV["HOME"]}/.codex/config.toml"
 
-if Dir.exist?(managed_projects_dir)
-  Dir.glob("#{managed_projects_dir}/*").select { |f| File.directory?(f) }.each do |dir|
-    trusted_projects << dir
-  end
+execute "generate codex config.toml" do
+  command "bash #{generator_script} #{mcp_yaml_path} #{output_path}"
+  user node[:setup][:user]
 end
 
-# Get MCP servers from node (set by mcp cookbook if included first)
-mcp_servers = node[:mcp_servers] || {}
-
-# Deploy codex config.toml
-template "#{ENV["HOME"]}/.codex/config.toml" do
-  source "templates/config.toml.erb"
+file output_path do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
-  variables(
-    trusted_projects: trusted_projects,
-    mcp_servers: mcp_servers
-  )
 end
