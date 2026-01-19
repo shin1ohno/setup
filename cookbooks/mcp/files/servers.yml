@@ -1,0 +1,72 @@
+# MCP Server Definitions
+# =======================
+# This file defines MCP servers that will be deployed to:
+# - Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json
+# - Codex CLI: ~/.codex/config.toml
+#
+# Environment Variables:
+#   - Static values: use plain strings
+#   - AWS SSM Parameters: use { ssm: "/path/to/parameter" }
+#   - Shell environment: use { env: "ENV_VAR_NAME" }
+#
+# Variables:
+#   - ${HOME} will be expanded to the user's home directory
+
+mcp_servers:
+  obsidian-mcp-tools:
+    command: "${HOME}/Library/Mobile Documents/iCloud~md~obsidian/Documents/notes/.obsidian/plugins/mcp-tools/bin/mcp-server"
+    platforms:
+      - darwin
+    env:
+      OBSIDIAN_API_KEY:
+        ssm: "/mcp/obsidian-api-key"
+
+  sage:
+    type: http
+    transport: http
+    url:
+      ssm: "/mcp/sage/endpoint-url"
+    # OAuth authentication handled by remote server
+
+  o3:
+    command: "npx"
+    args:
+      - "-y"
+      - "o3-search-mcp"
+    env:
+      OPENAI_API_KEY:
+        ssm: "/mcp/openai-api-key"
+      O3_REASONING_EFFORT: "medium"
+
+  o3-high:
+    command: "npx"
+    args:
+      - "-y"
+      - "o3-search-mcp"
+    env:
+      OPENAI_API_KEY:
+        ssm: "/mcp/openai-api-key"
+      O3_REASONING_EFFORT: "high"
+
+  o3-low:
+    command: "npx"
+    args:
+      - "-y"
+      - "o3-search-mcp"
+    env:
+      OPENAI_API_KEY:
+        ssm: "/mcp/openai-api-key"
+      O3_REASONING_EFFORT: "low"
+
+  notion:
+    type: http
+    transport: http
+    url: "https://mcp.notion.com/mcp"
+    # OAuth authentication via Notion
+
+  serena:
+    command: "uvx"
+    args:
+      - "serena"
+      - "--config"
+      - "${HOME}/.serena/config.yml"

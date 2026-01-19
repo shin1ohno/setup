@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+<% @mcp_servers.each_with_index do |(name, config), index| -%>
+<% if config["type"] == "http" -%>
+    "<%= name %>": {
+      "url": "<%= config["url"] %>",
+      "transport": "<%= config["transport"] || "sse" %>"
+    }<%= index < @mcp_servers.size - 1 ? "," : "" %>
+<% else -%>
+    "<%= name %>": {
+      "command": "<%= config["command"] %>"<% if config["args"] %>,
+      "args": <%= config["args"].to_json %><% end %><% if config["env"] %>,
+      "env": {
+<% config["env"].each_with_index do |(key, value), env_index| -%>
+        "<%= key %>": "<%= value %>"<%= env_index < config["env"].size - 1 ? "," : "" %>
+<% end -%>
+      }<% end %>
+    }<%= index < @mcp_servers.size - 1 ? "," : "" %>
+<% end -%>
+<% end -%>
+  },
+  "isDxtAutoUpdatesEnabled": true,
+  "preferences": {
+    "menuBarEnabled": false
+  }
+}

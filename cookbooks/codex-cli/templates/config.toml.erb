@@ -1,0 +1,33 @@
+<% @trusted_projects.each do |project| -%>
+[projects."<%= project %>"]
+trust_level = "trusted"
+
+<% end -%>
+<% @mcp_servers.each do |name, config| -%>
+[mcp_servers.<%= name %>]
+<% if config["type"] == "http" -%>
+url = "<%= config["url"] %>"
+<% if config["bearer_token_env_var"] -%>
+bearer_token_env_var = "<%= config["bearer_token_env_var"] %>"
+<% end -%>
+<% if config["http_headers"] -%>
+http_headers = <%= config["http_headers"].to_json %>
+<% end -%>
+<% else -%>
+command = "<%= config["command"] %>"
+<% if config["args"] -%>
+args = <%= config["args"].inspect %>
+<% end -%>
+<% if config["env_vars"] -%>
+env_vars = <%= config["env_vars"].inspect %>
+<% end -%>
+<% if config["env"] -%>
+
+[mcp_servers.<%= name %>.env]
+<% config["env"].each do |key, value| -%>
+<%= key %> = "<%= value %>"
+<% end -%>
+<% end -%>
+<% end -%>
+
+<% end -%>
