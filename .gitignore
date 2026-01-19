@@ -5,3 +5,4 @@ bin/*.zip
 .env
 .claude/settings.local.json
 .serena
+.mcp.json
