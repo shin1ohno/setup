@@ -4,6 +4,7 @@
 # This allows spec-workflow to be loaded only when working in a specific project
 
 managed_projects_dir = "#{ENV['HOME']}/ManagedProjects"
+claude_cmd = "#{ENV['HOME']}/.claude/local/claude"
 
 # Target projects for spec-workflow-mcp
 target_projects = %w[
@@ -19,8 +20,8 @@ target_projects.each do |project_name|
 
   # Add spec-workflow MCP server to the project if not already configured
   execute "add spec-workflow mcp to #{project_name}" do
-    command "cd #{project_path} && claude mcp add --scope project spec-workflow -- npx -y @pimzino/spec-workflow-mcp@latest #{project_path}"
+    command "cd #{project_path} && #{claude_cmd} mcp add --scope project spec-workflow -- npx -y @pimzino/spec-workflow-mcp@latest #{project_path}"
     user node[:setup][:user]
-    not_if "cd #{project_path} && claude mcp list 2>/dev/null | grep -q spec-workflow"
+    not_if "cd #{project_path} && #{claude_cmd} mcp list 2>/dev/null | grep -q spec-workflow"
   end
 end

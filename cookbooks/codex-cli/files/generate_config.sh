@@ -12,6 +12,20 @@ MANAGED_PROJECTS_DIR="${HOME_DIR}/ManagedProjects"
 # Default AWS region for SSM
 AWS_REGION="${AWS_REGION:-ap-northeast-1}"
 
+# Detect yq version and set appropriate command for YAML to JSON conversion
+# Python yq (kislyuk/yq): yq '.' file.yaml
+# Go yq (mikefarah/yq): yq -o json file.yaml
+yaml_to_json() {
+  local file="$1"
+  if yq --help 2>&1 | grep -q "jq wrapper"; then
+    # Python yq (kislyuk/yq)
+    yq '.' "$file"
+  else
+    # Go yq (mikefarah/yq)
+    yq -o json "$file"
+  fi
+}
+
 # Helper function to fetch SSM parameter
 fetch_ssm() {
   local param_path="$1"
@@ -37,7 +51,7 @@ fetch_ssm() {
   fi
 
   # Convert YAML to JSON and process MCP servers
-  json_config=$(yq -o json "$YAML_FILE")
+  json_config=$(yaml_to_json "$YAML_FILE")
   server_names=$(echo "$json_config" | jq -r '.mcp_servers | keys[]')
 
   for name in $server_names; do
