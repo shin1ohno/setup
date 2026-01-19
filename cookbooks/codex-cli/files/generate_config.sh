@@ -9,10 +9,13 @@ OUTPUT_FILE="$2"
 HOME_DIR="${HOME}"
 MANAGED_PROJECTS_DIR="${HOME_DIR}/ManagedProjects"
 
+# Default AWS region for SSM
+AWS_REGION="${AWS_REGION:-ap-northeast-1}"
+
 # Helper function to fetch SSM parameter
 fetch_ssm() {
   local param_path="$1"
-  aws ssm get-parameter --name "${param_path}" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "SSM_FETCH_FAILED:${param_path}"
+  aws ssm get-parameter --name "${param_path}" --with-decryption --query "Parameter.Value" --output text --region "${AWS_REGION}" 2>/dev/null || echo "SSM_FETCH_FAILED:${param_path}"
 }
 
 # Start building config.toml
