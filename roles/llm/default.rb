@@ -4,11 +4,14 @@
 # This role includes all LLM-related tools and configurations
 # Assumes core and programming roles are already included
 
+# MCP must be included first to set node[:mcp_servers] for other cookbooks
+include_cookbook "mcp"
+
 # LLM specific tools
 include_cookbook "claude-code"
 include_cookbook "claude-code-spec-workflow"
 include_cookbook "gemini-cli"
-include_cookbook "codex-cli"
+include_cookbook "codex-cli"  # Uses node[:mcp_servers] from mcp cookbook
 include_cookbook "ollama"
 include_cookbook "llama-3-elyza-jp"
 include_cookbook "tfmcp"
@@ -16,6 +19,5 @@ include_cookbook "tfmcp"
 # Additional Node.js tooling for LLM workflows
 # Volta removed - Node.js is now managed by mise via nodejs cookbook
 include_cookbook "bun"
-include_cookbook "mcp"
 include_cookbook "notion"
 include_cookbook "serena"
