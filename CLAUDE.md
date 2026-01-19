@@ -18,10 +18,11 @@ This is a **mitamae-based infrastructure automation system** for setting up deve
 
 - `roles/core/` - Essential CLI tools (git, zsh, fzf, ripgrep, etc.)
 - `roles/programming/` - Programming languages (Ruby, Python, Node.js, Go, Rust, Haskell)
-- `roles/llm/` - LLM tools (Claude Code, Ollama, MCP Hub)
+- `roles/llm/` - LLM tools (MCP servers, Claude Code, Gemini CLI, Codex CLI, Ollama, Serena, etc.)
 - `roles/network/` - Network tools (mosh, speedtest-cli, rclone, iperf3)
 - `roles/extras/` - Specialized development tools (terraform, neovim, docker)
 - `roles/manage/` - Managed projects setup from JSON configuration
+- `roles/server/` - Server-specific setup (Linux only, deploy directory)
 
 **Implementation Pattern:**
 
@@ -70,7 +71,7 @@ This is a **mitamae-based infrastructure automation system** for setting up deve
 
 - `include_role(name)` - Include role from roles/ directory
 - `include_cookbook(name)` - Include cookbook from cookbooks/ directory
-- `add_profile(name, bash_content:, priority:)` - Add shell profile script
+- `add_profile(name, bash_content:, priority:, fish_content:)` - Add shell profile script (fish_content requires SETUP_FISH=1)
 - `install_package(darwin:, ubuntu:, arch:)` - Cross-platform package installation
 - `git_clone(uri:, cwd:, user:)` - Git repository cloning
 
