@@ -65,7 +65,11 @@ fetch_ssm() {
         url=$(fetch_ssm "$ssm_path")
       fi
 
+      transport=$(echo "$server" | jq -r '.transport // "sse"')
+
+      echo "type = \"http\""
       echo "url = \"${url}\""
+      echo "transport = \"${transport}\""
     else
       # STDIO server
       command=$(echo "$server" | jq -r '.command' | sed "s|\${HOME}|${HOME_DIR}|g")

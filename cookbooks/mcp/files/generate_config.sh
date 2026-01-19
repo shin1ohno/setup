@@ -55,7 +55,7 @@ for name in $server_names; do
     server_config=$(jq -n \
       --arg url "$url" \
       --arg transport "$transport" \
-      '{url: $url, transport: $transport}')
+      '{type: "http", url: $url, transport: $transport}')
   else
     # STDIO server
     command=$(echo "$server" | jq -r '.command' | sed "s|\${HOME}|${HOME_DIR}|g")
