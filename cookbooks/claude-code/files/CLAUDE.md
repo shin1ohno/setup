@@ -7,7 +7,7 @@ This file contains my personal preferences for Claude Code.
 These rules must always be followed:
 
 - Communicate in Japanese
-- Git commit messages and source code comments must be in English
+- Git commit messages, source code comments, and spec documentation must be in English
 - Always ensure files end with a newline character (`\n`)
 - Never include "Generated with Claude Code" or "Co-Authored-By: Claude" in git commits
 
