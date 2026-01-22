@@ -4,6 +4,13 @@ if node[:platform] == "darwin"
   package "git"
   package "git-lfs"
   package "gh"
+  package "git-filter-repo"
+
+  execute "brew tap takai/tap" do
+    not_if "brew tap | grep -q takai/tap"
+  end
+
+  package "git-ai-commit"
 else
   package "git" do
     user node[:setup][:system_user]
