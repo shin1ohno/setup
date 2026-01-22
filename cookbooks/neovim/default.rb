@@ -36,3 +36,11 @@ if node[:platform] == "ubuntu"
 else
   package "neovim"
 end
+
+add_profile "editor" do
+  priority 50
+  bash_content <<~BASH
+    export EDITOR="nvim"
+    export VISUAL="nvim"
+  BASH
+end
