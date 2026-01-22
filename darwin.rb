@@ -39,5 +39,5 @@ include_cookbook "mac-settings"
 include_cookbook "mac-apps"
 include_cookbook "macism"
 include_cookbook "altserver"
-include_cookbook "gpg-keychain-backup"
+include_cookbook "gpg-backup"
 
