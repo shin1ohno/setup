@@ -18,6 +18,7 @@ These rules must always be followed:
 - Write clean, readable code that follows language conventions
 - Use consistent indentation and formatting
 - Do not use mock data in production code
+- When using passwords in test data or documentation, use obviously fake values (e.g., `example!PASS123`)
 
 ## General Preferences
 
