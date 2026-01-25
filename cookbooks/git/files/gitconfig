@@ -1,7 +1,7 @@
 [user]
   name = Shin'ichi Ohno
   email = shin1ohno@gmail.com
-  signingkey = 59E8544A4001372A
+  signingkey = BF70703A832AF6C9
 [alias]
   st = status
   co = checkout
