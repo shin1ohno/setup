@@ -24,7 +24,12 @@ These rules must always be followed:
 
 - Follow existing code conventions and patterns in each project
 - Prefer editing existing files over creating new ones
-- Create a SESSION_PROGRESS.md document at the project root to record plans and achievements; split it appropriately to conserve tokens
+
+## Planning Before Implementation
+
+- Use `/plan` mode to create a thorough plan before starting any non-trivial task
+- Always get user confirmation on the plan before proceeding with implementation
+- Break down complex tasks into clear, actionable steps
 
 ## Spec Workflow
 
