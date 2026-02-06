@@ -5,7 +5,7 @@
 
 managed_projects_dir = "#{ENV['HOME']}/ManagedProjects"
 mise_shims = "export PATH=$HOME/.local/share/mise/shims:$PATH"
-claude_cmd = "$HOME/.claude/local/claude"
+claude_cmd = "$HOME/.local/share/mise/shims/claude"
 
 # Target projects for spec-workflow-mcp
 target_projects = %w[
