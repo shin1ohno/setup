@@ -1,16 +1,23 @@
 # frozen_string_literal: true
 
 # Claude Code is Anthropic's agentic coding tool for the terminal
-# It requires Node.js to run as it's distributed via npm
+# Installed via mise npm backend
 
-# Ensure Node.js is installed via mise
+# Ensure mise and Node.js are installed
+include_cookbook "mise"
 include_cookbook "nodejs"
 include_cookbook "mcp"
 
-# Install Claude Code
-execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g @anthropic-ai/claude-code" do
+# Install Claude Code using mise npm backend
+execute "$HOME/.local/bin/mise install npm:@anthropic-ai/claude-code@latest" do
   user node[:setup][:user]
-  not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g @anthropic-ai/claude-code"
+  not_if "$HOME/.local/bin/mise list npm:@anthropic-ai/claude-code | grep -q '@anthropic-ai/claude-code'"
+end
+
+# Set Claude Code as globally available via mise shims
+execute "$HOME/.local/bin/mise use --global npm:@anthropic-ai/claude-code@latest" do
+  user node[:setup][:user]
+  not_if "$HOME/.local/bin/mise list npm:@anthropic-ai/claude-code | grep -q '\\* '"
 end
 
 # Add Claude Code to the profile
@@ -18,7 +25,7 @@ add_profile "claude-code" do
   bash_content <<~BASH
     # Claude Code - Anthropic's AI coding assistant
     export CLAUDE_CODE_HOME="$HOME/.config/claude-code"
-    alias claude="$HOME/.claude/local/claude"
+    alias claude="$HOME/.local/share/mise/shims/claude"
 
     # Add Claude Code auto-completion
     if [ -f "$HOME/.config/claude-code/claude_completion.sh" ]; then
@@ -28,7 +35,7 @@ add_profile "claude-code" do
   fish_content <<~FISH
     # Claude Code - Anthropic's AI coding assistant
     set -gx CLAUDE_CODE_HOME $HOME/.config/claude-code
-    alias claude="$HOME/.claude/local/claude"
+    alias claude="$HOME/.local/share/mise/shims/claude"
     # Add Claude Code auto-completion
     if test -f "$HOME/.config/claude-code/claude_completion.fish"
       source "$HOME/.config/claude-code/claude_completion.fish"
@@ -36,8 +43,9 @@ add_profile "claude-code" do
   FISH
 end
 
+claude_path = "#{ENV["HOME"]}/.local/share/mise/shims/claude"
+
 execute "mcp setup" do
-  claude_path = "#{ENV["HOME"]}/.claude/local/claude"
   not_if "#{claude_path} mcp list | grep -q o3"
   command <<~BASH
     #{claude_path} mcp add o3-high -s user -e SEARCH_CONTEXT_SIZE=high -e REASONING_EFFORT=high -- npx o3-search-mcp

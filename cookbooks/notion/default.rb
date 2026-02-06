@@ -12,9 +12,9 @@ end
 
 # Set up Notion MCP for Claude Code (official hosted version via OAuth)
 # This uses Notion's official MCP server at mcp.notion.com
-claude_path = "#{ENV["HOME"]}/.claude/local/claude"
+claude_path = "#{ENV["HOME"]}/.local/share/mise/shims/claude"
 
 execute "setup notion mcp for claude code" do
-  command "#{claude_path} mcp add --transport http notion https://mcp.notion.com/mcp"
+  command "#{claude_path} mcp add --transport http --scope user notion https://mcp.notion.com/mcp"
   not_if "#{claude_path} mcp list | grep -q notion"
 end
