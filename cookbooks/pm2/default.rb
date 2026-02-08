@@ -3,9 +3,10 @@
 # Ensure Node.js is installed via mise
 include_cookbook "nodejs"
 
-execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g pm2" do
+execute "install pm2 via mise" do
   user node[:setup][:user]
-  not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g pm2"
+  command "$HOME/.local/bin/mise use --global npm:pm2@latest"
+  not_if "$HOME/.local/bin/mise list | grep -q 'npm:pm2'"
   cwd ENV["HOME"]
 end
 

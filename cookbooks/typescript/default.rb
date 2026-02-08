@@ -1,7 +1,8 @@
 # Ensure mise-managed Node.js is available
 include_cookbook "nodejs"
 
-execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g typescript@beta" do
+execute "install typescript via mise" do
   user node[:setup][:user]
-  not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g typescript"
+  command "$HOME/.local/bin/mise use --global npm:typescript@beta"
+  not_if "$HOME/.local/bin/mise list | grep -q 'npm:typescript'"
 end

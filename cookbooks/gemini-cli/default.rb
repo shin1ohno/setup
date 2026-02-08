@@ -6,9 +6,9 @@
 # Ensure Node.js is installed via mise
 include_cookbook "nodejs"
 
-# Install Gemini CLI globally via npm
-execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g @google/gemini-cli" do
+# Install Gemini CLI globally via mise
+execute "install gemini-cli via mise" do
   user node[:setup][:user]
-  not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g @google/gemini-cli"
+  command "$HOME/.local/bin/mise use --global npm:@google/gemini-cli@latest"
+  not_if "$HOME/.local/bin/mise list | grep -q 'npm:@google/gemini-cli'"
 end
-

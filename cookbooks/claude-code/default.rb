@@ -8,16 +8,11 @@ include_cookbook "mise"
 include_cookbook "nodejs"
 include_cookbook "mcp"
 
-# Install Claude Code using mise npm backend
-execute "$HOME/.local/bin/mise install npm:@anthropic-ai/claude-code@latest" do
+# Install Claude Code via mise
+execute "install claude-code via mise" do
   user node[:setup][:user]
-  not_if "$HOME/.local/bin/mise list npm:@anthropic-ai/claude-code | grep -q '@anthropic-ai/claude-code'"
-end
-
-# Set Claude Code as globally available via mise shims
-execute "$HOME/.local/bin/mise use --global npm:@anthropic-ai/claude-code@latest" do
-  user node[:setup][:user]
-  not_if "$HOME/.local/bin/mise list npm:@anthropic-ai/claude-code | grep -q '\\* '"
+  command "$HOME/.local/bin/mise use --global npm:@anthropic-ai/claude-code@latest"
+  not_if "$HOME/.local/bin/mise list | grep -q 'npm:@anthropic-ai/claude-code'"
 end
 
 # Add Claude Code to the profile

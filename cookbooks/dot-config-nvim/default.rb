@@ -27,13 +27,15 @@ vim-vint
 end
 
 %w(
-  typescript
-  typescript-language-server
-  @tailwindcss/language-server
-).each do |requirement|
-  execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g #{requirement}" do
+  typescript@beta
+  typescript-language-server@latest
+  @tailwindcss/language-server@latest
+).each do |package_spec|
+  package_name = package_spec.sub(/@[^@]+$/, "")
+  execute "install #{package_name} via mise" do
     user node[:setup][:user]
-    not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g #{requirement}"
+    command "$HOME/.local/bin/mise use --global npm:#{package_spec}"
+    not_if "$HOME/.local/bin/mise list | grep -q 'npm:#{package_name}'"
     cwd ENV["HOME"]
   end
 end
