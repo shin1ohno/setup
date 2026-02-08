@@ -15,6 +15,6 @@ end
 claude_path = "#{ENV["HOME"]}/.local/share/mise/shims/claude"
 
 execute "setup notion mcp for claude code" do
-  command "#{claude_path} mcp add --transport http --scope user notion https://mcp.notion.com/mcp"
+  command "#{claude_path} mcp add -s user --transport http notion https://mcp.notion.com/mcp"
   not_if "#{claude_path} mcp list | grep -q notion"
 end
