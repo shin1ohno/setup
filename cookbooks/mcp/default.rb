@@ -12,9 +12,10 @@ include_cookbook "yq"
 mcp_commands = %w(o3-search-mcp mcp-hub)
 
 mcp_commands.each do |com|
-  execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm install -g #{com}" do
+  execute "install #{com} via mise" do
     user node[:setup][:user]
-    not_if "export PATH=$HOME/.local/share/mise/shims:$PATH && npm list -g #{com}"
+    command "$HOME/.local/bin/mise use --global npm:#{com}@latest"
+    not_if "$HOME/.local/bin/mise list | grep -q 'npm:#{com}'"
   end
 end
 
