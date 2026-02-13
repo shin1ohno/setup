@@ -53,11 +53,3 @@ end
     action :create
   end
 end
-
-remote_file "#{ENV["HOME"]}/.claude-agents.json" do
-  source "files/claude-agents.json"
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "644"
-  action :create
-end
