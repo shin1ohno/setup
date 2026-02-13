@@ -26,9 +26,9 @@ end
 # Add Serena MCP server to Claude Code configuration
 execute "add serena mcp to claude code" do
   command <<~CMD
-    $HOME/.local/share/mise/shims/claude mcp add serena -- uvx --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant-enhanced --mode onboarding --project '$(pwd)'
+    $HOME/.local/bin/claude mcp add serena -- uvx --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant-enhanced --mode onboarding --project '$(pwd)'
   CMD
-  not_if "$HOME/.local/share/mise/shims/claude mcp list | grep serena"
+  not_if "$HOME/.local/bin/claude mcp list | grep serena"
   user node[:setup][:user]
 end
 
