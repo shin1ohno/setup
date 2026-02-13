@@ -10,7 +10,7 @@ claude_path = "#{ENV["HOME"]}/.local/bin/claude"
 # Uninstall Claude Code from mise if previously installed
 execute "uninstall claude-code from mise" do
   user node[:setup][:user]
-  command "$HOME/.local/bin/mise uninstall npm:@anthropic-ai/claude-code"
+  command "$HOME/.local/bin/mise uninstall --all npm:@anthropic-ai/claude-code"
   only_if "$HOME/.local/bin/mise list 2>/dev/null | grep -q 'npm:@anthropic-ai/claude-code'"
 end
 
