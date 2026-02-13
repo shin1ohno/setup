@@ -1,44 +1,32 @@
 # frozen_string_literal: true
 
 # Claude Code is Anthropic's agentic coding tool for the terminal
-# Installed via mise npm backend
+# Installed via native installer (https://code.claude.com/docs/en/setup)
 
-# Ensure mise and Node.js are installed
-include_cookbook "mise"
-include_cookbook "nodejs"
 include_cookbook "mcp"
 
-# Install Claude Code via mise
-execute "install claude-code via mise" do
+claude_path = "#{ENV["HOME"]}/.local/bin/claude"
+
+# Uninstall Claude Code from mise if previously installed
+execute "uninstall claude-code from mise" do
   user node[:setup][:user]
-  command "$HOME/.local/bin/mise use --global npm:@anthropic-ai/claude-code@latest"
-  not_if "$HOME/.local/bin/mise list | grep -q 'npm:@anthropic-ai/claude-code'"
+  command "$HOME/.local/bin/mise uninstall npm:@anthropic-ai/claude-code"
+  only_if "$HOME/.local/bin/mise list 2>/dev/null | grep -q 'npm:@anthropic-ai/claude-code'"
 end
 
-# Add Claude Code to the profile
-add_profile "claude-code" do
-  bash_content <<~BASH
-    # Claude Code - Anthropic's AI coding assistant
-    export CLAUDE_CODE_HOME="$HOME/.config/claude-code"
-    alias claude="$HOME/.local/share/mise/shims/claude"
-
-    # Add Claude Code auto-completion
-    if [ -f "$HOME/.config/claude-code/claude_completion.sh" ]; then
-      source "$HOME/.config/claude-code/claude_completion.sh"
-    fi
-  BASH
-  fish_content <<~FISH
-    # Claude Code - Anthropic's AI coding assistant
-    set -gx CLAUDE_CODE_HOME $HOME/.config/claude-code
-    alias claude="$HOME/.local/share/mise/shims/claude"
-    # Add Claude Code auto-completion
-    if test -f "$HOME/.config/claude-code/claude_completion.fish"
-      source "$HOME/.config/claude-code/claude_completion.fish"
-    end
-  FISH
+# Uninstall Claude Code from npm if previously installed
+execute "uninstall claude-code from npm" do
+  user node[:setup][:user]
+  command "npm uninstall -g @anthropic-ai/claude-code"
+  only_if "npm list -g @anthropic-ai/claude-code 2>/dev/null | grep -q '@anthropic-ai/claude-code'"
 end
 
-claude_path = "#{ENV["HOME"]}/.local/share/mise/shims/claude"
+# Install Claude Code via native installer
+execute "install claude-code via native installer" do
+  user node[:setup][:user]
+  command "curl -fsSL https://claude.ai/install.sh | bash"
+  not_if "test -f #{claude_path}"
+end
 
 execute "mcp setup" do
   not_if "#{claude_path} mcp list | grep -q o3"
