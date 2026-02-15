@@ -15,10 +15,11 @@ execute "uninstall claude-code from mise npm backend" do
 end
 
 # Uninstall Claude Code from mise if previously installed (claude backend)
+# Also remove leftover install dir and stale shim, then reshim
 execute "uninstall claude-code from mise claude backend" do
   user node[:setup][:user]
-  command "$HOME/.local/bin/mise uninstall --all claude"
-  only_if "test -d $HOME/.local/share/mise/installs/claude"
+  command "$HOME/.local/bin/mise uninstall --all claude; rm -rf $HOME/.local/share/mise/installs/claude; rm -f $HOME/.local/share/mise/shims/claude; $HOME/.local/bin/mise reshim"
+  only_if "test -d $HOME/.local/share/mise/installs/claude || test -f $HOME/.local/share/mise/shims/claude"
 end
 
 # Uninstall Claude Code from npm if previously installed
