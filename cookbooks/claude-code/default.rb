@@ -13,19 +13,19 @@ file "#{profile_dir}/50-claude-code.sh" do
   action :delete
 end
 
-# Uninstall Claude Code from mise if previously installed (npm backend)
-execute "uninstall claude-code from mise npm backend" do
+# Remove claude-code from mise global config, uninstall, and clean up shims
+execute "remove claude-code from mise" do
   user node[:setup][:user]
-  command "$HOME/.local/bin/mise uninstall --all npm:@anthropic-ai/claude-code"
-  only_if "$HOME/.local/bin/mise list 2>/dev/null | grep -q 'npm:@anthropic-ai/claude-code'"
-end
-
-# Uninstall Claude Code from mise if previously installed (claude backend)
-# Also remove leftover install dir and stale shim, then reshim
-execute "uninstall claude-code from mise claude backend" do
-  user node[:setup][:user]
-  command "$HOME/.local/bin/mise uninstall --all claude; rm -rf $HOME/.local/share/mise/installs/claude; rm -f $HOME/.local/share/mise/shims/claude; $HOME/.local/bin/mise reshim"
-  only_if "test -d $HOME/.local/share/mise/installs/claude || test -f $HOME/.local/share/mise/shims/claude"
+  command <<~SH
+    $HOME/.local/bin/mise unuse --global "npm:@anthropic-ai/claude-code@latest" 2>/dev/null
+    $HOME/.local/bin/mise uninstall --all npm:@anthropic-ai/claude-code 2>/dev/null
+    $HOME/.local/bin/mise uninstall --all claude 2>/dev/null
+    rm -rf $HOME/.local/share/mise/installs/claude
+    rm -rf $HOME/.local/share/mise/installs/npm-anthropic-ai-claude-code
+    rm -f $HOME/.local/share/mise/shims/claude
+    $HOME/.local/bin/mise reshim
+  SH
+  only_if "grep -q 'claude-code' $HOME/.config/mise/config.toml 2>/dev/null || test -d $HOME/.local/share/mise/installs/claude || test -f $HOME/.local/share/mise/shims/claude"
 end
 
 # Uninstall Claude Code from npm if previously installed
