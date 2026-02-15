@@ -7,11 +7,18 @@ include_cookbook "mcp"
 
 claude_path = "#{ENV["HOME"]}/.local/bin/claude"
 
-# Uninstall Claude Code from mise if previously installed
-execute "uninstall claude-code from mise" do
+# Uninstall Claude Code from mise if previously installed (npm backend)
+execute "uninstall claude-code from mise npm backend" do
   user node[:setup][:user]
   command "$HOME/.local/bin/mise uninstall --all npm:@anthropic-ai/claude-code"
   only_if "$HOME/.local/bin/mise list 2>/dev/null | grep -q 'npm:@anthropic-ai/claude-code'"
+end
+
+# Uninstall Claude Code from mise if previously installed (claude backend)
+execute "uninstall claude-code from mise claude backend" do
+  user node[:setup][:user]
+  command "$HOME/.local/bin/mise uninstall --all claude"
+  only_if "test -d $HOME/.local/share/mise/installs/claude"
 end
 
 # Uninstall Claude Code from npm if previously installed
