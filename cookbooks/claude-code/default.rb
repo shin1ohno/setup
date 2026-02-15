@@ -42,6 +42,13 @@ execute "remove claude-code from mise node globals" do
   only_if "find $HOME/.local/share/mise/installs/node -name claude -path '*/bin/claude' 2>/dev/null | grep -q claude"
 end
 
+# Remove claude-code from volta if previously installed
+execute "remove claude-code from volta" do
+  user node[:setup][:user]
+  command "$HOME/.volta/bin/volta uninstall @anthropic-ai/claude-code 2>/dev/null; rm -f $HOME/.volta/bin/claude"
+  only_if "test -f $HOME/.volta/bin/claude"
+end
+
 # Install Claude Code via native installer
 execute "install claude-code via native installer" do
   user node[:setup][:user]
