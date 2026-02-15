@@ -6,6 +6,12 @@
 include_cookbook "mcp"
 
 claude_path = "#{ENV["HOME"]}/.local/bin/claude"
+profile_dir = "#{node[:setup][:root]}/profile.d"
+
+# Remove legacy profile that aliases claude to mise shim
+file "#{profile_dir}/50-claude-code.sh" do
+  action :delete
+end
 
 # Uninstall Claude Code from mise if previously installed (npm backend)
 execute "uninstall claude-code from mise npm backend" do
