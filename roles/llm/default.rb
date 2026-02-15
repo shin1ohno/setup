@@ -23,3 +23,10 @@ include_cookbook "notion"
 include_cookbook "serena"
 include_cookbook "spec-workflow-mcp"
 include_cookbook "takt"
+
+# Remove mise shim for claude after all mise operations are done.
+# Any `mise use` call regenerates shims for binaries found under
+# mise-managed node globals, so this must run last.
+file "#{ENV["HOME"]}/.local/share/mise/shims/claude" do
+  action :delete
+end
