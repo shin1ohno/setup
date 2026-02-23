@@ -8,7 +8,7 @@ remote_file "#{node[:setup][:root]}/pyenv-install.sh" do
 end
 
 execute "#{node[:setup][:root]}/pyenv-install.sh" do
-  not_if { File.exists? "#{ENV["HOME"]}/.pyenv/bin" }
+  not_if { File.exist? "#{ENV["HOME"]}/.pyenv/bin" }
 end
 
 add_profile "pyenv" do

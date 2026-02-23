@@ -18,7 +18,7 @@ EOM
     end
 else
   execute "git clone https://github.com/reobin/typewritten.git #{node[:setup][:root]}/typewritten" do
-    not_if { File.exists? "#{node[:setup][:root]}/typewritten" }
+    not_if { File.exist? "#{node[:setup][:root]}/typewritten" }
   end
   
    add_profile "typewritten" do

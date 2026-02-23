@@ -22,7 +22,7 @@ when "darwin"
   
   execute "curl --silent --fail https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/#{archive_name} -o #{archive_path.shellescape}" do
     user user
-    not_if { FileTest.exist?(archive_path) }
+    not_if { File.exist?(archive_path) }
   end
   
   execute "tar -xzf #{archive_path.shellescape} -C #{installation_home}" do
@@ -46,7 +46,7 @@ when "ubuntu", "debian"
   
   execute "curl --silent --fail https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz -o #{archive_path.shellescape}" do
     user user
-    not_if { FileTest.exist?(archive_path) }
+    not_if { File.exist?(archive_path) }
   end
   
   execute "tar -xzf #{archive_path.shellescape} -C #{installation_home}" do

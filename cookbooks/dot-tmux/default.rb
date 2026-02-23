@@ -15,14 +15,14 @@ execute "Initialise tmux config directory" do
     git push --set-upstream origin main 
 EOF
   cwd "#{ENV["HOME"]}/.config/tmux"
-  not_if { File.exists? "#{ENV["HOME"]}/.config/tmux/.git" }
+  not_if { File.exist? "#{ENV["HOME"]}/.config/tmux/.git" }
 end
 
 execute "Initialise TPM" do
   command <<EOF
   git clone https://github.com/tmux-plugins/tpm #{ENV["HOME"]}/.config/tmux/plugins/tpm && #{ENV["HOME"]}/.config/tmux/plugins/tpm/bin/install_plugins
 EOF
-  not_if { File.exists? "#{ENV["HOME"]}/.config/tmux/plugins/tpm"}
+  not_if { File.exist? "#{ENV["HOME"]}/.config/tmux/plugins/tpm"}
 end
 
 execute "git pull --rebase origin main" do
