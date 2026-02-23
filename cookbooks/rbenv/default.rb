@@ -120,7 +120,7 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
   head_path = "#{node[:rbenv][:root]}/versions/#{headof}"
   execute "ln -sfn #{version} #{head_path}" do
     user rbenv_user
-    not_if { FileTest.exist?(head_path) && File.readlink(head_path) == version }
+    not_if { File.exist?(head_path) && File.readlink(head_path) == version }
   end
 
   execute "#{node[:rbenv][:root]}/bin/rbenv global #{node[:rbenv][:global_version]}" do

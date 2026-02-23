@@ -2,7 +2,7 @@
 
 if run_command("which brew", error: false).exit_status != 0 &&
   FileTest.directory?(node[:homebrew][:prefix]) &&
-  FileTest.exist?("#{node[:setup][:root]}/profile.d/10-homebrew.sh")
+  File.exist?("#{node[:setup][:root]}/profile.d/10-homebrew.sh")
   MItamae.logger.error("Homebrew is installed but `brew` can't be searched from PATH.")
   MItamae.logger.error("Add `source #{node[:setup][:root]}/profile` to your shell startup files.")
   exit 1
