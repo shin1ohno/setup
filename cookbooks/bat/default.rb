@@ -1,16 +1,6 @@
 include_cookbook "mise"
 
-# Install bat using mise
-execute "$HOME/.local/bin/mise install bat@latest" do
-  user node[:setup][:user]
-  not_if "$HOME/.local/bin/mise list bat | grep -q 'bat'"
-end
-
-# Set bat as globally available
-execute "$HOME/.local/bin/mise use --global bat@latest" do
-  user node[:setup][:user]
-  not_if "$HOME/.local/bin/mise list bat | grep -q '\\* '"
-end
+mise_tool "bat"
 
 directory "#{node[:setup][:home]}/.config/bat" do
   owner node[:setup][:user]

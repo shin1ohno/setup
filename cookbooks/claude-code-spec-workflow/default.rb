@@ -13,11 +13,8 @@ include_cookbook "nodejs"
 # Ensure Claude Code is installed (dependency)
 include_cookbook "claude-code"
 
-# Install Claude Code Spec Workflow globally using mise
-execute "install claude-code-spec-workflow via mise" do
-  user node[:setup][:user]
-  command "$HOME/.local/bin/mise use --global npm:@pimzino/claude-code-spec-workflow@latest"
-  not_if "$HOME/.local/bin/mise list | grep -q 'npm:@pimzino/claude-code-spec-workflow'"
+mise_tool "@pimzino/claude-code-spec-workflow" do
+  backend "npm"
 end
 
 # Add profile entry for documentation

@@ -9,13 +9,9 @@ include_cookbook "awscli"
 # Ensure yq is available for YAML processing
 include_cookbook "yq"
 
-mcp_commands = %w(o3-search-mcp mcp-hub)
-
-mcp_commands.each do |com|
-  execute "install #{com} via mise" do
-    user node[:setup][:user]
-    command "$HOME/.local/bin/mise use --global npm:#{com}@latest"
-    not_if "$HOME/.local/bin/mise list | grep -q 'npm:#{com}'"
+%w(o3-search-mcp mcp-hub).each do |com|
+  mise_tool com do
+    backend "npm"
   end
 end
 
