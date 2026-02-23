@@ -9,7 +9,7 @@ include_cookbook "build-essential"
 # Version configuration
 node.reverse_merge!(
   rbenv: {
-    root: "#{ENV["HOME"]}/.rbenv",
+    root: "#{node[:setup][:home]}/.rbenv",
     global_version: "3.3",
     global_gems: %w(bundler itamae ed25519 bcrypt_pbkdf)
   },

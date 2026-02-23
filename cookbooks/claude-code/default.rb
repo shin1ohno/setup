@@ -5,7 +5,7 @@
 
 include_cookbook "mcp"
 
-claude_path = "#{ENV["HOME"]}/.local/bin/claude"
+claude_path = "#{node[:setup][:home]}/.local/bin/claude"
 profile_dir = "#{node[:setup][:root]}/profile.d"
 
 # Remove legacy profile that aliases claude to mise shim
@@ -14,7 +14,7 @@ file "#{profile_dir}/50-claude-code.sh" do
 end
 
 # Remove claude-code from mise: global config, install tracking, and installs
-mise_installs_toml = "#{ENV["HOME"]}/.local/share/mise/installs/.mise-installs.toml"
+mise_installs_toml = "#{node[:setup][:home]}/.local/share/mise/installs/.mise-installs.toml"
 execute "remove claude-code from mise" do
   user node[:setup][:user]
   command <<~SH
@@ -56,7 +56,7 @@ execute "install claude-code via native installer" do
   not_if "test -f #{claude_path}"
 end
 
-directory "#{ENV["HOME"]}/.claude" do
+directory "#{node[:setup][:home]}/.claude" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
@@ -64,7 +64,7 @@ directory "#{ENV["HOME"]}/.claude" do
 end
 
 %w(CLAUDE.md settings.json).each do |file_name|
-  remote_file "#{ENV["HOME"]}/.claude/#{file_name}" do
+  remote_file "#{node[:setup][:home]}/.claude/#{file_name}" do
     source "files/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]

@@ -1,11 +1,11 @@
 # # frozen_string_literal: true
 
 if node[:platform] == "darwin"
-  path = "#{ENV["HOME"]}/Library/Application Support/lazygit" 
+  path = "#{node[:setup][:home]}/Library/Application Support/lazygit" 
     package "lazygit"
 else
   execute "go install github.com/jesseduffield/lazygit@latest" do
-    path = "#{ENV["HOME"]}/.config/lazygit/"
+    path = "#{node[:setup][:home]}/.config/lazygit/"
     not_if "which lazygit"
   end
 end

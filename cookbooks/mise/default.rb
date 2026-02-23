@@ -12,7 +12,7 @@ execute "sh #{node[:setup][:root]}/mise-install.sh" do
 end
 
 execute "$HOME/.local/bin/mise self-update -y" do
-  only_if { File.exist? "#{ENV["HOME"]}/.local/bin/mise" }
+  only_if { File.exist? "#{node[:setup][:home]}/.local/bin/mise" }
 end
 
 # Install usage tool for mise completions
@@ -22,39 +22,39 @@ execute "$HOME/.local/bin/mise use -g usage" do
 end
 
 # Generate shell completions
-directory "#{ENV['HOME']}/.local/share/bash-completion/completions" do
+directory "#{node[:setup][:home]}/.local/share/bash-completion/completions" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
 end
 
-execute "$HOME/.local/bin/mise completion bash --include-bash-completion-lib > #{ENV['HOME']}/.local/share/bash-completion/completions/mise" do
+execute "$HOME/.local/bin/mise completion bash --include-bash-completion-lib > #{node[:setup][:home]}/.local/share/bash-completion/completions/mise" do
   user node[:setup][:user]
-  not_if "test -f #{ENV['HOME']}/.local/share/bash-completion/completions/mise"
+  not_if "test -f #{node[:setup][:home]}/.local/share/bash-completion/completions/mise"
 end
 
 # Create zsh completions directory if it doesn't exist
-directory "#{ENV['HOME']}/.local/share/zsh/site-functions" do
+directory "#{node[:setup][:home]}/.local/share/zsh/site-functions" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
 end
 
-execute "$HOME/.local/bin/mise completion zsh > #{ENV['HOME']}/.local/share/zsh/site-functions/_mise" do
+execute "$HOME/.local/bin/mise completion zsh > #{node[:setup][:home]}/.local/share/zsh/site-functions/_mise" do
   user node[:setup][:user]
-  not_if "test -f #{ENV['HOME']}/.local/share/zsh/site-functions/_mise"
+  not_if "test -f #{node[:setup][:home]}/.local/share/zsh/site-functions/_mise"
 end
 
-directory "#{ENV['HOME']}/.config/fish/completions" do
+directory "#{node[:setup][:home]}/.config/fish/completions" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
   only_if "which fish"
 end
 
-execute "$HOME/.local/bin/mise completion fish > #{ENV['HOME']}/.config/fish/completions/mise.fish" do
+execute "$HOME/.local/bin/mise completion fish > #{node[:setup][:home]}/.config/fish/completions/mise.fish" do
   user node[:setup][:user]
-  not_if "test -f #{ENV['HOME']}/.config/fish/completions/mise.fish"
+  not_if "test -f #{node[:setup][:home]}/.config/fish/completions/mise.fish"
   only_if "which fish"
 end
 

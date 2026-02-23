@@ -7,10 +7,10 @@ execute "install pm2 via mise" do
   user node[:setup][:user]
   command "$HOME/.local/bin/mise use --global npm:pm2@latest"
   not_if "$HOME/.local/bin/mise list | grep -q 'npm:pm2'"
-  cwd ENV["HOME"]
+  cwd node[:setup][:home]
 end
 
-c = "sudo env PATH=$PATH:#{ENV["HOME"]}/.local/share/mise/shims $(which pm2) startup launchd -u $USER --hp #{ENV["HOME"]}" 
+c = "sudo env PATH=$PATH:#{node[:setup][:home]}/.local/share/mise/shims $(which pm2) startup launchd -u $USER --hp #{node[:setup][:home]}" 
 
 if node[:platform] == "darwin"
   execute "setup pm2" do
@@ -19,7 +19,7 @@ if node[:platform] == "darwin"
   end
 else
   execute "setup pm2" do
-    cwd ENV["HOME"]
+    cwd node[:setup][:home]
     command c
     not_if "systemctl list-unit-files | grep pm2-$USER.service | grep enabled"
   end

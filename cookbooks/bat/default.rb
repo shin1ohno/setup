@@ -12,14 +12,14 @@ execute "$HOME/.local/bin/mise use --global bat@latest" do
   not_if "$HOME/.local/bin/mise list bat | grep -q '\\* '"
 end
 
-directory "#{ENV["HOME"]}/.config/bat" do
+directory "#{node[:setup][:home]}/.config/bat" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
   action :create
 end
 
-remote_file "#{ENV["HOME"]}/.config/bat/config" do
+remote_file "#{node[:setup][:home]}/.config/bat/config" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"

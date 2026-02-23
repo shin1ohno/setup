@@ -3,7 +3,7 @@
 # Add spec-workflow-mcp to selected ManagedProjects directories using claude mcp add
 # This allows spec-workflow to be loaded only when working in a specific project
 
-managed_projects_dir = "#{ENV['HOME']}/ManagedProjects"
+managed_projects_dir = "#{node[:setup][:home]}/ManagedProjects"
 claude_cmd = "$HOME/.local/bin/claude"
 
 # Target projects for spec-workflow-mcp

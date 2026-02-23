@@ -23,12 +23,12 @@ directory "#{setup_root}/bin" do
   mode "0755"
 end
 
-directory "#{ENV['HOME']}/.config/s3-backup" do
+directory "#{node[:setup][:home]}/.config/s3-backup" do
   owner user
   mode "0700"
 end
 
-directory "#{ENV['HOME']}/.local/log" do
+directory "#{node[:setup][:home]}/.local/log" do
   owner user
   mode "0755"
 end
@@ -358,7 +358,7 @@ file "#{setup_root}/bin/s3-backup" do
 end
 
 # Create sample config if not exists
-file "#{ENV['HOME']}/.config/s3-backup/config.sample" do
+file "#{node[:setup][:home]}/.config/s3-backup/config.sample" do
   owner user
   mode "0600"
   content <<~CONFIG
@@ -376,17 +376,17 @@ file "#{ENV['HOME']}/.config/s3-backup/config.sample" do
     # RETENTION_DAYS=30
     # LOG_FILE=${HOME}/.local/log/s3-backup.log
   CONFIG
-  not_if "test -f #{ENV['HOME']}/.config/s3-backup/config.sample"
+  not_if "test -f #{node[:setup][:home]}/.config/s3-backup/config.sample"
 end
 
 # Linux-specific: systemd user service and timer
 if node[:platform] != "darwin"
-  directory "#{ENV['HOME']}/.config/systemd/user" do
+  directory "#{node[:setup][:home]}/.config/systemd/user" do
     owner user
     mode "0755"
   end
 
-  file "#{ENV['HOME']}/.config/systemd/user/s3-backup.service" do
+  file "#{node[:setup][:home]}/.config/systemd/user/s3-backup.service" do
     owner user
     mode "0644"
     content <<~SERVICE
@@ -410,7 +410,7 @@ if node[:platform] != "darwin"
     SERVICE
   end
 
-  file "#{ENV['HOME']}/.config/systemd/user/s3-backup.timer" do
+  file "#{node[:setup][:home]}/.config/systemd/user/s3-backup.timer" do
     owner user
     mode "0644"
     content <<~TIMER

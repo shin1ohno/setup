@@ -20,8 +20,8 @@ execute "sudo chsh -s #{zsh_path} #{node[:setup][:user]}" do
   not_if !zsh_path || "test $SHELL == #{zsh_path}"
 end
 
-execute "touch #{ENV["HOME"]}/.zshrc" do
-  not_if { File.exist?("#{ENV["HOME"]}/.zshrc") }
+execute "touch #{node[:setup][:home]}/.zshrc" do
+  not_if { File.exist?("#{node[:setup][:home]}/.zshrc") }
 end
 
 execute "echo '. #{node[:setup][:root]}/profile' >> ~/.zshrc" do
