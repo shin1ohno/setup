@@ -75,6 +75,45 @@ define :add_profile, bash_content: nil, fish_content: nil, priority: 50 do
   end
 end
 
+define :mise_tool, versions: nil, default_version: nil, backend: nil do
+  tool = params[:name]
+  backend = params[:backend]
+  versions = params[:versions]
+  prefix = backend ? "#{backend}:" : ""
+
+  if versions
+    # Pattern B: versioned (node, go)
+    versions.each do |version|
+      execute "$HOME/.local/bin/mise install #{prefix}#{tool}@#{version}" do
+        user node[:setup][:user]
+        not_if "$HOME/.local/bin/mise list #{prefix}#{tool} | grep -q '#{version}'"
+      end
+    end
+    default_ver = params[:default_version] || versions.first
+    execute "$HOME/.local/bin/mise use --global #{prefix}#{tool}@#{default_ver}" do
+      user node[:setup][:user]
+      not_if "$HOME/.local/bin/mise list #{prefix}#{tool} | grep -q '\\* #{default_ver}'"
+    end
+  elsif backend
+    # Pattern C: npm/cargo backend
+    execute "install #{tool} via mise" do
+      user node[:setup][:user]
+      command "$HOME/.local/bin/mise use --global #{prefix}#{tool}@latest"
+      not_if "$HOME/.local/bin/mise list | grep -q '#{prefix}#{tool}'"
+    end
+  else
+    # Pattern A: simple tool@latest
+    execute "$HOME/.local/bin/mise install #{tool}@latest" do
+      user node[:setup][:user]
+      not_if "$HOME/.local/bin/mise list #{tool} | grep -q '#{tool}'"
+    end
+    execute "$HOME/.local/bin/mise use --global #{tool}@latest" do
+      user node[:setup][:user]
+      not_if "$HOME/.local/bin/mise list #{tool} | grep -q '\\* '"
+    end
+  end
+end
+
 define :git_clone, uri: nil, cwd: nil, user: nil, not_if: nil do
   execute "git clone #{params[:uri]}" do
     action :run

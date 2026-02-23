@@ -15,19 +15,8 @@ if node[:platform] == "ubuntu"
   end
 end
 
-node[:go][:versions].each do |version|
-  execute "$HOME/.local/bin/mise install go@#{version}" do
-    user node[:setup][:user]
-    not_if "$HOME/.local/bin/mise list go | grep -q '#{version}'"
-  end
-end
-
-# Set default Go version to the first in the list
-default_version = node[:go][:versions].first
-
-execute "$HOME/.local/bin/mise use --global go@#{default_version}" do
-  user node[:setup][:user]
-  not_if "$HOME/.local/bin/mise list go | grep -q '\\* #{default_version}'"
+mise_tool "go" do
+  versions node[:go][:versions]
 end
 
 # Add Go environment setup
