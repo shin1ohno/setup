@@ -21,13 +21,6 @@ mcp_servers:
       OBSIDIAN_API_KEY:
         ssm: "/mcp/obsidian-api-key"
 
-  sage:
-    type: http
-    transport: http
-    url:
-      ssm: "/mcp/sage/endpoint-url"
-    # OAuth authentication handled by remote server
-
   o3:
     command: "npx"
     args:
