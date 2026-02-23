@@ -33,7 +33,7 @@ execute "add serena mcp to claude code" do
 end
 
 # Create a helper script for Serena MCP initial setup and project switching
-remote_file "#{ENV['HOME']}/.local/bin/serena-mcp-setup" do
+remote_file "#{node[:setup][:home]}/.local/bin/serena-mcp-setup" do
   source "files/serena-mcp-setup.sh"
   mode "0755"
   owner node[:setup][:user]
@@ -48,20 +48,20 @@ remote_file "#{node[:setup][:root]}/profile.d/70-serena.sh" do
 end
 
 # Create contexts directory for Serena configurations
-directory "#{ENV["HOME"]}/.serena" do
+directory "#{node[:setup][:home]}/.serena" do
   mode "0755"
   owner node[:setup][:user]
   group node[:setup][:group]
 end
 
-directory "#{ENV["HOME"]}/.serena/contexts" do
+directory "#{node[:setup][:home]}/.serena/contexts" do
   mode "0755"
   owner node[:setup][:user]
   group node[:setup][:group]
 end
 
 # Create Claude Code optimized context with mode switching
-remote_file "#{ENV['HOME']}/.serena/contexts/ide-assistant-enhanced.yml" do
+remote_file "#{node[:setup][:home]}/.serena/contexts/ide-assistant-enhanced.yml" do
   source "files/ide-assistant-enhanced.yml"
   mode "0644"
   owner node[:setup][:user]
@@ -69,7 +69,7 @@ remote_file "#{ENV['HOME']}/.serena/contexts/ide-assistant-enhanced.yml" do
 end
 
 # Create desktop app enhanced context
-remote_file "#{ENV['HOME']}/.serena/contexts/desktop-app-enhanced.yml" do
+remote_file "#{node[:setup][:home]}/.serena/contexts/desktop-app-enhanced.yml" do
   source "files/desktop-app-enhanced.yml"
   mode "0644"
   owner node[:setup][:user]

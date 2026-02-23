@@ -17,7 +17,7 @@ execute "install rust via mise" do
 end
 
 # Create bin directory if it doesn't exist
-directory "#{ENV['HOME']}/.local/bin" do
+directory "#{node[:setup][:home]}/.local/bin" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
@@ -27,8 +27,8 @@ end
 # Download imgcat script from iTerm2
 execute "download imgcat script" do
   user node[:setup][:user]
-  command "curl -fsSL https://iterm2.com/utilities/imgcat -o #{ENV['HOME']}/.local/bin/imgcat && chmod +x #{ENV['HOME']}/.local/bin/imgcat"
-  not_if "test -f #{ENV['HOME']}/.local/bin/imgcat"
+  command "curl -fsSL https://iterm2.com/utilities/imgcat -o #{node[:setup][:home]}/.local/bin/imgcat && chmod +x #{node[:setup][:home]}/.local/bin/imgcat"
+  not_if "test -f #{node[:setup][:home]}/.local/bin/imgcat"
 end
 
 # Install viu using mise cargo backend

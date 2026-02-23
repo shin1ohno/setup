@@ -15,7 +15,7 @@ execute "$HOME/.local/bin/mise use --global npm:@openai/codex@latest" do
 end
 
 # Ensure ~/.codex directory exists
-directory "#{ENV["HOME"]}/.codex" do
+directory "#{node[:setup][:home]}/.codex" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
@@ -36,7 +36,7 @@ end
 mcp_yaml_path = File.join(File.dirname(__FILE__), "..", "mcp", "files", "servers.yml")
 generator_script = File.join(File.dirname(__FILE__), "files", "generate_config.sh")
 temp_path = "#{generated_dir}/codex_config.toml"
-output_path = "#{ENV["HOME"]}/.codex/config.toml"
+output_path = "#{node[:setup][:home]}/.codex/config.toml"
 
 # Generate config to temporary location in setup root
 execute "generate codex config.toml" do

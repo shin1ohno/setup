@@ -23,7 +23,7 @@ else
   end
 end
 
-remote_file "#{ENV["HOME"]}/.gitconfig" do
+remote_file "#{node[:setup][:home]}/.gitconfig" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"

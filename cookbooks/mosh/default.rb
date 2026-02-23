@@ -25,18 +25,18 @@ if node[:platform] == "darwin"
   end
 
   # Create ~/.ssh/environment with PATH including /usr/local/bin
-  directory "#{ENV['HOME']}/.ssh" do
+  directory "#{node[:setup][:home]}/.ssh" do
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "700"
   end
 
-  file "#{ENV['HOME']}/.ssh/environment" do
+  file "#{node[:setup][:home]}/.ssh/environment" do
     content "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "600"
-    not_if "test -f #{ENV['HOME']}/.ssh/environment && grep -q '/usr/local/bin' #{ENV['HOME']}/.ssh/environment"
+    not_if "test -f #{node[:setup][:home]}/.ssh/environment && grep -q '/usr/local/bin' #{node[:setup][:home]}/.ssh/environment"
   end
 
   # Enable Remote Login (SSH) - required for mosh connections

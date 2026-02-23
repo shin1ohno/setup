@@ -3,7 +3,7 @@
 # Ensure Node.js is installed via mise for language servers
 include_cookbook "nodejs"
 
-directory "#{ENV["HOME"]}/.config/" do
+directory "#{node[:setup][:home]}/.config/" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
@@ -12,7 +12,7 @@ end
 
 git_clone "nvim" do
   uri "git@github.com:shin1ohno/astro.git nvim"
-  cwd "#{ENV["HOME"]}/.config/"
+  cwd "#{node[:setup][:home]}/.config/"
 end
 
 %w(
@@ -36,12 +36,12 @@ end
     user node[:setup][:user]
     command "$HOME/.local/bin/mise use --global npm:#{package_spec}"
     not_if "$HOME/.local/bin/mise list | grep -q 'npm:#{package_name}'"
-    cwd ENV["HOME"]
+    cwd node[:setup][:home]
   end
 end
 
 execute "git pull" do
-  cwd "#{ENV["HOME"]}/.config/nvim/"
+  cwd "#{node[:setup][:home]}/.config/nvim/"
 end
 
 execute "mkdir -p ~/.local/bin" do

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-directory "#{ENV["HOME"]}/.config/tmux/plugins" do
+directory "#{node[:setup][:home]}/.config/tmux/plugins" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
@@ -14,17 +14,17 @@ execute "Initialise tmux config directory" do
     git pull --rebase origin main &&\n
     git push --set-upstream origin main 
 EOF
-  cwd "#{ENV["HOME"]}/.config/tmux"
-  not_if { File.exist? "#{ENV["HOME"]}/.config/tmux/.git" }
+  cwd "#{node[:setup][:home]}/.config/tmux"
+  not_if { File.exist? "#{node[:setup][:home]}/.config/tmux/.git" }
 end
 
 execute "Initialise TPM" do
   command <<EOF
-  git clone https://github.com/tmux-plugins/tpm #{ENV["HOME"]}/.config/tmux/plugins/tpm && #{ENV["HOME"]}/.config/tmux/plugins/tpm/bin/install_plugins
+  git clone https://github.com/tmux-plugins/tpm #{node[:setup][:home]}/.config/tmux/plugins/tpm && #{node[:setup][:home]}/.config/tmux/plugins/tpm/bin/install_plugins
 EOF
-  not_if { File.exist? "#{ENV["HOME"]}/.config/tmux/plugins/tpm"}
+  not_if { File.exist? "#{node[:setup][:home]}/.config/tmux/plugins/tpm"}
 end
 
 execute "git pull --rebase origin main" do
-  cwd "#{ENV["HOME"]}/.config/tmux"
+  cwd "#{node[:setup][:home]}/.config/tmux"
 end

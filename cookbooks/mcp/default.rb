@@ -23,7 +23,7 @@ end
 # Deploy Claude Desktop config (macOS only)
 # =============================================================================
 if node[:platform] == "darwin"
-  claude_desktop_config_dir = "#{ENV["HOME"]}/Library/Application Support/Claude"
+  claude_desktop_config_dir = "#{node[:setup][:home]}/Library/Application Support/Claude"
 
   directory claude_desktop_config_dir do
     owner node[:setup][:user]

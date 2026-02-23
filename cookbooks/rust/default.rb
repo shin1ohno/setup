@@ -6,7 +6,7 @@ remote_file "#{node[:setup][:root]}/rust-install.sh" do
 end
 
 execute "#{node[:setup][:root]}/rust-install.sh -y --no-modify-path" do
-  not_if { File.exist? "#{ENV["HOME"]}/.cargo/env" }
+  not_if { File.exist? "#{node[:setup][:home]}/.cargo/env" }
 end
 
 add_profile "cargo" do
