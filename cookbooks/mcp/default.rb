@@ -48,17 +48,21 @@ if node[:platform] == "darwin"
     user node[:setup][:user]
   end
 
-  # Deploy using remote_file to enable diff detection
-  remote_file output_path do
-    source temp_path
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "644"
-  end
+  # Deploy and clean up only when the generated file exists.
+  # During --dry-run the execute above is a no-op so temp_path won't exist;
+  # during a real run, a generate failure halts execution before reaching here.
+  if File.exist?(temp_path)
+    remote_file output_path do
+      source temp_path
+      owner node[:setup][:user]
+      group node[:setup][:group]
+      mode "644"
+    end
 
-  # Clean up temporary file (contains sensitive SSM values)
-  file temp_path do
-    action :delete
+    # Clean up temporary file (contains sensitive SSM values)
+    file temp_path do
+      action :delete
+    end
   end
 end
 
