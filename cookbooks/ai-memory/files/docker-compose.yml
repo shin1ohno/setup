@@ -10,10 +10,11 @@ services:
       - USER=${MEM0_USER:-shin1ohno}
     volumes:
       - ${HOME}/.aws:/root/.aws:ro
+      - ./patches/database.py:/usr/src/openmemory/app/database.py:ro
     command: >
       sh -c "uvicorn main:app --host 0.0.0.0 --port 8765 --workers 4"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8765/docs"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/docs')"]
       interval: 30s
       timeout: 10s
       retries: 3
