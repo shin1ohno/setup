@@ -57,6 +57,11 @@ mcp_servers:
     url: "https://mcp.notion.com/mcp"
     # OAuth authentication via Notion
 
+  ai-memory:
+    type: http
+    transport: sse
+    url: "https://mcp.ohno.be/memory/mcp/claude/sse/shin1ohno"
+
   serena:
     command: "uvx"
     args:

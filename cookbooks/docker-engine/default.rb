@@ -34,3 +34,9 @@ service "docker" do
   user node[:setup][:system_user]
 end
 
+# Add the setup user to the docker group for rootless access
+execute "usermod -aG docker #{node[:setup][:user]}" do
+  user node[:setup][:system_user]
+  not_if "id -nG #{node[:setup][:user]} | grep -qw docker"
+end
+

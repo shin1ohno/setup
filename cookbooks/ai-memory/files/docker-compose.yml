@@ -1,0 +1,32 @@
+services:
+  openmemory-api:
+    image: mem0/openmemory-mcp:latest
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    env_file:
+      - .env
+    environment:
+      - USER=${MEM0_USER:-shin1ohno}
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
+    command: >
+      sh -c "uvicorn main:app --host 0.0.0.0 --port 8765 --workers 4"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  openmemory-ui:
+    image: mem0/openmemory-ui:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8765
+      - NEXT_PUBLIC_USER_ID=${MEM0_USER:-shin1ohno}
+    depends_on:
+      openmemory-api:
+        condition: service_healthy
