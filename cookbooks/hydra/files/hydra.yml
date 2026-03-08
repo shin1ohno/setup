@@ -1,0 +1,43 @@
+serve:
+  public:
+    cors:
+      enabled: true
+      allowed_origins:
+        - "*"
+      allowed_methods:
+        - POST
+        - GET
+        - PUT
+        - PATCH
+        - DELETE
+      allowed_headers:
+        - Authorization
+        - Content-Type
+      exposed_headers:
+        - Content-Type
+
+urls:
+  self:
+    issuer: https://mcp.ohno.be
+  login: https://mcp.ohno.be/consent/login
+  consent: https://mcp.ohno.be/consent/consent
+
+strategies:
+  access_token: jwt
+
+oidc:
+  dynamic_client_registration:
+    enabled: true
+
+oauth2:
+  pkce:
+    enforced_for_public_clients: true
+
+ttl:
+  access_token: 1h
+  refresh_token: 720h
+  authorization_code: 10m
+
+log:
+  level: info
+  format: json
