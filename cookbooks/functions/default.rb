@@ -92,7 +92,7 @@ define :mise_tool, versions: nil, default_version: nil, backend: nil do
     default_ver = params[:default_version] || versions.first
     execute "$HOME/.local/bin/mise use --global #{prefix}#{tool}@#{default_ver}" do
       user node[:setup][:user]
-      not_if "$HOME/.local/bin/mise list #{prefix}#{tool} | grep -q '\\* #{default_ver}'"
+      not_if "$HOME/.local/bin/mise list #{prefix}#{tool} | grep '#{default_ver}' | grep -q 'config.toml'"
     end
   elsif backend
     # Pattern C: npm/cargo backend
@@ -109,7 +109,7 @@ define :mise_tool, versions: nil, default_version: nil, backend: nil do
     end
     execute "$HOME/.local/bin/mise use --global #{tool}@latest" do
       user node[:setup][:user]
-      not_if "$HOME/.local/bin/mise list #{tool} | grep -q '\\* '"
+      not_if "$HOME/.local/bin/mise list #{tool} | grep -q 'config.toml'"
     end
   end
 end
