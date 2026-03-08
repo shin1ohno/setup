@@ -8,6 +8,7 @@ requests to the upstream openmemory-api service.
 import json
 import logging
 import os
+import re
 import time
 from urllib.request import urlopen
 
@@ -27,6 +28,8 @@ SAGE_JWKS_URL = os.environ.get(
 )
 UPSTREAM_URL = os.environ.get("UPSTREAM_URL", "http://openmemory-api:8765")
 PORT = int(os.environ.get("PORT", "8766"))
+# Public path prefix used by the reverse proxy (e.g. "/memory")
+PATH_PREFIX = os.environ.get("PATH_PREFIX", "")
 
 
 # ── JWKS-based token verifier ──────────────────────────────────────────
@@ -113,10 +116,55 @@ class TokenVerifier:
 verifier = TokenVerifier(SAGE_JWKS_URL, SAGE_ISSUER)
 
 
+# ── CORS helpers ─────────────────────────────────────────────────────
+
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+    "Access-Control-Expose-Headers": "WWW-Authenticate",
+    "Access-Control-Max-Age": "86400",
+}
+
+
+def add_cors(headers: dict) -> dict:
+    """Merge CORS headers into response headers."""
+    merged = dict(headers)
+    merged.update(CORS_HEADERS)
+    return merged
+
+
+# ── SSE path rewriting ───────────────────────────────────────────────
+
+# Matches SSE endpoint events: "event: endpoint\ndata: /some/path..."
+_SSE_ENDPOINT_RE = re.compile(
+    rb"(event:\s*endpoint\s*\ndata:\s*)(\/\S+)",
+    re.MULTILINE,
+)
+
+
+def rewrite_sse_paths(chunk: bytes, prefix: str) -> bytes:
+    """Prepend PATH_PREFIX to SSE endpoint event paths."""
+    if not prefix:
+        return chunk
+    prefix_bytes = prefix.encode()
+
+    def _rewrite(m: re.Match) -> bytes:
+        path = m.group(2)
+        if path.startswith(prefix_bytes):
+            return m.group(0)  # already prefixed
+        return m.group(1) + prefix_bytes + path
+
+    return _SSE_ENDPOINT_RE.sub(_rewrite, chunk)
+
+
 # ── Request handling ───────────────────────────────────────────────────
 
+# Resource identifier — distinct from sage to avoid MCP client confusion
+RESOURCE_ID = f"{SAGE_ISSUER}{PATH_PREFIX}" if PATH_PREFIX else SAGE_ISSUER
+
 WWW_AUTH = (
-    f'Bearer resource_metadata="{SAGE_ISSUER}/.well-known/oauth-protected-resource"'
+    f'Bearer resource_metadata="{RESOURCE_ID}/.well-known/oauth-protected-resource"'
 )
 
 HOP_BY_HOP = frozenset(
@@ -125,31 +173,67 @@ HOP_BY_HOP = frozenset(
 
 
 async def handle(request: web.Request) -> web.StreamResponse:
-    # Health endpoint — no auth required
+    logger.info("%s %s", request.method, request.path)
+
+    # ── CORS preflight — no auth required ──
+    if request.method == "OPTIONS":
+        return web.Response(status=204, headers=CORS_HEADERS)
+
+    # ── Health endpoint — no auth required ──
     if request.path == "/health":
-        return web.json_response({"status": "ok"})
+        return web.json_response({"status": "ok"}, headers=CORS_HEADERS)
+
+    # ── .well-known — no auth required (MCP/OAuth discovery) ──
+    if request.path.startswith("/.well-known/"):
+        if request.path == "/.well-known/oauth-protected-resource":
+            return web.json_response(
+                {
+                    "resource": RESOURCE_ID,
+                    "authorization_servers": [SAGE_ISSUER],
+                    "scopes_supported": ["mcp:read", "mcp:write", "mcp:admin"],
+                    "bearer_methods_supported": ["header"],
+                },
+                headers=add_cors({"Cache-Control": "public, max-age=3600"}),
+            )
+        # Proxy other .well-known paths to upstream without auth
+        session: ClientSession = request.app["http_client"]
+        url = f"{UPSTREAM_URL}{request.path_qs}"
+        upstream = await session.request("GET", url, timeout=ClientTimeout(total=10))
+        content = await upstream.read()
+        await upstream.release()
+        return web.Response(
+            body=content,
+            status=upstream.status,
+            content_type=upstream.headers.get("Content-Type", "application/json"),
+            headers=CORS_HEADERS,
+        )
 
     # ── Authenticate ──
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
+        logger.info("No Bearer token for %s %s", request.method, request.path)
         return web.json_response(
             {"error": "unauthorized"},
             status=401,
-            headers={"WWW-Authenticate": WWW_AUTH},
+            headers=add_cors({"WWW-Authenticate": WWW_AUTH}),
         )
 
-    if verifier.verify(auth[7:]) is None:
+    claims = verifier.verify(auth[7:])
+    if claims is None:
+        logger.warning("Invalid token for %s %s", request.method, request.path)
         return web.json_response(
             {"error": "invalid_token"},
             status=401,
-            headers={
+            headers=add_cors({
                 "WWW-Authenticate": (
                     f'Bearer error="invalid_token",'
-                    f' resource_metadata="{SAGE_ISSUER}'
+                    f' resource_metadata="{RESOURCE_ID}'
                     f'/.well-known/oauth-protected-resource"'
                 )
-            },
+            }),
         )
+
+    logger.info("Authenticated %s %s (sub=%s)", request.method, request.path, claims.get("sub", "?"))
 
     # ── Proxy to upstream ──
     url = f"{UPSTREAM_URL}{request.path_qs}"
@@ -157,34 +241,54 @@ async def handle(request: web.Request) -> web.StreamResponse:
         k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP
     }
 
-    session: ClientSession = request.app["http_client"]
+    session = request.app["http_client"]
     body = await request.read() if request.can_read_body else None
 
-    upstream = await session.request(
-        request.method,
-        url,
-        headers=fwd_headers,
-        data=body,
-        timeout=ClientTimeout(total=300, connect=10),
-    )
+    try:
+        upstream = await session.request(
+            request.method,
+            url,
+            headers=fwd_headers,
+            data=body,
+            timeout=ClientTimeout(total=300, connect=10),
+        )
+    except Exception as exc:
+        logger.error("Upstream request failed: %s", exc)
+        return web.json_response(
+            {"error": "upstream_error"},
+            status=502,
+            headers=CORS_HEADERS,
+        )
 
     ct = upstream.headers.get("Content-Type", "")
     resp_headers = {
         k: v for k, v in upstream.headers.items() if k.lower() not in HOP_BY_HOP
     }
+    resp_headers = add_cors(resp_headers)
+
+    logger.info("Upstream responded %d (%s) for %s %s", upstream.status, ct, request.method, request.path)
 
     # Stream SSE responses
     if "text/event-stream" in ct:
         response = web.StreamResponse(status=upstream.status, headers=resp_headers)
         await response.prepare(request)
-        async for chunk in upstream.content.iter_any():
-            await response.write(chunk)
-        await upstream.release()
+        try:
+            async for chunk in upstream.content.iter_any():
+                logger.info("SSE chunk: %s", chunk[:300])
+                chunk = rewrite_sse_paths(chunk, PATH_PREFIX)
+                await response.write(chunk)
+        except ConnectionResetError:
+            logger.info("SSE client disconnected for %s", request.path)
+        except Exception as exc:
+            logger.warning("SSE streaming error: %s", exc)
+        finally:
+            await upstream.release()
         return response
 
     # Regular responses
     content = await upstream.read()
     await upstream.release()
+    logger.info("Response body (%d bytes): %s", len(content), content[:500])
     return web.Response(body=content, status=upstream.status, headers=resp_headers)
 
 
@@ -193,6 +297,7 @@ async def handle(request: web.Request) -> web.StreamResponse:
 
 async def on_startup(app: web.Application) -> None:
     app["http_client"] = ClientSession()
+    logger.info("Auth proxy started (prefix=%s, upstream=%s)", PATH_PREFIX, UPSTREAM_URL)
 
 
 async def on_cleanup(app: web.Application) -> None:
