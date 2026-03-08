@@ -1,9 +1,29 @@
 services:
+  auth-proxy:
+    build: ./auth-proxy
+    restart: unless-stopped
+    ports:
+      - "8766:8766"
+    environment:
+      - SAGE_ISSUER=https://mcp.ohno.be
+      - SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
+      - UPSTREAM_URL=http://openmemory-api:8765
+      - PORT=8766
+    depends_on:
+      openmemory-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8766/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   openmemory-api:
     image: mem0/openmemory-mcp:latest
     restart: unless-stopped
     ports:
-      - "8765:8765"
+      - "127.0.0.1:8765:8765"
     env_file:
       - .env
     environment:
