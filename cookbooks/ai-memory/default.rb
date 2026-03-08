@@ -24,6 +24,24 @@ remote_file "#{deploy_dir}/docker-compose.yml" do
   mode "644"
 end
 
+# Auth proxy — validates sage OAuth tokens in front of openmemory-api
+auth_proxy_dir = "#{deploy_dir}/auth-proxy"
+directory auth_proxy_dir do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w[Dockerfile requirements.txt proxy.py].each do |f|
+  remote_file "#{auth_proxy_dir}/#{f}" do
+    source "files/auth-proxy/#{f}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+  end
+end
+
 # Generate .env with secrets from SSM Parameter Store
 generated_dir = "#{node[:setup][:root]}/generated"
 directory generated_dir do
