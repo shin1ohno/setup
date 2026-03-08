@@ -1,0 +1,35 @@
+services:
+  hydra-migrate:
+    image: oryd/hydra:v2.3
+    environment:
+      - DSN=postgres://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/hydra?sslmode=require
+    command: migrate sql -e --yes
+    restart: "no"
+
+  hydra:
+    image: oryd/hydra:v2.3
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4444:4444"
+      - "127.0.0.1:4445:4445"
+    volumes:
+      - ./hydra.yml:/etc/config/hydra/hydra.yml:ro
+    environment:
+      - DSN=postgres://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/hydra?sslmode=require
+      - SECRETS_SYSTEM=${HYDRA_SYSTEM_SECRET}
+    command: serve all --config /etc/config/hydra/hydra.yml
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+
+  consent:
+    build: ./consent-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9020:9020"
+    environment:
+      - HYDRA_ADMIN_URL=http://hydra:4445
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=https://mcp.ohno.be/consent/google/callback
+      - ALLOWED_EMAILS=${ALLOWED_EMAILS}
