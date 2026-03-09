@@ -63,14 +63,27 @@ directory "#{node[:setup][:home]}/.claude" do
   action :create
 end
 
-%w(CLAUDE.md settings.json).each do |file_name|
-  remote_file "#{node[:setup][:home]}/.claude/#{file_name}" do
-    source "files/#{file_name}"
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "644"
-    action :create
-  end
+remote_file "#{node[:setup][:home]}/.claude/CLAUDE.md" do
+  source "files/CLAUDE.md"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  action :create
+end
+
+# Merge managed keys into settings.json, preserving unmanaged keys (e.g. mcpServers)
+settings_path = "#{node[:setup][:home]}/.claude/settings.json"
+managed_file  = File.join(File.dirname(__FILE__), "files", "settings.json")
+
+managed  = JSON.parse(File.read(managed_file))
+existing = File.exist?(settings_path) ? (JSON.parse(File.read(settings_path)) rescue {}) : {}
+merged   = existing.merge(managed)
+
+file settings_path do
+  content JSON.pretty_generate(merged) + "\n"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
 end
 
 # Deploy global rules
