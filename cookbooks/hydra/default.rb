@@ -69,9 +69,12 @@ generate_env_script = File.join(File.dirname(__FILE__), "files", "generate_env.s
 env_temp_path = "#{generated_dir}/hydra.env"
 env_output_path = "#{deploy_dir}/.env"
 
+# Generate .env — skip if SSM parameters are not yet registered
+# (run setup-hydra.sh first, then re-run mitamae)
 execute "generate hydra .env" do
   command "bash #{generate_env_script} #{env_temp_path}"
   user node[:setup][:user]
+  not_if "test -f #{env_output_path}"
 end
 
 if File.exist?(env_temp_path)
@@ -87,26 +90,31 @@ if File.exist?(env_temp_path)
   end
 end
 
-# Create hydra database on Aurora (uses ephemeral postgres container)
-execute "create hydra database on Aurora" do
-  command %W[
-    docker run --rm --env-file #{deploy_dir}/.env
-    postgres:16-alpine
-    sh -c 'psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
-    -c "SELECT 1 FROM pg_database WHERE datname = '"'"'hydra'"'"'" | grep -q 1 ||
-    psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
-    -c "CREATE DATABASE hydra;"'
-  ].join(" ")
-  user node[:setup][:user]
-  not_if %W[
-    docker run --rm --env-file #{deploy_dir}/.env
-    postgres:16-alpine
-    sh -c 'psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
-    -tc "SELECT 1 FROM pg_database WHERE datname = '"'"'hydra'"'"'" | grep -q 1'
-  ].join(" ")
-end
+# Everything below requires .env — skip if not yet generated
+if File.exist?(env_output_path)
+  # Create hydra database on Aurora (uses ephemeral postgres container)
+  execute "create hydra database on Aurora" do
+    command %W[
+      docker run --rm --env-file #{deploy_dir}/.env
+      postgres:16-alpine
+      sh -c 'psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
+      -c "SELECT 1 FROM pg_database WHERE datname = '"'"'hydra'"'"'" | grep -q 1 ||
+      psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
+      -c "CREATE DATABASE hydra;"'
+    ].join(" ")
+    user node[:setup][:user]
+    not_if %W[
+      docker run --rm --env-file #{deploy_dir}/.env
+      postgres:16-alpine
+      sh -c 'psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
+      -tc "SELECT 1 FROM pg_database WHERE datname = '"'"'hydra'"'"'" | grep -q 1'
+    ].join(" ")
+  end
 
-# Pull latest images and (re)start containers
-execute "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build --pull always" do
-  user node[:setup][:user]
+  # Pull latest images and (re)start containers
+  execute "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build --pull always" do
+    user node[:setup][:user]
+  end
+else
+  MItamae.logger.info "hydra: .env not found — run ~/deploy/hydra/setup-hydra.sh first, then re-run mitamae"
 end
