@@ -75,6 +75,9 @@ else
   read -rp "  Enter allowed emails (comma-separated): " ALLOWED_EMAILS
   put_ssm "/hydra/allowed-emails" "${ALLOWED_EMAILS}" "Comma-separated emails allowed to log in"
 fi
+
+echo ""
+echo "── Part 1 complete ──"
 echo ""
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -124,6 +127,9 @@ if [[ "${AUTO_CREATE}" =~ ^[Yy]$ ]]; then
 else
   echo "  Skipping auto-creation. Please create manually before deploying."
 fi
+
+echo ""
+echo "── Part 2 complete ──"
 echo ""
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -204,10 +210,11 @@ echo "  Redirect URI:  ${REDIRECT_URI}"
 echo ""
 
 if gcloud projects describe "${GOOGLE_PROJECT_ID}" &>/dev/null; then
-  echo "  [a] Project already exists, skipping"
+  echo "  [a] Project '${GOOGLE_PROJECT_ID}' already exists, skipping"
 else
   echo "  [a] Creating project '${GOOGLE_PROJECT_ID}'..."
   gcloud projects create "${GOOGLE_PROJECT_ID}" --name="Hydra OAuth"
+  echo "      Done ✓"
 fi
 
 gcloud config set project "${GOOGLE_PROJECT_ID}"
@@ -215,6 +222,7 @@ gcloud config set project "${GOOGLE_PROJECT_ID}"
 echo "  [b] Enabling APIs..."
 gcloud services enable iap.googleapis.com --quiet 2>/dev/null || true
 gcloud services enable people.googleapis.com --quiet 2>/dev/null || true
+echo "      Done ✓"
 
 # ── OAuth consent screen ───────────────────────────────────────────────
 
