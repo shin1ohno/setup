@@ -12,14 +12,48 @@
 
 set -euo pipefail
 
-PROJECT_ID="${1:-hydra-oauth-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
-REDIRECT_URI="https://mcp.ohno.be/consent/google/callback"
-SUPPORT_EMAIL="${SUPPORT_EMAIL:-$(gcloud config get-value account 2>/dev/null)}"
-AWS_REGION="${AWS_REGION:-ap-northeast-1}"
+# ── 0. Select gcloud account ───────────────────────────────────────────
 
 echo "=== Google OAuth Setup for Hydra Consent App ==="
-echo "Project ID:   ${PROJECT_ID}"
-echo "Redirect URI: ${REDIRECT_URI}"
+echo ""
+
+# Get all authenticated accounts
+mapfile -t ACCOUNTS < <(gcloud auth list --format="value(account)" 2>/dev/null)
+
+if [ ${#ACCOUNTS[@]} -eq 0 ]; then
+  echo "No gcloud accounts found. Please run 'gcloud auth login' first."
+  exit 1
+fi
+
+echo "Authenticated gcloud accounts:"
+echo ""
+for i in "${!ACCOUNTS[@]}"; do
+  echo "  $((i + 1))) ${ACCOUNTS[$i]}"
+done
+echo ""
+
+read -rp "Select account [1-${#ACCOUNTS[@]}]: " ACCOUNT_INDEX
+
+if ! [[ "${ACCOUNT_INDEX}" =~ ^[0-9]+$ ]] || [ "${ACCOUNT_INDEX}" -lt 1 ] || [ "${ACCOUNT_INDEX}" -gt ${#ACCOUNTS[@]} ]; then
+  echo "Invalid selection."
+  exit 1
+fi
+
+SELECTED_ACCOUNT="${ACCOUNTS[$((ACCOUNT_INDEX - 1))]}"
+gcloud config set account "${SELECTED_ACCOUNT}" 2>/dev/null
+echo ""
+echo "Using account: ${SELECTED_ACCOUNT}"
+echo ""
+
+# ── Setup variables ────────────────────────────────────────────────────
+
+PROJECT_ID="${1:-hydra-oauth-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
+REDIRECT_URI="https://mcp.ohno.be/consent/google/callback"
+SUPPORT_EMAIL="${SELECTED_ACCOUNT}"
+AWS_REGION="${AWS_REGION:-ap-northeast-1}"
+
+echo "Project ID:    ${PROJECT_ID}"
+echo "Redirect URI:  ${REDIRECT_URI}"
 echo "Support Email: ${SUPPORT_EMAIL}"
 echo ""
 
