@@ -31,6 +31,13 @@ remote_file "#{deploy_dir}/hydra.yml" do
   mode "644"
 end
 
+remote_file "#{deploy_dir}/setup-hydra.sh" do
+  source "files/setup-hydra.sh"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+end
+
 # Consent app — Google OAuth login + Hydra consent flow
 consent_app_dir = "#{deploy_dir}/consent-app"
 directory consent_app_dir do
