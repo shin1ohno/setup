@@ -30,17 +30,25 @@ echo ""
 for i in "${!ACCOUNTS[@]}"; do
   echo "  $((i + 1))) ${ACCOUNTS[$i]}"
 done
+NEW_LOGIN_INDEX=$(( ${#ACCOUNTS[@]} + 1 ))
+echo "  ${NEW_LOGIN_INDEX}) Log in with a different account"
 echo ""
 
-read -rp "Select account [1-${#ACCOUNTS[@]}]: " ACCOUNT_INDEX
+read -rp "Select account [1-${NEW_LOGIN_INDEX}]: " ACCOUNT_INDEX
 
-if ! [[ "${ACCOUNT_INDEX}" =~ ^[0-9]+$ ]] || [ "${ACCOUNT_INDEX}" -lt 1 ] || [ "${ACCOUNT_INDEX}" -gt ${#ACCOUNTS[@]} ]; then
+if ! [[ "${ACCOUNT_INDEX}" =~ ^[0-9]+$ ]] || [ "${ACCOUNT_INDEX}" -lt 1 ] || [ "${ACCOUNT_INDEX}" -gt "${NEW_LOGIN_INDEX}" ]; then
   echo "Invalid selection."
   exit 1
 fi
 
-SELECTED_ACCOUNT="${ACCOUNTS[$((ACCOUNT_INDEX - 1))]}"
-gcloud config set account "${SELECTED_ACCOUNT}" 2>/dev/null
+if [ "${ACCOUNT_INDEX}" -eq "${NEW_LOGIN_INDEX}" ]; then
+  echo ""
+  gcloud auth login --no-launch-browser
+  SELECTED_ACCOUNT="$(gcloud config get-value account 2>/dev/null)"
+else
+  SELECTED_ACCOUNT="${ACCOUNTS[$((ACCOUNT_INDEX - 1))]}"
+  gcloud config set account "${SELECTED_ACCOUNT}" 2>/dev/null
+fi
 echo ""
 echo "Using account: ${SELECTED_ACCOUNT}"
 echo ""
