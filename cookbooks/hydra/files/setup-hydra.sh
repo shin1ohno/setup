@@ -220,93 +220,31 @@ fi
 gcloud config set project "${GOOGLE_PROJECT_ID}"
 
 echo "  [b] Enabling APIs..."
-gcloud services enable iap.googleapis.com --quiet 2>/dev/null || true
 gcloud services enable people.googleapis.com --quiet 2>/dev/null || true
 echo "      Done ✓"
 
-# ── OAuth consent screen ───────────────────────────────────────────────
+# ── OAuth consent screen + client (Console) ────────────────────────────
 
-echo "  [c] Configuring OAuth consent screen..."
+echo "  [c] Create OAuth consent screen and client in Google Cloud Console."
+echo ""
+echo "      1. Open: https://console.cloud.google.com/apis/credentials/consent?project=${GOOGLE_PROJECT_ID}"
+echo "         - User Type: External → Create"
+echo "         - App name: Hydra Consent"
+echo "         - User support email: ${SELECTED_ACCOUNT}"
+echo "         - Developer contact email: ${SELECTED_ACCOUNT}"
+echo "         - Save and Continue (skip Scopes, Test users)"
+echo ""
+echo "      2. Open: https://console.cloud.google.com/apis/credentials?project=${GOOGLE_PROJECT_ID}"
+echo "         - Create Credentials → OAuth client ID"
+echo "         - Application type: Web application"
+echo "         - Name: Hydra Consent App"
+echo "         - Authorized redirect URIs: ${REDIRECT_URI}"
+echo "         - Click Create"
+echo ""
 
-ACCESS_TOKEN="$(gcloud auth print-access-token)"
-
-EXISTING_BRAND=$(curl -sf \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  "https://iap.googleapis.com/v1/projects/${GOOGLE_PROJECT_ID}/brands" \
-  | python3 -c "import sys,json; brands=json.load(sys.stdin).get('brands',[]); print(brands[0]['name'] if brands else '')" 2>/dev/null || true)
-
-if [ -n "${EXISTING_BRAND}" ]; then
-  echo "      Already configured"
-else
-  curl -sf \
-    -X POST \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"applicationTitle\": \"Hydra Consent\",
-      \"supportEmail\": \"${SELECTED_ACCOUNT}\"
-    }" \
-    "https://iap.googleapis.com/v1/projects/${GOOGLE_PROJECT_ID}/brands" >/dev/null
-  echo "      Created ✓"
-fi
-
-# ── OAuth client ───────────────────────────────────────────────────────
-
-echo "  [d] Creating OAuth client..."
-
-PROJECT_NUMBER=$(gcloud projects describe "${GOOGLE_PROJECT_ID}" --format="value(projectNumber)")
-
-EXISTING_CLIENTS=$(curl -sf \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  "https://oauth2.googleapis.com/v2/projects/${PROJECT_NUMBER}/oauthClients" 2>/dev/null || echo '{}')
-
-EXISTING_CLIENT_ID=$(echo "${EXISTING_CLIENTS}" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for c in data.get('oauthClients', []):
-    if c.get('displayName') == 'Hydra Consent App':
-        print(c.get('clientId', ''))
-        break
-" 2>/dev/null || true)
-
-if [ -n "${EXISTING_CLIENT_ID}" ]; then
-  echo "      Already exists: ${EXISTING_CLIENT_ID}"
-  echo ""
-  echo "  Retrieve the client secret from:"
-  echo "  https://console.cloud.google.com/apis/credentials?project=${GOOGLE_PROJECT_ID}"
-  exit 0
-fi
-
-CLIENT_RESPONSE=$(curl -sf \
-  -X POST \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"client_id\": \"\",
-    \"client_secret\": \"\",
-    \"redirect_uris\": [\"${REDIRECT_URI}\"],
-    \"client_name\": \"Hydra Consent App\",
-    \"application_type\": \"web\"
-  }" \
-  "https://www.googleapis.com/oauth2/v1/projects/${PROJECT_NUMBER}/oauthClients" 2>/dev/null || true)
-
-if [ -z "${CLIENT_RESPONSE}" ] || echo "${CLIENT_RESPONSE}" | grep -q '"error"'; then
-  echo "      REST API not available. Please create manually:"
-  echo ""
-  echo "      1. Open: https://console.cloud.google.com/apis/credentials?project=${GOOGLE_PROJECT_ID}"
-  echo "      2. Create Credentials → OAuth client ID"
-  echo "      3. Type: Web application"
-  echo "      4. Name: Hydra Consent App"
-  echo "      5. Redirect URI: ${REDIRECT_URI}"
-  echo "      6. Click Create"
-  echo ""
-  read -rp "      Enter Client ID: " CLIENT_ID
-  read -rp "      Enter Client Secret: " CLIENT_SECRET
-else
-  CLIENT_ID=$(echo "${CLIENT_RESPONSE}" | python3 -c "import sys,json; print(json.load(sys.stdin)['client_id'])")
-  CLIENT_SECRET=$(echo "${CLIENT_RESPONSE}" | python3 -c "import sys,json; print(json.load(sys.stdin)['client_secret'])")
-  echo "      Created: ${CLIENT_ID}"
-fi
+read -rp "      Enter Client ID: " CLIENT_ID
+read -rp "      Enter Client Secret: " CLIENT_SECRET
+echo "      Done ✓"
 
 # ── Store Google OAuth in SSM ──────────────────────────────────────────
 
