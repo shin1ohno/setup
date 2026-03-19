@@ -36,7 +36,7 @@ oauth2:
 ttl:
   access_token: 1h
   refresh_token: 720h
-  authorization_code: 10m
+  auth_code: 10m
 
 log:
   level: info
