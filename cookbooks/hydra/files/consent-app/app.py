@@ -1,5 +1,6 @@
 """Hydra consent app with Google OAuth login."""
 
+import json
 import os
 import secrets
 import urllib.parse
@@ -277,6 +278,42 @@ async def consent_post(request: Request):
             redirect_to = reject_resp.json()["redirect_to"]
 
     return RedirectResponse(redirect_to, status_code=303)
+
+
+@app.post("/oauth2/register")
+async def dcr_proxy(request: Request):
+    """Proxy DCR to Hydra and strip null/empty fields from response.
+
+    Claude rejects DCR responses containing null values or empty objects,
+    so we filter them out before returning.
+    """
+    body = await request.body()
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{HYDRA_ADMIN_URL.replace(':4445', ':4444')}/oauth2/register",
+            content=body,
+            headers=headers,
+        )
+
+    data = resp.json()
+
+    # Strip null, empty string, empty list, empty dict, and None values
+    cleaned = {
+        k: v
+        for k, v in data.items()
+        if v is not None and v != "" and v != [] and v != {}
+    }
+
+    return Response(
+        content=json.dumps(cleaned),
+        status_code=resp.status_code,
+        media_type="application/json",
+    )
 
 
 @app.get("/consent/health")
