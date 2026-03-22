@@ -14,8 +14,8 @@ Treat `$ARGUMENTS` as the task content. If omitted, use AskUserQuestion to promp
 
 Read the following 2 files using the Read tool:
 
-1. `~/.takt/personas/document-writer.md` - Writer persona
-2. `~/.takt/personas/marginal-utility-editor.md` - Editor persona
+1. `~/.claude/skills/takt/personas/document-writer.md` - Writer persona
+2. `~/.claude/skills/takt/personas/marginal-utility-editor.md` - Editor persona
 
 ## Workflow
 

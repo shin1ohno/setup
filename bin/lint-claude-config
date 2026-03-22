@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+errors=0
+
+echo "=== Claude Code Configuration Lint ==="
+
+# 1. JSON syntax check
+for f in ~/.claude/settings.json ~/.claude/settings.local.json; do
+  if [[ -f "$f" ]]; then
+    if ! jq . "$f" > /dev/null 2>&1; then
+      echo "ERROR: Invalid JSON: $f"
+      errors=$((errors + 1))
+    else
+      echo "OK: JSON syntax valid: $f"
+    fi
+  fi
+done
+
+# 2. Denylist completeness
+for pattern in "Bash(rm -rf:*)" "Bash(rm -r :*)"; do
+  if ! jq -e --arg p "$pattern" '.permissions.deny | index($p)' ~/.claude/settings.json > /dev/null 2>&1; then
+    echo "WARN: '$pattern' missing from denylist in ~/.claude/settings.json"
+    errors=$((errors + 1))
+  fi
+done
+echo "OK: Denylist checked"
+
+# 3. Orphan personas check
+if [[ -d ~/.takt/personas ]] && [[ -n "$(ls -A ~/.takt/personas 2>/dev/null)" ]]; then
+  echo "WARN: ~/.takt/personas/ is not empty (should be consolidated to ~/.claude/skills/takt/personas/)"
+  errors=$((errors + 1))
+else
+  echo "OK: No orphan personas in ~/.takt/personas/"
+fi
+
+# 4. Persona reference validation in SKILL.md files
+ref_errors=0
+for skill_md in ~/.claude/skills/*/SKILL.md; do
+  while IFS= read -r ref; do
+    expanded="${ref/#\~/$HOME}"
+    if [[ ! -f "$expanded" ]]; then
+      echo "ERROR: Missing persona: $ref (referenced in $skill_md)"
+      ref_errors=$((ref_errors + 1))
+    fi
+  done < <(grep -oP '~/.claude/skills/takt/personas/\S+\.md' "$skill_md" 2>/dev/null || true)
+done
+if [[ "$ref_errors" -eq 0 ]]; then
+  echo "OK: All persona references valid"
+else
+  errors=$((errors + ref_errors))
+fi
+
+# 5. hybrid-codex pieces check (should not exist)
+hybrid_count=$(find ~/.claude/skills/takt/pieces/ -name '*-hybrid-codex.yaml' 2>/dev/null | wc -l)
+if [[ "$hybrid_count" -gt 0 ]]; then
+  echo "WARN: $hybrid_count hybrid-codex pieces still exist (consider deleting)"
+  errors=$((errors + 1))
+else
+  echo "OK: No hybrid-codex pieces"
+fi
+
+echo ""
+echo "=== Lint complete. Issues: $errors ==="
+exit "$errors"
