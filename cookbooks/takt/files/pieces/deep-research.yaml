@@ -1,0 +1,234 @@
+name: deep-research
+description: 並列調査ピース - 3チーム並列で調査し、統合・レビュー・レポートまで実行
+max_iterations: 10
+
+personas:
+  planner: ../personas/deep-research-planner.md
+  web-researcher: ../personas/web-researcher.md
+  tech-analyst: ../personas/tech-analyst.md
+  critical-analyst: ../personas/critical-analyst.md
+  integrator: ../personas/integrator.md
+  report-writer: ../personas/report-writer.md
+
+initial_movement: plan
+
+movements:
+  - name: plan
+    persona: planner
+    edit: false
+    instruction_template: |
+      ## ピース状況
+      - イテレーション: {iteration}/{max_iterations}
+      - ムーブメント実行回数: {movement_iteration}
+      - ムーブメント: plan
+
+      ## 調査依頼
+      {task}
+
+      ## レビューからのフィードバック（再計画の場合）
+      {previous_response}
+
+      ## 追加のユーザー入力
+      {user_inputs}
+
+      ## 指示
+      上記の調査依頼について、3つの並列調査チーム（Web調査・技術深掘り・批判的分析）への指示を含む調査計画を立ててください。
+
+      **重要**: ユーザーに質問しないでください。不明点は仮定を置いて進めてください。
+    rules:
+      - condition: 計画が完了した
+        next: investigate
+      - condition: 情報が不足しており計画を立てられない
+        next: ABORT
+
+  - name: investigate
+    parallel:
+      - name: web-research
+        persona: web-researcher
+        edit: false
+        instruction_template: |
+          ## ピース状況
+          - イテレーション: {iteration}/{max_iterations}
+          - ムーブメント: investigate / web-research
+
+          ## 元の調査依頼
+          {task}
+
+          ## 調査計画（Plannerからの指示）
+          {previous_response}
+
+          ## 指示
+          調査計画の「Web調査チームへの指示」セクションに従って調査を実行してください。
+          計画に該当セクションがない場合は、一般的なWeb情報収集の観点で調査してください。
+
+          **重要**: ユーザーに質問しないでください。
+        rules:
+          - condition: 調査完了
+          - condition: 調査失敗
+
+      - name: tech-deepdive
+        persona: tech-analyst
+        edit: false
+        instruction_template: |
+          ## ピース状況
+          - イテレーション: {iteration}/{max_iterations}
+          - ムーブメント: investigate / tech-deepdive
+
+          ## 元の調査依頼
+          {task}
+
+          ## 調査計画（Plannerからの指示）
+          {previous_response}
+
+          ## 指示
+          調査計画の「技術深掘りチームへの指示」セクションに従って調査を実行してください。
+          計画に該当セクションがない場合は、コードベースと技術文書の観点で調査してください。
+
+          **重要**: ユーザーに質問しないでください。
+        rules:
+          - condition: 調査完了
+          - condition: 調査失敗
+
+      - name: critical-analysis
+        persona: critical-analyst
+        edit: false
+        instruction_template: |
+          ## ピース状況
+          - イテレーション: {iteration}/{max_iterations}
+          - ムーブメント: investigate / critical-analysis
+
+          ## 元の調査依頼
+          {task}
+
+          ## 調査計画（Plannerからの指示）
+          {previous_response}
+
+          ## 指示
+          調査計画の「批判的分析チームへの指示」セクションに従って分析を実行してください。
+          計画に該当セクションがない場合は、リスク・代替案・反論の観点で分析してください。
+
+          **重要**: ユーザーに質問しないでください。
+        rules:
+          - condition: 調査完了
+          - condition: 調査失敗
+
+    rules:
+      - condition: all("調査完了")
+        next: integrate
+      - condition: any("調査失敗")
+        next: plan
+
+  - name: integrate
+    persona: integrator
+    edit: false
+    instruction_template: |
+      ## ピース状況
+      - イテレーション: {iteration}/{max_iterations}
+      - ムーブメント実行回数: {movement_iteration}
+      - ムーブメント: integrate
+
+      ## 元の調査依頼
+      {task}
+
+      ## 3チームの調査結果
+      {previous_response}
+
+      ## 指示
+      3チーム（Web調査・技術深掘り・批判的分析）の調査結果を統合してください。
+
+      以下の構造で出力:
+      1. **主要な発見** - 3チームの結果から導かれる核心的な知見
+      2. **詳細** - チーム横断で整理された情報（重複除去済み）
+      3. **矛盾点** - チーム間で矛盾する情報（あれば）
+      4. **ギャップ** - 調査が不十分な領域（あれば）
+      5. **暫定的な結論** - 現時点での推奨/回答
+    rules:
+      - condition: 統合が完了した
+        next: review
+      - condition: 統合できない（情報が不十分）
+        next: plan
+
+  - name: review
+    persona: integrator
+    edit: false
+    instruction_template: |
+      ## ピース状況
+      - イテレーション: {iteration}/{max_iterations}
+      - ムーブメント実行回数: {movement_iteration}
+      - ムーブメント: review（品質チェック）
+
+      ## 元の調査依頼
+      {task}
+
+      ## 統合された調査結果
+      {previous_response}
+
+      ## 指示
+      統合された調査結果を以下の観点で品質チェックしてください:
+
+      1. **依頼への回答性**: 元の調査依頼に対する明確な回答があるか
+      2. **網羅性**: 重要な観点が抜けていないか
+      3. **信頼性**: 情報源が明示され、推測と事実が区別されているか
+      4. **実用性**: 具体的で実用的な内容か
+
+      80%以上の品質があれば承認。不足がある場合は具体的に指摘してください。
+    rules:
+      - condition: 品質が十分である
+        next: report
+      - condition: 品質が不十分であり、再調査が必要
+        next: plan
+
+  - name: report
+    persona: report-writer
+    edit: false
+    instruction_template: |
+      ## ピース状況
+      - イテレーション: {iteration}/{max_iterations}
+      - ムーブメント: report（最終レポート作成）
+
+      ## 元の調査依頼
+      {task}
+
+      ## レビュー済み調査結果
+      {previous_response}
+
+      ## 指示
+      レビュー済みの調査結果から最終レポートを作成してください。
+
+      フォーマット:
+      ```
+      ## 結論（BLUF）
+      [1-3文で結論]
+
+      ## 主要な発見
+      - [箇条書きで主要な発見]
+
+      ## 詳細分析
+      [構造化された詳細]
+
+      ## リスクと注意点
+      - [箇条書き]
+
+      ## 推奨事項
+      - [具体的なアクションアイテム]
+
+      ## 参考情報源
+      - [URL等]
+      ```
+    rules:
+      - condition: レポートが完成した
+        next: COMPLETE
+
+loop_monitors:
+  - cycle: [plan, investigate, integrate, review]
+    threshold: 3
+    judge:
+      persona: integrator
+      instruction_template: |
+        調査サイクルが {cycle_count} 回繰り返されました。
+        これまでの調査結果を評価し、現時点で最善のレポートを作成すべきか判断してください。
+      rules:
+        - condition: 現時点の情報で十分なレポートが作成可能
+          next: report
+        - condition: 改善の余地がありもう1サイクル必要
+          next: plan

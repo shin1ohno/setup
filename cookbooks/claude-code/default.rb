@@ -73,3 +73,39 @@ end
   end
 end
 
+# Deploy global rules
+directory "#{node[:setup][:home]}/.claude/rules" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w(ruby.md shell.md infrastructure.md review.md).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
+    source "files/rules/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+# Deploy skills
+%w(writing deep-research).each do |skill_name|
+  directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
+
+  remote_file "#{node[:setup][:home]}/.claude/skills/#{skill_name}/SKILL.md" do
+    source "files/skills/#{skill_name}/SKILL.md"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
