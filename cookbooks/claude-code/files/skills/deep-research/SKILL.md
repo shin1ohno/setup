@@ -14,12 +14,12 @@ Treat `$ARGUMENTS` as the research task. If omitted, use AskUserQuestion to prom
 
 Read the following files using the Read tool:
 
-1. `~/.takt/personas/deep-research-planner.md`
-2. `~/.takt/personas/web-researcher.md`
-3. `~/.takt/personas/tech-analyst.md`
-4. `~/.takt/personas/critical-analyst.md`
-5. `~/.takt/personas/integrator.md`
-6. `~/.takt/personas/report-writer.md`
+1. `~/.claude/skills/takt/personas/deep-research-planner.md`
+2. `~/.claude/skills/takt/personas/web-researcher.md`
+3. `~/.claude/skills/takt/personas/tech-analyst.md`
+4. `~/.claude/skills/takt/personas/critical-analyst.md`
+5. `~/.claude/skills/takt/personas/integrator.md`
+6. `~/.claude/skills/takt/personas/report-writer.md`
 
 ## Workflow
 

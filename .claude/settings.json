@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json; d=json.load(sys.stdin); cmd=d.get('tool_input',{}).get('command',''); exit(0) if 'mitamae' not in cmd else (exit(0) if '--dry-run' in cmd else (print('ERROR: mitamae without --dry-run is blocked. Add --dry-run flag.',file=sys.stderr) or exit(2)))\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json; d=json.load(sys.stdin); path=d.get('tool_input',{}).get('file_path',''); print('Reminder: test cookbook changes with ./bin/mitamae local linux.rb --dry-run') if '/cookbooks/' in path and path.endswith('.rb') else None\""
+          }
+        ]
+      }
+    ]
+  }
+}
