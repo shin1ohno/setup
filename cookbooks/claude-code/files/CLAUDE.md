@@ -25,11 +25,32 @@ These rules must always be followed:
 - Follow existing code conventions and patterns in each project
 - Prefer editing existing files over creating new ones
 
+## Behavioral Principles
+
+- Simple first: try the simplest solution first
+- Do not guess when unclear — ask (use AskUserQuestion)
+
 ## Planning Before Implementation
 
 - Use `/plan` mode to create a thorough plan before starting any non-trivial task
 - Always get user confirmation on the plan before proceeding with implementation
 - Break down complex tasks into clear, actionable steps
+
+## Sub-agent Design Principles
+
+- 1 agent = 1 task: never give multiple roles to a single agent
+- Run parallelizable tasks in parallel (Agent tool parallel calls)
+- Review gate: always include a review step for important outputs
+- Use TAKT pieces for reusable, multi-step workflows
+
+### Tool Selection Guide
+
+| Situation | Tool |
+|-----------|------|
+| One-off research / exploration | Agent tool (Explore) |
+| Multi-step repeatable workflow | /takt {piece} |
+| Simple code search | Glob / Grep directly |
+| 3+ step non-standard task | /plan → implement |
 
 ## Spec Workflow
 
@@ -53,6 +74,32 @@ Use o3 when:
 - Searching or fetching information from the web
 - Need external knowledge beyond training data
 - Want a second opinion on complex problems
+
+## Writing Principles
+
+Core objective: maximize the utility of what is communicated while minimizing the cost of reading.
+
+### Structure: Pyramid Principle
+
+- Lead with the conclusion (BLUF: Bottom Line Up Front)
+- Support with key arguments, then details
+- Each level answers "why?" or "how?" from the level above
+- Group related arguments using MECE (Mutually Exclusive, Collectively Exhaustive)
+
+### Style
+
+- Default to narrative prose; use bullet points only when they genuinely aid comprehension
+- Replace adjectives and adverbs with concrete numbers and specific facts (e.g., "significantly improved" → "improved by 40%")
+- Amazon-style narrative memo format; body max 6 pages for long-form documents
+
+### Editing Lens: Marginal Utility
+
+Every sentence must earn its place. Apply the marginal utility test:
+
+- When adding: does this sentence increase the document's total value more than the reading cost it adds?
+- When reviewing: if I remove this sentence, does the document lose value?
+- A shorter document that conveys the same information is always better
+- When marginal utility of the next sentence approaches zero, stop writing
 
 ## Git Commit Format
 
