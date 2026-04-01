@@ -5,8 +5,10 @@ git_clone "fzf-git.sh" do
   uri "git@github.com:junegunn/fzf-git.sh.git"
 end
 
-execute "git pull" do
+execute "update fzf-git.sh" do
+  command "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' git pull || true"
   cwd "#{node[:setup][:root]}/fzf-git.sh"
+  only_if "test -d #{node[:setup][:root]}/fzf-git.sh"
 end
 
 case node[:platform]

@@ -2,13 +2,15 @@
 # https://github.com/oraios/serena
 
 # Skip installation if uv is not available
-unless run_command("which uv", error: false).exit_status == 0
+uv_path = "#{ENV['HOME']}/.local/bin/uv"
+unless File.exist?(uv_path)
   MItamae.logger.info "uv is not installed, skipping Serena installation"
   return
 end
 
 # Skip installation if claude is not available
-unless run_command("which claude", error: false).exit_status == 0
+claude_path = "#{ENV['HOME']}/.local/bin/claude"
+unless File.exist?(claude_path)
   MItamae.logger.info "Claude Code is not installed, skipping Serena MCP configuration"
   return
 end

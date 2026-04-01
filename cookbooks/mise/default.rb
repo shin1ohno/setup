@@ -11,7 +11,8 @@ execute "sh #{node[:setup][:root]}/mise-install.sh" do
   not_if "which mise"
 end
 
-execute "$HOME/.local/bin/mise self-update -y" do
+execute "mise self-update" do
+  command "$HOME/.local/bin/mise self-update -y --no-plugins || echo '[setup] WARNING: mise self-update failed, continuing with current version'"
   only_if { File.exist? "#{node[:setup][:home]}/.local/bin/mise" }
 end
 

@@ -7,8 +7,8 @@ when "darwin"
   package "speedtest"
 when "ubuntu"
   execute "Install speedtest-cli" do
-    command "pip install speedtest-cli"
-    not_if "pip list | grep -q speedtest-cli"
+    command "$HOME/.pyenv/shims/pip install speedtest-cli"
+    not_if "test -x $HOME/.pyenv/shims/pip && $HOME/.pyenv/shims/pip list | grep -q speedtest-cli"
   end
 end
 
