@@ -10,6 +10,9 @@ include_cookbook "neovim"
 include_cookbook "dot-config-nvim"
 include_cookbook "lazygit"
 
+# Google Workspace CLI
+include_cookbook "gws"
+
 # File utilities and knowledge tools
 include_cookbook "imgcat"
 include_cookbook "skicka"

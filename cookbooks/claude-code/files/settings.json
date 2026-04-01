@@ -41,5 +41,6 @@
     "typescript-lsp@claude-plugins-official": true,
     "lua-lsp@claude-plugins-official": true
   },
-  "enableAllProjectMcpServers": true
+  "enableAllProjectMcpServers": true,
+  "skipDangerousModePermissionPrompt": true
 }
