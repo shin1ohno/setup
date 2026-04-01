@@ -117,6 +117,7 @@ end
 define :git_clone, uri: nil, cwd: nil, user: nil, not_if: nil do
   execute "git clone #{params[:uri]}" do
     action :run
+    command "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' git clone #{params[:uri]}"
     cwd params[:cwd]
     user params[:user] || node[:setup][:user]
     not_if params[:not_if] || "test -e #{params[:cwd]}/#{params[:name]}"

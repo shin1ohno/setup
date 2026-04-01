@@ -7,7 +7,7 @@ mise_tool "pm2" do
   backend "npm"
 end
 
-c = "sudo env PATH=$PATH:#{node[:setup][:home]}/.local/share/mise/shims $(which pm2) startup launchd -u $USER --hp #{node[:setup][:home]}" 
+c = "sudo env PATH=$PATH:#{node[:setup][:home]}/.local/share/mise/shims #{node[:setup][:home]}/.local/share/mise/shims/pm2 startup launchd -u $USER --hp #{node[:setup][:home]}"
 
 if node[:platform] == "darwin"
   execute "setup pm2" do

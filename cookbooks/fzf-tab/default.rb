@@ -5,8 +5,10 @@ git_clone "fzf-tab" do
   uri "https://github.com/Aloxaf/fzf-tab.git"
 end
 
-execute "git pull" do
+execute "update fzf-tab" do
+  command "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' git pull || true"
   cwd "#{node[:setup][:root]}/fzf-tab"
+  only_if "test -d #{node[:setup][:root]}/fzf-tab"
 end
 
 add_profile "fzf-tab" do

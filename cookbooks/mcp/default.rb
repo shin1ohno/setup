@@ -9,7 +9,14 @@ include_cookbook "awscli"
 # Ensure yq is available for YAML processing
 include_cookbook "yq"
 
-%w(o3-search-mcp mcp-hub).each do |com|
+# Ensure jq is available for JSON processing in generate_config.sh
+install_package "jq" do
+  darwin "jq"
+  ubuntu "jq"
+  arch "jq"
+end
+
+%w(o3-search-mcp mcp-hub mcp-remote).each do |com|
   mise_tool com do
     backend "npm"
   end
@@ -48,12 +55,20 @@ if node[:platform] == "darwin"
     user node[:setup][:user]
   end
 
-  # Deploy and clean up only when the generated file exists.
+  # Merge managed config into existing file, preserving user-added mcpServers.
   # During --dry-run the execute above is a no-op so temp_path won't exist;
   # during a real run, a generate failure halts execution before reaching here.
   if File.exist?(temp_path)
-    remote_file output_path do
-      source temp_path
+    managed  = JSON.parse(File.read(temp_path))
+    existing = File.exist?(output_path) ? (JSON.parse(File.read(output_path)) rescue {}) : {}
+
+    # Deep-merge mcpServers: keep user-added servers, update managed ones
+    merged_servers = (existing["mcpServers"] || {}).merge(managed["mcpServers"] || {})
+    merged = existing.merge(managed)
+    merged["mcpServers"] = merged_servers
+
+    file output_path do
+      content JSON.pretty_generate(merged) + "\n"
       owner node[:setup][:user]
       group node[:setup][:group]
       mode "644"

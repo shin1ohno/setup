@@ -25,6 +25,7 @@ end
 # Ensure npm is up to date
 execute "export PATH=$HOME/.local/share/mise/shims:$PATH && npm upgrade -g npm" do
   user node[:setup][:user]
+  only_if "test -x $HOME/.local/share/mise/shims/npm"
 end
 
 # Add Node.js related environment setup

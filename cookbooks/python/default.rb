@@ -43,4 +43,6 @@ node[:python][:versions].each do |version|
   end
 end
 
-execute "$HOME/.pyenv/shims/pip install --upgrade pip"
+execute "$HOME/.pyenv/shims/pip install --upgrade pip" do
+  only_if "test -x $HOME/.pyenv/shims/pip"
+end

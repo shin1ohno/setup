@@ -62,6 +62,17 @@ mcp_servers:
     transport: sse
     url: "https://mcp.ohno.be/memory/mcp/claude/sse/shin1ohno"
 
+  langmem-mcp:
+    command: "npx"
+    args:
+      - "-y"
+      - "mcp-remote"
+      - "https://mcp-gateway-proxy.dev.citadelapps.com"
+      - "--header"
+      - "X-Work-MCP-name:langmem-mcp"
+      - "--header"
+      - "X-Work-MCP-Session-Id:REDACTED"
+
   serena:
     command: "uvx"
     args:

@@ -14,7 +14,17 @@ return if node[:platform] != "darwin"
 
 # Ensure Xcode Command Line Tools are installed first
 # (Required for xcodes bottle installation and general development)
-execute "xcode-select --install" do
+# xcode-select --install launches a GUI dialog and returns immediately,
+# so we poll until the CLT installation is complete.
+execute "install and wait for Xcode CLT" do
+  command <<~BASH
+    xcode-select --install 2>/dev/null || true
+    echo "Waiting for Xcode Command Line Tools installation..."
+    until xcode-select -p > /dev/null 2>&1; do
+      sleep 5
+    done
+    echo "Xcode Command Line Tools installed."
+  BASH
   not_if "xcode-select -p > /dev/null 2>&1"
 end
 

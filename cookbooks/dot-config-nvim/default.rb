@@ -40,8 +40,10 @@ end
   end
 end
 
-execute "git pull" do
+execute "update nvim config" do
+  command "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' git pull || true"
   cwd "#{node[:setup][:home]}/.config/nvim/"
+  only_if "test -d #{node[:setup][:home]}/.config/nvim/.git"
 end
 
 execute "mkdir -p ~/.local/bin" do

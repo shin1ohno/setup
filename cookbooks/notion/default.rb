@@ -14,7 +14,11 @@ end
 # This uses Notion's official MCP server at mcp.notion.com
 claude_path = "#{node[:setup][:home]}/.local/bin/claude"
 
-execute "setup notion mcp for claude code" do
-  command "#{claude_path} mcp add -s user --transport http notion https://mcp.notion.com/mcp"
-  not_if "#{claude_path} mcp list | grep -q notion"
+if File.exist?("#{ENV['HOME']}/.local/bin/claude")
+  execute "setup notion mcp for claude code" do
+    command "#{claude_path} mcp add -s user --transport http notion https://mcp.notion.com/mcp"
+    not_if "#{claude_path} mcp list | grep -q notion"
+  end
+else
+  MItamae.logger.info "Claude Code is not installed, skipping Notion MCP configuration"
 end
