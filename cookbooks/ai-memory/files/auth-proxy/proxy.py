@@ -171,6 +171,20 @@ HOP_BY_HOP = frozenset(
     ("host", "authorization", "transfer-encoding", "connection", "keep-alive")
 )
 
+# MCP uses JSON-RPC 2.0, whose error objects require a numeric `code`. Returning
+# a plain {"error": "..."} body on 401 makes MCP clients reject the response
+# with "code: Field required" before they can act on the WWW-Authenticate
+# header, so 401s must ship a JSON-RPC 2.0 envelope.
+JSONRPC_UNAUTHORIZED = -32001
+
+
+def jsonrpc_error(code: int, message: str, status: int, headers: dict) -> web.Response:
+    return web.json_response(
+        {"jsonrpc": "2.0", "id": None, "error": {"code": code, "message": message}},
+        status=status,
+        headers=headers,
+    )
+
 
 async def handle(request: web.Request) -> web.StreamResponse:
     logger.info("%s %s", request.method, request.path)
@@ -212,19 +226,21 @@ async def handle(request: web.Request) -> web.StreamResponse:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         logger.info("No Bearer token for %s %s", request.method, request.path)
-        return web.json_response(
-            {"error": "unauthorized"},
-            status=401,
-            headers=add_cors({"WWW-Authenticate": WWW_AUTH}),
+        return jsonrpc_error(
+            JSONRPC_UNAUTHORIZED,
+            "unauthorized",
+            401,
+            add_cors({"WWW-Authenticate": WWW_AUTH}),
         )
 
     claims = verifier.verify(auth[7:])
     if claims is None:
         logger.warning("Invalid token for %s %s", request.method, request.path)
-        return web.json_response(
-            {"error": "invalid_token"},
-            status=401,
-            headers=add_cors({
+        return jsonrpc_error(
+            JSONRPC_UNAUTHORIZED,
+            "invalid_token",
+            401,
+            add_cors({
                 "WWW-Authenticate": (
                     f'Bearer error="invalid_token",'
                     f' resource_metadata="{RESOURCE_ID}'
@@ -254,10 +270,11 @@ async def handle(request: web.Request) -> web.StreamResponse:
         )
     except Exception as exc:
         logger.error("Upstream request failed: %s", exc)
-        return web.json_response(
-            {"error": "upstream_error"},
-            status=502,
-            headers=CORS_HEADERS,
+        return jsonrpc_error(
+            -32000,
+            "upstream_error",
+            502,
+            CORS_HEADERS,
         )
 
     ct = upstream.headers.get("Content-Type", "")
