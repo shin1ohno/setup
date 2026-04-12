@@ -105,7 +105,7 @@ end
 end
 
 # Deploy skills
-%w(writing deep-research).each do |skill_name|
+%w(writing).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
