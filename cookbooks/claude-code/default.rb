@@ -94,7 +94,7 @@ directory "#{node[:setup][:home]}/.claude/rules" do
   action :create
 end
 
-%w(ruby.md shell.md infrastructure.md review.md).each do |file_name|
+%w(ruby.md shell.md infrastructure.md review.md writing.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
     source "files/rules/#{file_name}"
     owner node[:setup][:user]
@@ -115,6 +115,24 @@ end
 
   remote_file "#{node[:setup][:home]}/.claude/skills/#{skill_name}/SKILL.md" do
     source "files/skills/#{skill_name}/SKILL.md"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+# Deploy writing skill personas
+directory "#{node[:setup][:home]}/.claude/skills/writing/personas" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w(document-writer.md marginal-utility-editor.md).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/skills/writing/personas/#{file_name}" do
+    source "files/skills/writing/personas/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
