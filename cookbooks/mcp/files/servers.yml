@@ -21,36 +21,6 @@ mcp_servers:
       OBSIDIAN_API_KEY:
         ssm: "/mcp/obsidian-api-key"
 
-  o3:
-    command: "npx"
-    args:
-      - "-y"
-      - "o3-search-mcp"
-    env:
-      OPENAI_API_KEY:
-        ssm: "/mcp/openai-api-key"
-      O3_REASONING_EFFORT: "medium"
-
-  o3-high:
-    command: "npx"
-    args:
-      - "-y"
-      - "o3-search-mcp"
-    env:
-      OPENAI_API_KEY:
-        ssm: "/mcp/openai-api-key"
-      O3_REASONING_EFFORT: "high"
-
-  o3-low:
-    command: "npx"
-    args:
-      - "-y"
-      - "o3-search-mcp"
-    env:
-      OPENAI_API_KEY:
-        ssm: "/mcp/openai-api-key"
-      O3_REASONING_EFFORT: "low"
-
   notion:
     type: http
     transport: http
