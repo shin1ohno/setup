@@ -91,6 +91,20 @@ end
   end
 end
 
+directory "#{deploy_dir}/vault-exporter" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+remote_file "#{deploy_dir}/vault-exporter/Dockerfile" do
+  source "files/vault-exporter/Dockerfile"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+end
+
 # Generate .env with secrets from SSM Parameter Store
 generated_dir = "#{node[:setup][:root]}/generated"
 directory generated_dir do
