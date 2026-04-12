@@ -73,10 +73,4 @@ mcp_servers:
       - "--header"
       - "X-Mercari-MCP-Session-Id:yGMM21ZWwxjj1-3BeEWicXhtFmJj44pBHTlPXqObs6k"
 
-  serena:
-    command: "uvx"
-    args:
-      - "serena"
-      - "--config"
-      - "${HOME}/.serena/config.yml"
 
