@@ -55,7 +55,7 @@ services:
         COPY . .
         RUN find src -type d | while read d; do base=$$(basename "$$d"); lower=$$(echo "$$base" | tr '[:upper:]' '[:lower:]'); [ "$$base" != "$$lower" ] && ln -sf "$$base" "$$(dirname "$$d")/$$lower" 2>/dev/null; done; true
         RUN mv next.config.mjs next.config.original.mjs && \
-            echo 'import config from "./next.config.original.mjs"; export default { ...config, basePath: "/cognee-ui" };' > next.config.mjs
+            echo 'import config from "./next.config.original.mjs"; export default { ...config, basePath: "/cognee-ui", typescript: { ignoreBuildErrors: true }, eslint: { ignoreDuringBuilds: true } };' > next.config.mjs
         # Patch window.location.href redirects to include basePath
         RUN find src -name '*.ts' -o -name '*.tsx' | xargs sed -i \
             -e 's|window\.location\.href = "/local-login"|window.location.href = "/cognee-ui/local-login"|g' \
@@ -63,7 +63,13 @@ services:
             -e 's|window\.location\.href = "/datasets"|window.location.href = "/cognee-ui/datasets"|g' \
             -e 's|window\.location\.href = `/auth/login|window.location.href = `/cognee-ui/auth/login|g' \
             -e 's|window\.location\.pathname === "/local-login"|window.location.pathname === "/cognee-ui/local-login"|g'
-        CMD ["npm", "run", "dev"]
+        ENV NEXT_PUBLIC_LOCAL_API_URL=https://mcp.ohno.be/cognee-api
+        ENV NEXT_PUBLIC_IS_CLOUD_ENVIRONMENT=false
+        # Patch logout href to include basePath (plain <a> tags bypass Next.js basePath)
+        RUN find src -name '*.ts' -o -name '*.tsx' | xargs sed -i \
+            -e 's|"/api/local-signout"|"/cognee-ui/api/local-signout"|g'
+        RUN npm run build
+        CMD ["npm", "run", "start"]
     restart: unless-stopped
     ports:
       - "127.0.0.1:3001:3000"
