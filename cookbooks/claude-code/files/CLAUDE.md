@@ -28,7 +28,7 @@ These rules must always be followed:
 ## Behavioral Principles
 
 - Simple first: try the simplest solution first
-- Do not guess when unclear — ask (use AskUserQuestion)
+- Do not guess when unclear — ALWAYS use AskUserQuestion to confirm before proceeding. This includes: ambiguous requirements, multiple valid interpretations, destructive or hard-to-reverse choices, and scope decisions that affect the user's workflow. Guessing and proceeding is worse than pausing to ask.
 
 ## Planning Before Implementation
 
@@ -124,7 +124,7 @@ Use `top_k=5` for focused queries, `top_k=15` for broad exploration.
 
 ### When to Save (WRITE)
 
-Save knowledge when you discover something the user (or a future Claude session) would benefit from knowing again.
+Save proactively — do NOT wait for the user to ask. When a research, review, or analysis task reaches a natural conclusion (e.g., you output a summary or comparison table), save immediately before moving on. This applies to ALL topics, not just software engineering.
 
 **Always save (use `cognify`):**
 - Product reviews, evaluations, and comparison results
