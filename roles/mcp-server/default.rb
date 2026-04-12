@@ -6,3 +6,4 @@
 include_cookbook "docker-engine"
 include_cookbook "hydra"
 include_cookbook "ai-memory"
+include_cookbook "cognee"

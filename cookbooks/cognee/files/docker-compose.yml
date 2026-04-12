@@ -1,0 +1,171 @@
+services:
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    restart: unless-stopped
+    volumes:
+      - ./chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  cognee:
+    image: cognee/cognee:0.5.8
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - ENVIRONMENT=local
+      - LOG_LEVEL=DEBUG
+      - LITELLM_LOG=DEBUG
+      - CORS_ALLOWED_ORIGINS=*
+      - ENABLE_BACKEND_ACCESS_CONTROL=false
+      - COGNEE_SKIP_CONNECTION_TEST=true
+      - VECTOR_DB_URL=http://chromadb:8000
+    volumes:
+      - ./data:/app/.data_storage
+      - ./system:/app/cognee/.cognee_system
+      - ./ingest:/app/ingest:ro
+      - ${HOME}/ObsidianVaults/cognee-generated:/vault
+      - ./scripts:/app/scripts:ro
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  cognee-frontend:
+    build:
+      context: https://github.com/topoteretes/cognee.git#main:cognee-frontend
+      dockerfile_inline: |
+        FROM node:22-alpine
+        WORKDIR /app
+        COPY package.json package-lock.json ./
+        RUN npm install --legacy-peer-deps
+        RUN npm rebuild lightningcss
+        COPY . .
+        RUN find src -type d | while read d; do base=$$(basename "$$d"); lower=$$(echo "$$base" | tr '[:upper:]' '[:lower:]'); [ "$$base" != "$$lower" ] && ln -sf "$$base" "$$(dirname "$$d")/$$lower" 2>/dev/null; done; true
+        RUN mv next.config.mjs next.config.original.mjs && \
+            echo 'import config from "./next.config.original.mjs"; export default { ...config, basePath: "/cognee-ui" };' > next.config.mjs
+        # Patch window.location.href redirects to include basePath
+        RUN find src -name '*.ts' -o -name '*.tsx' | xargs sed -i \
+            -e 's|window\.location\.href = "/local-login"|window.location.href = "/cognee-ui/local-login"|g' \
+            -e 's|window\.location\.href = "/"|window.location.href = "/cognee-ui/"|g' \
+            -e 's|window\.location\.href = "/datasets"|window.location.href = "/cognee-ui/datasets"|g' \
+            -e 's|window\.location\.href = `/auth/login|window.location.href = `/cognee-ui/auth/login|g' \
+            -e 's|window\.location\.pathname === "/local-login"|window.location.pathname === "/cognee-ui/local-login"|g'
+        CMD ["npm", "run", "dev"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      - NEXT_PUBLIC_LOCAL_API_URL=https://mcp.ohno.be/cognee-api
+    depends_on:
+      cognee:
+        condition: service_healthy
+
+  cognee-gateway:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./cognee-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      cognee-frontend:
+        condition: service_started
+
+  cognee-oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    restart: unless-stopped
+    ports:
+      - "3002:4180"
+    env_file:
+      - .env
+    environment:
+      - OAUTH2_PROXY_CLIENT_SECRET=${OAUTH2_CLIENT_SECRET}
+      - OAUTH2_PROXY_COOKIE_SECRET=${OAUTH2_COOKIE_SECRET}
+    command:
+      - --http-address=0.0.0.0:4180
+      - --upstream=http://cognee-gateway:3000
+      - --provider=oidc
+      - --client-id=9bf4426a-e483-4d4e-8e17-e48f7875696a
+      - --oidc-issuer-url=https://mcp.ohno.be
+      - --redirect-url=https://mcp.ohno.be/cognee-ui/oauth2/callback
+      - --cookie-secure=true
+      - --cookie-name=_cognee_oauth2
+      - --email-domain=*
+      - --scope=openid email profile
+      - --proxy-prefix=/cognee-ui/oauth2
+      - --skip-provider-button=true
+      - --code-challenge-method=S256
+      - --insecure-oidc-allow-unverified-email=true
+      - --oidc-email-claim=sub
+      - --oidc-groups-claim=
+      - --skip-claims-from-profile-url=true
+      - --reverse-proxy=true
+    depends_on:
+      cognee-gateway:
+        condition: service_started
+
+  cognee-watcher:
+    build:
+      context: ./watcher
+    restart: unless-stopped
+    environment:
+      - COGNEE_API=http://cognee:8000
+      - DROP_DIR=/drop
+      - COGNIFY_IDLE_SECONDS=30
+    volumes:
+      - ./ingest/drop:/drop
+    depends_on:
+      cognee:
+        condition: service_healthy
+
+  cognee-mcp:
+    image: cognee/cognee-mcp:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8002:8000"
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=local
+      - LOG_LEVEL=INFO
+      - TRANSPORT_MODE=sse
+      - MCP_LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+      - API_URL=http://cognee:8000
+      - API_TOKEN=${COGNEE_MCP_API_TOKEN}
+    depends_on:
+      cognee:
+        condition: service_healthy
+
+  auth-proxy:
+    build: ./auth-proxy
+    restart: unless-stopped
+    ports:
+      - "8767:8767"
+    environment:
+      - SAGE_ISSUER=https://mcp.ohno.be
+      - SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
+      - UPSTREAM_URL=http://cognee-mcp:8000
+      - PORT=8767
+      - PATH_PREFIX=/cognee
+      - HOST_OVERRIDE=127.0.0.1:8000
+    depends_on:
+      cognee-mcp:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8767/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
