@@ -16,7 +16,7 @@ install_package "jq" do
   arch "jq"
 end
 
-%w(o3-search-mcp mcp-hub mcp-remote).each do |com|
+%w(mcp-hub mcp-remote).each do |com|
   mise_tool com do
     backend "npm"
   end
