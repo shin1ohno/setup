@@ -22,7 +22,6 @@ include_cookbook "bun"
 include_cookbook "notion"
 include_cookbook "serena"
 include_cookbook "spec-workflow-mcp"
-include_cookbook "takt"
 
 # Shared ingest drop folder via S3 (feeds cognee knowledge graph)
 include_cookbook "ingest-drop"

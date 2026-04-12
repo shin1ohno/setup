@@ -90,6 +90,3 @@ This is a **mitamae-based infrastructure automation system** for setting up deve
 - Linux includes hardware-specific cookbooks directly (bluez, broadcom-wifi, etc.)
 - macOS includes client-specific setup (mac-settings, mac-apps) directly in darwin.rb
 
-## Monitoring Notes
-
-- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` is set globally. Review when Claude Code major versions are released.
