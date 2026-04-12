@@ -20,13 +20,20 @@ directory deploy_dir do
   action :create
 end
 
-%w[data system chroma_data ingest ingest/drop watcher scripts auth-proxy].each do |sub|
+%w[data system ingest ingest/drop watcher scripts auth-proxy].each do |sub|
   directory "#{deploy_dir}/#{sub}" do
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "755"
     action :create
   end
+end
+
+# chroma_data is written by the ChromaDB container (runs as root);
+# only ensure the directory exists — do not enforce ownership.
+directory "#{deploy_dir}/chroma_data" do
+  mode "755"
+  action :create
 end
 
 directory vault_dir do
