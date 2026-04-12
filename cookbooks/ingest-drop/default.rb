@@ -93,6 +93,13 @@ EOM
     not_if "launchctl list | grep com.#{node[:setup][:user]}.ingest-drop"
   end
 else
+  # Enable linger so systemd user services survive logout
+  execute "enable loginctl linger for #{node[:setup][:user]}" do
+    command "sudo loginctl enable-linger #{node[:setup][:user]}"
+    only_if "which loginctl"
+    not_if "test -f /var/lib/systemd/linger/#{node[:setup][:user]}"
+  end
+
   # Linux: systemd user service for persistent rclone mount
   directory "#{node[:setup][:home]}/.config/systemd/user" do
     owner node[:setup][:user]
