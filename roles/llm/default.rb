@@ -9,7 +9,6 @@ include_cookbook "mcp"
 
 # LLM specific tools
 include_cookbook "claude-code"
-include_cookbook "claude-code-spec-workflow"
 include_cookbook "gemini-cli"
 include_cookbook "codex-cli"  # Uses node[:mcp_servers] from mcp cookbook
 include_cookbook "ollama"
@@ -20,8 +19,6 @@ include_cookbook "tfmcp"
 # Volta removed - Node.js is now managed by mise via nodejs cookbook
 include_cookbook "bun"
 include_cookbook "notion"
-include_cookbook "serena"
-include_cookbook "spec-workflow-mcp"
 
 # Shared ingest drop folder via S3 (feeds cognee knowledge graph)
 include_cookbook "ingest-drop"
