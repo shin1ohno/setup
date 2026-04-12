@@ -135,6 +135,26 @@ services:
       cognee:
         condition: service_healthy
 
+  vault-exporter:
+    image: cognee/cognee:0.5.8
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - EXPORT_POLL_SECONDS=60
+      - STARTUP_DELAY_SECONDS=30
+      - VAULT_DIR=/vault
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/.data_storage
+      - ./system:/app/cognee/.cognee_system
+      - ${HOME}/ObsidianVaults/cognee-generated:/vault
+      - ./scripts:/app/scripts:ro
+    command: ["python", "-u", "/app/scripts/watch_and_export.py"]
+    depends_on:
+      cognee:
+        condition: service_healthy
+
   cognee-mcp:
     image: cognee/cognee-mcp:latest
     restart: unless-stopped
