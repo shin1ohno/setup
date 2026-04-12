@@ -41,39 +41,15 @@ These rules must always be followed:
 - 1 agent = 1 task: never give multiple roles to a single agent
 - Run parallelizable tasks in parallel (Agent tool parallel calls)
 - Review gate: always include a review step for important outputs
-- Use TAKT pieces for reusable, multi-step workflows
 
 ### Tool Selection Guide
 
 | Situation | Tool |
 |-----------|------|
 | One-off research / exploration | Agent tool (Explore) |
-| Multi-step repeatable workflow | /takt {piece} |
 | Simple code search | Glob / Grep directly |
 | 3+ step non-standard task | /plan → implement |
 
-## Spec Workflow
-
-When spec-workflow MCP is available, use it for feature development:
-
-- Run tasks in parallel whenever possible to maximize efficiency
-- Complete one task at a time, then commit changes before moving to the next
-- Each task completion should result in a git commit
-
-## Using o3 MCP
-
-Three o3 MCPs are available with different reasoning levels:
-
-| MCP | Use Case |
-|-----|----------|
-| `o3-high` | Complex architectural decisions, difficult debugging |
-| `o3` | General reasoning, moderate complexity tasks |
-| `o3-low` | Quick lookups, simple questions |
-
-Use o3 when:
-- Searching or fetching information from the web
-- Need external knowledge beyond training data
-- Want a second opinion on complex problems
 
 ## Writing Principles
 
@@ -210,17 +186,17 @@ Risk factors: [caveats]
 |------|--------|------|
 | Single insight (< 500 words) | `cognify` MCP tool | During conversation |
 | Interaction log | `save_interaction` MCP tool | End of meaningful exchange |
-| File from user (path/URL) | Copy to `~/deploy/cognee/ingest/drop/` | User provides file to ingest |
+| File from user (path/URL) | Copy to `~/ingest/drop/` | User provides file to ingest |
 | Large batch (10+ files) | `bulk_ingest.py` via docker | One-time imports |
 
 ### PDF and Document Ingestion
 
 When the user provides a PDF/document (path or URL) for ingestion:
-1. Copy the file to `~/deploy/cognee/ingest/drop/` (watcher will auto-ingest)
+1. Copy the file to `~/ingest/drop/` (watcher will auto-ingest)
 2. Wait ~60 seconds for watcher to process and cognify
 3. **Verify indexing**: Run `list_data` to confirm the document appears, then `search` with a specific fact from the document to verify graph quality
 4. **If verification fails**: Try re-ingesting with `cognify` using extracted text, or report the issue to the user
-5. For URLs: download the file first with `curl`/`wget` to `~/deploy/cognee/ingest/drop/`
+5. For URLs: download the file first with `curl`/`wget` to `~/ingest/drop/`
 
 ### Relationship to MEMORY.md
 
