@@ -116,3 +116,114 @@ Every sentence must earn its place. Apply the marginal utility test:
 - Leave second line empty
 - Add detailed explanation, background, or reasoning
 - Include context that helps reviewers understand the change
+
+## Cognee Knowledge Graph
+
+Cross-project knowledge store for technical knowledge, product reviews, business insights, and reference documents.
+Available via MCP tools: `search`, `cognify`, `save_interaction`, `list_data`.
+If Cognee MCP is not connected in this session, skip all Cognee operations silently.
+
+### When to Search (READ)
+
+Search Cognee proactively — do NOT wait for the user to ask:
+
+1. **Conversation start**: When the first message involves a non-trivial task, search for relevant prior knowledge
+2. **Before decisions**: Search for past decisions, reviews, or evaluations on the same topic/product/technology
+3. **Product/tool discussions**: Search for existing reviews, comparisons, or recommendations before giving advice
+4. **When encountering errors**: Search for the error message or pattern — it may have been solved before
+5. **Investment/business questions**: Search for prior analysis, market data, or past recommendations on similar topics
+6. **Unfamiliar project/tool**: Search before asking the user questions that Cognee might already answer
+
+Do NOT search for: trivial edits, typo fixes, git operations, or tasks where you already have full context.
+
+**Search type selection:**
+
+| Need | search_type |
+|------|-------------|
+| Recommendations, relationships, why-questions | GRAPH_COMPLETION |
+| Specific facts, error solutions, product specs | CHUNKS |
+| Overview of a topic, product category summary | SUMMARIES |
+
+Use `top_k=5` for focused queries, `top_k=15` for broad exploration.
+
+### When to Save (WRITE)
+
+Save knowledge when you discover something the user (or a future Claude session) would benefit from knowing again.
+
+**Always save (use `cognify`):**
+- Product reviews, evaluations, and comparison results
+- Recommended product/tool combinations with rationale
+- Root cause of a non-obvious bug and its fix
+- Architectural decisions and their rationale
+- Surprising API behavior, gotchas, or workarounds
+- Infrastructure/deployment patterns
+- Investment or business analysis results
+- Cross-project patterns or conventions
+
+**Save lightly (use `save_interaction`):**
+- Troubleshooting steps that led to a resolution
+- Quick product impressions or initial evaluations
+- Project-specific setup steps
+
+**Never save:**
+- Routine code changes (rename, formatting, simple refactor)
+- Information already in project README or docs
+- Temporary state (current branch, WIP status)
+- Secrets, credentials, tokens, passwords
+
+### Save Format
+
+When calling `cognify`, structure the data as a self-contained knowledge note:
+
+For technical knowledge:
+```
+## [Topic]: [Specific Subject]
+Context: [project name, tech stack]
+Problem: [what happened]
+Solution: [what worked]
+Why: [root cause or rationale]
+```
+
+For product reviews and evaluations:
+```
+## Review: [Product Name] ([Category])
+Rating: [1-5 or qualitative]
+Use case: [what it's good for]
+Pros: [strengths]
+Cons: [weaknesses]
+Compared to: [alternatives considered]
+Verdict: [recommendation and context]
+```
+
+For business/investment insights:
+```
+## Analysis: [Subject]
+Context: [market, timing, constraints]
+Key findings: [main points]
+Recommendation: [action items]
+Risk factors: [caveats]
+```
+
+### Ingestion Method Selection
+
+| Data | Method | When |
+|------|--------|------|
+| Single insight (< 500 words) | `cognify` MCP tool | During conversation |
+| Interaction log | `save_interaction` MCP tool | End of meaningful exchange |
+| File from user (path/URL) | Copy to `~/deploy/cognee/ingest/drop/` | User provides file to ingest |
+| Large batch (10+ files) | `bulk_ingest.py` via docker | One-time imports |
+
+### PDF and Document Ingestion
+
+When the user provides a PDF/document (path or URL) for ingestion:
+1. Copy the file to `~/deploy/cognee/ingest/drop/` (watcher will auto-ingest)
+2. Wait ~60 seconds for watcher to process and cognify
+3. **Verify indexing**: Run `list_data` to confirm the document appears, then `search` with a specific fact from the document to verify graph quality
+4. **If verification fails**: Try re-ingesting with `cognify` using extracted text, or report the issue to the user
+5. For URLs: download the file first with `curl`/`wget` to `~/deploy/cognee/ingest/drop/`
+
+### Relationship to MEMORY.md
+
+- **MEMORY.md**: project-scoped, conversation-scoped facts (file paths, current architecture state)
+- **Cognee**: cross-project knowledge with lasting value (patterns, decisions, reviews, recommendations)
+- Do not duplicate between the two systems
