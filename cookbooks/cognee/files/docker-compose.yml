@@ -136,21 +136,19 @@ services:
         condition: service_healthy
 
   vault-exporter:
-    image: cognee/cognee:0.5.8
+    build:
+      context: ./vault-exporter
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
+      - COGNEE_API=http://cognee:8000
+      - COGNEE_USER_EMAIL=default_user@example.com
+      - COGNEE_USER_PASSWORD=default_password
       - EXPORT_POLL_SECONDS=60
       - STARTUP_DELAY_SECONDS=30
       - VAULT_DIR=/vault
-      - PYTHONUNBUFFERED=1
     volumes:
-      - ./data:/app/.data_storage
-      - ./system:/app/cognee/.cognee_system
       - ${HOME}/ObsidianVaults/cognee-generated:/vault
-      - ./scripts:/app/scripts:ro
-    command: ["python", "-u", "/app/scripts/watch_and_export.py"]
+      - ./scripts:/scripts:ro
     depends_on:
       cognee:
         condition: service_healthy
