@@ -123,7 +123,7 @@ EOM
 
   execute "enable ingest-drop mount service" do
     command "systemctl --user daemon-reload && systemctl --user enable ingest-drop.service && systemctl --user start ingest-drop.service"
-    only_if "which systemctl"
+    only_if "systemctl --user status >/dev/null 2>&1"
     only_if "test -f #{rclone_conf}"
     not_if "systemctl --user is-active ingest-drop.service"
   end
