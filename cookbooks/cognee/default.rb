@@ -82,7 +82,7 @@ end
   end
 end
 
-%w[bulk_ingest.py export_vault.py].each do |f|
+%w[bulk_ingest.py export_vault.py watch_and_export.py].each do |f|
   remote_file "#{deploy_dir}/scripts/#{f}" do
     source "files/scripts/#{f}"
     owner node[:setup][:user]
