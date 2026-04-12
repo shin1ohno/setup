@@ -69,9 +69,22 @@ sync_obsidian() {
   log "Sync completed"
 }
 
+# One-way sync of cognee-generated vault (local → remote)
+sync_cognee_vault() {
+  COGNEE_DIR="${HOME}/ObsidianVaults/cognee-generated"
+  if [ -d "$COGNEE_DIR" ] && [ -n "$(ls -A "$COGNEE_DIR" 2>/dev/null)" ]; then
+    log "Starting one-way sync of cognee-generated vault"
+    rclone sync "$COGNEE_DIR" "${REMOTE_NAME}:${REMOTE_PATH}/cognee-generated" --create-empty-src-dirs 2>&1 | tee -a "$LOG_FILE"
+    log "Cognee vault sync completed"
+  else
+    log "Cognee vault directory is empty or missing, skipping"
+  fi
+}
+
 # Main execution
 log "======= Obsidian Vault Sync Started ======="
 sync_obsidian
+sync_cognee_vault
 log "======= Obsidian Vault Sync Finished ======="
 EOM
   not_if "test -f #{node[:setup][:root]}/obsidian_sync/sync.sh"
