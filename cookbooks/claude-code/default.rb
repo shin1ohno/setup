@@ -72,18 +72,46 @@ remote_file "#{node[:setup][:home]}/.claude/CLAUDE.md" do
 end
 
 # Merge managed keys into settings.json, preserving unmanaged keys (e.g. mcpServers)
+# Deep-merges `permissions` so machine-specific allow/deny entries are preserved
 settings_path = "#{node[:setup][:home]}/.claude/settings.json"
 managed_file  = File.join(File.dirname(__FILE__), "files", "settings.json")
 
 managed  = JSON.parse(File.read(managed_file))
 existing = File.exist?(settings_path) ? (JSON.parse(File.read(settings_path)) rescue {}) : {}
-merged   = existing.merge(managed)
+
+# Shallow merge for all top-level keys (managed wins)
+merged = existing.merge(managed)
+
+# Deep merge for permissions: union the allow and deny arrays
+if existing.key?("permissions") && managed.key?("permissions")
+  %w[allow deny].each do |key|
+    existing_entries = existing.dig("permissions", key) || []
+    managed_entries  = managed.dig("permissions", key) || []
+    merged["permissions"][key] = (existing_entries | managed_entries)
+  end
+end
 
 file settings_path do
   content JSON.pretty_generate(merged) + "\n"
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
+end
+
+# Deploy hook scripts
+directory "#{node[:setup][:home]}/.claude/hooks" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+remote_file "#{node[:setup][:home]}/.claude/hooks/pre-commit-test.py" do
+  source "files/hooks/pre-commit-test.py"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
 end
 
 # Deploy global rules
