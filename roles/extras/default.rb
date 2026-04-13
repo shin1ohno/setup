@@ -19,6 +19,9 @@ include_cookbook "skicka"
 include_cookbook "tnef"
 include_cookbook "zk"
 
+# Presentation
+include_cookbook "slidev"
+
 # Containerization and virtualization
 include_cookbook "docker-engine" unless node[:platform] == "darwin"
 
