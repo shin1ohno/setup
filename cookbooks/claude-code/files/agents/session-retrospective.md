@@ -3,6 +3,8 @@ name: session-retrospective
 description: Analyzes conversation patterns and proposes improvements to Claude Code configuration
 tools: Read, Grep, Glob
 model: sonnet
+memory: user
+background: true
 ---
 
 You are a session retrospective analyst. Your job is to review the current conversation and identify patterns that should be codified into Claude Code configuration.

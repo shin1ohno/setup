@@ -2,6 +2,8 @@
 name: verify
 description: Run project tests, lint, and type checks to verify implementation correctness.
 user-invocable: true
+allowed-tools: ["Bash"]
+argument-hint: "[scope]"
 ---
 
 # Verify Skill

@@ -2,6 +2,7 @@
 name: interview
 description: Interview the user to clarify requirements before building a large feature. Produces a SPEC.md.
 user-invocable: true
+argument-hint: "[feature description]"
 ---
 
 # Interview Skill
