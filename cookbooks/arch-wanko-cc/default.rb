@@ -4,17 +4,10 @@ execute "pacman-key --recv-keys C48DBD97 && pacman-key --lsign-key C48DBD97" do
   action :nothing
 end
 
-file "/etc/pacman.conf" do
-  action :edit
-  server = "[aur-eagletmt]\nServer = http://arch.wanko.cc/$repo/os/$arch"
+server_block = "[aur-eagletmt]\nServer = http://arch.wanko.cc/\\$repo/os/\\$arch"
 
-  block do |content|
-    if /^\[aur-eagletmt\]/.match?(content)
-      content.gsub!(/^\[aur-eagletmt\].*\n.*$/, server)
-    else
-      content << server << "\n"
-    end
-  end
-
+execute "add aur-eagletmt to pacman.conf" do
+  command "printf '\\n#{server_block}\\n' | sudo tee -a /etc/pacman.conf > /dev/null"
+  not_if "grep -q '\\[aur-eagletmt\\]' /etc/pacman.conf"
   notifies :run, "execute[pacman-key --recv-keys C48DBD97 && pacman-key --lsign-key C48DBD97]"
 end
