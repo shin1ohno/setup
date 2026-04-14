@@ -12,12 +12,23 @@ Analyze the current session's patterns and propose improvements to the Claude Co
 
 ## Workflow
 
+### Step 0: Summarize Session Context
+
+Before launching the agent, compile a session summary to pass as context:
+
+1. List all commits made in this session (run `git log --oneline` for recent commits)
+2. Identify key patterns: files modified, corrections made, repeated instructions, workflows executed
+3. Note any rule violations or hook misfires observed
+
+Format as a concise bullet list of session events.
+
 ### Step 1: Launch Retrospective Agent
 
 Launch the `session-retrospective` agent in the background using the Agent tool:
 
 - subagent_type: use the session-retrospective agent definition
-- Provide the agent with context: "Review the current conversation for patterns that could be codified into CLAUDE.md rules, hooks, agents, or skills."
+- Include the session summary from Step 0 in the agent prompt as context
+- Instruct: "Review the current conversation for patterns that could be codified into CLAUDE.md rules, hooks, agents, or skills."
 
 ### Step 2: Present Findings
 
