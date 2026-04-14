@@ -106,12 +106,14 @@ directory "#{node[:setup][:home]}/.claude/hooks" do
   action :create
 end
 
-remote_file "#{node[:setup][:home]}/.claude/hooks/pre-commit-test.py" do
-  source "files/hooks/pre-commit-test.py"
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "755"
-  action :create
+%w(pre-commit-test.py check-trailing-newline.rb check-whitespace-lines.rb block-co-authored-by.rb).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/hooks/#{file_name}" do
+    source "files/hooks/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
 end
 
 # Deploy global rules
@@ -122,7 +124,7 @@ directory "#{node[:setup][:home]}/.claude/rules" do
   action :create
 end
 
-%w(ruby.md shell.md infrastructure.md review.md writing.md sub-agents.md).each do |file_name|
+%w(ruby.md shell.md infrastructure.md review.md writing.md sub-agents.md git-commit.md code-quality.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
     source "files/rules/#{file_name}"
     owner node[:setup][:user]

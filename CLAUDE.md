@@ -82,6 +82,11 @@ This is a **mitamae-based infrastructure automation system** for setting up deve
 - `node[:platform]` - Platform (darwin/ubuntu/arch)
 - `node[:homebrew][:prefix]` - Homebrew installation path
 
+## Claude Code Hooks
+
+- Hook scripts in `cookbooks/claude-code/files/hooks/` must be written in Ruby
+- Existing `pre-commit-test.py` is a legacy exception; new hooks use Ruby
+
 ## Important Notes
 
 - Always test cookbook changes with `--dry-run` first
