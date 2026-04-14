@@ -34,6 +34,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - Git commit messages, source code comments, and spec documentation must be in English
 - **Non-trivial tasks**: ALWAYS enter plan mode before implementation. No exceptions. Non-trivial = any task touching 2+ files, any config change with deploy steps, any new agent/hook/skill creation
 - **Every conversation**: launch background sub-agents to search Cognee and Mem0 at conversation start. Continue interacting with the user immediately — feed results back when agents complete. No exceptions except trivial edits, typo fixes, and git operations
+- **Conversation first turn**: after launching background agents, if the user's initial request has any ambiguity, do NOT proceed with analysis — immediately use AskUserQuestion. Background agent launch does not substitute for clarifying intent
 - **Every conclusion**: save findings to Cognee/Mem0 before moving on. Do not wait for the user to ask
 - **Every meaningful unit of work**: create a git commit immediately upon completion. Do not wait for the user to ask. A unit = one feature, one bug fix, one refactor, or one logical change
 - **This file is managed in two places**: source of truth is `~/ManagedProjects/setup/cookbooks/claude-code/files/CLAUDE.md`, deploy target is `~/.claude/CLAUDE.md`. When editing, always update both files and verify they match with `diff`
@@ -62,6 +63,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 | Scope creep temptation | AskUserQuestion |
 | Destructive operation not in the plan | AskUserQuestion |
 | Implementation complete | Create PR, notify user |
+| All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
 
 ### Research-to-Plan Pipeline
 
