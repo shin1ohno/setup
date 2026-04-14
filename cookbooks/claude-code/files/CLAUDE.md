@@ -36,15 +36,15 @@ These rules must always be followed:
 
 ### When to AskUserQuestion
 
-AskUserQuestionは遠慮ではなく品質管理。以下の状況では応答生成を**中断**してユーザーに確認する：
+AskUserQuestion is quality control, not hesitation. **Pause** response generation and confirm with the user in these situations:
 
-1. **要件の曖昧さ**: 「改善して」「きれいにして」等、成果物の方向性が複数解釈できる場合
-2. **破壊的操作の前**: ファイル削除、git reset、データベース変更等、元に戻せない操作
-3. **スコープ判断**: 「ついでにこれも直す」かどうか迷う場合 — 勝手にスコープを広げない
-4. **技術選択**: 同等の選択肢が複数あり、ユーザーの好みが不明な場合
-5. **前提の不確実性**: 「たぶんこうだろう」で進めようとしている自分に気づいた場合
+1. **Ambiguous requirements**: e.g., "improve this", "clean this up" — when the output direction has multiple valid interpretations
+2. **Before destructive operations**: file deletion, git reset, database changes — anything irreversible
+3. **Scope decisions**: when tempted to fix something "while you're at it" — do not expand scope unilaterally
+4. **Technical choices**: when multiple equivalent options exist and the user's preference is unknown
+5. **Uncertain assumptions**: when you catch yourself thinking "this is probably right"
 
-**AskUserQuestionを使わなくてよい場合**: 指示が明確で、実装方法が1通りしかなく、可逆的な操作のみの場合。承認済みプランの実行中も同様 — プランに含まれるステップは個別確認不要。
+**When AskUserQuestion is not needed**: when instructions are clear, only one implementation path exists, and all operations are reversible. Same applies during execution of an approved plan — steps included in the plan do not require individual confirmation.
 
 ## Planning and Execution Model
 
@@ -79,7 +79,7 @@ When collecting information from multiple sources (URLs, products, brands, categ
 1. **Split by independence**: divide targets so each agent's work is self-contained — 1 agent = 1 brand, category, or theme
 2. **Launch all agents in background in parallel**: use `run_in_background: true` for all agents in a single message
 3. **Each agent's responsibility**: WebFetch reviews → fetch specs from manufacturer sites → save to Cognee via cognify
-4. **Progress reporting**: show a progress table with agent status (調査中... / **完了**) and update it as each agent completes
+4. **Progress reporting**: show a progress table with agent status (researching... / **done**) and update it as each agent completes
 
 ```
 Example: "Save all reviews from this page" → launch sub-agents per category in background
@@ -141,30 +141,30 @@ Every sentence must earn its place. Apply the marginal utility test:
 
 ## Knowledge Persistence: Mem0 / Cognee / MEMORY.md
 
-3つのシステムをデータの性質で使い分ける。迷ったら両方に保存する — 重複のコストより欠落のコストが高い。
+Choose the system based on the nature of the data. When in doubt, save to both — the cost of duplication is lower than the cost of missing information.
 
-| 保存先 | 対象 | 例 |
-|--------|------|-----|
-| **Mem0** | ユーザー自身の属性・嗜好・所有物 | 身体サイズ、所有ギア、味の好み、仕事の進め方 |
-| **Cognee** | ドメイン知識・外部文書・分析結果 | 製品スペック、技術的知見、比較レビュー、エラー解決策 |
-| **MEMORY.md** | プロジェクト固有の作業コンテキスト | ファイル構造の癖、ビルド手順の注意点 |
+| Destination | Target | Examples |
+|-------------|--------|----------|
+| **Mem0** | User attributes, preferences, possessions | Body measurements, owned gear, taste preferences, workflow style |
+| **Cognee** | Domain knowledge, external documents, analysis results | Product specs, technical insights, comparison reviews, error solutions |
+| **MEMORY.md** | Project-specific working context | Codebase quirks, build process caveats |
 
-**判断基準**: 「誰が」に紐づく → Mem0。「何が」に紐づく → Cognee。プロジェクト内で閉じる → MEMORY.md。
+**Decision rule**: tied to "who" → Mem0. Tied to "what" → Cognee. Scoped to this project → MEMORY.md.
 
-MCP未接続時は該当システムの操作をスキップする。
+Skip operations for any system whose MCP is not connected in the current session.
 
 ## Mem0
 
-ユーザーの属性・嗜好・所有物のクロスプロジェクト記憶。
+Cross-project memory for user attributes, preferences, and possessions.
 Available via MCP tools: `add_memories`, `search_memory`, `list_memories`.
 
 ### When to Search
 
-会話開始時にCogneeと並行してsearch_memoryを実行する。ユーザーの属性（所有物、好み、身体情報）が関連する話題では必ず検索する。
+Run search_memory in parallel with Cognee at conversation start. Always search when the topic relates to user attributes (possessions, preferences, body measurements).
 
 ### When to Save
 
-会話中にユーザー属性が明らかになったら待たずに即保存する。保存対象: 身体測定値、所有デバイス・ギア、食の好み、ライディングスタイル、仕事の進め方の好み、人間関係・役割。
+Save immediately when user attributes are revealed during conversation — do not wait to be asked. Targets: body measurements, owned devices/gear, food preferences, riding style, workflow preferences, relationships/roles.
 
 ## Cognee Knowledge Graph
 
@@ -174,16 +174,16 @@ If Cognee MCP is not connected in this session, skip all Cognee operations silen
 
 ### When to Search (READ)
 
-会話の最初のメッセージを受け取ったら、応答を生成する**前に**Cognee searchを実行する。
+Run a Cognee search **before** generating a response to the first message in a conversation.
 
-検索すべき場面:
-1. **会話開始時**: 非自明なタスクに関わる最初のメッセージ
-2. **意思決定の前**: 同じトピック/製品/技術に関する過去の決定・レビュー・評価
-3. **製品・ツールの議論**: 既存のレビュー・比較・推奨事項
-4. **エラー遭遇時**: エラーメッセージやパターン — 過去に解決済みかもしれない
-5. **投資・ビジネスの質問**: 過去の分析、市場データ、類似トピックの推奨事項
+When to search:
+1. **Conversation start**: the first message involving a non-trivial task
+2. **Before decisions**: past decisions, reviews, or evaluations on the same topic/product/technology
+3. **Product or tool discussions**: existing reviews, comparisons, recommendations
+4. **On errors**: error messages or patterns — may have been solved before
+5. **Investment or business questions**: past analyses, market data, recommendations on similar topics
 
-**検索不要**: trivial edits, typo fixes, git operations のみ。
+**No search needed**: trivial edits, typo fixes, and git operations only.
 
 **Search type selection:**
 
@@ -197,7 +197,7 @@ Use `top_k=5` for focused queries, `top_k=15` for broad exploration.
 
 ### When to Save (WRITE)
 
-リサーチ・レビュー・分析タスクが結論に達したら（サマリーや比較表を出力したら）、次のタスクに移る**前に**即座に保存する。ユーザーの指示を待たない。
+When a research, review, or analysis task reaches a conclusion (summary or comparison table produced), save immediately **before** moving to the next task. Do not wait for the user to ask.
 
 **Always save (use `cognify`):**
 - Product reviews, evaluations, and comparison results
@@ -260,24 +260,24 @@ Risk factors: [caveats]
 |------|--------|------|
 | Single insight (< 500 words) | `cognify` MCP tool | During conversation |
 | Interaction log | `save_interaction` MCP tool | End of meaningful exchange |
-| PDF/ドキュメント | `/ingest-pdf` スキル | ユーザーがファイルを提供 |
+| PDF/document | `/ingest-pdf` skill | When user provides a file |
 | Large batch (10+ files) | `bulk_ingest.py` via docker | One-time imports |
 
 ### PDF and Document Ingestion
 
-`/ingest-pdf` スキルを使用する。手動で行う場合の手順：
+Use the `/ingest-pdf` skill. Manual procedure if needed:
 
-1. PyPDF2でテキスト抽出を試行。抽出文字数がページ数×100文字未満なら画像ベースPDFと判定
-2. 画像ベースPDF: PyMuPDFで各ページを画像化（DPI=200）→ Claudeの視覚認識でテキスト化
-3. ユニークなファイル名でREST API `POST /api/v1/add`（`datasetName`パラメータで専用dataset作成）
-4. `POST /api/v1/cognify`（`datasets`パラメータで対象指定）
-5. MCP `search`（`GRAPH_COMPLETION`）で取り込み結果を検証
+1. Attempt text extraction with PyPDF2. If extracted characters < pages × 100, classify as image-based PDF
+2. Image-based PDF: render each page as an image with PyMuPDF (DPI=200) → extract text via Claude's vision
+3. Upload with a unique filename via REST API `POST /api/v1/add` (use `datasetName` parameter to create a dedicated dataset)
+4. `POST /api/v1/cognify` (specify target with `datasets` parameter)
+5. Verify ingestion with MCP `search` (`GRAPH_COMPLETION`)
 
-**Watcher（`~/ingest/drop/`）は非推奨**: 書き込み途中のファイルも取り込む、ファイル名重複でdata_id衝突が起きる等の問題がある。REST API経由でのアップロードを推奨。
+**Watcher (`~/ingest/drop/`) is deprecated**: it ingests files mid-write and causes data_id collisions on duplicate filenames. Use the REST API for uploads instead.
 
-### Cognee運用の注意点
+### Cognee Operational Notes
 
-- **ファイル名の一意性**: `/api/v1/add`はファイル名からdata_idを決定論的に生成する。同名ファイルは重複判定されるため、`<カテゴリ>_<名前>_<詳細>_text.txt`のようにユニークにする
-- **dataset分離**: main_datasetへの集約よりドメインごとに専用dataset（例: `snowboard_<brand>`）を作る。コンテナ障害時に個別再構築できる
-- **コンテナ再起動リスク**: 再起動で内部の`text_<hash>.txt`が消失し得る。cognifyが409を返す場合はこれが原因。データ再アップロード+再cognifyで復旧
-- **API情報**: Base URL `http://localhost:8001`、認証は`POST /api/v1/auth/login`（form: `username=default_user@example.com&password=default_password`）
+- **Filename uniqueness**: `/api/v1/add` generates data_id deterministically from the filename. Duplicate filenames are treated as the same record — use unique names like `<category>_<name>_<detail>_text.txt`
+- **Dataset isolation**: prefer per-domain datasets (e.g., `snowboard_<brand>`) over aggregating into main_dataset. Enables independent rebuilds on container failure
+- **Container restart risk**: restarts can lose internal `text_<hash>.txt` files. If cognify returns 409, this is the cause. Fix by re-uploading data and re-running cognify
+- **API info**: Base URL `http://localhost:8001`, auth via `POST /api/v1/auth/login` (form: `username=default_user@example.com&password=default_password`)
