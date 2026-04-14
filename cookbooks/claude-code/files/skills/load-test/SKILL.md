@@ -81,6 +81,15 @@ Present findings as a constraint table:
 | File lock | kuzu (single-writer) | graph DB | No |
 ```
 
+### Step 2b: DB-less Service Shortcut
+
+If Step 2 reveals the service has **no database dependency** (no PostgreSQL, MySQL, SQLite, or connection pool):
+
+1. Skip pool-related constraint analysis
+2. Run Steps 3-4 with higher initial concurrency (start at 100, escalate to 500, 1000)
+3. The primary bottleneck is likely OS-level (file descriptors, TCP backlog) or application-level (event loop saturation, worker threads)
+4. If the service handles 1000+ concurrent with 100% success, conclude "no tuning needed" and skip Steps 5-6
+
 ### Step 3: Baseline Measurement
 
 Run progressive benchmarks using curl:
@@ -101,8 +110,16 @@ For each level, report:
 
 Benchmark script pattern:
 ```bash
-# Auth → loop(concurrent curl with timeout → count 200 vs non-200) → summary
+# Auth → loop(concurrent curl with timeout → write HTTP code to file) → categorize → summary
 ```
+
+Categorize results by HTTP code:
+- **200**: success
+- **000**: connection refused / timeout (curl couldn't connect — indicates backlog overflow or service down)
+- **5xx**: server error (application processed the request but failed — indicates pool exhaustion, OOM, etc.)
+- **4xx**: client error (auth failure, bad request — likely a benchmark script bug)
+
+Report failures broken down by category, not just "fail" count.
 
 ### Step 4: Breaking Point Discovery
 
@@ -112,6 +129,20 @@ Double concurrency until failures appear:
 Monitor simultaneously:
 - `docker stats --no-stream` for CPU/memory during load
 - Error count per round
+
+### Step 4b: Recovery Check
+
+After finding the breaking point, verify the service can recover:
+
+1. Wait 10 seconds after the breaking-point test
+2. Run a single request to check if the service responds
+3. If it doesn't respond, check `docker ps` for unhealthy status
+4. Record recovery behavior:
+   - **Self-healing**: service recovers without intervention
+   - **Needs restart**: service stays unhealthy, requires `docker compose restart`
+   - **Cascading failure**: service crash affects dependent services
+
+This information is critical for operational planning — a service that doesn't self-heal after pool exhaustion needs monitoring alerts or a restart policy.
 
 ### Step 5: Bottleneck Analysis
 
