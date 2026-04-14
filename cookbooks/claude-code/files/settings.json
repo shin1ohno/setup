@@ -50,6 +50,38 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/pre-commit-test.py"
+          },
+          {
+            "type": "command",
+            "command": "ruby ~/.claude/hooks/block-co-authored-by.rb"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ruby ~/.claude/hooks/check-trailing-newline.rb"
+          },
+          {
+            "type": "command",
+            "command": "ruby ~/.claude/hooks/check-whitespace-lines.rb"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ruby ~/.claude/hooks/check-trailing-newline.rb"
+          },
+          {
+            "type": "command",
+            "command": "ruby ~/.claude/hooks/check-whitespace-lines.rb"
           }
         ]
       }

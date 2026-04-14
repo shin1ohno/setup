@@ -1,45 +1,13 @@
 # Claude Code Personal Preferences
 
-This file contains my personal preferences for Claude Code.
+## Critical Rules — AskUserQuestion
 
-## Critical Rules
+IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
-These rules must always be followed:
-
-- Communicate in Japanese
-- Git commit messages, source code comments, and spec documentation must be in English
-- Always ensure files end with a newline character (`\n`)
-- Never include "Generated with Claude Code" or "Co-Authored-By: Claude" in git commits
-- **Non-trivial tasks**: ALWAYS enter plan mode before implementation. No exceptions
 - **Every ambiguity**: use AskUserQuestion instead of guessing — never present analysis as implicit proposal. Guessing wrong costs more than a 5-second pause
-- **Every conversation**: launch background sub-agents to search Cognee and Mem0 at conversation start. Continue interacting with the user immediately — feed results back when agents complete. No exceptions except trivial edits, typo fixes, and git operations
-- **Every conclusion**: save findings to Cognee/Mem0 before moving on. Do not wait for the user to ask
-- **Every meaningful unit of work**: create a git commit immediately upon completion. Do not wait for the user to ask. A unit = one feature, one bug fix, one refactor, or one logical change
-- **This file is managed in two places**: source of truth is `~/ManagedProjects/setup/cookbooks/claude-code/files/CLAUDE.md`, deploy target is `~/.claude/CLAUDE.md`. When editing, always update both files and verify they match with `diff`
+- Do not guess when unclear — ALWAYS use AskUserQuestion to confirm before proceeding. This includes: ambiguous requirements, multiple valid interpretations, destructive or hard-to-reverse choices, and scope decisions that affect the user's workflow
 
-## Code Quality Standards
-
-- Throw errors instead of silently ignoring them (unless explicitly instructed otherwise)
-- Do not leave empty lines containing only whitespace
-- Write clean, readable code that follows language conventions
-- Use consistent indentation and formatting
-- Do not use mock data in production code
-- When using passwords in test data or documentation, use obviously fake values (e.g., `example!PASS123`)
-
-## General Preferences
-
-- Follow existing code conventions and patterns in each project
-- Prefer editing existing files over creating new ones
-
-## Behavioral Principles
-
-- Simple first: try the simplest solution first
-- When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
-- Do not guess when unclear — ALWAYS use AskUserQuestion to confirm before proceeding. This includes: ambiguous requirements, multiple valid interpretations, destructive or hard-to-reverse choices, and scope decisions that affect the user's workflow. Guessing and proceeding is worse than pausing to ask
-
-### When to AskUserQuestion
-
-AskUserQuestion is quality control, not hesitation. **Pause** response generation and confirm with the user in these situations:
+**Pause** response generation and confirm with the user in these situations:
 
 1. **Ambiguous requirements**: e.g., "improve this", "clean this up" — when the output direction has multiple valid interpretations
 2. **Before destructive operations**: file deletion, git reset, database changes — anything irreversible
@@ -48,6 +16,21 @@ AskUserQuestion is quality control, not hesitation. **Pause** response generatio
 5. **Uncertain assumptions**: when you catch yourself thinking "this is probably right"
 
 **When AskUserQuestion is not needed**: when instructions are clear, only one implementation path exists, and all operations are reversible. Same applies during execution of an approved plan — steps included in the plan do not require individual confirmation.
+
+## Critical Rules — General
+
+- Communicate in Japanese
+- Git commit messages, source code comments, and spec documentation must be in English
+- **Non-trivial tasks**: ALWAYS enter plan mode before implementation. No exceptions
+- **Every conversation**: launch background sub-agents to search Cognee and Mem0 at conversation start. Continue interacting with the user immediately — feed results back when agents complete. No exceptions except trivial edits, typo fixes, and git operations
+- **Every conclusion**: save findings to Cognee/Mem0 before moving on. Do not wait for the user to ask
+- **Every meaningful unit of work**: create a git commit immediately upon completion. Do not wait for the user to ask. A unit = one feature, one bug fix, one refactor, or one logical change
+- **This file is managed in two places**: source of truth is `~/ManagedProjects/setup/cookbooks/claude-code/files/CLAUDE.md`, deploy target is `~/.claude/CLAUDE.md`. When editing, always update both files and verify they match with `diff`
+
+## Behavioral Principles
+
+- Simple first: try the simplest solution first
+- When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
 
 ## Planning and Execution Model
 
@@ -78,34 +61,6 @@ See @~/.claude/rules/sub-agents.md for full guidelines including bulk research p
 
 See @~/.claude/rules/writing.md
 
-## Git Commit Format
+## Knowledge Persistence
 
-### First Line (Summary)
-
-- Keep under 50 characters
-- Start with `{component}: ` prefix when possible (shortened filename or directory)
-- Use imperative mood (e.g., "Add feature" not "Added feature")
-- Prefer contextful verbs over generic "Change", "Add", "Fix", "Update"
-- Explain the "why", not just the "what"
-
-### Body (Optional)
-
-- Leave second line empty
-- Add detailed explanation, background, or reasoning
-- Include context that helps reviewers understand the change
-
-## Knowledge Persistence: Mem0 / Cognee / MEMORY.md
-
-Choose the system based on the nature of the data. When in doubt, save to both — the cost of duplication is lower than the cost of missing information.
-
-| Destination | Target | Examples |
-|-------------|--------|----------|
-| **Mem0** | User attributes, preferences, possessions | Body measurements, owned gear, taste preferences, workflow style |
-| **Cognee** | Domain knowledge, external documents, analysis results | Product specs, technical insights, comparison reviews, error solutions |
-| **MEMORY.md** | Project-specific working context | Codebase quirks, build process caveats |
-
-**Decision rule**: tied to "who" → Mem0. Tied to "what" → Cognee. Scoped to this project → MEMORY.md.
-
-Skip operations for any system whose MCP is not connected in the current session.
-
-See @~/.claude/docs/knowledge-persistence.md for search/save rules, formats, and operational notes.
+See @~/.claude/docs/knowledge-persistence.md for persistence rules (Mem0 / Cognee / MEMORY.md).
