@@ -32,7 +32,7 @@ services:
       - GUNICORN_WORKERS=1
       - POOL_ARGS={"pool_size":30,"max_overflow":20,"pool_recycle":300,"pool_timeout":30,"pool_pre_ping":true}
     volumes:
-      - ./data:/app/.data_storage
+      - ./data:/app/cognee/.data_storage
       - ./entrypoint-override.sh:/app/entrypoint.sh:ro
       - ./system:/app/cognee/.cognee_system
       - ./ingest:/app/ingest:ro
