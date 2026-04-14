@@ -33,3 +33,10 @@ When a user reports any service or application misbehavior (slow, unavailable, f
 1. Run `systemctl --failed` and check OOM kills in journal before diagnosing application logic
 2. Check `journalctl -u <service> -n 50 --no-pager` for the affected service
 3. Report findings before proposing fixes — the cause may be OS-level, not app-level
+
+## Sudo Permission Boundary
+
+When a task requires sudo and permission is denied:
+1. Immediately present the `! sudo <command>` to the user — do not add it to a "remaining tasks" list
+2. Continue with other non-sudo work in parallel while waiting for the user to run it
+3. After the user runs it, verify the result before moving on
