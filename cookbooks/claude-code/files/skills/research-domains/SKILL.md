@@ -17,6 +17,18 @@ Systematically research best practices across multiple domains and propose concr
 - `software` / `management` / `investment` / `hobbies` — single domain
 - `all` or omitted — all domains
 
+## Domain-Specific Research Priorities
+
+### Management
+
+In addition to general engineering management practices, prioritize organizational insights published by leading AI companies (Anthropic, OpenAI, DeepMind, etc.). These companies actively share practices on:
+- Team structure and scaling (research ↔ engineering ↔ product)
+- Decision-making frameworks at fast-scaling organizations
+- Culture of writing and documentation (RFCs, design docs)
+- Leadership principles and values frameworks
+
+Launch a dedicated sub-agent for AI company organizational research alongside the general management researcher.
+
 ## Workflow
 
 ### Step 1: Launch Domain Research

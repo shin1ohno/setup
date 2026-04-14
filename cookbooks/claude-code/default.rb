@@ -171,7 +171,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test audit-claudemd).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -181,6 +181,24 @@ end
 
   remote_file "#{node[:setup][:home]}/.claude/skills/#{skill_name}/SKILL.md" do
     source "files/skills/#{skill_name}/SKILL.md"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+# Deploy writing skill templates
+directory "#{node[:setup][:home]}/.claude/skills/writing/templates" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w(dvq.md rfc.md).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/skills/writing/templates/#{file_name}" do
+    source "files/skills/writing/templates/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
