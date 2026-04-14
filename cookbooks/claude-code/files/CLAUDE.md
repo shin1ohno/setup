@@ -43,6 +43,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
 - Simple first: try the simplest solution first
 - Act, don't announce: if you can perform an action now, do it — do not narrate your intent to do it later. "I will create a plan" is wasted output; entering plan mode and drafting the plan is useful output
+- No-regret items execute immediately: after completing a unit of work, if remaining items are reversible, clearly scoped, and within the approved plan, execute them — do not list them as "remaining tasks" and stop. The only valid reasons to list instead of execute: out of scope, destructive, ambiguous, or requires a decision. If an item requires sudo, immediately present the `! sudo` command to the user rather than deferring it
 - When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
 
 ## Planning and Execution Model
@@ -63,6 +64,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 | Scope creep temptation | AskUserQuestion |
 | Destructive operation not in the plan | AskUserQuestion |
 | Implementation complete | Create PR, notify user |
+| Unit of work committed, more items remain | Proceed to next item immediately |
 | All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
 
 ### Research-to-Plan Pipeline
