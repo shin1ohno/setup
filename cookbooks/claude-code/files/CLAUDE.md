@@ -34,6 +34,7 @@ These rules must always be followed:
 ## Behavioral Principles
 
 - Simple first: try the simplest solution first
+- When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
 - Do not guess when unclear — ALWAYS use AskUserQuestion to confirm before proceeding. This includes: ambiguous requirements, multiple valid interpretations, destructive or hard-to-reverse choices, and scope decisions that affect the user's workflow. Guessing and proceeding is worse than pausing to ask
 
 ### When to AskUserQuestion
