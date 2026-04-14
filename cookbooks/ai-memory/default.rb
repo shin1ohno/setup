@@ -83,7 +83,7 @@ execute "enable pgvector extension on Aurora" do
   user node[:setup][:user]
 end
 
-# Pull latest images and (re)start containers
-execute "docker compose -f #{deploy_dir}/docker-compose.yml up -d --pull always" do
+# Pull latest images and (re)start containers; wait for health checks to pass
+execute "docker compose -f #{deploy_dir}/docker-compose.yml up -d --pull always --wait --wait-timeout 120" do
   user node[:setup][:user]
 end
