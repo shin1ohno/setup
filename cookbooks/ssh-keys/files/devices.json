@@ -1,0 +1,32 @@
+{
+  "aws_profile": "sh1admn",
+  "aws_region": "ap-northeast-1",
+  "devices": [
+    {
+      "name": "pro",
+      "ssm_prefix": "/ssh-keys/devices/pro",
+      "key_file": "pro_ed25519",
+      "ssh_host": "pro",
+      "ssh_user": "shin1ohno"
+    },
+    {
+      "name": "air",
+      "ssm_prefix": "/ssh-keys/devices/air",
+      "key_file": "air_ed25519",
+      "ssh_host": "air",
+      "ssh_user": "shin1ohno"
+    },
+    {
+      "name": "nrt",
+      "ssm_prefix": "/ssh-keys/devices/nrt",
+      "key_file": "nrt_ed25519",
+      "ssh_host": "nrt",
+      "ssh_user": "ec2-user"
+    },
+    {
+      "name": "ios",
+      "ssm_prefix": "/ssh-keys/devices/ios",
+      "client_only": true
+    }
+  ]
+}

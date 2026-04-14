@@ -32,6 +32,7 @@ include_cookbook "tree"
 include_cookbook "zsh"
 include_cookbook "git"
 include_cookbook "ssh"
+include_cookbook "ssh-keys"
 include_cookbook "wget"
 
 # Modern CLI enhancement tools
