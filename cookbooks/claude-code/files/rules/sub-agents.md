@@ -24,6 +24,17 @@ Example: "Look up all reviews for this brand" → 1 agent per brand in backgroun
 Example: "Find bindings for this board" → 1 agent per brand group in background
 ```
 
+## Agent Self-Recovery
+
+Sub-agents should handle predictable errors autonomously before escalating to the user:
+
+- **Library fallback**: if a Python module is unavailable (e.g., `requests`), switch to stdlib alternatives (`urllib.request`, `json`, `http.client`)
+- **Extraction fallback**: if PyMuPDF returns empty text from a PDF, escalate to Vision API (page→PNG→Claude vision)
+- **API fallback**: if REST API returns unexpected results, try the equivalent MCP tool
+- **Escalation threshold**: only report to user after 2+ alternative approaches have been attempted and failed
+
+This principle enables parallel agents to complete independently without blocking on user input for recoverable errors.
+
 ## Tool Selection Guide
 
 | Situation | Tool |
