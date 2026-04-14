@@ -61,6 +61,10 @@ See @~/.claude/rules/sub-agents.md for full guidelines including bulk research p
 
 See @~/.claude/rules/writing.md
 
+## Session Retrospective
+
+After 3 or more commits in a session, launch the `session-retrospective` agent in the background to analyze conversation patterns. Present any improvement proposals to the user. The user can also trigger this manually with `/retro`.
+
 ## Compaction
 
 When compacting, always preserve: the current plan state, all modified file paths, test commands used, and any AskUserQuestion decisions made.
