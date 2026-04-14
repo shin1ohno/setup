@@ -31,6 +31,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 ## Behavioral Principles
 
 - Simple first: try the simplest solution first
+- Act, don't announce: if you can perform an action now, do it — do not narrate your intent to do it later. "I will create a plan" is wasted output; entering plan mode and drafting the plan is useful output
 - When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
 
 ## Planning and Execution Model
@@ -51,6 +52,17 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 | Scope creep temptation | AskUserQuestion |
 | Destructive operation not in the plan | AskUserQuestion |
 | Implementation complete | Create PR, notify user |
+
+### Research-to-Plan Pipeline
+
+When a task requires research before planning, run research and planning in parallel — never sequentially:
+
+1. Launch background research agents
+2. **Immediately** enter plan mode and begin drafting the plan with available information
+3. Incorporate research results into the plan as agents complete
+4. Present the completed plan for user approval
+
+**Anti-pattern**: launching research, then announcing "I'll plan when results arrive" and waiting. This is idle time that violates the planning rule.
 
 ## Sub-agent Design Principles
 
