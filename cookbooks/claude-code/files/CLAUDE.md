@@ -61,6 +61,10 @@ See @~/.claude/rules/sub-agents.md for full guidelines including bulk research p
 
 See @~/.claude/rules/writing.md
 
+## Compaction
+
+When compacting, always preserve: the current plan state, all modified file paths, test commands used, and any AskUserQuestion decisions made.
+
 ## Knowledge Persistence
 
 See @~/.claude/docs/knowledge-persistence.md for persistence rules (Mem0 / Cognee / MEMORY.md).
