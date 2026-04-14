@@ -152,6 +152,24 @@ end
   end
 end
 
+# Deploy agents
+directory "#{node[:setup][:home]}/.claude/agents" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w(code-reviewer.md security-reviewer.md mitamae-validator.md researcher.md).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/agents/#{file_name}" do
+    source "files/agents/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
 # Deploy skills
 %w(writing).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
