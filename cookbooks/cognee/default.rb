@@ -50,6 +50,13 @@ remote_file "#{deploy_dir}/docker-compose.yml" do
   mode "644"
 end
 
+remote_file "#{deploy_dir}/entrypoint-override.sh" do
+  source "files/entrypoint-override.sh"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+end
+
 remote_file "#{deploy_dir}/cognee-gateway.conf" do
   source "files/cognee-gateway.conf"
   owner node[:setup][:user]

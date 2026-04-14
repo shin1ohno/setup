@@ -2,6 +2,8 @@ services:
   chromadb:
     image: chromadb/chroma:0.5.23
     restart: unless-stopped
+    environment:
+      - CHROMA_WORKERS=4
     volumes:
       - ./chroma_data:/chroma/chroma
     healthcheck:
@@ -27,8 +29,11 @@ services:
       - ENABLE_BACKEND_ACCESS_CONTROL=false
       - COGNEE_SKIP_CONNECTION_TEST=true
       - VECTOR_DB_URL=http://chromadb:8000
+      - GUNICORN_WORKERS=1
+      - POOL_ARGS={"pool_size":30,"max_overflow":20,"pool_recycle":300,"pool_timeout":30,"pool_pre_ping":true}
     volumes:
       - ./data:/app/.data_storage
+      - ./entrypoint-override.sh:/app/entrypoint.sh:ro
       - ./system:/app/cognee/.cognee_system
       - ./ingest:/app/ingest:ro
       - ${HOME}/ObsidianVaults/cognee-generated:/vault
