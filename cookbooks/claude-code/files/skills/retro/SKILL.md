@@ -22,6 +22,17 @@ Before launching the agent, compile a session summary to pass as context:
 
 Format as a concise bullet list of session events.
 
+### Step 0: Collect Session Metrics
+
+Before launching the agent, gather quantitative metrics:
+
+1. `git log --oneline` — count commits in this session
+2. Count AskUserQuestion invocations in the conversation
+3. Count tool permission denials
+4. Count plan revisions
+
+Include these metrics in the agent prompt as structured data.
+
 ### Step 1: Launch Retrospective Agent
 
 Launch the `session-retrospective` agent in the background using the Agent tool:
@@ -32,7 +43,11 @@ Launch the `session-retrospective` agent in the background using the Agent tool:
 
 ### Step 2: Present Findings
 
-When the agent returns, present its findings to the user as a numbered list of proposals. Each proposal should include:
+When the agent returns, present its findings in two sections:
+
+**Section A: Patterns to Reinforce** — workflows, rules, or agent invocations that worked well this session. These should be preserved and not accidentally removed in future config changes.
+
+**Section B: Improvement Proposals** — numbered list where each proposal includes:
 
 1. **What**: the specific change (e.g., "add a hook that...", "add a rule that...")
 2. **Where**: the target file (e.g., `~/.claude/rules/foo.md`, `settings.json`)

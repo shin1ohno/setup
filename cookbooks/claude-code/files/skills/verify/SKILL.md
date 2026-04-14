@@ -31,7 +31,18 @@ Check for these markers in order and run all matching checks:
 | `Makefile` with test target | Tests | `make test` |
 | `Cargo.toml` | Tests + Lint | `cargo test` then `cargo clippy` |
 | `pyproject.toml` | Tests | `python -m pytest` |
-| `go.mod` | Tests + Vet | `go test ./...` then `go vet ./...` |
+| `pyproject.toml` + pytest-cov | Coverage | `python -m pytest --cov` |
+| `go.mod` | Tests + Vet | `go test ./... -coverprofile=coverage.out` then `go vet ./...` |
+
+### Step 1.5: Static Review (Design, Naming, Comments)
+
+Launch a `code-reviewer` agent to scan the current diff (`git diff HEAD`) for issues that automated tools cannot catch:
+
+- **Design**: does the change fit the system architecture? Are interfaces consistent with existing patterns?
+- **Naming**: are new names clear, descriptive, and consistent with project conventions?
+- **Comments**: do comments explain "why" rather than "what"? Are misleading comments flagged?
+
+This step runs in parallel with Step 2 (automated checks).
 
 ### Step 2: Run Checks
 

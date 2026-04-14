@@ -30,13 +30,14 @@ Launch 2 `researcher` agents **in parallel** via the Agent tool (both with `run_
 - Search Mem0 for any user-related context on the topic
 - Topic: `$ARGUMENTS`
 
-### Step 2: Gap Analysis
+### Step 2: Gap Analysis and Contradiction Detection
 
 When both agents return, synthesize their results:
 
 1. List what is already known (from Cognee + Mem0)
-2. Identify gaps: what questions remain unanswered?
-3. If no gaps exist, skip to Step 4
+2. **Contradiction check**: if Cognee and Mem0 return conflicting information, flag the contradiction explicitly and investigate which is current
+3. Identify gaps: what questions remain unanswered?
+4. If no gaps exist, skip to Step 4
 
 ### Step 3: Web Research
 
@@ -44,6 +45,7 @@ Launch a `researcher` agent to fill identified gaps:
 
 - Provide the specific gaps as search targets
 - Agent uses WebSearch to find sources, WebFetch to extract details
+- **Source credibility**: tag each finding with source type (official docs / engineering blog / forum post / vendor marketing). Flag findings that rely on a single low-credibility source
 - Agent saves new findings to Cognee/Mem0 before returning
 
 ### Step 4: Report

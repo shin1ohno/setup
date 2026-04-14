@@ -32,6 +32,7 @@ Use AskUserQuestion repeatedly to explore these dimensions:
 5. **Edge cases** — What happens when input is invalid, the network fails, or data is missing?
 6. **Tradeoffs** — What are we trading off (speed vs correctness, simplicity vs flexibility)?
 7. **Acceptance criteria** — How do we know it works? What tests should pass?
+8. **Operations** — How is this deployed? How do we monitor it? What does rollback look like?
 
 Guidelines:
 - Ask 1-2 questions at a time, not a wall of questions
@@ -44,7 +45,7 @@ Guidelines:
 Write `SPEC.md` in the project root containing:
 
 1. **Summary** — One paragraph describing the feature
-2. **Requirements** — Numbered list of functional requirements
+2. **Requirements** — Numbered list with priority (Must / Should / Could)
 3. **Non-requirements** — Explicitly out of scope
 4. **Technical approach** — High-level implementation plan
 5. **Edge cases** — Known edge cases and how to handle them
