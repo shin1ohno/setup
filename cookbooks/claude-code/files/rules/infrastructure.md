@@ -18,6 +18,16 @@ When modifying infrastructure, always evaluate whether the change triggers resou
 - **Never mix change frequencies**: a file that changes weekly (app config) must not share a content hash with a file that should change rarely (OS bootstrap). If they are hashed together, the fast-changing file forces recreation of the slow-changing resource
 - **When fixing a bug on a running instance**: determine whether the fix belongs in the base provisioning layer or the application deploy layer. Defaulting to the provisioning script because "it's already there" creates coupling that causes unnecessary recreation later
 
+## Deploy-Only Change Tracking
+
+When modifying files directly in `~/deploy/` (not managed by a cookbook):
+
+1. **Prefer cookbook**: if a cookbook exists for the service, make the change there instead
+2. **If no cookbook exists**: make the change in `~/deploy/`, but immediately save the change details to Cognee (what was changed, why, and the file path) so it can be reproduced if the deploy directory is rebuilt
+3. **Flag for future cookbookification**: note in the cognify entry that this change is unmanaged and should be moved to a cookbook when one is created
+
+Deploy directories can be rebuilt from scratch. Untracked changes there are silently lost.
+
 ## Commit Timing for Cookbook Changes
 
 After implementing a cookbook change:
