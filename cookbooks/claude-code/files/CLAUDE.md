@@ -12,8 +12,9 @@ These rules must always be followed:
 - Never include "Generated with Claude Code" or "Co-Authored-By: Claude" in git commits
 - **Non-trivial tasks**: ALWAYS enter plan mode before implementation. No exceptions
 - **Every ambiguity**: use AskUserQuestion instead of guessing — never present analysis as implicit proposal. Guessing wrong costs more than a 5-second pause
-- **Every conversation**: search Cognee and Mem0 before generating the first substantive response. No exceptions except trivial edits, typo fixes, and git operations
+- **Every conversation**: launch background sub-agents to search Cognee and Mem0 at conversation start. Continue interacting with the user immediately — feed results back when agents complete. No exceptions except trivial edits, typo fixes, and git operations
 - **Every conclusion**: save findings to Cognee/Mem0 before moving on. Do not wait for the user to ask
+- **Every meaningful unit of work**: create a git commit immediately upon completion. Do not wait for the user to ask. A unit = one feature, one bug fix, one refactor, or one logical change
 - **This file is managed in two places**: source of truth is `~/ManagedProjects/setup/cookbooks/claude-code/files/CLAUDE.md`, deploy target is `~/.claude/CLAUDE.md`. When editing, always update both files and verify they match with `diff`
 
 ## Code Quality Standards
