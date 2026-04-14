@@ -46,8 +46,12 @@ else
     not_if "test -e /opt/RoonServer"
   end
 
-  file "/etc/systemd/system/roonserver.service" do
-    owner node[:setup][:system_user]
+  staging_unit = "#{node[:setup][:root]}/roon-server/roonserver.service"
+  system_unit = "/etc/systemd/system/roonserver.service"
+
+  file staging_unit do
+    owner node[:setup][:user]
+    group node[:setup][:group]
     mode "644"
     content <<~SERVICE
       [Unit]
@@ -70,18 +74,21 @@ else
       [Install]
       WantedBy=multi-user.target
     SERVICE
+  end
+
+  execute "install roonserver systemd unit" do
+    command "sudo cp #{staging_unit} #{system_unit} && sudo chmod 644 #{system_unit}"
+    not_if "diff -q #{staging_unit} #{system_unit} 2>/dev/null"
     notifies :run, "execute[roonserver systemctl daemon-reload]"
   end
 
   execute "roonserver systemctl daemon-reload" do
-    command "systemctl daemon-reload && systemctl restart roonserver"
-    user node[:setup][:system_user]
+    command "sudo systemctl daemon-reload && sudo systemctl restart roonserver"
     action :nothing
   end
 
   execute "enable roonserver" do
-    command "systemctl enable roonserver.service"
-    user node[:setup][:system_user]
+    command "sudo systemctl enable roonserver.service"
     not_if "systemctl is-enabled roonserver.service"
   end
 end
