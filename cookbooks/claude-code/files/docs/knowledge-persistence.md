@@ -119,6 +119,8 @@ Use the `/ingest-pdf` skill. Manual procedure if needed:
 3. Upload with a unique filename via REST API `POST /api/v1/add` (use `datasetName` parameter to create a dedicated dataset)
 4. `POST /api/v1/cognify` (specify target with `datasets` parameter)
 5. Verify ingestion with MCP `search` (`GRAPH_COMPLETION`)
+6. **Verification loop**: after cognify returns, wait for background processing to complete (check `cognify_status`), then search for key terms from the ingested document using CHUNKS mode. If results are empty or sparse, re-run cognify
+7. **Gap audit**: compare source directory file list against Cognee search results for each group/brand. Re-ingest any files with zero matching chunks. Use `/verify-cognee` skill for systematic audits
 
 **Watcher (`~/ingest/drop/`) is deprecated**: it ingests files mid-write and causes data_id collisions on duplicate filenames. Use the REST API for uploads instead.
 
