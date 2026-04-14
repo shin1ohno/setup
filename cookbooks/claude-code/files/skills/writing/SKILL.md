@@ -10,12 +10,21 @@ user-invocable: true
 
 Treat `$ARGUMENTS` as the task content. If omitted, use AskUserQuestion to prompt the user for input.
 
-## Preparation: Load Personas
+**Template keywords**: if `$ARGUMENTS` starts with `dvq` or `rfc`, load the corresponding template from `~/.claude/skills/writing/templates/` and use it as structural guidance in Step 1. Strip the keyword from the arguments before passing the remainder as the task content.
+
+- `dvq [topic]` — strategic vision document (DVQ template)
+- `rfc [topic]` — technical decision document (RFC template)
+
+## Preparation: Load Personas and Templates
 
 Read the following 2 files using the Read tool:
 
 1. `~/.claude/skills/writing/personas/document-writer.md` - Writer persona
 2. `~/.claude/skills/writing/personas/marginal-utility-editor.md` - Editor persona
+
+If a template keyword was detected, also read the matching template:
+- `~/.claude/skills/writing/templates/dvq.md` for `dvq`
+- `~/.claude/skills/writing/templates/rfc.md` for `rfc`
 
 ## Workflow
 
@@ -28,6 +37,7 @@ Launch Agent tool (subagent_type: "general-purpose"):
 - Persona: include document-writer content in the prompt
 - Instructions:
   - Analyze the task and determine mode (new creation or proofreading)
+  - If a template was loaded, use its structure as the starting point instead of designing from scratch
   - Identify the reader: who they are, what they already know, and what decision or action this document supports
   - Design structure based on Pyramid Principle: conclusion (1 sentence) → arguments (MECE-grouped) → evidence/data
   - Verify each argument answers "why?" or "how?" from the conclusion
