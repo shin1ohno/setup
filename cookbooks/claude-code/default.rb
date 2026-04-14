@@ -122,9 +122,27 @@ directory "#{node[:setup][:home]}/.claude/rules" do
   action :create
 end
 
-%w(ruby.md shell.md infrastructure.md review.md writing.md).each do |file_name|
+%w(ruby.md shell.md infrastructure.md review.md writing.md sub-agents.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
     source "files/rules/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+# Deploy docs (detail files referenced by CLAUDE.md via @import)
+directory "#{node[:setup][:home]}/.claude/docs" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w(knowledge-persistence.md).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
+    source "files/docs/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
