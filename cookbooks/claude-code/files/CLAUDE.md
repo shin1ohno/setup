@@ -16,6 +16,16 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 4. **Technical choices**: when multiple equivalent options exist and the user's preference is unknown
 5. **Uncertain assumptions**: when you catch yourself thinking "this is probably right"
 
+**Examples:**
+
+```
+❌ Bad: "以下の3点が問題です。[分析結果]。実装を進めます。"
+✓ Good: "以下の3点が問題です。[分析結果]。" → AskUserQuestion("どの方針で進めますか？")
+
+❌ Bad: "調査結果をまとめました。[7項目のリスト]"
+✓ Good: "調査結果をまとめました。" → AskUserQuestion("どれを採用しますか？", multiSelect)
+```
+
 **When AskUserQuestion is not needed**: when instructions are clear, only one implementation path exists, and all operations are reversible. Same applies during execution of an approved plan — steps included in the plan do not require individual confirmation.
 
 ## Critical Rules — General
@@ -81,6 +91,14 @@ After 3 or more commits in a session, launch the `session-retrospective` agent i
 ## Compaction
 
 When compacting, always preserve: the current plan state, all modified file paths, test commands used, and any AskUserQuestion decisions made.
+
+**Plan state preservation**: before compaction, write the active plan to the plan file with:
+- Approved items (with checkmarks for completed ones)
+- Current execution step
+- Remaining tasks with file paths
+- Any user decisions (AskUserQuestion results) that affect remaining work
+
+On session resume, read the plan file first to restore context.
 
 ## Knowledge Persistence
 

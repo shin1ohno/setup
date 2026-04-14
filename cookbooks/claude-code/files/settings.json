@@ -58,9 +58,20 @@
         ]
       }
     ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "notify-send --urgency=low 'Claude Code' 'Waiting for input' 2>/dev/null; true"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
-        "matcher": "Edit",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
@@ -71,17 +82,15 @@
             "command": "ruby ~/.claude/hooks/check-whitespace-lines.rb"
           }
         ]
-      },
+      }
+    ],
+    "SessionStart": [
       {
-        "matcher": "Write",
+        "matcher": "compact",
         "hooks": [
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/check-trailing-newline.rb"
-          },
-          {
-            "type": "command",
-            "command": "ruby ~/.claude/hooks/check-whitespace-lines.rb"
+            "command": "ruby ~/.claude/hooks/post-compact-remind.rb"
           }
         ]
       }
