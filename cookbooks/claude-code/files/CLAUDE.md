@@ -5,6 +5,7 @@
 IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
 - **Every ambiguity**: use AskUserQuestion instead of guessing — never present analysis as implicit proposal. Guessing wrong costs more than a 5-second pause
+- **Analysis is NOT a proposal**: presenting findings without a question is a rule violation — always end with AskUserQuestion asking which direction to proceed
 - Do not guess when unclear — ALWAYS use AskUserQuestion to confirm before proceeding. This includes: ambiguous requirements, multiple valid interpretations, destructive or hard-to-reverse choices, and scope decisions that affect the user's workflow
 
 **Pause** response generation and confirm with the user in these situations:
@@ -21,7 +22,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
 - Communicate in Japanese
 - Git commit messages, source code comments, and spec documentation must be in English
-- **Non-trivial tasks**: ALWAYS enter plan mode before implementation. No exceptions
+- **Non-trivial tasks**: ALWAYS enter plan mode before implementation. No exceptions. Non-trivial = any task touching 2+ files, any config change with deploy steps, any new agent/hook/skill creation
 - **Every conversation**: launch background sub-agents to search Cognee and Mem0 at conversation start. Continue interacting with the user immediately — feed results back when agents complete. No exceptions except trivial edits, typo fixes, and git operations
 - **Every conclusion**: save findings to Cognee/Mem0 before moving on. Do not wait for the user to ask
 - **Every meaningful unit of work**: create a git commit immediately upon completion. Do not wait for the user to ask. A unit = one feature, one bug fix, one refactor, or one logical change

@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/pre-commit-test.py"
+            "command": "ruby ~/.claude/hooks/pre-commit-test.rb"
           },
           {
             "type": "command",
