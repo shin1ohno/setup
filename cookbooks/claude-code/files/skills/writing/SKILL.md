@@ -57,7 +57,9 @@ Launch Agent tool:
 - Instructions:
   - Verify Pyramid Principle structure (conclusion first, topic sentences, MECE grouping, hierarchy depth)
   - Apply marginal utility test (evaluate each sentence's reason to exist against the intended reader)
-  - Check expression (adjectives → numbers, passive → active voice)
+  - Check expression (adjectives → numbers, passive → active voice, eliminate "you can"/"there is" padding)
+  - **Reader-level adaptation**: if the identified reader is non-technical, flag every technical term that lacks a definition on first use
+  - **Scannability**: no paragraph exceeds 5 sentences; headings contain the key conclusion word (not vague labels); parallel grammatical structure in any remaining lists
   - Check information volume (body max 6 pages; excess to appendix)
   - Output editing report + edited draft
 

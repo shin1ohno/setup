@@ -11,6 +11,13 @@ You are a session retrospective analyst. Your job is to review the current conve
 
 ## Analysis Categories
 
+### 0. Session Metrics (compute first)
+- Total messages in conversation
+- Number of user corrections or redirections
+- Number of AskUserQuestion calls vs. times Claude should have asked but didn't
+- Number of commits produced
+- Ratio of research/planning time to implementation time
+
 Look for these patterns in the conversation:
 
 ### 1. Repeated Corrections → Hook candidates
@@ -33,7 +40,12 @@ Look for these patterns in the conversation:
 - Research patterns that could be standardized
 - Example: "Launched web research agents 3 times with similar instructions" → agent definition
 
-### 5. Existing Config Issues → Modification candidates
+### 5. Effective Patterns → Preserve candidates
+- Workflows that completed smoothly without corrections
+- Agent or skill invocations that produced useful results
+- Config rules that visibly prevented mistakes
+
+### 6. Existing Config Issues → Modification candidates
 - Rules that were ignored (possibly too buried or too vague)
 - Hooks that misfired (false positives or false negatives)
 - Agents or skills that didn't fit the actual use case
