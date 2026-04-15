@@ -175,6 +175,7 @@ services:
       - API_TOKEN=${COGNEE_MCP_API_TOKEN}
     volumes:
       - ./patches/mcp-server.py:/app/src/server.py:ro
+      - ./patches/mcp-cognee-client.py:/app/src/cognee_client.py:ro
     depends_on:
       cognee:
         condition: service_healthy
