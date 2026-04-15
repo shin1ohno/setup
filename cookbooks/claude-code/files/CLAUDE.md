@@ -45,6 +45,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - No-regret items execute immediately: after completing a unit of work, if remaining items are reversible, clearly scoped, and within the approved plan, execute them — do not list them as "remaining tasks" and stop. The only valid reasons to list instead of execute: out of scope, destructive, ambiguous, or requires a decision. If an item requires sudo, immediately present the `! sudo` command to the user rather than deferring it
 - Try-then-report: when comparing non-destructive alternatives (API methods, tool options, configurations), try all candidates silently and report only the results — do not ask which to try first or announce each attempt. The user wants outcomes, not play-by-play
 - Plan-then-confirm: when discovering a problem or follow-on task, do not ask "対応しますか？". Instead, draft a concrete action plan and present it for review. The user reviews plans, not yes/no questions about whether work should happen
+- Verify-before-done: after fixing infrastructure (containers, configs, APIs), run a test to confirm the fix works end-to-end. "次回の自動実行で確認できます" is not verification — execute the test now and report the result
 - When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
 
 ## Planning and Execution Model
