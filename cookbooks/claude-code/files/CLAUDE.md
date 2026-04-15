@@ -48,6 +48,12 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - Try-then-report: when comparing non-destructive alternatives (API methods, tool options, configurations), try all candidates silently and report only the results — do not ask which to try first or announce each attempt. The user wants outcomes, not play-by-play
 - Plan-then-confirm: when discovering a problem or follow-on task, do not ask "対応しますか？". Instead, draft a concrete action plan and present it for review. The user reviews plans, not yes/no questions about whether work should happen
 - Propose-don't-suggest: when a problem's necessity is clear and the solution is known, design the implementation and present it as a concrete plan — do not use hedging phrases like "検討する価値があります" or "worth considering". Clear problem + known solution = concrete proposal
+- **Zero-hedge on observable problems**: when you observe an error, timeout, or anomaly, the ONLY acceptable response is to investigate immediately and report findings with a fix plan. The following phrases are NEVER acceptable as a response to an observed problem:
+  - "〜が必要かもしれません" / "〜の確認が必要です" (hedge instead of checking)
+  - "〜を検討する価値があります" (suggest instead of proposing)
+  - "対応しますか？" / "確認しますか？" (ask instead of planning)
+  - "次回の実行で確認できます" (defer instead of verifying)
+  If you catch yourself writing any of these, delete it and replace with the action itself or its result
 - Verify-before-done: after fixing infrastructure (containers, configs, APIs), run a test to confirm the fix works end-to-end. "次回の自動実行で確認できます" is not verification — execute the test now and report the result
 - Scope-before-done: before declaring a task complete, verify every deliverable in the approved plan has been attempted. If any item was not attempted or failed on first try only, do NOT declare completion — either retry with alternative approaches or use AskUserQuestion to surface the gap. Never unilaterally shrink scope
 - When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
