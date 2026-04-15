@@ -21,5 +21,7 @@ When creating scheduled triggers via the RemoteTrigger tool:
 
 ## Design Principles
 
-- **1 trigger = 1 task**: split research and action into separate triggers. A research trigger saves findings to Cognee; an action trigger reads Cognee and produces a PR
+- **1 trigger = 1 task**: split research and action into separate triggers. A research trigger saves findings to Cognee; an action trigger reads Cognee and saves proposals back to Cognee
 - **Chain via time offset**: if trigger B depends on trigger A's output (via Cognee), schedule B 3-4 hours after A on the same day
+- **No GitHub auth in remote environments**: remote trigger sessions cannot use `git push`, `gh pr create`, or `gh issue create`. All durable output must go to Cognee. The user reviews proposals in their next interactive session (e.g., `/research-domains` searches Cognee for "Quarterly Audit Proposal")
+- **Graceful empty state**: if a trigger finds no input data in Cognee, it should save a "skipped" note and stop — not fail silently
