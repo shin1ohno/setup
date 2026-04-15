@@ -19,6 +19,15 @@ When creating scheduled triggers via the RemoteTrigger tool:
 - **opus**: research-heavy triggers (domain research, web synthesis, multi-source analysis). Match the agent's declared model — `domain-researcher` specifies opus
 - **sonnet**: well-scoped operational tasks (healthcheck, load-test, single-repo audit)
 
+## Creation Checklist
+
+When creating a new trigger:
+1. `RemoteTrigger list` — check existing triggers for name collisions
+2. Draft config using the field reference below (cron_expression, job_config structure)
+3. `RemoteTrigger create` with the config
+4. `RemoteTrigger run` — immediately test the trigger
+5. After the remote session completes, verify output (search Cognee, check for PRs/issues, read session log at claude.ai/code/scheduled/{trigger_id})
+
 ## Design Principles
 
 - **1 trigger = 1 task**: split research and action into separate triggers. A research trigger saves findings to Cognee; an action trigger reads Cognee and saves proposals back to Cognee
