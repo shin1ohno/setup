@@ -24,8 +24,13 @@
       "ssh_user": "ec2-user"
     },
     {
-      "name": "ios",
-      "ssm_prefix": "/ssh-keys/devices/ios",
+      "name": "ipad",
+      "ssm_prefix": "/ssh-keys/devices/ipad",
+      "client_only": true
+    },
+    {
+      "name": "iphone",
+      "ssm_prefix": "/ssh-keys/devices/iphone",
       "client_only": true
     }
   ]
