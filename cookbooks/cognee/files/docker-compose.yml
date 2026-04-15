@@ -173,6 +173,8 @@ services:
       - PYTHONUNBUFFERED=1
       - API_URL=http://cognee:8000
       - API_TOKEN=${COGNEE_MCP_API_TOKEN}
+    volumes:
+      - ./patches/mcp-server.py:/app/src/server.py:ro
     depends_on:
       cognee:
         condition: service_healthy
