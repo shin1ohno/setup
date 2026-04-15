@@ -33,7 +33,8 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - Communicate in Japanese
 - Git commit messages, source code comments, and spec documentation must be in English
 - **Non-trivial tasks**: ALWAYS enter plan mode before implementation. No exceptions. Non-trivial = any task touching 2+ files, any config change with deploy steps, any new agent/hook/skill creation
-- **Every conversation**: launch background sub-agents to search Cognee and Mem0 at conversation start. Continue interacting with the user immediately — feed results back when agents complete. No exceptions except trivial edits, typo fixes, and git operations
+- **Every conversation**: launch background sub-agents to search Cognee and Mem0 at conversation start. Also read `TODO.md` in the project memory directory — if it has open items, mention them to the user. Continue interacting with the user immediately — feed results back when agents complete. No exceptions except trivial edits, typo fixes, and git operations
+- **Deferred work → TODO.md**: when a task is deferred to a future session ("次回セッションで対応"), write a TODO item to the project memory `TODO.md` with: task description, why it was deferred, and the concrete first step or prompt to resume. Delete items when completed
 - **Conversation first turn**: after launching background agents, if the user's initial request has any ambiguity, do NOT proceed with analysis — immediately use AskUserQuestion. Background agent launch does not substitute for clarifying intent
 - **Every conclusion**: save findings to Cognee/Mem0 before moving on. Do not wait for the user to ask
 - **Every meaningful unit of work**: create a git commit immediately upon completion. Do not wait for the user to ask. A unit = one feature, one bug fix, one refactor, or one logical change
