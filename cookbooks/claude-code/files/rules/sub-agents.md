@@ -35,6 +35,10 @@ Sub-agents should handle predictable errors autonomously before escalating to th
 
 This principle enables parallel agents to complete independently without blocking on user input for recoverable errors.
 
+### Shell Init Noise
+
+If Bash commands produce repeated `zsh: command not found: -e` or similar shell init noise, the cause is a `.zshrc` that interprets literal flags as commands. This is cosmetic — ignore the noise lines and parse only the actual command output that follows.
+
 ## Tool Selection Guide
 
 | Situation | Tool |
