@@ -1,6 +1,6 @@
 services:
   chromadb:
-    image: chromadb/chroma:0.5.23
+    image: chromadb/chroma:0.6.3
     restart: unless-stopped
     environment:
       - CHROMA_WORKERS=4
