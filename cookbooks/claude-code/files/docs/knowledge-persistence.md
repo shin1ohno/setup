@@ -101,6 +101,17 @@ Recommendation: [action items]
 Risk factors: [caveats]
 ```
 
+### Post-Cognify Verification
+
+After every `cognify` or `save_interaction` call via MCP, verify the data was actually persisted:
+
+1. Wait for background processing (cognify runs asynchronously)
+2. Search with `search_type: CHUNKS` using 2-3 key terms from the saved content
+3. If results are empty, check Cognee container logs for errors (`docker compose logs cognee --tail 20`)
+4. If the error is `'NoneType' object has no attribute 'keys'`, this is a ChromaDB client/server version mismatch — see Troubleshooting below
+
+This applies to all cognify calls, not just PDF ingestion. MCP cognify returns success even when the background pipeline fails silently.
+
 ### Ingestion Method Selection
 
 | Data | Method | When |
@@ -130,3 +141,16 @@ Use the `/ingest-pdf` skill. Manual procedure if needed:
 - **Dataset isolation**: prefer per-domain datasets (e.g., `snowboard_<brand>`) over aggregating into main_dataset. Enables independent rebuilds on container failure
 - **Container restart risk**: restarts can lose internal `text_<hash>.txt` files. If cognify returns 409, this is the cause. Fix by re-uploading data and re-running cognify
 - **API info**: Base URL `http://localhost:8001`, auth via `POST /api/v1/auth/login` (form: `username=default_user@example.com&password=default_password`)
+
+### Troubleshooting
+
+**Cognify succeeds but search returns no results:**
+1. Check cognee container logs: `docker compose -f ~/deploy/cognee/docker-compose.yml logs cognee --tail 30`
+2. Look for `'NoneType' object has no attribute 'keys'` in ChromaDBAdapter — this means client/server version mismatch
+3. Compare versions: `docker compose exec cognee python3 -c "import chromadb; print(chromadb.__version__)"` vs `docker compose images chromadb`
+4. Fix: update ChromaDB server image in `cookbooks/cognee/files/docker-compose.yml` to match the client version, then `docker compose up -d chromadb && docker compose restart cognee cognee-mcp`
+
+**REST API add returns 500 "datasetName must be provided":**
+- Cognee 0.5.8+ requires `datasetName` in the add request body
+- MCP cognify handles this automatically via the cognee_client's default `dataset_name="main_dataset"`
+- For direct REST API calls: use multipart form with `-F "data=@file.txt" -F "datasetName=main_dataset"`

@@ -20,6 +20,10 @@ The caller (retro skill) provides structured session metrics in the prompt:
 
 Use these metrics to ground your analysis in concrete data.
 
+## Deduplication Guard
+
+Before proposing changes, read recent commits (`git log --oneline -20`) and check which patterns have already been codified in this session. Any proposal that maps to an existing commit should be excluded with a note: "Already codified in [commit hash]". This prevents the user from reviewing the same proposals across multiple retro runs in a single session.
+
 ## Analysis Categories
 
 ### 0. Session Metrics (verify and extend caller-provided data)
