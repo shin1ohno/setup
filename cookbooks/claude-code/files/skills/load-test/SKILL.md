@@ -189,6 +189,32 @@ After changes are applied:
 4. Verify no errors in `docker logs`
 5. Check that shared services (other DB users) are unaffected
 
+### Step 8: Long-Duration Stability Test (Optional)
+
+When the user requests extended stability validation, run intermittent load bursts over several hours:
+
+1. **Configuration**: use the safe concurrency level from Step 4 (below breaking point)
+2. **Cycle structure**: burst → 60s cooldown → health check → 19min rest → next cycle
+3. **Minimum duration**: 6 cycles (~2 hours) to detect slow leaks
+4. **Monitor per cycle**:
+   - Success rate and throughput (compare against baseline from Step 3)
+   - Memory usage trend (detect leaks: >20% growth over test duration is a flag)
+   - Container restart count
+   - Error log analysis
+5. **The agent must own the loop** — do not launch a bash script in the background and terminate. The agent iterates over cycles directly, sleeping between them
+6. **Report**: cycle-by-cycle table with throughput, memory, and success rate. Final verdict: stable / degrading / unstable
+
+```
+| Cycle | Success | Throughput | Memory | Restarts |
+|-------|---------|------------|--------|----------|
+| 1     | 100%    | 12.4 req/s | 162MB  | 0        |
+| 2     | 100%    | 12.2 req/s | 163MB  | 0        |
+| ...   | ...     | ...        | ...    | ...      |
+| 6     | 100%    | 12.5 req/s | 166MB  | 0        |
+```
+
+Memory trend: 162→166MB (+2.5%) — no leak detected.
+
 ## Principles
 
 - **Constraint-first**: never increase a parameter without first confirming the hard limit it feeds into

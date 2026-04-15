@@ -42,7 +42,7 @@ Dry-run passing is the commit gate for cookbook changes. Never leave cookbook ch
 When a user reports any service or application misbehavior (slow, unavailable, failing):
 1. Run `systemctl --failed` and check OOM kills in journal before diagnosing application logic
 2. Check `journalctl -u <service> -n 50 --no-pager` for the affected service
-3. Report findings before proposing fixes — the cause may be OS-level, not app-level
+3. Report findings **with a concrete fix plan** for review — never present findings alone without actionable next steps. The cause may be OS-level, not app-level
 
 ## Sudo Permission Boundary
 
