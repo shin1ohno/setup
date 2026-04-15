@@ -31,6 +31,14 @@ Launch a dedicated sub-agent for AI company organizational research alongside th
 
 ## Workflow
 
+### Step 0: Load Previous Audit Proposals
+
+Before launching new research, search Cognee for proposals saved by the quarterly-audit remote trigger:
+
+1. Search Cognee with query `"Quarterly Audit Proposal"` using `search_type: CHUNKS, top_k: 10`
+2. If results exist, include them as **Prior Proposals** in Step 2's output — these are pre-researched improvement suggestions that the user has not yet reviewed
+3. If no results, skip this step silently
+
 ### Step 1: Launch Domain Research
 
 Launch the `domain-researcher` agent in the background via the Agent tool:
