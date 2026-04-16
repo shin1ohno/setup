@@ -71,6 +71,14 @@ remote_file "#{node[:setup][:home]}/.claude/CLAUDE.md" do
   action :create
 end
 
+remote_file "#{node[:setup][:home]}/.claude/statusline-command.sh" do
+  source "files/statusline-command.sh"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
 # Merge managed keys into settings.json, preserving unmanaged keys (e.g. mcpServers)
 # Deep-merges `permissions` so machine-specific allow/deny entries are preserved
 settings_path = "#{node[:setup][:home]}/.claude/settings.json"
@@ -124,7 +132,7 @@ directory "#{node[:setup][:home]}/.claude/rules" do
   action :create
 end
 
-%w(ruby.md shell.md infrastructure.md writing.md sub-agents.md git-commit.md remote-trigger.md).each do |file_name|
+%w(ruby.md shell.md infrastructure.md writing.md sub-agents.md git-commit.md remote-trigger.md mcp-config.md rust.md architecture.md data-collection.md debugging.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
     source "files/rules/#{file_name}"
     owner node[:setup][:user]
@@ -171,7 +179,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test audit-claudemd).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test audit-claudemd check-services ingest-batch security-review verify-cognee verify-data-integrity feature-parity).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -186,6 +194,15 @@ end
     mode "644"
     action :create
   end
+end
+
+# Deploy single-file skills (markdown-only, no SKILL.md subdirectory)
+remote_file "#{node[:setup][:home]}/.claude/skills/ingest-pdf.md" do
+  source "files/skills/ingest-pdf.md"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  action :create
 end
 
 # Deploy writing skill templates
