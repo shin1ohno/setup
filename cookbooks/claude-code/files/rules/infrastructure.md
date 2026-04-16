@@ -37,6 +37,16 @@ After implementing a cookbook change:
 
 Dry-run passing is the commit gate for cookbook changes. Never leave cookbook changes uncommitted after a passing dry-run.
 
+## Long-Running Operations
+
+`terraform plan`, `terraform apply`, and other commands that typically take 30+ seconds must run in a background sub-agent (`run_in_background: true`) so the main conversation remains interactive. Pattern:
+
+1. Launch a background agent that runs the command and parses the output
+2. Continue interacting with the user (answer questions, start other work)
+3. When the agent completes, present the results and ask for next steps
+
+This applies to: `terraform plan/apply`, `docker build`, long test suites, and any command where the user cannot usefully intervene mid-execution.
+
 ## Incident First Response
 
 When a user reports any service or application misbehavior (slow, unavailable, failing):
