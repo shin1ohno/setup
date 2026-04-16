@@ -57,7 +57,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - Verify-before-done: after fixing infrastructure (containers, configs, APIs), run a test to confirm the fix works end-to-end. "次回の自動実行で確認できます" is not verification — execute the test now and report the result
 - Scope-before-done: before declaring a task complete, verify every deliverable in the approved plan has been attempted. If any item was not attempted or failed on first try only, do NOT declare completion — either retry with alternative approaches or use AskUserQuestion to surface the gap. Never unilaterally shrink scope
 - When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
-- **Blocked on manual action → use idle time**: when waiting for the user to run a sudo command, restart a service, or perform any manual action, immediately launch background agents for retro, Cognee/Mem0 saves, or TODO.md cleanup. Never idle while waiting
+- **Blocked on manual action → immediate background launch**: when detecting ANY of these signals — user says "読んでいる", "確認する", "試してみる", "待って", or you present `! sudo`, ask user to restart, or deliver a spec/plan for review — fire a background Agent tool call **in the same response**. Do not explain first then launch; launch then report. Candidate tasks: retro, Cognee save, Mem0 update, TODO.md cleanup. This rule exists because knowing the rule and executing it at token-generation time are different capabilities — the action must be reflexive, not deliberative
 
 ## Planning and Execution Model
 
