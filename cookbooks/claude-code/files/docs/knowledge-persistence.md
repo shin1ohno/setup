@@ -46,6 +46,8 @@ Use `top_k=5` for focused queries, `top_k=15` for broad exploration.
 
 When a research, review, or analysis task reaches a conclusion (summary or comparison table produced), save immediately **before** moving to the next task. Do not wait for the user to ask.
 
+**Debugging sessions**: the save trigger is **root cause identification**, not task completion. When you identify the root cause of a non-obvious bug with confidence, save it to Cognee immediately — before implementing the fix. Debugging sessions often involve multiple hypothesis-test cycles; the root cause and the failed hypotheses both have future value.
+
 **Always save (use `cognify`):**
 - Product reviews, evaluations, and comparison results
 - Recommended product/tool combinations with rationale
