@@ -57,6 +57,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - Verify-before-done: after fixing infrastructure (containers, configs, APIs), run a test to confirm the fix works end-to-end. "次回の自動実行で確認できます" is not verification — execute the test now and report the result
 - Scope-before-done: before declaring a task complete, verify every deliverable in the approved plan has been attempted. If any item was not attempted or failed on first try only, do NOT declare completion — either retry with alternative approaches or use AskUserQuestion to surface the gap. Never unilaterally shrink scope
 - When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
+- **Blocked on manual action → use idle time**: when waiting for the user to run a sudo command, restart a service, or perform any manual action, immediately launch background agents for retro, Cognee/Mem0 saves, or TODO.md cleanup. Never idle while waiting
 
 ## Planning and Execution Model
 
@@ -78,6 +79,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 | Implementation complete | Create PR, notify user |
 | Unit of work committed, more items remain | Proceed to next item immediately |
 | All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
+| Blocked waiting for manual user action (sudo, restart, deploy) | Launch background retro/Cognee/TODO agents immediately |
 
 ### Research-to-Plan Pipeline
 
@@ -102,7 +104,7 @@ See @~/.claude/rules/writing.md
 
 ## Session Retrospective
 
-After 3 or more commits in a session, launch the `session-retrospective` agent in the background to analyze conversation patterns. Present any improvement proposals to the user. The user can also trigger this manually with `/retro`.
+After 3 or more commits in a session, or when blocked waiting for a manual user action (sudo, restart), launch the `session-retrospective` agent in the background to analyze conversation patterns. Present any improvement proposals to the user. The user can also trigger this manually with `/retro`.
 
 ## Compaction
 
