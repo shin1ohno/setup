@@ -85,7 +85,6 @@ This is a **mitamae-based infrastructure automation system** for setting up deve
 ## Claude Code Hooks
 
 - Hook scripts in `cookbooks/claude-code/files/hooks/` must be written in Ruby
-- Existing `pre-commit-test.py` is a legacy exception; new hooks use Ruby
 
 ## Important Notes
 
