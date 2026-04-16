@@ -18,6 +18,16 @@ When modifying infrastructure, always evaluate whether the change triggers resou
 - **Never mix change frequencies**: a file that changes weekly (app config) must not share a content hash with a file that should change rarely (OS bootstrap). If they are hashed together, the fast-changing file forces recreation of the slow-changing resource
 - **When fixing a bug on a running instance**: determine whether the fix belongs in the base provisioning layer or the application deploy layer. Defaulting to the provisioning script because "it's already there" creates coupling that causes unnecessary recreation later
 
+## Config File Merge Semantics
+
+Before syncing a managed config file (settings.json, YAML with list fields, etc.) where the deploy logic merges the cookbook source into an existing file, identify how each field is merged:
+
+- **Union (set-like)**: array entries are deduplicated but never removed. A cookbook author who deletes an entry does NOT cause that entry to disappear from the deploy target — it persists in `existing` and is re-added on every run. Requires a one-time manual cleanup on the deploy target
+- **Replace (overwrite)**: the cookbook value wholly replaces the existing value. Entries in the deploy target but absent from the cookbook are silently deleted on the next run
+- **Deep-merge (object union)**: nested objects are merged key-by-key; behavior for each leaf field still falls into one of the above
+
+In the plan, state the merge mode for every field being changed. For union fields, include the manual-cleanup command (e.g., `jq 'del(.permissions.allow[] | select(...))'`) as an explicit plan step — never assume a cookbook deploy will remove stale entries.
+
 ## Deploy-Only Change Tracking
 
 When modifying files directly in `~/deploy/` (not managed by a cookbook):
@@ -54,9 +64,12 @@ When a user reports any service or application misbehavior (slow, unavailable, f
 2. Check `journalctl -u <service> -n 50 --no-pager` for the affected service
 3. Report findings **with a concrete fix plan** for review — never present findings alone without actionable next steps. The cause may be OS-level, not app-level
 
-## Sudo Permission Boundary
+## Blocked Command Boundary
 
-When a task requires sudo and permission is denied:
-1. Immediately present the `! sudo <command>` to the user — do not add it to a "remaining tasks" list
-2. Continue with other non-sudo work in parallel while waiting for the user to run it
+When a command is blocked by any permission restriction — `sudo` required, tool-permission denied, project hook guard (e.g., mitamae dry-run guard), or user-declined approval — immediately present the blocked command prefixed with `!` so the user can run it in-session:
+
+1. Present `! <command>` verbatim — do not add it to a "remaining tasks" list, do not describe it in prose without the `!` prefix
+2. Continue with other non-blocked work in parallel while waiting for the user to run it
 3. After the user runs it, verify the result before moving on
+
+Applies equally to sudo, project-hook guards, and `deny`-listed Bash patterns.

@@ -44,7 +44,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 ## Behavioral Principles
 
 - Act, don't announce: if you can perform an action now, do it — do not narrate your intent to do it later. "I will create a plan" is wasted output; entering plan mode and drafting the plan is useful output
-- No-regret items execute immediately: after completing a unit of work, if remaining items are reversible, clearly scoped, and within the approved plan, execute them — do not list them as "remaining tasks" and stop. The only valid reasons to list instead of execute: out of scope, destructive, ambiguous, or requires a decision. If an item requires sudo, immediately present the `! sudo` command to the user rather than deferring it
+- No-regret items execute immediately: after completing a unit of work, if remaining items are reversible, clearly scoped, and within the approved plan, execute them — do not list them as "remaining tasks" and stop. The only valid reasons to list instead of execute: out of scope, destructive, ambiguous, or requires a decision. If an item is blocked by a permission restriction (sudo required, tool permission denied, project hook guard), immediately present the blocked command prefixed with `!` to the user rather than deferring it
 - Try-then-report: when comparing non-destructive alternatives (API methods, tool options, configurations), try all candidates silently and report only the results — do not ask which to try first or announce each attempt. The user wants outcomes, not play-by-play
 - Plan-then-confirm: when discovering a problem or follow-on task, do not ask "対応しますか？". Instead, draft a concrete action plan and present it for review. The user reviews plans, not yes/no questions about whether work should happen
 - Propose-don't-suggest: when a problem's necessity is clear and the solution is known, design the implementation and present it as a concrete plan — do not use hedging phrases like "検討する価値があります" or "worth considering". Clear problem + known solution = concrete proposal
@@ -63,6 +63,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
 - Use `/plan` mode to create a thorough plan before starting any non-trivial task
 - Get user confirmation on the plan before proceeding
+- **Batch plan-phase questions**: when a plan has multiple independent preference or scope decisions, consolidate them into a single AskUserQuestion (multiSelect when choices are non-exclusive) at the end of the plan draft — do not ask each decision sequentially. Sequential confirmation creates artificial wait cycles; the user reviews all open choices at once
 - **After plan approval, execute the full implementation autonomously** — do not stop to ask permission at each step
 - Produce a PR as the reviewable artifact: branch, implement, test, commit, then `gh pr create`
 - The user reviews the PR, not the intermediate steps
