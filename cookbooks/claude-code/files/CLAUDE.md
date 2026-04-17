@@ -67,6 +67,18 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - **After plan approval, execute the full implementation autonomously** — do not stop to ask permission at each step
 - Produce a PR as the reviewable artifact: branch, implement, test, commit, then `gh pr create`
 - The user reviews the PR, not the intermediate steps
+- **Auto mode does NOT override plan mode**: auto mode means executing an approved plan autonomously — it does not mean skipping plan creation. Non-trivial tasks require EnterPlanMode regardless of auto mode being active
+
+### Design-to-Plan Transition
+
+When an exploratory conversation ("考えてみてください" / "think about it", "どう思う？" / "what do you think?", "どうすればいい？" / "how should we approach this?") converges on a directional decision ("この方向でやろう" / "let's go with this", "いい案だ" / "good idea", user accepts a design proposal), that convergence is the plan-mode entry trigger — not a chat proposal or consent question.
+
+**Banned closing phrases for non-trivial tasks** — if you are about to write any of these, stop and call EnterPlanMode instead:
+- "この方針で X 実装していいですか？" / "can I implement X with this approach?"
+- "X に進んでいいですか？" / "can I proceed with X?"
+- "実装に入っていいですか？" / "can I start implementing?"
+
+These are plan-mode entry triggers, not chat questions. Writing them in chat means the plan was never created. The correct sequence is: design converges → EnterPlanMode → draft plan → user approves → implement.
 
 ### Autonomous Execution Boundary
 
