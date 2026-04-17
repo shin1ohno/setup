@@ -21,3 +21,23 @@ Before every git commit in a Rust workspace, run all three checks:
 3. `cargo clippy --workspace --tests` — must be warning-free
 
 Do not commit if any check fails. Fix the issue first.
+
+## Verify Step Side Effects
+
+`cargo build`, `cargo test`, and `cargo clippy` regenerate `Cargo.lock` in
+place when versions or dependencies change. Any skill or multi-step script
+that runs these commands as a verify step MUST include `Cargo.lock` in the
+subsequent `git add`. Omitting it produces a commit where `Cargo.toml` and
+`Cargo.lock` are out of sync — broken for downstream consumers and
+`cargo publish` dry-runs.
+
+General rule: before writing the "stage changes" step of a skill, list every
+file the verify commands can touch as a side effect and include all of them
+in the `git add` pattern.
+
+## Pre-`/bump-version` Sanity Check
+
+Before invoking `/bump-version`, confirm `git status` shows no unstaged
+changes (or only intentional ones). The verify step's lockfile rewrite will
+otherwise tangle with unrelated edits, making the resulting commit hard to
+review and easy to mis-stage. Stash or commit work-in-progress first.
