@@ -2,7 +2,7 @@
 
 # Bump this constant to upgrade Neovim. Mitamae detects the installed version
 # via `nvim --version` and triggers a rebuild when it differs.
-NVIM_VERSION = "v0.11.4"
+NVIM_VERSION = "v0.12.1"
 
 neovim_root = "#{node[:setup][:root]}/neovim"
 nvim_source_dir = "neovim-#{NVIM_VERSION.delete_prefix('v')}"
