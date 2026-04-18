@@ -8,6 +8,7 @@ include_cookbook "terraform"
 include_cookbook "ctags"
 include_cookbook "neovim"
 include_cookbook "dot-config-nvim"
+include_cookbook "imagemagick"
 include_cookbook "lazygit"
 
 # Google Workspace CLI
