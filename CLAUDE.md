@@ -66,6 +66,7 @@ This is a **mitamae-based infrastructure automation system** for setting up deve
 - Use `add_profile` helper for shell environment setup
 - Platform-specific logic: `if node[:platform] == "darwin"`
 - Always include user/group/mode for file operations
+- **External URLs**: Verify external resources (GitHub releases, Homebrew packages, URLs) with `curl -sI` before commit. Dry-run does not fetch external resources — it is not evidence that a URL exists
 
 **Custom Helpers Available:**
 
