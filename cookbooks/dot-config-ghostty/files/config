@@ -1,0 +1,59 @@
+# Managed by mitamae: ~/ManagedProjects/setup/cookbooks/dot-config-ghostty/files/config
+# Local overrides: ~/.config/ghostty/local.ghostty (hand-edit safe, loaded via config-file at bottom)
+
+# ===== Appearance =====
+theme                   = Nord
+background-opacity      = 0.92
+background-blur         = 20
+window-padding-x        = 12
+window-padding-y        = 12
+window-padding-balance  = true
+cursor-style            = block
+cursor-style-blink      = false
+
+# ===== Font (UDEV Gothic NF = JP + Nerd Font in one family) =====
+font-family             = UDEV Gothic NF
+font-size               = 14
+font-feature            = -dlig
+font-thicken            = true
+grapheme-width-method   = unicode
+
+# ===== Shell Integration =====
+# ssh-terminfo auto-installs xterm-ghostty on remote hosts (prevents vim/tmux/clear breakage).
+# no-cursor keeps cursor-style=block at the prompt (shell-integration otherwise switches to bar).
+shell-integration          = detect
+shell-integration-features = no-cursor,sudo,title,ssh-env,ssh-terminfo
+
+# ===== Keybinds (additions; macOS defaults handle cmd+t/w/d/shift+d/[/]/k/enter/shift+,) =====
+keybind = global:cmd+grave_accent=toggle_quick_terminal
+keybind = cmd+ctrl+h=goto_split:left
+keybind = cmd+ctrl+j=goto_split:bottom
+keybind = cmd+ctrl+k=goto_split:top
+keybind = cmd+ctrl+l=goto_split:right
+keybind = cmd+alt+equal=equalize_splits
+keybind = cmd+shift+o=toggle_tab_overview
+
+# ===== Quick Terminal (quake mode) =====
+quick-terminal-position           = top
+quick-terminal-screen             = mouse
+quick-terminal-animation-duration = 0.15
+quick-terminal-autohide           = true
+
+# ===== Splits =====
+unfocused-split-opacity = 0.85
+
+# ===== Clipboard / Mouse =====
+copy-on-select             = clipboard
+clipboard-read             = allow
+clipboard-paste-protection = true
+mouse-hide-while-typing    = true
+mouse-scroll-multiplier    = 2.0
+
+# ===== macOS =====
+macos-option-as-alt          = left
+macos-titlebar-style         = tabs
+macos-non-native-fullscreen  = visible-menu
+window-save-state            = always
+
+# ===== Local overrides (optional) =====
+config-file = ?local.ghostty
