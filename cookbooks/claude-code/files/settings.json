@@ -31,11 +31,13 @@
       "mcp__context7__resolve-library-id",
       "mcp__context7__get-library-docs"
     ],
+    "ask": [
+      "Bash(git push:*)"
+    ],
     "deny": [
       "Bash(sudo:*)",
       "Bash(rm -rf:*)",
       "Bash(rm -r :*)",
-      "Bash(git push:*)",
       "Bash(git push --force:*)",
       "Bash(git reset:*)",
       "Bash(git rebase:*)",
