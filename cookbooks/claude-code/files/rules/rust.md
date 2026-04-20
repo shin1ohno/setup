@@ -35,6 +35,33 @@ General rule: before writing the "stage changes" step of a skill, list every
 file the verify commands can touch as a side effect and include all of them
 in the `git add` pattern.
 
+## crates.io Token Scopes — publish-new vs publish-update
+
+crates.io API tokens have per-action scopes. For release-plz / manual publishing:
+
+- **`publish-update`**: version bump of an EXISTING crate (most common day-to-day)
+- **`publish-new`**: the FIRST publish of a new crate name. Required even if the crate is listed in the token's allow-list — `publish-update` is NOT sufficient for the first push
+- **`yank`**: separate scope, only needed when retracting a published version
+
+The trap: when adding a new publishable crate to a workspace that already has a `CARGO_REGISTRY_TOKEN` secret (with `publish-update` scope), the first release-plz run on that crate fails with:
+
+```
+error: failed to publish <crate> v0.1.0 to registry at https://crates.io
+Caused by:
+  the remote server responded with an error (status 403 Forbidden): this token does not have the required permissions to perform this action
+```
+
+crates.io does NOT allow editing an existing token's scope; you must revoke and re-issue.
+
+**Practical workflow** when adding a new publishable crate:
+
+1. Issue a one-off token with **just `publish-new` scope** + allow-list = the new crate name
+2. `cargo publish -p <new-crate> --token <one-off-token>` to do the first publish manually from HEAD
+3. Revoke the one-off token
+4. Future version bumps use the existing `publish-update` token via release-plz — no further action needed
+
+Alternatively, re-issue the main `CARGO_REGISTRY_TOKEN` with both `publish-new` + `publish-update` scopes if you add new crates often. Update the secret in every repo using it (`gh secret set CARGO_REGISTRY_TOKEN`).
+
 ## Pre-`/bump-version` Sanity Check
 
 Before invoking `/bump-version`, confirm `git status` shows no unstaged
