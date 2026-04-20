@@ -39,6 +39,8 @@ This principle enables parallel agents to complete independently without blockin
 
 If Bash commands produce repeated `zsh: command not found: -e` or similar shell init noise, the cause is a `.zshrc` that interprets literal flags as commands. This is cosmetic — ignore the noise lines and parse only the actual command output that follows.
 
+**Active scanning**: when noise is in the output, explicitly grep for real errors instead of just "not noticing them at the bottom". After any Bash invocation with noisy output, scan for `error`, `Error`, `ERROR`, `fatal`, `failed`, `FAILED`, `permission denied`, `cannot`, `not found` (only after the noise block), `✗`, `❌`. Real errors tend to cluster at the end of output AFTER the noise, so tail-inspection is where mistakes happen — prefer `grep -iE "error|fatal|failed|denied"` on the full output over `| tail`.
+
 ## Long-Running Tasks
 
 When a sub-agent needs to execute a task that runs longer than a few minutes (stability tests, load tests, multi-cycle benchmarks):
