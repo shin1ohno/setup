@@ -24,6 +24,9 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
 ❌ Bad: "調査結果をまとめました。[7項目のリスト]"
 ✓ Good: "調査結果をまとめました。" → AskUserQuestion("どれを採用しますか？", multiSelect)
+
+❌ Bad: "以下の選択肢があります。A: ... B: ... C: ... どれにしますか？" (prose-form menu masquerading as a question — still a violation)
+✓ Good: same situation → AskUserQuestion("どれにしますか？", options=["A: ...", "B: ...", "C: ..."])
 ```
 
 **When AskUserQuestion is not needed**: when instructions are clear, only one implementation path exists, and all operations are reversible. Same applies during execution of an approved plan — steps included in the plan do not require individual confirmation.
@@ -32,7 +35,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
 - Communicate in Japanese
 - Git commit messages, source code comments, and spec documentation must be in English
-- **Non-trivial tasks**: ALWAYS enter plan mode before implementation. Non-trivial = any task touching 2+ files, any config change with deploy steps, any new agent/hook/skill creation. **Exception**: hardware/protocol debugging where root cause is unknown — use hypothesis-driven iteration instead (state hypothesis → minimal code change → user tests on device → confirm or invalidate → next hypothesis). Enter plan mode only after root cause is identified and the fix scope is clear
+- **Non-trivial tasks**: ALWAYS enter plan mode before implementation. Non-trivial = any task touching 2+ files, any task spanning 2+ repositories, any config change with deploy steps, any new agent/hook/skill creation. **Exception**: hardware/protocol debugging where root cause is unknown — use hypothesis-driven iteration instead (state hypothesis → minimal code change → user tests on device → confirm or invalidate → next hypothesis). Enter plan mode only after root cause is identified and the fix scope is clear
 - **Every conversation**: launch background sub-agents to search Cognee and Mem0 at conversation start. Also read `TODO.md` in the project memory directory — if it has open items, mention them to the user. Continue interacting with the user immediately — feed results back when agents complete. No exceptions except trivial edits, typo fixes, and git operations
 - **Deferred work → TODO.md**: when a task is deferred to a future session ("次回セッションで対応"), write a TODO item to the project memory `TODO.md` with: task description, why it was deferred, and the concrete first step or prompt to resume. When completing a unit of work, check if it resolves any TODO item — if so, delete that item from TODO.md in the same commit
 - **RAG gap → TODO.md**: when RAG search returns no relevant results after 2+ query attempts on a topic that clearly belongs in the knowledge base, write a TODO.md entry immediately — without waiting for explicit "次回対応" language. Entry must include: what was missing, why it matters, and the concrete ingest command or source URL
@@ -86,10 +89,11 @@ These are plan-mode entry triggers, not chat questions. Writing them in chat mea
 |-----------|--------|
 | Plan approved, implementation straightforward | Proceed autonomously |
 | Tests fail during implementation | Fix and retry, do not ask |
+| Same observable symptom persists after 3 fix attempts | Stop loop — synthesize failed hypotheses, challenge design assumption with AskUserQuestion |
 | Ambiguity discovered not covered by the plan | AskUserQuestion |
 | Scope creep temptation | AskUserQuestion |
 | Destructive operation not in the plan | AskUserQuestion |
-| Implementation complete | Create PR, notify user |
+| Implementation complete | Create PR; immediately launch a background `gh pr checks --watch` loop. If any check fails, read the log, fix, push without prompting; repeat until CI is fully green. Do NOT declare the task complete or notify the user until every required check passes. `gh pr create` is not the terminal step — green CI is |
 | Unit of work committed, more items remain | Proceed to next item immediately |
 | All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
 | Blocked waiting for manual user action (sudo, restart, deploy) | Launch background retro/Cognee/TODO agents immediately |
