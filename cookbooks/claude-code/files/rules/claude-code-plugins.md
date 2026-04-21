@@ -87,3 +87,26 @@ The `design-md` plugin from the `saladdays-skills` marketplace generates a `DESI
 - User wants brand/competitive strategy — DESIGN.md codifies craft decisions, not market positioning
 
 Reference: [saladdays note on DESIGN.md integration](https://note.com/saladdays/n/nd6bdc9727c8e).
+
+## Expert Roundtable Deliberation (`/roundtable:start`)
+
+The `roundtable` plugin from `saladdays-skills` orchestrates structured multi-expert deliberation: it dynamically selects domain experts, generates their independent opinions first (Delphi / Nominal Group Technique), then runs up to 2 debate rounds (MAD research shows 3+ rounds degrade quality), preserving minority views and Red-Team / Devil's-Advocate objections.
+
+**Invoke `/roundtable:start` when**:
+- User is about to make a judgment call that benefits from diverse expert perspectives (product strategy, organization design, architectural pivot, investment decision, design review)
+- User explicitly asks for a review, evaluation, or multi-angle critique ("レビューして", "多角的に評価", "専門家に聞きたい", "議論して")
+- The decision has meaningful downside and the user has time for a deliberation cycle
+- The topic is cross-domain (e.g., product + legal + ops) where a single expert view is insufficient
+
+**Inputs to prepare**: a clear topic or problem statement. Optional: URLs, attached files, in-context references. The skill auto-calibrates depth (Quick vs Deep) from perceived risk.
+
+**Output**: executive summary, expert panel roster, consensus points, debated issues (pro/con/chosen rationale), preserved minority opinions with reasoning, prioritized recommendations, scope limitations.
+
+**Do NOT invoke `/roundtable:start` when**:
+- Pure fact-finding / factual lookup — use direct queries instead
+- Time-critical decisions where the multi-round deliberation cost is prohibitive
+- Single-domain technical specs with an unambiguous answer (e.g., "which npm flag does X")
+- Low-stakes brainstorming where speed outweighs rigor
+- As a substitute for human stakeholder sign-off on high-stakes choices — the skill explicitly flags that human verification is still required
+
+Reference: [saladdays note on the roundtable skill](https://note.com/saladdays/n/nd62af8015341).
