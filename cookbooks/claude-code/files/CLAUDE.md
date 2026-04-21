@@ -115,6 +115,12 @@ Core rules: 1 agent = 1 task, parallelize independent work, background-first for
 
 See @~/.claude/rules/sub-agents.md for full guidelines including bulk research pattern and tool selection.
 
+## Claude Code Plugins
+
+Official plugins from `claude-plugins-official` and `anthropic-agent-skills` are registered via the cookbook. Most plugin skills/commands self-describe their triggers — Claude auto-invokes them when the user's request matches.
+
+See @~/.claude/rules/claude-code-plugins.md for integration rules where the plugin's own trigger conflicts with an existing cookbook workflow (commit-commands vs git-commit hygiene, feature-dev vs EnterPlanMode, hookify vs Ruby hooks, etc.).
+
 ## Writing
 
 See @~/.claude/rules/writing.md
