@@ -170,12 +170,13 @@ if File.exist?(env_output_path)
       exit 1
     SH
   end
+end
 
-  # Recreate containers when compose config or built image sources change.
-  # Notified by remote_file resources above; no-op otherwise.
-  execute "docker compose restart cognee" do
-    command "docker compose -f #{compose_path} up -d --build"
-    user node[:setup][:user]
-    action :nothing
-  end
+# Recreate containers when compose config or built image sources change.
+# Notified by remote_file resources above; no-op otherwise.
+# Defined unconditionally so notifies: resolve even before .env is generated.
+execute "docker compose restart cognee" do
+  command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build"
+  user node[:setup][:user]
+  action :nothing
 end
