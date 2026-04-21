@@ -1,0 +1,14 @@
+# edge-agent config for the "air" macOS host. Nuimo (BLE) controller; Roon
+# lives on pro.home.local, weave-server too.
+
+edge_id = "air"
+config_server_url = "ws://pro.home.local:3101/ws/edge"
+
+[roon]
+extension_id = "com.shin1ohno.edge-agent.air"
+display_name = "edge-agent (air)"
+host = "pro.home.local"
+port = 9330
+
+[nuimo]
+# No ble_address pin — use the first Nuimo discovered on this host.
