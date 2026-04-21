@@ -2,6 +2,19 @@
 
 Official plugins from `claude-plugins-official` and `anthropic-agent-skills` are registered via the cookbook. Each plugin self-describes its triggers via skill/command frontmatter — Claude auto-invokes them when the user's request matches. The rules below codify integration points where an explicit default differs from the plugin's own suggestion, or where a workflow habit should change.
 
+## Skill Availability Check
+
+Before invoking a plugin skill (e.g. `/roundtable:start`, `/feature-dev:feature-dev`, `/plugin-dev:create-plugin`), verify it is actually listed in the session's available-skills reminder. If the user requests a skill that is not present:
+
+1. State the fact in one line: "`<skill>` は本セッションでは未登録です" (user-visible)
+2. Propose a fallback via AskUserQuestion:
+   - Option A: proceed with a manual/inline equivalent (e.g. run the roundtable deliberation format by hand)
+   - Option B: pause so the user can install the plugin (`/plugin install …` or cookbook update) and retry
+
+Do NOT silently fall back to a hand-rolled approximation — the user expects the plugin's structure (and may have trusted its output format for downstream work). Transparent substitution with consent is acceptable; opaque substitution is not.
+
+Applies equally to commands and agents from plugins. Built-in Claude Code slash commands (`/help`, `/clear`, etc.) are not covered by this rule.
+
 ## Skill Creation
 
 When the user asks to create a new skill (model-invocable behavior, not plain slash-command), **invoke the `skill-creator` skill** rather than hand-writing a `SKILL.md`. `skill-creator` runs evals, comparisons, and description-tuning — outputs higher-quality skills than a draft-then-commit loop.
