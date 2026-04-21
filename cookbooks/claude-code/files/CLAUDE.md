@@ -31,6 +31,8 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
 **When AskUserQuestion is not needed**: when instructions are clear, only one implementation path exists, and all operations are reversible. Same applies during execution of an approved plan — steps included in the plan do not require individual confirmation.
 
+**When a diagnosis yields 5+ issues**: do NOT flatten them into a single "which of these do you care about?" AskUserQuestion — the user ends up with a question whose shape doesn't match how they think about the product. Instead, group the issues by user-goal theme (not by file, not by severity) and make the themes the options. Example: 7 痛点 across Edit form → group into "フォーム内部 / 行内アクション / drawer 差別化 / Save モデル" and ask which themes to tackle. This makes the plan's top-level structure correct from the start and avoids rewriting it after the user corrects the framing.
+
 ## Critical Rules — General
 
 - Communicate in Japanese
@@ -71,6 +73,19 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - Produce a PR as the reviewable artifact: branch, implement, test, commit, then `gh pr create`
 - The user reviews the PR, not the intermediate steps
 - **Auto mode does NOT override plan mode**: auto mode means executing an approved plan autonomously — it does not mean skipping plan creation. Non-trivial tasks require EnterPlanMode regardless of auto mode being active
+
+### Plan File Structure for UX / IA / Frontend Tasks
+
+When the task is UX revision, IA redesign, or any frontend feature with multiple user-facing behaviors, the plan file MUST follow this section order:
+
+1. **Context** — problem statement + user-confirmed constraints (1 paragraph)
+2. **ユースケース別 操作フロー (use-case flows)** — for each primary use case, show the actor + goal + concrete step-by-step interaction. Side-by-side "いま / 新しく" table when revising existing behavior. This section comes FIRST because it forces the IA shape to emerge from user goals, not from file boundaries
+3. **Scope / Out-of-scope** — explicit boundaries
+4. **構造変更 (structural changes)** — code-level changes grouped by module, derived from the use cases above
+5. **ファイル一覧 + 既存ユーティリティの再利用**
+6. **Verification** — manual + static checks referencing the UC numbers
+
+Why this order: flat lists of "痛点 → implementation" produce plans whose top-level structure doesn't match how users experience the product. Organizing by user journey first makes the plan scannable AND makes the implementation phase's priority ordering obvious (primary UC → secondary UC → rare UC). This rule exists because a session that led with implementation-list structure cost one full plan rewrite when the user asked "最初にユースケースごとの操作を書いて".
 
 ### Design-to-Plan Transition
 
