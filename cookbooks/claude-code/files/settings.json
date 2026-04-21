@@ -126,7 +126,8 @@
     "playground@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
     "document-skills@anthropic-agent-skills": true,
-    "design-md@saladdays-skills": true
+    "design-md@saladdays-skills": true,
+    "roundtable@saladdays-skills": true
   },
   "enableAllProjectMcpServers": true,
   "skipDangerousModePermissionPrompt": true
