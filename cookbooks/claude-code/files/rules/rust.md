@@ -18,7 +18,7 @@
 Before every git commit in a Rust workspace, run all three checks:
 1. `cargo build --workspace`
 2. `cargo test --workspace`
-3. `cargo clippy --workspace --tests` — must be warning-free
+3. `RUSTFLAGS="-D warnings" cargo clippy --workspace --tests` — must be warning-free. Matches CI's flags; catches `dead_code` and other lints that bare `cargo clippy` surfaces only as warnings (e.g. a parametric helper committed ahead of its runtime caller)
 
 Do not commit if any check fails. Fix the issue first.
 
