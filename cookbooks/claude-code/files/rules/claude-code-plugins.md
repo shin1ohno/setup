@@ -66,3 +66,24 @@ The `code-simplifier` plugin agent and the `/simplify` cookbook skill coexist: t
 ## Document Skills (DOCX / PDF / PPTX / XLSX)
 
 The `document-skills` from `anthropic-agent-skills` marketplace handle creation and editing of Office-format documents. Claude auto-invokes when the user asks for these formats. Note: the cookbook's `ingest-pdf` skill is separate — it handles PDF → Cognee ingestion with Vision API fallback, distinct from `document-skills`' PDF form-field manipulation.
+
+## DESIGN.md Generation (`/design-md:generate`)
+
+The `design-md` plugin from the `saladdays-skills` marketplace generates a `DESIGN.md` rulebook — a Markdown design-system document structured as three layers: rationale (Why), specifications (What), and application guidance (When). Its purpose is to maintain visual consistency across multiple AI-generated UI screens by codifying shared decision-making principles rather than pixel-perfect specs.
+
+**Invoke `/design-md:generate` when**:
+- User is building or owns a product with 3+ screens that need to feel cohesive
+- Existing product shows inconsistency as new AI-generated pages accumulate
+- No dedicated designer; user wants to codify aesthetic direction as text
+- Rapid prototyping where speed and consistency both matter
+- Trigger phrases: "5+ screens need cohesion", "AI pages look different", "document our design decisions", "design system from scratch"
+
+**Inputs the skill asks for** (prepare these if available): 3+ product URLs or codebase samples, W3C DTCG token files / CSS variables / Figma styles, target users, desired tone, aesthetics to avoid. For iterative updates, pass the existing `DESIGN.md`.
+
+**Do NOT invoke `/design-md:generate` when**:
+- Single-page design — the overhead is not justified
+- User wants pixel-perfect prescriptive specs — the skill intentionally preserves creative latitude
+- User expects a one-shot output — treat the output as a living document that must be revisited as the product evolves
+- User wants brand/competitive strategy — DESIGN.md codifies craft decisions, not market positioning
+
+Reference: [saladdays note on DESIGN.md integration](https://note.com/saladdays/n/nd6bdc9727c8e).
