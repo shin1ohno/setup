@@ -1,0 +1,22 @@
+# edge-agent config for pro.home.local. WS-only witness (no BLE/Nuimo on this
+# host); the Roon adapter pins to the local Roon Core on 127.0.0.1:9330.
+
+edge_id = "pro"
+config_server_url = "ws://127.0.0.1:3101/ws/edge"
+
+[roon]
+extension_id = "com.shin1ohno.edge-agent.pro"
+display_name = "edge-agent (pro)"
+# Pin to the RoonServer ("home") on this host; bypasses SOOD so the agent
+# never accidentally pairs with the bundled RoonAppliance (core_id
+# ba89a1de-...), which has no zones and leaves the Overview UI empty.
+# The roon-hub container proves 127.0.0.1:9330 resolves to the correct
+# core (b38d8cfc-...).
+host = "127.0.0.1"
+port = 9330
+
+[nuimo]
+skip = true
+
+# Hue enabled; token at default $XDG_STATE_HOME/edge-agent/hue-token.json.
+[hue]
