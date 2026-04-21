@@ -22,6 +22,7 @@ remote_file "#{deploy_dir}/docker-compose.yml" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
+  notifies :run, "execute[docker compose restart ai-memory]"
 end
 
 # Auth proxy — validates sage OAuth tokens in front of openmemory-api
@@ -39,6 +40,7 @@ end
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
+    notifies :run, "execute[docker compose restart ai-memory]"
   end
 end
 
@@ -58,6 +60,7 @@ env_output_path = "#{deploy_dir}/.env"
 execute "generate ai-memory .env" do
   command "bash #{generate_env_script} #{env_temp_path}"
   user node[:setup][:user]
+  not_if "test -f #{env_output_path}"
 end
 
 if File.exist?(env_temp_path)
@@ -66,6 +69,7 @@ if File.exist?(env_temp_path)
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "600"
+    notifies :run, "execute[docker compose restart ai-memory]"
   end
 
   file env_temp_path do
@@ -83,7 +87,27 @@ execute "enable pgvector extension on Aurora" do
   user node[:setup][:user]
 end
 
-# Pull latest images and (re)start containers; wait for health checks to pass
-execute "docker compose -f #{deploy_dir}/docker-compose.yml up -d --pull always --wait --wait-timeout 120" do
+compose_path = "#{deploy_dir}/docker-compose.yml"
+
+# Ensure containers are running (cheap idempotency check). Fires only when a
+# declared service is not currently running.
+execute "ensure ai-memory running" do
+  command "docker compose -f #{compose_path} up -d --wait --wait-timeout 120"
   user node[:setup][:user]
+  only_if <<~SH.tr("\n", " ").strip
+    services=$(docker compose -f #{compose_path} config --services 2>/dev/null);
+    [ -n "$services" ] || exit 1;
+    for s in $services; do
+      docker compose -f #{compose_path} ps --services --filter status=running 2>/dev/null | grep -qx "$s" || exit 0;
+    done;
+    exit 1
+  SH
+end
+
+# Recreate containers when compose config or built image sources change.
+# Notified by remote_file resources above; no-op otherwise.
+execute "docker compose restart ai-memory" do
+  command "docker compose -f #{compose_path} up -d --wait --wait-timeout 120"
+  user node[:setup][:user]
+  action :nothing
 end
