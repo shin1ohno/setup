@@ -41,4 +41,14 @@ Do NOT commit onto: merged PR branches still checked out locally, in-flight feat
 
 ## GPG Signing Failures
 
-If `git commit` fails with a GPG signing error or timeout, present the user with `! gpg-connect-agent reloadagent /bye` to reload the GPG agent and cache the passphrase. Do not bypass signing with `-c commit.gpgsign=false` unless the user explicitly requests it.
+If `git commit` fails with a GPG signing error or timeout, present the user with the full cache-refresh command:
+
+```
+! gpg-connect-agent reloadagent /bye && echo "test" | gpg --clearsign > /dev/null
+```
+
+The first part reloads the agent; the second forces a `gpg --clearsign` in the user's terminal, which triggers pinentry and caches the passphrase so the next `git commit` inside the Claude Code Bash sandbox signs silently without timing out again.
+
+Do not use the shorter `gpg-connect-agent reloadagent /bye` alone — it reloads the agent but does not pre-cache the passphrase, so the very next commit can trigger a fresh pinentry that times out in the sandbox.
+
+Do not bypass signing with `-c commit.gpgsign=false` unless the user explicitly requests it.

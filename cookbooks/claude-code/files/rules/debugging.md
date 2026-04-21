@@ -78,3 +78,25 @@ Research-first agents surface authoritative-looking docs about the surrounding a
 **Anti-signal**: if a research agent comes back with suggestions that rely on entire-layer replacements (e.g., ".app bundle + codesign + Info.plist entitlements" for a BLE error), and the SDK source hasn't been read, assume the framing is wrong. Read the source before acting on that research.
 
 This rule exists because Thread 3 of the 2026-04-20 retro session burned ~30 minutes on macOS TCC / .app-bundle research for a `BLE error: Device not found`, when the actual bug was a 2-line sibling-central mismatch inside `nuimo-rs/crates/nuimo/src/backend/macos.rs` — visible on first read of the file.
+
+## Frame the Failure Class Before Writing the Fix
+
+When fixing a bug, the first design question is **"what shape is this failure class?"**, not "what minimal change makes this error stop?". Silencing the specific error often leaves the underlying fragility in place — correct only until the next instance.
+
+**Triggers** — when the error involves any of these, the failure is almost certainly structural and deserves a failure-class framing pass before implementing:
+
+- Hard-coded addresses (IPs, hostnames, ports) that the environment can rotate — DHCP leases, floating cloud IPs, mDNS-announced services
+- Stored auth tokens or keys against a mutable endpoint — the credential is stable but the endpoint it points to is not
+- Hard-coded filesystem paths that reference structure a sibling process / deploy step manages — `configs/*.toml` dropped by a repo refactor, state directories moved by an XDG migration, symlinks rewritten by deploys
+- Timestamps, versions, or hashes embedded in persisted state that outlive their intended scope
+
+**Protocol**:
+
+1. Before implementing, name the failure class: "what set of similar failures will this same design reproduce?" Write it down in one sentence.
+2. If the class is structural (multiple foreseeable triggers, not a one-off), propose the class-wide fix via AskUserQuestion — typically includes discovery / caching / fallback, not just silencing
+3. If the class is transient (network blip, race, rare external outage), non-fatal retry is sufficient — proceed without the full framing round
+4. Non-fatal + retry is a necessary piece of the structural fix, **never the complete fix**. A dead service retried against stale config will stay dead forever
+
+**Anti-pattern**: seeing "Connection refused on 192.168.1.23" and immediately making the init non-fatal, without asking "why 192.168.1.23? is it stable? what happens when it changes?". The non-fatal change satisfies "error stops crashing the process" but leaves the service silently dead until a human re-pairs.
+
+This rule exists because in the 2026-04-22 session, three cascaded "hard-coded stale value" failures — systemd ExecStart pointing at a deleted `configs/` path, stale release binary predating the config migration, and Hue token IP pinned to a rotated DHCP lease — would each have been caught by asking "is this value persistently hard-coded against a thing that rotates?" before starting implementation. Instead, each was discovered sequentially, wasting restart cycles.
