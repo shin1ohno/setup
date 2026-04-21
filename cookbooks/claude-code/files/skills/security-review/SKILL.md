@@ -10,7 +10,7 @@ argument-hint: "[base_commit]"
 
 ## Purpose
 
-Review code changes for security vulnerabilities by diffing against a base commit and launching the security-reviewer agent.
+Review code changes for security vulnerabilities by diffing against a base commit and launching the `code-reviewer` agent (from `pr-review-toolkit`) with a security-focused prompt.
 
 ## Argument Parsing
 
@@ -38,13 +38,16 @@ Also run `git diff <base>..HEAD --stat` for the summary.
 
 If the diff is empty, inform the user and stop.
 
-### Step 3: Launch Security Reviewer
+### Step 3: Launch Security-Focused Code Review
 
-Launch the `security-reviewer` agent (subagent_type: security-reviewer) with:
+Launch the `code-reviewer` agent (from the `pr-review-toolkit` plugin) with an explicit security-focus prompt. Include:
 
 - The full diff output (excluding binary files)
 - The diff stat summary
+- A security-focused review directive: "Focus on OWASP Top 10 vulnerabilities (injection, XSS, SSRF, auth/session flaws, crypto misuse, path traversal, unsafe deserialization, etc.) plus secret leakage, unsafe exec/eval, and untrusted input flowing to privileged sinks. Rate each finding by severity (Critical/High/Medium/Low/Info)."
 - Instructions to focus on changed lines but read surrounding context as needed
+
+`code-reviewer` already supports confidence scoring (0-100) per finding; use its output format directly.
 
 ### Step 4: Present Results
 
