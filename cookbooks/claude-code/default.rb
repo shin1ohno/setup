@@ -63,6 +63,22 @@ directory "#{node[:setup][:home]}/.claude" do
   action :create
 end
 
+# Register official plugin marketplaces. Idempotent via not_if checking known_marketplaces.json.
+# Marketplace registration must precede settings.json deploy so that enabledPlugins entries resolve.
+known_marketplaces = "#{node[:setup][:home]}/.claude/plugins/known_marketplaces.json"
+
+execute "register claude-plugins-official marketplace" do
+  user node[:setup][:user]
+  command "#{claude_path} plugin marketplace add anthropics/claude-plugins-official"
+  not_if "test -f #{known_marketplaces} && grep -q claude-plugins-official #{known_marketplaces}"
+end
+
+execute "register anthropic-agent-skills marketplace" do
+  user node[:setup][:user]
+  command "#{claude_path} plugin marketplace add anthropics/skills"
+  not_if "test -f #{known_marketplaces} && grep -q anthropic-agent-skills #{known_marketplaces}"
+end
+
 remote_file "#{node[:setup][:home]}/.claude/CLAUDE.md" do
   source "files/CLAUDE.md"
   owner node[:setup][:user]
@@ -168,7 +184,7 @@ directory "#{node[:setup][:home]}/.claude/agents" do
   action :create
 end
 
-%w(code-reviewer.md security-reviewer.md mitamae-validator.md researcher.md session-retrospective.md claude-docs-researcher.md domain-researcher.md).each do |file_name|
+%w(mitamae-validator.md researcher.md session-retrospective.md claude-docs-researcher.md domain-researcher.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/agents/#{file_name}" do
     source "files/agents/#{file_name}"
     owner node[:setup][:user]
@@ -179,7 +195,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test audit-claudemd check-services ingest-batch security-review verify-cognee verify-data-integrity feature-parity).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services ingest-batch security-review verify-cognee verify-data-integrity feature-parity).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -239,5 +255,25 @@ end
     mode "644"
     action :create
   end
+end
+
+# Clean up deprecated custom items replaced by official plugins.
+# - audit-claudemd skill → claude-md-management@claude-plugins-official
+# - code-reviewer agent → pr-review-toolkit@claude-plugins-official
+# - security-reviewer agent → pr-review-toolkit@claude-plugins-official
+file "#{node[:setup][:home]}/.claude/agents/code-reviewer.md" do
+  action :delete
+end
+
+file "#{node[:setup][:home]}/.claude/agents/security-reviewer.md" do
+  action :delete
+end
+
+file "#{node[:setup][:home]}/.claude/skills/audit-claudemd/SKILL.md" do
+  action :delete
+end
+
+directory "#{node[:setup][:home]}/.claude/skills/audit-claudemd" do
+  action :delete
 end
 
