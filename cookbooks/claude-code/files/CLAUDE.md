@@ -93,7 +93,7 @@ These are plan-mode entry triggers, not chat questions. Writing them in chat mea
 | Ambiguity discovered not covered by the plan | AskUserQuestion |
 | Scope creep temptation | AskUserQuestion |
 | Destructive operation not in the plan | AskUserQuestion |
-| Implementation complete | Create PR, notify user |
+| Implementation complete | Create PR; immediately launch a background `gh pr checks --watch` loop. If any check fails, read the log, fix, push without prompting; repeat until CI is fully green. Do NOT declare the task complete or notify the user until every required check passes. `gh pr create` is not the terminal step — green CI is |
 | Unit of work committed, more items remain | Proceed to next item immediately |
 | All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
 | Blocked waiting for manual user action (sudo, restart, deploy) | Launch background retro/Cognee/TODO agents immediately |
