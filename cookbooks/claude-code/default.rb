@@ -79,6 +79,12 @@ execute "register anthropic-agent-skills marketplace" do
   not_if "test -f #{known_marketplaces} && grep -q anthropic-agent-skills #{known_marketplaces}"
 end
 
+execute "register saladdays-skills marketplace" do
+  user node[:setup][:user]
+  command "#{claude_path} plugin marketplace add saladdays/agent-skills"
+  not_if "test -f #{known_marketplaces} && grep -q saladdays-skills #{known_marketplaces}"
+end
+
 remote_file "#{node[:setup][:home]}/.claude/CLAUDE.md" do
   source "files/CLAUDE.md"
   owner node[:setup][:user]
