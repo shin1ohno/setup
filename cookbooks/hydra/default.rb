@@ -22,6 +22,7 @@ remote_file "#{deploy_dir}/docker-compose.yml" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
+  notifies :run, "execute[docker compose restart hydra]"
 end
 
 remote_file "#{deploy_dir}/hydra.yml" do
@@ -29,6 +30,7 @@ remote_file "#{deploy_dir}/hydra.yml" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
+  notifies :run, "execute[docker compose restart hydra]"
 end
 
 remote_file "#{deploy_dir}/setup-hydra.sh" do
@@ -53,6 +55,7 @@ end
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
+    notifies :run, "execute[docker compose restart hydra]"
   end
 end
 
@@ -83,6 +86,7 @@ if File.exist?(env_temp_path)
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "600"
+    notifies :run, "execute[docker compose restart hydra]"
   end
 
   file env_temp_path do
@@ -111,10 +115,31 @@ if File.exist?(env_output_path)
     ].join(" ")
   end
 
-  # Pull latest images and (re)start containers
-  execute "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build --pull always" do
+  compose_path = "#{deploy_dir}/docker-compose.yml"
+
+  # Ensure containers are running (cheap idempotency check). Fires only when a
+  # declared service is not currently running.
+  execute "ensure hydra running" do
+    command "docker compose -f #{compose_path} up -d --build"
     user node[:setup][:user]
+    only_if <<~SH.tr("\n", " ").strip
+      services=$(docker compose -f #{compose_path} config --services 2>/dev/null);
+      [ -n "$services" ] || exit 1;
+      for s in $services; do
+        docker compose -f #{compose_path} ps --services --filter status=running 2>/dev/null | grep -qx "$s" || exit 0;
+      done;
+      exit 1
+    SH
   end
 else
   MItamae.logger.info "hydra: .env not found — run ~/deploy/hydra/setup-hydra.sh first, then re-run mitamae"
+end
+
+# Recreate containers when compose config or built image sources change.
+# Notified by remote_file resources above; no-op otherwise.
+# Defined unconditionally so notifies: resolve even before .env is generated.
+execute "docker compose restart hydra" do
+  command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build"
+  user node[:setup][:user]
+  action :nothing
 end

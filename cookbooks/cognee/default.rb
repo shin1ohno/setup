@@ -48,6 +48,7 @@ remote_file "#{deploy_dir}/docker-compose.yml" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
+  notifies :run, "execute[docker compose restart cognee]"
 end
 
 remote_file "#{deploy_dir}/entrypoint-override.sh" do
@@ -55,6 +56,7 @@ remote_file "#{deploy_dir}/entrypoint-override.sh" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
+  notifies :run, "execute[docker compose restart cognee]"
 end
 
 remote_file "#{deploy_dir}/cognee-gateway.conf" do
@@ -62,6 +64,7 @@ remote_file "#{deploy_dir}/cognee-gateway.conf" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
+  notifies :run, "execute[docker compose restart cognee]"
 end
 
 remote_file "#{deploy_dir}/.env.example" do
@@ -77,6 +80,7 @@ end
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
+    notifies :run, "execute[docker compose restart cognee]"
   end
 end
 
@@ -86,6 +90,7 @@ end
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
+    notifies :run, "execute[docker compose restart cognee]"
   end
 end
 
@@ -110,6 +115,7 @@ remote_file "#{deploy_dir}/vault-exporter/Dockerfile" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
+  notifies :run, "execute[docker compose restart cognee]"
 end
 
 # Generate .env with secrets from SSM Parameter Store
@@ -138,6 +144,7 @@ if File.exist?(env_temp_path)
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "600"
+    notifies :run, "execute[docker compose restart cognee]"
   end
 
   file env_temp_path do
@@ -147,7 +154,29 @@ end
 
 # Everything below requires .env — skip if not yet generated
 if File.exist?(env_output_path)
-  execute "docker compose -f #{deploy_dir}/docker-compose.yml up -d --pull always --build" do
+  compose_path = "#{deploy_dir}/docker-compose.yml"
+
+  # Ensure containers are running (cheap idempotency check). Fires only when a
+  # declared service is not currently running.
+  execute "ensure cognee running" do
+    command "docker compose -f #{compose_path} up -d --build"
     user node[:setup][:user]
+    only_if <<~SH.tr("\n", " ").strip
+      services=$(docker compose -f #{compose_path} config --services 2>/dev/null);
+      [ -n "$services" ] || exit 1;
+      for s in $services; do
+        docker compose -f #{compose_path} ps --services --filter status=running 2>/dev/null | grep -qx "$s" || exit 0;
+      done;
+      exit 1
+    SH
   end
+end
+
+# Recreate containers when compose config or built image sources change.
+# Notified by remote_file resources above; no-op otherwise.
+# Defined unconditionally so notifies: resolve even before .env is generated.
+execute "docker compose restart cognee" do
+  command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build"
+  user node[:setup][:user]
+  action :nothing
 end
