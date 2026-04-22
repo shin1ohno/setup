@@ -79,6 +79,14 @@ Research-first agents surface authoritative-looking docs about the surrounding a
 
 This rule exists because Thread 3 of the 2026-04-20 retro session burned ~30 minutes on macOS TCC / .app-bundle research for a `BLE error: Device not found`, when the actual bug was a 2-line sibling-central mismatch inside `nuimo-rs/crates/nuimo/src/backend/macos.rs` — visible on first read of the file.
 
+### Custom terraform providers — apply-time command-string errors
+
+This applies identically to custom Terraform providers. When `terraform apply` fails with a device-side syntax error (YAMAHA RTX `コマンド名を確認してください`, Cisco `% Invalid input`, a CLI-style "unrecognized command" from any provider), **grep the provider's command builders — `Build*Command`, `ToCommands`, `Render*`, the service layer that calls `executor.Run` — before trusting an Explore agent's summary or the provider's own `docs/`**.
+
+The provider's internal schema and docs describe what the resource accepts; they do not always reflect what the code emits. The emitted string is what the device actually sees. A 2-minute grep for the exact command fragment in the error (e.g., `"ip tunnel"` for `ip tunnel1 secure filter ...`) usually points directly at the builder that needs fixing.
+
+This rule exists because the 2026-04-22 session lost ~30 minutes after an Explore agent reported that `terraform-provider-rtx` supported tunnel-interface filter apply. The provider did expose the resource, but its `BuildInterfaceSecureFilterCommand` emitted `ip tunnel1 secure filter ...` which RTX rejects — the correct form requires a `tunnel select N` context switch first. Visible on first read of `internal/rtx/parsers/ip_filter.go`.
+
 ## Frame the Failure Class Before Writing the Fix
 
 When fixing a bug, the first design question is **"what shape is this failure class?"**, not "what minimal change makes this error stop?". Silencing the specific error often leaves the underlying fragility in place — correct only until the next instance.
