@@ -17,7 +17,7 @@
 #
 # Hosts that aren't in HOSTNAME_TO_VARIANT are skipped — same pattern as ssh-keys.
 
-EDGE_AGENT_VERSION = "0.4.2"
+EDGE_AGENT_VERSION = "0.4.3"
 
 HOSTNAME_TO_VARIANT = {
   "pro" => "pro",
@@ -120,11 +120,17 @@ if node[:platform] == "darwin"
     PLIST
   end
 
-  # Sync binary + ad-hoc sign whenever cargo_bin is newer than the bundled copy
-  # (or the copy is missing). `-nt` is true when the right-hand side is *not
-  # newer*, so `not_if` fires when the bundle is already up to date.
-  execute "sync EdgeAgent.app binary and codesign" do
-    command "cp -f #{cargo_bin} #{bundle_exec} && codesign --force --deep --sign - #{app_bundle}"
+  # Sync binary + ad-hoc sign + reload launchd whenever cargo_bin is newer than
+  # the bundled copy (or the copy is missing). `-nt` is true when the right-hand
+  # side is *not newer*, so `not_if` fires when the bundle is already up to date.
+  # The unload tolerates "not currently loaded" (first run before interactive
+  # bootstrap) via `2>/dev/null || true`; load is only reached if cp + codesign
+  # succeeded so a failing codesign leaves the old binary + launchd state intact.
+  execute "sync EdgeAgent.app binary, codesign, and reload launchd" do
+    command "cp -f #{cargo_bin} #{bundle_exec} && " \
+            "codesign --force --deep --sign - #{app_bundle} && " \
+            "{ launchctl unload #{launchd_plist} 2>/dev/null || true; } && " \
+            "launchctl load #{launchd_plist}"
     user user
     only_if "test -x #{cargo_bin}"
     not_if "test -x #{bundle_exec} && ! [ #{cargo_bin} -nt #{bundle_exec} ]"
