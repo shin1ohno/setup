@@ -1,14 +1,33 @@
-# edge-agent config for the "air" macOS host. Nuimo (BLE) controller; Roon
-# lives on pro.home.local, weave-server too.
+# edge-agent config for the "air" macOS host. Nuimo (BLE) controller; Roon lives
+# on pro, weave-server too.
+#
+# Host is pinned to pro's LAN IP rather than `pro.home.local` because pro
+# advertises 2-3 mDNS IPs (one is a stale ghost) and Rust's stdlib resolver
+# takes the first one round-robin — the ghost IP causes `No route to host` on
+# roughly a third of connect attempts. 192.168.1.20 is pro's wired NIC and is
+# stable in the home LAN's DHCP reservation. See
+# ~/ManagedProjects/weave/CLAUDE.md → "Recurring bug: empty Live Console panels"
+# for the full failure-mode writeup.
 
 edge_id = "air"
-config_server_url = "ws://pro.home.local:3101/ws/edge"
+config_server_url = "ws://192.168.1.20:3101/ws/edge"
 
 [roon]
 extension_id = "com.shin1ohno.edge-agent.air"
 display_name = "edge-agent (air)"
-host = "pro.home.local"
+# Pin to the RoonServer ("home", core_id b38d8cfc-...) on pro rather than rely
+# on SOOD, which non-deterministically picks between RoonServer and the bundled
+# RoonAppliance (ba89a1de-...) — the Appliance has no zones and leaves the UI
+# empty. Can be dropped once roon-api learns `prefer_core_id` (tracked in
+# weave/edge-agent TODO).
+host = "192.168.1.20"
 port = 9330
 
 [nuimo]
 # No ble_address pin — use the first Nuimo discovered on this host.
+
+[hue]
+# Hue enabled. Token defaults to $XDG_STATE_HOME/edge-agent/hue-token.json,
+# populated by `edge-agent pair-hue` the first time. From 0.3.2 onwards the
+# resolver re-discovers the bridge's IP via mDNS / cloud on every start, so
+# token stays valid across DHCP rotations without re-pairing.
