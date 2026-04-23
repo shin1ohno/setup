@@ -39,9 +39,9 @@ execute "brew install aria2" do
   not_if "brew list aria2"
 end
 
-# Install xcodegen for generating .xcodeproj files from YAML specs
-execute "brew install xcodegen" do
-  not_if "brew list xcodegen"
+# Install xcodegen via mise (pre-built binary from github:yonaskolb/XcodeGen releases).
+# mise_tool handles `mise install` + `mise use --global` + idempotency guards.
+mise_tool "xcodegen" do
 end
 
 # Accept Xcode license if Xcode.app is installed
