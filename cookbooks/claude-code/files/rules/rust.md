@@ -68,3 +68,34 @@ Before invoking `/bump-version`, confirm `git status` shows no unstaged
 changes (or only intentional ones). The verify step's lockfile rewrite will
 otherwise tangle with unrelated edits, making the resulting commit hard to
 review and easy to mis-stage. Stash or commit work-in-progress first.
+
+## Cross-Platform Build Tasks — Completion Gate
+
+When a Rust task targets a non-Linux platform (iOS, macOS-only, Android, WASM) and the verification must run on a host the current machine cannot emulate:
+
+1. Mark the task `in_progress` — NOT `completed` — after the Linux-side code is committed
+2. State "Exit criteria: [target host] で [specific observation]" in the status summary sent to the user
+3. Completion requires observable evidence *from the target host*: xcframework file listing, `swiftc` compile output, device log, etc. A green `cargo build --workspace` on Linux is necessary but not sufficient
+4. If the target host is unavailable this session, write a TODO.md entry with the exact verification command and keep the task `in_progress`; do not silently mark completed
+
+This rule exists because the 2026-04-23 iOS session marked `weave-ios-core` (Phase 2) as `completed` after Linux-side build/test passed, but the plan's exit criteria required a Mac-side `xcodebuild -create-xcframework` that had not run. The user caught it with "Phase 2 は終わってますか？" — a false completion that would have silently propagated into downstream phase scheduling.
+
+## Cross-Platform Build Scripts — Precondition Guard
+
+When generating a build script that requires non-default rustup targets or toolchain components (`rustup target add …`, `cargo install <bin>`, system SDKs, env vars), always add a self-diagnosing guard at the top of the script:
+
+```bash
+for target in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
+  if ! rustup target list --installed | grep -q "^$target\$"; then
+    echo "ERROR: missing rustup target: $target" >&2
+    echo "Run: rustup target add $target" >&2
+    exit 1
+  fi
+done
+```
+
+A prose handoff note ("初回のみ rustup target add してください") is NOT a substitute. Scripts are executed directly; documentation is sometimes skipped. The script must self-diagnose and output the exact remediation command as its error message.
+
+Applies equally to: homebrew packages, required cargo binaries, first-run Xcode setup (`xcodebuild -runFirstLaunch`), env vars the build consumes.
+
+This rule exists because the 2026-04-23 iOS session's `build-xcframework.sh` did not check `rustup target list --installed`; the user hit `E0463 can't find crate for core` on first run and had to decode which targets were missing from the cargo error rather than from a script-owned message.

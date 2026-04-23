@@ -25,6 +25,7 @@
       "Bash(make :*)",
       "Bash(gh pr :*)",
       "Bash(rm :*)",
+      "Bash(rm -rf /tmp/:*)",
       "Bash(ls :*)",
       "Bash(cat :*:*)",
       "Bash(osascript -e:*)",

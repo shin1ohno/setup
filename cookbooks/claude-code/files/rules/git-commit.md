@@ -39,6 +39,17 @@ Before writing any file or running `git add` in a repo that is part of the curre
 
 Do NOT commit onto: merged PR branches still checked out locally, in-flight feature branches for unrelated work, or any branch whose `git log` shows commits unrelated to the current task. Scope-bleed discovered after the commit requires cherry-pick surgery that is easy to prevent with this 2-second check.
 
+### Multi-repo tasks
+
+When a task spans 2+ repositories (e.g., CWD is `weave`, edits land in `edge-agent`), run the branch check **per repository** before the first `git add` in each repo:
+
+    git -C /absolute/path/to/other-repo branch --show-current
+    git -C /absolute/path/to/other-repo log --oneline -3
+
+Tool-side CWD resets (Bash sandbox reverts to the primary working directory on each invocation) mean a cd-based branch check only describes the primary repo; a CWD-based check is insufficient when edits reach into a sibling repo via absolute paths. Run the check per-repo, explicitly naming the path with `git -C`.
+
+This rule exists because the 2026-04-23 iOS session edited `~/ManagedProjects/edge-agent` from a `~/ManagedProjects/weave` primary CWD. The check happened to succeed (edge-agent was on `main` and I cut a fresh branch), but the default `git branch --show-current` in that session was describing the weave repo, not the repo being edited.
+
 ### Re-check after any long-running background operation
 
 The check above covers the start of a task. It does not cover mid-task branch drift. Re-run `git branch --show-current` before **every** `git add` / `git commit` when *any* of these happened since your last commit on this repo:
