@@ -39,6 +39,11 @@ execute "brew install aria2" do
   not_if "brew list aria2"
 end
 
+# Install xcodegen for generating .xcodeproj files from YAML specs
+execute "brew install xcodegen" do
+  not_if "brew list xcodegen"
+end
+
 # Accept Xcode license if Xcode.app is installed
 execute "sudo xcodebuild -license accept" do
   only_if "test -d /Applications/Xcode.app"
