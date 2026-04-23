@@ -17,7 +17,7 @@
 #
 # Hosts that aren't in HOSTNAME_TO_VARIANT are skipped — same pattern as ssh-keys.
 
-EDGE_AGENT_VERSION = "0.4.3"
+EDGE_AGENT_VERSION = "0.5.0"
 
 HOSTNAME_TO_VARIANT = {
   "pro" => "pro",
