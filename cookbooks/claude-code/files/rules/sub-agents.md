@@ -78,3 +78,20 @@ This rule exists because the 2026-04-23 iOS session had two consecutive Ultrapla
 | 3+ step non-standard task | /plan → implement |
 | 2+ independent research tasks | Background sub-agents (parallel) |
 | Multi-brand/category survey | 1 agent per category (background) |
+
+## 60-Second Rule for Inline Commands
+
+Any single Bash command or pipeline expected to run for more than 60 seconds MUST be launched inside a background sub-agent (foreground Agent with `run_in_background: true`, OR `Bash` with `run_in_background: true` if simple). The main conversation must remain interactive while the command runs — never block a turn waiting on a multi-minute compile/build/apply.
+
+Commands that always qualify:
+
+- `docker compose up --build` / `docker build` on any non-trivial service
+- `cargo install <crate>` (fresh dep graph compile) or `cargo build --release` on large workspaces
+- `terraform apply` on anything beyond a trivial single-resource plan
+- `npm run build` for Next.js / Vite production builds
+- `mitamae local <role>.rb` on a role that compiles anything from source
+- Any test suite that has previously taken >60s in prior sessions
+
+Pattern: launch the sub-agent with `run_in_background: true`, emit one short user-facing line ("Deploy in background, waiting for completion notification"), and continue interacting with the user. Feed results back when the completion notification arrives. Multiple such tasks can and should run in parallel when independent.
+
+Anti-pattern (caught in the 2026-04-23 weave session): attempting `docker compose up -d --build` inline as a foreground `Bash` call. The user corrected with "そういう時間がかかるタスクは SubAgent でやって" — this rule codifies that correction.
