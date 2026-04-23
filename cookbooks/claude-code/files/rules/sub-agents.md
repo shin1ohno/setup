@@ -49,6 +49,26 @@ When a sub-agent needs to execute a task that runs longer than a few minutes (st
 - **Never delegate monitoring to a detached script**: if the task requires periodic checks, error recovery, or metric collection, the agent must stay alive to perform these — a fire-and-forget bash script cannot recover from failures or report intermediate results
 - **Timeout awareness**: if a task exceeds the agent's practical execution window, break it into phases — the agent completes phase 1, reports results, and the parent schedules phase 2
 
+## Background Agent Deadline Tracking
+
+When launching a background sub-agent (foreground Agent, Ultraplan, remote research) for planning or research, set an internal deadline and remember to check it:
+
+- Research / codebase audit: **15 min**
+- Plan-level analysis (Ultraplan, multi-repo design): **30 min**
+- Large multi-repo audit or domain research: **60 min**
+
+If the deadline passes without a completion notification, do NOT wait silently. Escalate in the next user-facing turn:
+
+1. State the timeout explicitly: e.g. "Ultraplan が 35 分経過しても未完了です"
+2. Offer concrete alternatives via AskUserQuestion:
+   - wait longer (specify minutes)
+   - restart with a narrower scope
+   - proceed with available information without the agent's output
+
+Do not re-launch the same agent with the same prompt expecting a different result. If the agent silently fails once, the second attempt usually fails the same way — instead narrow the scope or switch tools.
+
+This rule exists because the 2026-04-23 iOS session had two consecutive Ultraplan failures (one user-stopped after ~15 min; one timed out silently at 90 min). Both required the user to notice the silence and manually restart. Explicit deadlines with escalation via AskUserQuestion would have surfaced the failure at the first 30 min mark.
+
 ## Tool Selection Guide
 
 | Situation | Tool |
