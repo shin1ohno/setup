@@ -87,6 +87,18 @@ Dry-run passing is the commit gate for cookbook changes. Never leave cookbook ch
 
 This applies to: `terraform plan/apply`, `docker build`, long test suites, and any command where the user cannot usefully intervene mid-execution.
 
+## Terraform Apply Branch Gate
+
+Before invoking `terraform apply`, run `git branch --show-current` and confirm the branch is `main` (or the repo's designated deploy branch). If on a feature branch, stop and present the apply as a user-run command:
+
+```
+! cd /absolute/path/to/repo && terraform apply -target=<scope>
+```
+
+Do NOT attempt `terraform apply` from a feature branch — permission gates often deny this anyway, and applying unmerged changes bypasses the review gate. The correct sequence is: PR merge → pull `main` → apply. The PR's `terraform plan` output is the pre-apply review artifact; the post-merge apply is just the execution step.
+
+This rule exists because the 2026-04-25 session attempted `terraform apply` from an unmerged feature branch in home-monitor; the permission layer correctly denied it, surfacing that the proper flow is merge-first-then-apply.
+
 ## Incident First Response
 
 When a user reports any service or application misbehavior (slow, unavailable, failing):
