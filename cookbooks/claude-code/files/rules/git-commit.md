@@ -50,6 +50,19 @@ Tool-side CWD resets (Bash sandbox reverts to the primary working directory on e
 
 This rule exists because the 2026-04-23 iOS session edited `~/ManagedProjects/edge-agent` from a `~/ManagedProjects/weave` primary CWD. The check happened to succeed (edge-agent was on `main` and I cut a fresh branch), but the default `git branch --show-current` in that session was describing the weave repo, not the repo being edited.
 
+### Cross-repo propagation: enumerate first
+
+When a task propagates a value (hostname, SSH key, config entry, API endpoint, env var) across multiple repos, grep all likely-affected repos BEFORE writing any file. Create branches and PRs for every affected repo in one planning round — do not discover repos sequentially as edits progress.
+
+```
+# Example: adding a new host `neo` — grep for existing hosts to find all touchpoints
+grep -rln '"air"\|"pro"' ~/ManagedProjects/*/ 2>/dev/null
+```
+
+If the grep surfaces K repos, the plan should list K branch/PR pairs up front. Do not start the first repo's PR and discover the second repo's need mid-flight — the user sees sequential round-trips where one coordinated planning step would have sufficed.
+
+This rule exists because the 2026-04-25 session added `neo` to `setup` first, then separately discovered `home-monitor/ssh-devices.tf` also needed the entry, producing two sequential PR flows where one planning step would have scoped both.
+
 ### Re-check after any long-running background operation
 
 The check above covers the start of a task. It does not cover mid-task branch drift. Re-run `git branch --show-current` before **every** `git add` / `git commit` when *any* of these happened since your last commit on this repo:
