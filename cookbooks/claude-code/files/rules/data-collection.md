@@ -21,7 +21,3 @@ When an external service returns a transient error (5xx, timeout, rate limit, 40
 4. On retry success: remove the TODO item. On retry failure: escalate per the Failure Escalation Ladder
 
 Do not silently drop items that failed due to transient errors.
-
-## Plan Scope Check Before Completion
-
-Before declaring a task complete, verify every deliverable listed in the approved plan has been attempted at least once. If any item is missing and not yet attempted, attempt it now — never defer without AskUserQuestion.
