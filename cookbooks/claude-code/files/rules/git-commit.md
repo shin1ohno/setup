@@ -63,6 +63,22 @@ The branch you started the task on is not the branch you are necessarily on now.
 
 This rule exists because the 2026-04-22 session landed a `rtx-hnd: block DHCP ...` commit on `fix/hydra-upstream` instead of `main` — the user had switched branches while a long `terraform apply` was running in the background. Fixed afterward via FF-merge, but only after the user spotted it.
 
+## Branch Cleanup Survey
+
+When the user asks to delete merged local branches (or asks "これはマージ済みか？" about lingering branches), survey BOTH sets before presenting the candidate list — never ask the AskUserQuestion until you have the complete set:
+
+```bash
+# Set A: squash-merged leftovers (commits NOT reachable from origin/main).
+git branch --no-merged origin/main
+
+# Set B: true-merge-commit leftovers (commits reachable, but the branch ref still exists locally).
+git branch --merged origin/main | grep -v '^\*\| main$\| master$'
+```
+
+Present the union of A and B as a single candidate list, cross-reference each against `gh pr list --state closed --head <branch>` to confirm merged status, then ask once for destructive-op authorization. Do not ship the first-pass deletion and then surface "by the way, 2 more remain" — that forces a second user roundtrip.
+
+This rule exists because the 2026-04-24 weave session ran only `git branch --no-merged origin/main` in the first pass (detected 3 squash-merged branches) and missed 2 true-merge-commit branches (`docs/operational-assumptions`, `feat/connections-first-ui`). The user had to reply "消してください" a second time after the remaining candidates were surfaced post-deletion.
+
 ## GPG Signing Failures
 
 If `git commit` fails with a GPG signing error or timeout, present the user with the full cache-refresh command:
