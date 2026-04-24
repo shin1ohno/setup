@@ -143,7 +143,7 @@ See @~/.claude/rules/writing.md
 
 ## Session Retrospective
 
-After 3 or more commits in a session, or when blocked waiting for a manual user action (sudo, restart), launch the `session-retrospective` agent in the background to analyze conversation patterns. Present any improvement proposals to the user. The user can also trigger this manually with `/retro`.
+After 3+ commits in a session, launch the `session-retrospective` agent in the background to analyze conversation patterns and surface improvement proposals. The "blocked on manual action" trigger is covered by the Behavioral Principles section above. `/retro` is the manual entry point.
 
 ## Compaction
 
