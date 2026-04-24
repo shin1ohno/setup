@@ -10,6 +10,14 @@ end
 c = "sudo env PATH=$PATH:#{node[:setup][:home]}/.local/share/mise/shims #{node[:setup][:home]}/.local/share/mise/shims/pm2 startup launchd -u $USER --hp #{node[:setup][:home]}"
 
 if node[:platform] == "darwin"
+  # Pre-create ~/Library/LaunchAgents. pm2 6.0.14's `startup launchd` tries
+  # to open the plist for writing before running its own `mkdir -p` step,
+  # which ENOENT-fails on fresh Macs where the directory doesn't yet exist.
+  directory "#{node[:setup][:home]}/Library/LaunchAgents" do
+    owner node[:setup][:user]
+    mode "755"
+  end
+
   execute "setup pm2" do
     command c
     not_if "test -f ~/Library/LaunchAgents/pm2.$USER.plist"
