@@ -17,6 +17,13 @@
       "ssh_user": "shin1ohno"
     },
     {
+      "name": "neo",
+      "ssm_prefix": "/ssh-keys/devices/neo",
+      "key_file": "neo_ed25519",
+      "ssh_host": "neo",
+      "ssh_user": "shin1ohno"
+    },
+    {
       "name": "nrt",
       "ssm_prefix": "/ssh-keys/devices/nrt",
       "key_file": "nrt_ed25519",
