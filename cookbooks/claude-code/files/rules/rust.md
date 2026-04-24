@@ -1,11 +1,6 @@
-# Ruby Code Guidelines
-
-- Prefer explicit over implicit — avoid magic methods and meta-programming unless clearly beneficial
-- Use guard clauses to reduce nesting
-- Follow existing project conventions (indentation, naming, etc.)
-- When working with mitamae DSL: use `not_if` / `only_if` for idempotency checks
-- Prefer symbols over strings for hash keys in DSL code
-- mitamae runs without sudo. Never use `owner node[:setup][:system_user]` on file/remote_file resources — it triggers an internal `sudo chown` that fails without a terminal. Instead, stage files in user space (`node[:setup][:root]`) and use `execute` with explicit `sudo cp` to place them in system directories
+---
+globs: ["*.rs"]
+---
 
 # Rust Code Guidelines
 
@@ -15,7 +10,8 @@
 
 ## Commit Gate for Rust Projects
 
-Before every git commit in a Rust workspace, run all three checks:
+Before every git commit in a Rust workspace, run all four checks in order:
+0. `cargo fmt --check --all` — must produce no diff. Run first; it's the fastest failure to fix. Matches CI's rustfmt step. A multi-import line-break or brace-style mismatch that passes clippy will still fail CI if fmt is skipped — caught this exact failure in the 2026-04-23 weave session after clippy + test + build were all green
 1. `cargo build --workspace`
 2. `cargo test --workspace`
 3. `RUSTFLAGS="-D warnings" cargo clippy --workspace --tests` — must be warning-free. Matches CI's flags; catches `dead_code` and other lints that bare `cargo clippy` surfaces only as warnings (e.g. a parametric helper committed ahead of its runtime caller)
