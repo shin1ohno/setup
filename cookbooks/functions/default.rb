@@ -63,14 +63,25 @@ module RecipeHelper
       return
     end
 
+    # First check before any prompting — covers the warm-rerun case.
+    result = run_command(check_command, error: false)
+    if result.exit_status == 0
+      yield if block_given?
+      return
+    end
+
+    # Non-interactive context (CI / dry-run / agent-driven): can't pause for
+    # user input. Skip the gate silently and yield the block. If the inner
+    # resources actually need the auth, they'll fail at command-execution
+    # time with a clearer downstream error than blocking on STDIN forever.
+    unless STDIN.tty?
+      MItamae.logger.warn("[bootstrap] #{tool_name} not configured but STDIN is not a TTY — skipping auth gate (non-interactive run).")
+      yield if block_given?
+      return
+    end
+
     attempts = 0
     loop do
-      result = run_command(check_command, error: false)
-      if result.exit_status == 0
-        yield if block_given?
-        return
-      end
-
       attempts += 1
       MItamae.logger.warn("=" * 60)
       MItamae.logger.warn("[bootstrap] #{tool_name} not configured (attempt #{attempts})")
@@ -80,8 +91,14 @@ module RecipeHelper
 
       STDIN.gets
 
+      result = run_command(check_command, error: false)
+      if result.exit_status == 0
+        yield if block_given?
+        return
+      end
+
       if attempts >= 5
-        MItamae.logger.warn("Still not configured after 5 attempts.")
+        MItamae.logger.warn("Still not configured after #{attempts} attempts.")
         MItamae.logger.warn("Type 'skip' + Enter to bypass this block, or Enter alone to keep retrying.")
         response = (STDIN.gets || "").strip
         if response == "skip"
