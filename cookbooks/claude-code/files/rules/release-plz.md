@@ -65,3 +65,25 @@ When adding a new publishable crate to a workspace with existing release-plz CI:
 - [ ] No cross-repo path deps
 - [ ] Baseline commit for each publishable crate's current published version is cargo-metadata-clean
 ```
+
+## Cross-repo Dependency Bump Ordering
+
+When Crate A in Repo-1 publishes a new version that Crate B in Repo-2 depends on, do NOT bump Repo-2's `Cargo.toml` requirement until crates.io confirms Crate A is live. Bumping the dep before the publish workflow completes — even on a local branch — leaves a window where the commit fails CI with `error: failed to select a version ... no matching package named ... found`.
+
+**Verification before writing the dep bump commit:**
+
+```
+# 1. Confirm the new version is live on crates.io (sparse index, no API auth).
+#    Prefix rules: <= 2 chars → direct; 3 chars → first char; 4+ chars → first 2 / next 2.
+#    e.g. weave-contracts → https://index.crates.io/we/av/weave-contracts
+curl -sH "User-Agent: cargo 1.0" https://index.crates.io/<prefix>/<crate> | tail -1 | jq -r '.vers'
+
+# 2. Or confirm the publish workflow succeeded in Repo-1:
+gh run list --repo <owner>/<repo1> --workflow release-plz --limit 3
+```
+
+Only write the dep bump commit in Repo-2 after one of these confirms the new version is indexed.
+
+**Development workaround while waiting for publish**: a temporary `[patch.crates-io]` block in Repo-2's workspace `Cargo.toml` pointing at the local sibling checkout lets the dep-bump code be authored and tested locally. The patch MUST be removed from the final commit that bumps the version — grep for `[patch.crates-io]` in staged changes before `git add`.
+
+This rule exists because the 2026-04-23 weave session needed edge-agent's `weave-contracts@0.5.0` to ship before `weave-server` could bump its dep. Sequencing was manual: watch release-plz run completion → poll sparse index → bump dep → push. Writing it down prevents the race next time.
