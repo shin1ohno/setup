@@ -19,10 +19,14 @@ if node[:platform] == "darwin"
 
   execute "download Tailscale #{TAILSCALE_VERSION} pkg + sha256" do
     user node[:setup][:user]
+    # Tailscale's .sha256 file contains only the bare hash (no filename),
+    # so build a `<hash>  <filename>` line for `shasum -c` on the fly.
     command <<~SH
+      set -e
       curl -fsSL #{pkg_url} -o #{pkg_path}
       curl -fsSL #{pkg_url}.sha256 -o #{pkg_path}.sha256
-      cd #{pkg_dir} && shasum -a 256 -c #{pkg_name}.sha256
+      cd #{pkg_dir}
+      printf '%s  %s\\n' "$(cat #{pkg_name}.sha256)" "#{pkg_name}" | shasum -a 256 -c -
     SH
     not_if "defaults read /Applications/Tailscale.app/Contents/Info.plist CFBundleShortVersionString 2>/dev/null | grep -q '^#{TAILSCALE_VERSION}$'"
   end
