@@ -108,3 +108,29 @@ When fixing a bug, the first design question is **"what shape is this failure cl
 **Anti-pattern**: seeing "Connection refused on 192.168.1.23" and immediately making the init non-fatal, without asking "why 192.168.1.23? is it stable? what happens when it changes?". The non-fatal change satisfies "error stops crashing the process" but leaves the service silently dead until a human re-pairs.
 
 This rule exists because in the 2026-04-22 session, three cascaded "hard-coded stale value" failures — systemd ExecStart pointing at a deleted `configs/` path, stale release binary predating the config migration, and Hue token IP pinned to a rotated DHCP lease — would each have been caught by asking "is this value persistently hard-coded against a thing that rotates?" before starting implementation. Instead, each was discovered sequentially, wasting restart cycles.
+
+## Chain verify command with the fix in the same `!` block
+
+When presenting a credential or configuration fix to the user that must succeed before the main task can resume, **compose the verify command into the same `!` block** with `&&`:
+
+```
+! aws configure --profile sh1admn && \
+  aws ssm get-parameter --name /ssh-keys/devices/neo/private \
+    --with-decryption --profile sh1admn --region ap-northeast-1 > /dev/null && \
+  echo OK
+```
+
+Versus the anti-pattern of presenting fix and verify as separate steps the user is expected to chain mentally:
+
+```
+! aws configure --profile sh1admn
+
+# (then run, separately:)
+! aws ssm get-parameter --name /ssh-keys/devices/neo/private ...
+```
+
+Users skip "separately" verifies, especially under time pressure or when the fix command "looks like" it succeeded. They go straight back to retrying the main task, which fails at a deeper layer with a different-looking error — burning 2-3 round-trips to re-diagnose what the verify would have caught instantly.
+
+**When verify cannot be composed** (e.g. the fix is `aws configure` interactive, which can't be piped): explicitly mark the verify command as **required before retrying the main task** — not as a suggestion. Words like "and confirm with" or "before retrying, run". Not "you can also check".
+
+This rule exists because the 2026-04-25 neo bootstrap session presented `aws configure --profile sh1admn` and the SSM-read verify as separate steps. The user configured the profile, skipped the verify, and re-ran mitamae — which then failed deeper (UnrecognizedClientException because the credentials had been clobbered by an earlier `aws configure set` with empty values). 4-5 round-trips of diagnostic followed.
