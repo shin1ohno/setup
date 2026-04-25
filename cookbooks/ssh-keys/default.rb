@@ -182,8 +182,10 @@ devices.each do |dev|
   next if dev["name"] == current_device_name
   next if dev["client_only"]
 
-  config_entries << "Host #{dev["name"]}"
-  config_entries << "    HostName #{dev["ssh_host"]}"
+  # Match `<device>.<anything>` — covers FQDN / mDNS / Tailscale MagicDNS
+  # forms (neo.local, neo.tailnet.ts.net, etc.) without requiring a
+  # HostName redirect.
+  config_entries << "Host #{dev["name"]}.*"
   config_entries << "    User #{dev["ssh_user"]}"
   config_entries << "    IdentityFile #{ssh_dir}/#{current_device["key_file"]}"
   config_entries << "    IdentitiesOnly yes"
