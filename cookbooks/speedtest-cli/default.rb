@@ -1,8 +1,9 @@
 case node[:platform]
 when "darwin"
   ookla_dir = "#{node[:setup][:root]}/speedtest"
-  arch = node[:homebrew][:machine] == "arm64" ? "arm64" : "x86_64"
-  ookla_url = "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-macosx-#{arch}.tgz"
+  # Ookla ships a single universal2 (arm64 + x86_64) binary on macOS.
+  # The arch-specific URLs (-arm64, -x86_64) return 403 from the S3 CDN.
+  ookla_url = "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-macosx-universal.tgz"
 
   directory ookla_dir do
     owner node[:setup][:user]
@@ -12,7 +13,10 @@ when "darwin"
 
   execute "download Ookla speedtest CLI" do
     user node[:setup][:user]
-    command "curl -L #{ookla_url} -o #{ookla_dir}/speedtest.tgz && tar xzf #{ookla_dir}/speedtest.tgz -C #{ookla_dir}"
+    # -fsSL: fail on HTTP errors (the previous -L silently saved 403 error
+    # bodies as 263-byte XML, which tar then rejected as "unrecognized
+    # archive format").
+    command "curl -fsSL #{ookla_url} -o #{ookla_dir}/speedtest.tgz && tar xzf #{ookla_dir}/speedtest.tgz -C #{ookla_dir}"
     not_if "test -x #{ookla_dir}/speedtest"
   end
 
