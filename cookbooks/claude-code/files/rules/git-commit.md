@@ -90,6 +90,29 @@ Never cherry-pick onto an existing feature branch unless that branch is the cher
 
 This rule exists because the 2026-04-25 session cherry-picked an `ssh-keys: ...` commit onto `feat/roon-mcp-0.5.2-allowed-host` (the user's unrelated WIP branch). Recovery required `git branch -f <branch> origin/<branch>` to discard the misplaced commit and a fresh cherry-pick onto `fix/ssh-keys-host-pattern` from main.
 
+### Branch overlap pre-flight: open PR file scope
+
+Before cutting a feature branch from `origin/main` while another fix-PR is still open, check whether the fix touches files the feature plans to modify. A feature branched from `origin/main` does NOT inherit changes from an open sibling PR — when that sibling later merges, the feature's branch is silently regression-prone for the duration the user keeps deploying from it.
+
+```
+# List open PRs and the files they change.
+gh pr list --state open --json number,headRefName,files \
+  --jq '.[] | "#\(.number) \(.headRefName) — \(.files | map(.path) | join(", "))"'
+```
+
+Before `git checkout -b feat/<topic> origin/main`:
+
+1. List your planned file edits (from the plan, or from the AskUserQuestion contract decisions)
+2. Cross-reference against the open-PR file list
+3. If overlap exists, choose explicitly via AskUserQuestion:
+   - **(a) branch from the open fix-PR's HEAD** (`git checkout -b feat/<topic> origin/<fix-branch>`) — feature inherits the fix; rebase onto main after the fix merges
+   - **(b) wait for the fix-PR to merge first**, then branch from updated `origin/main`
+   - **(c) branch from main now and accept the cherry-pick later** (only when the fix-PR is unlikely to land before you ship)
+
+Default to **(a)**. The cost of cherry-picking later is one extra round-trip the user must notice on their own; the cost of (a) is a routine post-merge rebase.
+
+This rule exists because the 2026-04-25 weave session cut `feat/ios-edge-client` from `origin/main` while `fix/ios-ble-scan-no-filter` (PR #41) was still open and modifying `ios/WeaveIos/Core/BleBridge.swift`. PR #42 was then deployed to iPad without #41's fix, breaking BLE pairing on the redeploy. Recovery required cherry-picking the fix commit onto the feature branch — the user had to surface the regression by re-testing on hardware.
+
 ## Branch Cleanup Survey
 
 When the user asks to delete merged local branches (or asks "これはマージ済みか？" about lingering branches), survey BOTH sets before presenting the candidate list — never ask the AskUserQuestion until you have the complete set:
