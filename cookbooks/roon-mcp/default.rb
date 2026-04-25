@@ -14,7 +14,7 @@
 
 # Constant names are prefixed to avoid mruby's cross-recipe global namespace
 # (frozen constants get silently overwritten when two cookbooks reuse the same name).
-ROON_MCP_VERSION = "0.5.1"
+ROON_MCP_VERSION = "0.5.2"
 ROON_MCP_SSE_PORT = 8080
 ROON_MCP_CORE_HOST = "192.168.1.20"
 ROON_MCP_CORE_PORT = 9330
@@ -48,7 +48,7 @@ file "#{home}/.config/systemd/user/roon-mcp.service" do
 
     [Service]
     Type=simple
-    ExecStart=#{cargo_bin} --transport sse --http-port #{ROON_MCP_SSE_PORT} --host #{ROON_MCP_CORE_HOST} --port #{ROON_MCP_CORE_PORT}
+    ExecStart=#{cargo_bin} --transport sse --http-port #{ROON_MCP_SSE_PORT} --host #{ROON_MCP_CORE_HOST} --port #{ROON_MCP_CORE_PORT} --allowed-host pro.home.local
     Environment=RUST_LOG=info
     Restart=on-failure
     RestartSec=5s
