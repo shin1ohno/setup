@@ -11,6 +11,14 @@ execute "#{node[:setup][:root]}/pyenv-install.sh" do
   not_if { File.exist? "#{node[:setup][:home]}/.pyenv/bin" }
 end
 
+# Make pyenv visible to subsequent cookbooks in the same mitamae run (e.g.
+# speedtest-cli uses bare `pip` from `~/.pyenv/shims`). Idempotent — no-op
+# on re-run if already on PATH.
+prepend_path(
+  "#{node[:setup][:home]}/.pyenv/bin",
+  "#{node[:setup][:home]}/.pyenv/shims",
+)
+
 add_profile "pyenv" do
   bash_content <<~EOS
     export PYENV_ROOT="$HOME/.pyenv"

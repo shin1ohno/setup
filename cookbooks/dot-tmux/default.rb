@@ -1,5 +1,13 @@
 # frozen_string_literal: true
 
+# Depends on ssh-keys: the private device key (~/.ssh/<host>_ed25519) must be
+# in place before `git@github.com:shin1ohno/tmux.git` can be cloned. ssh-keys
+# pauses for AWS auth itself, so by the time we reach here the key is on
+# disk. The matching public key is registered to github.com/shin1ohno via
+# home-monitor's Terraform `github_user_ssh_key.device[*]` (run that first
+# on a brand-new machine).
+include_cookbook "ssh-keys"
+
 directory "#{node[:setup][:home]}/.config/tmux/plugins" do
   owner node[:setup][:user]
   group node[:setup][:group]

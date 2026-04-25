@@ -63,6 +63,13 @@ git node[:rbenv][:root] do
   not_if "test -d #{node[:rbenv][:root]}"
 end
 
+# Make rbenv visible to subsequent cookbooks in the same mitamae run.
+# Idempotent — no-op if already on PATH.
+prepend_path(
+  "#{node[:rbenv][:root]}/bin",
+  "#{node[:rbenv][:root]}/shims",
+)
+
 # Restore versions, shims and sources to avoid rebuild.
 Dir.glob("#{node[:rbenv][:root]}/{versions,shims,sources}").each do |dir|
   execute "mv #{backup_path}/#{File.basename(dir)} #{dir}" do
