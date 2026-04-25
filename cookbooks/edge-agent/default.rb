@@ -21,7 +21,8 @@ EDGE_AGENT_VERSION = "0.5.3"
 
 HOSTNAME_TO_VARIANT = {
   "pro" => "pro",
-  "xmhtm6qvqx" => "air", # MacBook Air
+  "xmhtm6qvqx" => "air", # MacBook Air,
+  "neo" => "neo"
 }.freeze
 
 current_host = run_command("hostname -s").stdout.strip.downcase
