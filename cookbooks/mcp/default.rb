@@ -49,6 +49,14 @@ if node[:platform] == "darwin"
   temp_path = "#{generated_dir}/claude_desktop_config.json"
   output_path = "#{claude_desktop_config_dir}/claude_desktop_config.json"
 
+  # generate_config.sh fetches MCP server credentials from SSM. Block here
+  # until AWS auth is in place — interactive pause + re-check loop.
+  await_external_auth(
+    tool_name: "AWS CLI (for MCP server SSM params)",
+    check_command: "aws sts get-caller-identity",
+    instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  )
+
   # Generate config to temporary location in setup root
   execute "generate claude_desktop_config.json" do
     command "bash #{generator_script} #{yaml_path} #{temp_path}"

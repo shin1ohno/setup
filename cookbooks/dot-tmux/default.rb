@@ -7,6 +7,17 @@ directory "#{node[:setup][:home]}/.config/tmux/plugins" do
   action :create
 end
 
+# Block here until SSH-to-GitHub works — the git pull below clones a private
+# repo. On a fresh machine the user needs to add their public key (placed by
+# the ssh-keys cookbook) to github.com first.
+unless File.exist?("#{node[:setup][:home]}/.config/tmux/.git")
+  await_external_auth(
+    tool_name: "GitHub SSH access",
+    check_command: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | grep -q 'successfully authenticated'",
+    instructions: "Add ~/.ssh/<host>_ed25519.pub to https://github.com/settings/keys, then press Enter.",
+  )
+end
+
 execute "Initialise tmux config directory" do
   command <<EOF
     GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' && export GIT_SSH_COMMAND &&\n

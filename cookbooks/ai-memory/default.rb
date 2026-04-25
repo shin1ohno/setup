@@ -57,6 +57,14 @@ generate_env_script = File.join(File.dirname(__FILE__), "files", "generate_env.s
 env_temp_path = "#{generated_dir}/ai-memory.env"
 env_output_path = "#{deploy_dir}/.env"
 
+unless File.exist?(env_output_path)
+  await_external_auth(
+    tool_name: "AWS CLI (for /ai-memory/* SSM params)",
+    check_command: "aws sts get-caller-identity",
+    instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  )
+end
+
 execute "generate ai-memory .env" do
   command "bash #{generate_env_script} #{env_temp_path}"
   user node[:setup][:user]

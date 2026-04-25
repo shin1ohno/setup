@@ -11,6 +11,15 @@ execute "sh #{node[:setup][:root]}/mise-install.sh" do
   not_if "which mise"
 end
 
+# Make mise + its shims visible to subsequent cookbooks in the same mitamae
+# run (e.g. nodejs, pm2, codex-cli all expect mise shims on PATH). Without
+# this, `add_profile` only takes effect for new login shells, not for the
+# rest of this run.
+prepend_path(
+  "#{node[:setup][:home]}/.local/bin",
+  "#{node[:setup][:home]}/.local/share/mise/shims",
+)
+
 execute "mise self-update" do
   command "$HOME/.local/bin/mise self-update -y --no-plugins || echo '[setup] WARNING: mise self-update failed, continuing with current version'"
   only_if { File.exist? "#{node[:setup][:home]}/.local/bin/mise" }

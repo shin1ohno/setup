@@ -74,6 +74,14 @@ env_output_path = "#{deploy_dir}/.env"
 
 # Generate .env — skip if SSM parameters are not yet registered
 # (run setup-hydra.sh first, then re-run mitamae)
+unless File.exist?(env_output_path)
+  await_external_auth(
+    tool_name: "AWS CLI (for /hydra/* SSM params)",
+    check_command: "aws sts get-caller-identity",
+    instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  )
+end
+
 execute "generate hydra .env" do
   command "bash #{generate_env_script} #{env_temp_path}"
   user node[:setup][:user]
