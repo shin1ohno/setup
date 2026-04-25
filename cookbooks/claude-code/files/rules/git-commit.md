@@ -76,6 +76,20 @@ The branch you started the task on is not the branch you are necessarily on now.
 
 This rule exists because the 2026-04-22 session landed a `rtx-hnd: block DHCP ...` commit on `fix/hydra-upstream` instead of `main` — the user had switched branches while a long `terraform apply` was running in the background. Fixed afterward via FF-merge, but only after the user spotted it.
 
+### Cherry-pick is a commit operation — branch check applies
+
+`git cherry-pick` does not involve `git add`, so the "check before git add" trigger above is not reached. Before any `git cherry-pick`, run `git branch --show-current` and confirm the target is the intended branch — typically a fresh branch created from `origin/main` for this specific task, not whatever branch happens to be checked out.
+
+The standard pattern for moving an existing commit onto its own clean branch:
+
+    git fetch origin
+    git checkout -b fix/<topic> origin/main
+    git cherry-pick <hash>
+
+Never cherry-pick onto an existing feature branch unless that branch is the cherry-pick's intended destination. The "branch is not main" heuristic is insufficient — the branch may be another in-flight feature (the user's WIP, a sibling task) that has nothing to do with the commit you're moving.
+
+This rule exists because the 2026-04-25 session cherry-picked an `ssh-keys: ...` commit onto `feat/roon-mcp-0.5.2-allowed-host` (the user's unrelated WIP branch). Recovery required `git branch -f <branch> origin/<branch>` to discard the misplaced commit and a fresh cherry-pick onto `fix/ssh-keys-host-pattern` from main.
+
 ## Branch Cleanup Survey
 
 When the user asks to delete merged local branches (or asks "これはマージ済みか？" about lingering branches), survey BOTH sets before presenting the candidate list — never ask the AskUserQuestion until you have the complete set:
