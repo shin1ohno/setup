@@ -6,7 +6,10 @@
 case node[:platform]
 when "darwin"
   include_cookbook "mise"
-  mise_tool "zk"
+  # zk is not in mise's core registry; use the aqua backend (zk-org/zk).
+  mise_tool "zk-org/zk" do
+    backend "aqua"
+  end
   package "zk" do
     action :remove
     only_if { brew_formula?("zk") }
