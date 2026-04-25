@@ -1,37 +1,23 @@
 # frozen_string_literal: true
 #
 # roon-mcp: SSE MCP server exposing Roon Core as AI assistant tools.
+# Linux-only — included from linux.rb. macOS is intentionally not supported
+# (Roon Core lives on the Linux server; running roon-mcp on a Mac would only
+# add an extra network hop).
+#
 # Per-host deploy:
 #   - cargo install roon-mcp                    → ~/.cargo/bin/roon-mcp
 #   - ~/.config/roon-rs/tokens.json must already hold a paired token
 #     (one-time bootstrap via `roon-cli` or first stdio run; not managed here
 #     because Roon's pairing requires interactive approval in the Roon UI)
-#   - Linux: systemd --user unit, user runs `systemctl --user enable --now roon-mcp`
-#
-# Hosts that aren't in ROON_MCP_HOSTS are skipped — same pattern as edge-agent.
+#   - systemd --user unit, user runs `systemctl --user enable --now roon-mcp`
 
+# Constant names are prefixed to avoid mruby's cross-recipe global namespace
+# (frozen constants get silently overwritten when two cookbooks reuse the same name).
 ROON_MCP_VERSION = "0.5.1"
 ROON_MCP_SSE_PORT = 8080
 ROON_MCP_CORE_HOST = "192.168.1.20"
 ROON_MCP_CORE_PORT = 9330
-
-# Distinct constant name to avoid collision with edge-agent's HOSTNAME_TO_VARIANT
-# (mruby silently overwrites frozen constants across recipes).
-ROON_MCP_HOSTS = {
-  "pro" => "pro",
-}.freeze
-
-current_host = run_command("hostname -s").stdout.strip.downcase
-variant = ROON_MCP_HOSTS[current_host]
-
-if variant.nil?
-  MItamae.logger.info("roon-mcp: hostname '#{current_host}' not in ROON_MCP_HOSTS, skipping")
-  return
-end
-
-# macOS is intentionally out of scope: Roon Core lives on the Linux server (pro);
-# running roon-mcp on a Mac would only add an extra network hop.
-return unless node[:platform] == "linux"
 
 user = node[:setup][:user]
 home = node[:setup][:home]
@@ -55,7 +41,7 @@ file "#{home}/.config/systemd/user/roon-mcp.service" do
   mode "644"
   content <<~UNIT
     [Unit]
-    Description=roon-mcp (SSE) — #{variant}
+    Description=roon-mcp (SSE)
     Documentation=https://github.com/shin1ohno/roon-rs
     After=network-online.target
     Wants=network-online.target
