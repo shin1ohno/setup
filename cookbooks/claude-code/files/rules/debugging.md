@@ -87,6 +87,30 @@ The provider's internal schema and docs describe what the resource accepts; they
 
 This rule exists because the 2026-04-22 session lost ~30 minutes after an Explore agent reported that `terraform-provider-rtx` supported tunnel-interface filter apply. The provider did expose the resource, but its `BuildInterfaceSecureFilterCommand` emitted `ip tunnel1 secure filter ...` which RTX rejects — the correct form requires a `tunnel select N` context switch first. Visible on first read of `internal/rtx/parsers/ip_filter.go`.
 
+### Tool-manager migration design — verify backend claims before writing
+
+The "read the source before researching" principle applies at design time too, not just during debugging. When designing a migration to a tool manager (mise / asdf / nix / homebrew) or writing any external-download recipe (`ubi:`, `aqua:`, `github:`, `go:`, `cargo:` backends; manual `curl` + `shasum` installs), treat plan-agent or web-search output as **unverified hypotheses, not facts**.
+
+The authoritative sources are:
+
+- `mise registry <name>` — confirms whether bare `mise use <name>` works and which backend the registry uses
+- `gh api repos/<owner>/<repo>/releases/latest --jq '.tag_name, (.assets[] | .name)'` — confirms tag format and downloadable assets
+- `curl -fsI <url>` — confirms the URL serves the expected file (always `-f`, never bare `-L`)
+- `gh api repos/<owner>/<repo> --jq '.language'` — confirms the repo's primary language matches the planned backend (`go:` requires Go; `cargo:` requires Rust; `npm:` requires JS/TS)
+
+Run each one before writing the cookbook line. Web summaries cannot detect:
+
+- `ubi:` prepends `v` to the version, but upstream tag is bare `1.6.2` → 404
+- `.sha256` file contains a bare hash; `shasum -c` expects `<hash>  <filename>` → error
+- S3-hosted `-arm64`/`-x86_64` URLs return 403; only `-universal` is public
+- GitHub Releases exists but has zero downloadable assets (tarball-only release)
+- Tool is not in mise core registry; needs `aqua:<org>/<repo>` prefix
+- Repo is Swift/Zig/not-Go; `go:` backend silently fetches wrong binary or fails
+
+These all look identical from a plan-agent's web summary. They diverge only when you query the actual API or URL.
+
+This rule exists because PR #32 (2026-04-25 brew→mise migration in `~/ManagedProjects/setup`) shipped 8 of these failure modes in a single PR, producing 6 cleanup PRs (#33, #34, #36, #37, #38, #41) over the same session. The full pre-migration checklist is in `~/.claude/rules/mise-migration.md`; the executable batch is the `/verify-mise-backend` skill.
+
 ## Frame the Failure Class Before Writing the Fix
 
 When fixing a bug, the first design question is **"what shape is this failure class?"**, not "what minimal change makes this error stop?". Silencing the specific error often leaves the underlying fragility in place — correct only until the next instance.
