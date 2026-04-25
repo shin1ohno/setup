@@ -22,31 +22,54 @@ module RecipeHelper
     end
   end
 
-  # Pause mitamae and prompt the user to configure an external prerequisite
-  # (AWS auth, GitHub SSH, etc.). Loops until `check_command` succeeds or the
-  # user explicitly types "skip" after 5 attempts.
+  # Gate a block of cookbook resources behind an external prerequisite
+  # (AWS auth, GitHub SSH, etc.). Pauses mitamae and prompts the user to
+  # configure the prerequisite, then runs the block.
   #
-  # Usage in a cookbook:
-  #   await_external_auth(
-  #     tool_name: "AWS CLI (sh1admn profile)",
-  #     check_command: "aws sts get-caller-identity --profile sh1admn",
-  #     instructions: "Run: aws configure --profile sh1admn",
-  #   )
+  # Usage:
+  #   require_external_auth(
+  #     tool_name: "AWS CLI",
+  #     check_command: "aws sts get-caller-identity",
+  #     instructions: "Run: aws configure",
+  #     skip_if: -> { File.exist?(env_output_path) },  # optional
+  #   ) do
+  #     execute "generate .env" do
+  #       command "bash #{generator}"
+  #       not_if "test -f #{env_output_path}"
+  #     end
+  #   end
   #
   # Behaviour:
-  #   - If check_command exits 0 immediately, returns silently — no prompt.
+  #   - `skip_if` (optional callable): if it returns truthy, the auth check
+  #     is skipped AND the block is not yielded — for cases where the work
+  #     is already done (e.g. .env file exists). Resources inside the block
+  #     would have been no-op'd by their own `not_if`, but skipping
+  #     entirely also avoids a needless auth prompt on warm re-runs where
+  #     auth happens to be unconfigured.
+  #   - If `check_command` exits 0, the block runs immediately — no prompt.
   #   - Else logs instructions and blocks on STDIN.gets, then re-checks.
-  #   - After 5 failed attempts, offers a "skip" escape (raises if chosen)
-  #     so a partial bootstrap can finish with a known gap.
+  #   - After 5 failed attempts, offers a "skip" escape: if the user types
+  #     "skip", the block is NOT yielded and mitamae continues (partial
+  #     bootstrap with a known gap). Anything else: keep retrying.
+  #   - Without a block, behaves as a procedural gate (still pauses,
+  #     returns when check passes; "skip" raises so the cookbook's
+  #     unconditional resources still surface the missing prereq).
   #
-  # Caveat: STDIN.gets blocks in non-TTY contexts (CI, agent-driven runs).
-  # The bootstrap is designed for an interactive first-time setup; non-
-  # interactive runs should pre-configure auth before invoking mitamae.
-  def await_external_auth(tool_name:, check_command:, instructions:)
+  # Caveat: STDIN.gets blocks in non-TTY contexts. The bootstrap assumes
+  # an interactive first-time run; non-interactive contexts should
+  # pre-configure auth before invoking mitamae.
+  def require_external_auth(tool_name:, check_command:, instructions:, skip_if: nil)
+    if skip_if && skip_if.call
+      return
+    end
+
     attempts = 0
     loop do
       result = run_command(check_command, error: false)
-      return if result.exit_status == 0
+      if result.exit_status == 0
+        yield if block_given?
+        return
+      end
 
       attempts += 1
       MItamae.logger.warn("=" * 60)
@@ -59,9 +82,16 @@ module RecipeHelper
 
       if attempts >= 5
         MItamae.logger.warn("Still not configured after 5 attempts.")
-        MItamae.logger.warn("Type 'skip' + Enter to bypass, or Enter alone to keep retrying.")
+        MItamae.logger.warn("Type 'skip' + Enter to bypass this block, or Enter alone to keep retrying.")
         response = (STDIN.gets || "").strip
-        raise "User skipped #{tool_name} configuration" if response == "skip"
+        if response == "skip"
+          if block_given?
+            MItamae.logger.warn("Skipping #{tool_name}-dependent block. Re-run mitamae after configuring.")
+            return
+          else
+            raise "User skipped #{tool_name} configuration"
+          end
+        end
       end
     end
   end

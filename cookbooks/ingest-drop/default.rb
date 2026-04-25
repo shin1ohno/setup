@@ -43,19 +43,18 @@ remote_file mount_script do
   mode "755"
 end
 
-# Generate rclone config from SSM (skip if already exists)
-unless File.exist?(rclone_conf)
-  await_external_auth(
-    tool_name: "AWS CLI (for /ingest/drop/* SSM params)",
-    check_command: "aws sts get-caller-identity",
-    instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
-  )
-end
-
-execute "generate ingest-drop rclone config" do
-  command "bash #{generate_script} #{rclone_conf}"
-  user node[:setup][:user]
-  not_if "test -f #{rclone_conf}"
+# Generate rclone config from SSM. Gated by AWS auth on first run; on warm
+# re-runs the existence check short-circuits the prompt + the execute.
+require_external_auth(
+  tool_name: "AWS CLI (for /ingest/drop/* SSM params)",
+  check_command: "aws sts get-caller-identity",
+  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  skip_if: -> { File.exist?(rclone_conf) },
+) do
+  execute "generate ingest-drop rclone config" do
+    command "bash #{generate_script} #{rclone_conf}"
+    user node[:setup][:user]
+  end
 end
 
 if node[:platform] == "darwin"

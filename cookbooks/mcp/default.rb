@@ -51,16 +51,16 @@ if node[:platform] == "darwin"
 
   # generate_config.sh fetches MCP server credentials from SSM. Block here
   # until AWS auth is in place — interactive pause + re-check loop.
-  await_external_auth(
+  require_external_auth(
     tool_name: "AWS CLI (for MCP server SSM params)",
     check_command: "aws sts get-caller-identity",
     instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
-  )
-
-  # Generate config to temporary location in setup root
-  execute "generate claude_desktop_config.json" do
-    command "bash #{generator_script} #{yaml_path} #{temp_path}"
-    user node[:setup][:user]
+  ) do
+    # Generate config to temporary location in setup root
+    execute "generate claude_desktop_config.json" do
+      command "bash #{generator_script} #{yaml_path} #{temp_path}"
+      user node[:setup][:user]
+    end
   end
 
   # Merge managed config into existing file, preserving user-added mcpServers.
