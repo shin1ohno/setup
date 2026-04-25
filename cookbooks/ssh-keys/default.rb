@@ -38,14 +38,22 @@ if current_device["client_only"]
   return
 end
 
-# AWS auth required to fetch keys from SSM. Pause here on a fresh machine
-# until `aws configure` is done — without this, fetch_ssm returns nil
-# silently and downstream cookbooks (dot-tmux, managed-projects) fail at
-# `ssh -T git@github.com` because the local private key was never placed.
+# AWS auth + SSM access required to fetch keys. Pause here on a fresh
+# machine until both are in place. The check actually attempts the SSM
+# read on the current device's own private key — this verifies (a) the
+# named profile exists, (b) credentials are valid, (c) the region is
+# right, and (d) the IAM principal has ssm:GetParameter on the path.
+# `aws sts get-caller-identity` alone catches only (a) and (b).
+device_ssm_check = "aws ssm get-parameter --name #{current_device['ssm_prefix']}/private " \
+                   "--with-decryption --query Parameter.Value --output text " \
+                   "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1"
 require_external_auth(
-  tool_name: "AWS CLI (ssh-keys SSM fetches)",
-  check_command: "aws sts get-caller-identity",
-  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  tool_name: "AWS SSM access (profile=#{aws_profile}, region=#{aws_region})",
+  check_command: device_ssm_check,
+  instructions: "Configure the '#{aws_profile}' profile with credentials that have " \
+                "ssm:GetParameter on /ssh-keys/devices/* in #{aws_region}. " \
+                "On a fresh machine: `aws configure --profile #{aws_profile}` and ensure " \
+                "the IAM user/role has the required SSM permissions. Then press Enter.",
 )
 
 user = node[:setup][:user]
