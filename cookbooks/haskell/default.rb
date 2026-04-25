@@ -3,7 +3,7 @@
 if node[:platform] == "darwin"
   include_cookbook "mise"
   mise_tool "commercialhaskell/stack" do
-    backend "ubi"
+    backend "github"
   end
   package "haskell-stack" do
     action :remove
