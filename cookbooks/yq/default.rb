@@ -1,7 +1,12 @@
 # frozen_string_literal: true
 
-install_package "yq" do
-  darwin "yq"
-  ubuntu "yq"
-  arch "yq"
+include_cookbook "mise"
+
+mise_tool "yq"
+
+if node[:platform] == "darwin"
+  package "yq" do
+    action :remove
+    only_if { brew_formula?("yq") }
+  end
 end

@@ -2,17 +2,23 @@
 
 case node[:platform]
 when "darwin"
-  execute "brew reinstall --cask corretto@11" do
-    not_if %q{/usr/libexec/java_home --verbose 2>&1 | fgrep -q '"Amazon Corretto 11"'}
-  end
-
-  execute "brew reinstall --cask corretto@17" do
-    not_if %q{/usr/libexec/java_home --verbose 2>&1 | fgrep -q '"Amazon Corretto 17"'}
+  include_cookbook "mise"
+  mise_tool "java" do
+    versions ["corretto-11", "corretto-17"]
+    default_version "corretto-17"
   end
 
   add_profile "java" do
-    bash_content "export JAVA_HOME=$(/usr/libexec/java_home -v 17)\n"
-    fish_content "set -gx JAVA_HOME (/usr/libexec/java_home -v 17)\n"
+    bash_content "export JAVA_HOME=$($HOME/.local/bin/mise where java@corretto-17 2>/dev/null)\n"
+    fish_content "set -gx JAVA_HOME ($HOME/.local/bin/mise where java@corretto-17 2>/dev/null)\n"
+  end
+
+  # Cleanup legacy brew casks. Cask name uses '@' which brew normalizes to
+  # '@' in `brew list --cask` output (e.g. corretto@11).
+  %w(corretto@11 corretto@17).each do |cask|
+    execute "brew uninstall --cask #{cask}" do
+      only_if { brew_cask?(cask) }
+    end
   end
 when "ubuntu"
   include_cookbook "apt-source-corretto"

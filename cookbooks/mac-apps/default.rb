@@ -15,8 +15,8 @@ return if node[:platform] != "darwin"
   microsoft-teams           monodraw
   mqtt-explorer             obs
   obsidian                  rapidapi
-  tailscale                 tidal
-  transmit                  via
+  tidal                     transmit
+  via
   zoom
 ).each do |app|
   execute "brew reinstall --cask #{app}" do

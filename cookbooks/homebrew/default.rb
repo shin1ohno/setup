@@ -21,4 +21,35 @@ execute "echo | env HAVE_SUDO_ACCESS=0 #{node[:setup][:root]}/homebrew-install.s
   not_if "test -f #{node[:homebrew][:prefix]}/bin/brew"
 end
 
+# Populate cached brew lookup files. Reads by `brew_formula?`, `brew_cask?`,
+# `brew_tap?` helpers in cookbooks/functions consume these to avoid running
+# `brew list` once per cookbook. Refreshed every run so cache entries
+# reflect the state at the start of converge.
+brew_cache_dir = "#{node[:setup][:root]}/brew-cache"
+brew_bin = "#{node[:homebrew][:prefix]}/bin/brew"
+
+directory brew_cache_dir do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+end
+
+execute "refresh brew formula list cache" do
+  user node[:setup][:user]
+  command "#{brew_bin} list --formula > #{brew_cache_dir}/formulae.txt"
+  only_if "test -x #{brew_bin}"
+end
+
+execute "refresh brew cask list cache" do
+  user node[:setup][:user]
+  command "#{brew_bin} list --cask > #{brew_cache_dir}/casks.txt"
+  only_if "test -x #{brew_bin}"
+end
+
+execute "refresh brew tap list cache" do
+  user node[:setup][:user]
+  command "#{brew_bin} tap > #{brew_cache_dir}/taps.txt"
+  only_if "test -x #{brew_bin}"
+end
+
 include_recipe "environment"

@@ -39,7 +39,12 @@ if node[:platform] == "ubuntu"
     not_if "nvim --version 2>/dev/null | head -1 | grep -q 'NVIM #{NVIM_VERSION}'"
   end
 else
-  package "neovim"
+  include_cookbook "mise"
+  mise_tool "neovim"
+  package "neovim" do
+    action :remove
+    only_if { brew_formula?("neovim") }
+  end
 end
 
 add_profile "editor" do

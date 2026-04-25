@@ -1,7 +1,10 @@
-# macOS: use Homebrew (reliable on ARM), Linux: use mise asdf plugin
+include_cookbook "mise"
+
+mise_tool "fd"
+
 if node[:platform] == "darwin"
-  package "fd"
-else
-  include_cookbook "mise"
-  mise_tool "fd"
+  package "fd" do
+    action :remove
+    only_if { brew_formula?("fd") }
+  end
 end

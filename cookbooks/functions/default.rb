@@ -134,8 +134,44 @@ module RecipeHelper
       ENV["PATH"] = "#{dir}#{File::PATH_SEPARATOR}#{ENV['PATH']}"
     end
   end
+
+  # Cached lookups against `brew list --formula`, `brew list --cask`, and
+  # `brew tap`. The cookbooks/homebrew recipe populates plain-text cache
+  # files under #{node[:setup][:root]}/brew-cache/ at the start of a darwin
+  # run. Each predicate reads its cache file on first call and memoizes;
+  # subsequent calls are O(1).
+  #
+  # Why: each `brew list <name>` invocation pays the brew Ruby startup cost
+  # (~hundreds of ms). With ~20 migrated tools × 3 lookups each (formula /
+  # cask / tap), the savings are significant on darwin runs.
+  #
+  # Returns false if the cache file is missing (e.g. fresh machine before
+  # homebrew cookbook ran, or non-darwin platforms). only_if blocks gated
+  # on these predicates therefore safely no-op when the cache is absent.
+  def brew_formula?(name)
+    _brew_cache(:formulae).include?(name)
+  end
+
+  def brew_cask?(name)
+    _brew_cache(:casks).include?(name)
+  end
+
+  def brew_tap?(name)
+    _brew_cache(:taps).include?(name)
+  end
+
+  def _brew_cache(kind)
+    @@brew_cache ||= {}
+    return @@brew_cache[kind] if @@brew_cache.key?(kind)
+    cache_root = "#{ENV['HOME']}/.setup_shin1ohno/brew-cache"
+    file = "#{cache_root}/#{kind}.txt"
+    @@brew_cache[kind] = File.exist?(file) ? File.read(file).split("\n").map(&:strip).reject(&:empty?) : []
+  end
 end
 MItamae::RecipeContext.send(:include, RecipeHelper)
+# only_if / not_if Procs evaluate in ResourceContext — include the helpers
+# there too so brew_formula?, brew_cask?, brew_tap? resolve in those blocks.
+MItamae::ResourceContext.send(:include, RecipeHelper)
 
 define :install_package, darwin: nil, ubuntu: nil, arch: nil do
   platform = node[:platform]

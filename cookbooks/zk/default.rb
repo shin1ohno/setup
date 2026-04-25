@@ -5,7 +5,12 @@
 
 case node[:platform]
 when "darwin"
-  package "zk"
+  include_cookbook "mise"
+  mise_tool "zk"
+  package "zk" do
+    action :remove
+    only_if { brew_formula?("zk") }
+  end
 when "ubuntu", "debian"
   # For Ubuntu/Debian, install from GitHub releases
   # Get the latest version
@@ -78,7 +83,7 @@ else
 
   # Default format for note IDs
   id-format = "%Y%m%d%H%M"
-    
+
   # Default editor command
   editor = "nvim"
 
