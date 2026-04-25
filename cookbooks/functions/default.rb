@@ -21,6 +21,119 @@ module RecipeHelper
       raise "#{type.capitalize} #{name} is not found at #{recipe_file}."
     end
   end
+
+  # Gate a block of cookbook resources behind an external prerequisite
+  # (AWS auth, GitHub SSH, etc.). Pauses mitamae and prompts the user to
+  # configure the prerequisite, then runs the block.
+  #
+  # Usage:
+  #   require_external_auth(
+  #     tool_name: "AWS CLI",
+  #     check_command: "aws sts get-caller-identity",
+  #     instructions: "Run: aws configure",
+  #     skip_if: -> { File.exist?(env_output_path) },  # optional
+  #   ) do
+  #     execute "generate .env" do
+  #       command "bash #{generator}"
+  #       not_if "test -f #{env_output_path}"
+  #     end
+  #   end
+  #
+  # Behaviour:
+  #   - `skip_if` (optional callable): if it returns truthy, the auth check
+  #     is skipped AND the block is not yielded — for cases where the work
+  #     is already done (e.g. .env file exists). Resources inside the block
+  #     would have been no-op'd by their own `not_if`, but skipping
+  #     entirely also avoids a needless auth prompt on warm re-runs where
+  #     auth happens to be unconfigured.
+  #   - If `check_command` exits 0, the block runs immediately — no prompt.
+  #   - Else logs instructions and blocks on STDIN.gets, then re-checks.
+  #   - After 5 failed attempts, offers a "skip" escape: if the user types
+  #     "skip", the block is NOT yielded and mitamae continues (partial
+  #     bootstrap with a known gap). Anything else: keep retrying.
+  #   - Without a block, behaves as a procedural gate (still pauses,
+  #     returns when check passes; "skip" raises so the cookbook's
+  #     unconditional resources still surface the missing prereq).
+  #
+  # Caveat: STDIN.gets blocks in non-TTY contexts. The bootstrap assumes
+  # an interactive first-time run; non-interactive contexts should
+  # pre-configure auth before invoking mitamae.
+  def require_external_auth(tool_name:, check_command:, instructions:, skip_if: nil)
+    if skip_if && skip_if.call
+      return
+    end
+
+    # First check before any prompting — covers the warm-rerun case.
+    result = run_command(check_command, error: false)
+    if result.exit_status == 0
+      yield if block_given?
+      return
+    end
+
+    # Non-interactive context (CI / dry-run / agent-driven): can't pause for
+    # user input. Skip the gate silently and yield the block. If the inner
+    # resources actually need the auth, they'll fail at command-execution
+    # time with a clearer downstream error than blocking on STDIN forever.
+    unless STDIN.tty?
+      MItamae.logger.warn("[bootstrap] #{tool_name} not configured but STDIN is not a TTY — skipping auth gate (non-interactive run).")
+      yield if block_given?
+      return
+    end
+
+    attempts = 0
+    loop do
+      attempts += 1
+      MItamae.logger.warn("=" * 60)
+      MItamae.logger.warn("[bootstrap] #{tool_name} not configured (attempt #{attempts})")
+      MItamae.logger.warn(instructions)
+      MItamae.logger.warn("Press Enter to re-check, or Ctrl-C to abort.")
+      MItamae.logger.warn("=" * 60)
+
+      STDIN.gets
+
+      result = run_command(check_command, error: false)
+      if result.exit_status == 0
+        yield if block_given?
+        return
+      end
+
+      if attempts >= 5
+        MItamae.logger.warn("Still not configured after #{attempts} attempts.")
+        MItamae.logger.warn("Type 'skip' + Enter to bypass this block, or Enter alone to keep retrying.")
+        response = (STDIN.gets || "").strip
+        if response == "skip"
+          if block_given?
+            MItamae.logger.warn("Skipping #{tool_name}-dependent block. Re-run mitamae after configuring.")
+            return
+          else
+            raise "User skipped #{tool_name} configuration"
+          end
+        end
+      end
+    end
+  end
+
+  # Prepend dirs to mitamae's running ENV['PATH'] so subsequent execute
+  # resources (and any `run_command` calls in this same mitamae run) see
+  # them. Idempotent — entries already on PATH are skipped.
+  #
+  # Usage after installing a tool:
+  #   prepend_path(
+  #     "#{node[:setup][:home]}/.local/bin",
+  #     "#{node[:setup][:home]}/.local/share/mise/shims",
+  #   )
+  #
+  # Note: this is in-process only; it does NOT modify the user's shell
+  # profile. Use `add_profile` for that. The two are complementary —
+  # `prepend_path` covers within-run dependencies, `add_profile` covers
+  # post-bootstrap login shells.
+  def prepend_path(*dirs)
+    dirs.each do |dir|
+      next if ENV["PATH"].split(File::PATH_SEPARATOR).include?(dir)
+      MItamae.logger.info("Prepending '#{dir}' to PATH for the rest of this run")
+      ENV["PATH"] = "#{dir}#{File::PATH_SEPARATOR}#{ENV['PATH']}"
+    end
+  end
 end
 MItamae::RecipeContext.send(:include, RecipeHelper)
 

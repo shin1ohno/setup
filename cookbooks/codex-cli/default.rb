@@ -38,10 +38,18 @@ generator_script = File.join(File.dirname(__FILE__), "files", "generate_config.s
 temp_path = "#{generated_dir}/codex_config.toml"
 output_path = "#{node[:setup][:home]}/.codex/config.toml"
 
-# Generate config to temporary location in setup root
-execute "generate codex config.toml" do
-  command "bash #{generator_script} #{mcp_yaml_path} #{temp_path}"
-  user node[:setup][:user]
+# generate_config.sh fetches MCP server credentials from SSM. Block here
+# until AWS auth is in place — interactive pause + re-check loop.
+require_external_auth(
+  tool_name: "AWS CLI (for MCP server SSM params)",
+  check_command: "aws sts get-caller-identity",
+  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+) do
+  # Generate config to temporary location in setup root
+  execute "generate codex config.toml" do
+    command "bash #{generator_script} #{mcp_yaml_path} #{temp_path}"
+    user node[:setup][:user]
+  end
 end
 
 # Deploy and clean up only when the generated file exists.

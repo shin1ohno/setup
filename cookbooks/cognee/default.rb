@@ -132,10 +132,16 @@ env_temp_path = "#{generated_dir}/cognee.env"
 env_output_path = "#{deploy_dir}/.env"
 
 # Skip generation if .env already exists — edit by hand to override
-execute "generate cognee .env" do
-  command "bash #{generate_env_script} #{env_temp_path}"
-  user node[:setup][:user]
-  not_if "test -f #{env_output_path}"
+require_external_auth(
+  tool_name: "AWS CLI (for /cognee/* SSM params)",
+  check_command: "aws sts get-caller-identity",
+  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  skip_if: -> { File.exist?(env_output_path) },
+) do
+  execute "generate cognee .env" do
+    command "bash #{generate_env_script} #{env_temp_path}"
+    user node[:setup][:user]
+  end
 end
 
 if File.exist?(env_temp_path)
