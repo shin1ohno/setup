@@ -40,7 +40,6 @@ include_cookbook "fzf"
 include_cookbook "fzf-tab"
 include_cookbook "zoxide"
 include_cookbook "bat"
-include_cookbook "autojump"
 include_cookbook "ripgrep"
 include_cookbook "fd"
 
@@ -51,7 +50,7 @@ include_cookbook "dot-tmux"
 include_cookbook "fonts"
 include_cookbook "dot-config-alacritty"
 include_cookbook "dot-config-ghostty"
-include_cookbook "neofetch"
+include_cookbook "fastfetch"
 include_cookbook "pbcopy" # OSC 52 clipboard for Linux
 
 # Security and encryption

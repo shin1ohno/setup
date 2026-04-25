@@ -28,15 +28,26 @@ execute "install and wait for Xcode CLT" do
   not_if "xcode-select -p > /dev/null 2>&1"
 end
 
-# Install xcodes CLI for Xcode version management
-# Use homebrew-core formula (has pre-built bottles, no Xcode required)
-execute "brew install xcodes" do
-  not_if "brew list xcodes"
+# Install xcodes CLI for Xcode version management via mise (ubi backend
+# fetches the prebuilt binary from XcodesOrg/xcodes GitHub releases).
+mise_tool "XcodesOrg/xcodes" do
+  backend "ubi"
 end
 
-# Install aria2 for faster parallel downloads
-execute "brew install aria2" do
-  not_if "brew list aria2"
+# Install aria2 for faster parallel downloads via mise.
+mise_tool "aria2/aria2" do
+  backend "ubi"
+end
+
+# Clean up legacy brew installations.
+package "xcodes" do
+  action :remove
+  only_if { brew_formula?("xcodes") }
+end
+
+package "aria2" do
+  action :remove
+  only_if { brew_formula?("aria2") }
 end
 
 # Install xcodegen via mise (pre-built binary from github:yonaskolb/XcodeGen releases).

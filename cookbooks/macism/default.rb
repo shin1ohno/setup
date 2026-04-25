@@ -2,10 +2,18 @@
 
 return unless node[:platform] == "darwin"
 
-execute "brew tap laishulu/homebrew" do
-  not_if "brew tap | grep laishulu/homebrew"
+include_cookbook "mise"
+include_cookbook "golang"
+
+mise_tool "github.com/laishulu/macism" do
+  backend "go"
 end
 
 package "macism" do
-  user node[:setup][:user]
+  action :remove
+  only_if { brew_formula?("macism") }
+end
+
+execute "brew untap laishulu/homebrew" do
+  only_if { brew_tap?("laishulu/homebrew") }
 end

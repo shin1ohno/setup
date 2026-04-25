@@ -10,11 +10,7 @@ include_cookbook "awscli"
 include_cookbook "yq"
 
 # Ensure jq is available for JSON processing in generate_config.sh
-install_package "jq" do
-  darwin "jq"
-  ubuntu "jq"
-  arch "jq"
-end
+include_cookbook "jq"
 
 %w(mcp-hub mcp-remote).each do |com|
   mise_tool com do

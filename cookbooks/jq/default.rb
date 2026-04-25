@@ -1,10 +1,10 @@
 include_cookbook "mise"
 
-mise_tool "fd"
+mise_tool "jq"
 
 if node[:platform] == "darwin"
-  package "fd" do
+  package "jq" do
     action :remove
-    only_if { brew_formula?("fd") }
+    only_if { brew_formula?("jq") }
   end
 end
