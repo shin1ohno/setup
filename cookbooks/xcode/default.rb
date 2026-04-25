@@ -28,27 +28,23 @@ execute "install and wait for Xcode CLT" do
   not_if "xcode-select -p > /dev/null 2>&1"
 end
 
-# Install xcodes CLI for Xcode version management via mise (ubi backend
+# Install xcodes CLI for Xcode version management via mise (github backend
 # fetches the prebuilt binary from XcodesOrg/xcodes GitHub releases).
 mise_tool "XcodesOrg/xcodes" do
   backend "github"
 end
 
-# Install aria2 for faster parallel downloads via mise.
-mise_tool "aria2/aria2" do
-  backend "github"
-end
-
-# Clean up legacy brew installations.
+# Clean up legacy brew install (now managed by mise).
 package "xcodes" do
   action :remove
   only_if { brew_formula?("xcodes") }
 end
 
-package "aria2" do
-  action :remove
-  only_if { brew_formula?("aria2") }
-end
+# aria2 stays on brew: upstream (aria2/aria2) does not publish darwin
+# binaries on its GitHub releases — only Linux/Windows/source. mise's
+# github backend can't install it; brew's homebrew-core formula is the
+# only viable darwin install path.
+package "aria2"
 
 # Install xcodegen via mise (pre-built binary from github:yonaskolb/XcodeGen releases).
 # mise_tool handles `mise install` + `mise use --global` + idempotency guards.
