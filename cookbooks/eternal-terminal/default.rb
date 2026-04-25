@@ -6,29 +6,21 @@
 
 case node[:platform]
 when "darwin"
-  include_cookbook "mise"
-  mise_tool "MisterTea/EternalTerminal" do
-    backend "github"
+  # MisterTea/EternalTerminal does not publish prebuilt binaries on its
+  # GitHub releases (assets is empty on every recent tag). mise's github
+  # backend (and the deprecated ubi backend) both fail with
+  # "No matching asset found for platform macos-arm64". The brew formula
+  # via the official MisterTea/et tap is the only stable darwin install
+  # path — keep it.
+  execute "brew install eternal-terminal" do
+    user node[:setup][:user]
+    command "brew install MisterTea/et/et"
+    not_if { brew_formula?("et") }
   end
 
-  # launchd runs daemons as root, which has its own $HOME — point at the
-  # absolute user-home mise shim so it resolves regardless of context.
-  etserver_path = "#{node[:setup][:home]}/.local/share/mise/shims/etserver"
-  plist_path = "/Library/LaunchDaemons/homebrew.mxcl.et.plist"
-
-  # Unload the old daemon if its plist points at the brew install path —
-  # re-templating below will then drop in the mise-shim version.
-  execute "unload stale etserver daemon (brew path)" do
-    user node[:setup][:system_user]
-    command "launchctl unload #{plist_path} || true"
-    only_if "test -f #{plist_path} && grep -q '/opt/homebrew/bin/etserver\\|/usr/local/bin/etserver' #{plist_path}"
-  end
-
-  execute "remove stale etserver plist (brew path)" do
-    user node[:setup][:system_user]
-    command "rm -f #{plist_path}"
-    only_if "test -f #{plist_path} && grep -q '/opt/homebrew/bin/etserver\\|/usr/local/bin/etserver' #{plist_path}"
-  end
+  # Configure and start etserver as a system daemon
+  # Apple Silicon Macs use /opt/homebrew, Intel Macs use /usr/local
+  etserver_path = node[:homebrew][:machine] == "arm64" ? "/opt/homebrew/bin/etserver" : "/usr/local/bin/etserver"
 
   directory "#{node[:setup][:root]}/eternal-terminal" do
     owner node[:setup][:user]
@@ -47,37 +39,20 @@ when "darwin"
 
   execute "copy etserver launch daemon" do
     user node[:setup][:system_user]
-    command "cp #{node[:setup][:root]}/eternal-terminal/homebrew.mxcl.et.plist #{plist_path}"
-    not_if "test -f #{plist_path}"
+    command "cp #{node[:setup][:root]}/eternal-terminal/homebrew.mxcl.et.plist /Library/LaunchDaemons/homebrew.mxcl.et.plist"
+    not_if "test -f /Library/LaunchDaemons/homebrew.mxcl.et.plist"
   end
 
   execute "set etserver launch daemon ownership" do
     user node[:setup][:system_user]
-    command "chown #{node[:setup][:system_user]}:#{node[:setup][:system_group]} #{plist_path}"
-    only_if "test -f #{plist_path}"
+    command "chown #{node[:setup][:system_user]}:#{node[:setup][:system_group]} /Library/LaunchDaemons/homebrew.mxcl.et.plist"
+    only_if "test -f /Library/LaunchDaemons/homebrew.mxcl.et.plist"
   end
 
   execute "load etserver daemon" do
     user node[:setup][:system_user]
-    command "launchctl load -w #{plist_path}"
+    command "launchctl load -w /Library/LaunchDaemons/homebrew.mxcl.et.plist"
     not_if "launchctl list | grep -q homebrew.mxcl.et"
-  end
-
-  # Cleanup: remove the brew formula and its tap.
-  execute "brew uninstall eternal-terminal (et)" do
-    user node[:setup][:user]
-    command "brew uninstall et"
-    only_if { brew_formula?("et") }
-  end
-
-  execute "brew uninstall eternal-terminal (eternal-terminal)" do
-    user node[:setup][:user]
-    command "brew uninstall eternal-terminal"
-    only_if { brew_formula?("eternal-terminal") }
-  end
-
-  execute "brew untap MisterTea/et" do
-    only_if { brew_tap?("MisterTea/et") }
   end
 
 when "ubuntu"
