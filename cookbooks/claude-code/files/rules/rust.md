@@ -58,6 +58,23 @@ crates.io does NOT allow editing an existing token's scope; you must revoke and 
 
 Alternatively, re-issue the main `CARGO_REGISTRY_TOKEN` with both `publish-new` + `publish-update` scopes if you add new crates often. Update the secret in every repo using it (`gh secret set CARGO_REGISTRY_TOKEN`).
 
+### Token allow-list must enumerate the transitive publishable closure
+
+A workspace release publishes more than just the crates flagged `publish = true` in `release-plz.toml`. Cargo also publishes path-dependency crates of any published target — anything `cargo publish -p <root>` would push. Token allow-lists must include the full closure, not just the explicit publish targets.
+
+When a release-plz run hits 403 on a crate that was previously published successfully (so it is not a publish-new case), the failure is almost always allow-list scope, not crate scope. Symptom: token allow-list lists the explicit publish targets but omits a workspace-internal crate that release-plz must also push because workspace-version inheritance bumps every member.
+
+**Pre-merge checklist** for the auto-generated `chore: release vX.Y.Z` PR:
+
+1. Read the `[[package]] name = "..."` entries in `release-plz.toml` (the explicit publish set)
+2. `grep -l '^name = ' crates/*/Cargo.toml` — list every workspace crate
+3. For each workspace member without `publish = false` in its `Cargo.toml`, confirm it appears in the token's allow-list at https://crates.io/settings/tokens
+4. If any are missing, re-issue the token with the expanded allow-list **before** merging the release PR
+
+Two consecutive 403s on the same release (the 2026-04-25 v0.5.4 cut) cost two re-runs because edge-core and weave-ios-core were both omitted. The transitive closure rule, applied once before the first merge, would have surfaced both at the same time.
+
+**Workspace-internal crates that should be `publish = false`**: if a crate is genuinely internal (e.g. `weave-ios-core` — UniFFI binding for one specific app, "Not intended for non-Swift consumers" per its description), set `publish = false` in its `Cargo.toml` rather than adding it to the token allow-list. release-plz will then skip it cleanly. Reserve allow-list entries for crates that genuinely ship to crates.io.
+
 ## Pre-`/bump-version` Sanity Check
 
 Before invoking `/bump-version`, confirm `git status` shows no unstaged
