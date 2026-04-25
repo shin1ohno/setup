@@ -169,6 +169,9 @@ module RecipeHelper
   end
 end
 MItamae::RecipeContext.send(:include, RecipeHelper)
+# only_if / not_if Procs evaluate in ResourceContext — include the helpers
+# there too so brew_formula?, brew_cask?, brew_tap? resolve in those blocks.
+MItamae::ResourceContext.send(:include, RecipeHelper)
 
 define :install_package, darwin: nil, ubuntu: nil, arch: nil do
   platform = node[:platform]
