@@ -3,14 +3,24 @@
 if node[:platform] == "darwin"
   package "git"
   package "git-lfs"
-  package "gh"
   package "git-filter-repo"
 
-  execute "brew tap takai/tap" do
-    not_if "brew tap | grep -q takai/tap"
+  include_cookbook "mise"
+  mise_tool "gh"
+
+  package "gh" do
+    action :remove
+    only_if { brew_formula?("gh") }
   end
 
-  package "git-ai-commit"
+  # git-ai-commit (takai/tap) removed — drop the formula and the tap.
+  package "git-ai-commit" do
+    action :remove
+    only_if { brew_formula?("git-ai-commit") }
+  end
+  execute "brew untap takai/tap" do
+    only_if { brew_tap?("takai/tap") }
+  end
 else
   package "git" do
     user node[:setup][:system_user]
