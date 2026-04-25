@@ -8,7 +8,7 @@ case node[:platform]
 when "darwin"
   include_cookbook "mise"
   mise_tool "MisterTea/EternalTerminal" do
-    backend "ubi"
+    backend "github"
   end
 
   # launchd runs daemons as root, which has its own $HOME — point at the
