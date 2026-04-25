@@ -8,7 +8,7 @@ when "ubuntu"
 when "darwin"
   include_cookbook "mise"
   mise_tool "universal-ctags/ctags" do
-    backend "ubi"
+    backend "github"
   end
   package "ctags" do
     action :remove

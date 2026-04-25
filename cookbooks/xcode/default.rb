@@ -31,12 +31,12 @@ end
 # Install xcodes CLI for Xcode version management via mise (ubi backend
 # fetches the prebuilt binary from XcodesOrg/xcodes GitHub releases).
 mise_tool "XcodesOrg/xcodes" do
-  backend "ubi"
+  backend "github"
 end
 
 # Install aria2 for faster parallel downloads via mise.
 mise_tool "aria2/aria2" do
-  backend "ubi"
+  backend "github"
 end
 
 # Clean up legacy brew installations.
