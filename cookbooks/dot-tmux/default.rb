@@ -1,5 +1,13 @@
 # frozen_string_literal: true
 
+# Depends on ssh-keys: the private device key (~/.ssh/<host>_ed25519) must be
+# in place before `git@github.com:shin1ohno/tmux.git` can be cloned. ssh-keys
+# pauses for AWS auth itself, so by the time we reach here the key is on
+# disk. The matching public key is registered to github.com/shin1ohno via
+# home-monitor's Terraform `github_user_ssh_key.device[*]` (run that first
+# on a brand-new machine).
+include_cookbook "ssh-keys"
+
 directory "#{node[:setup][:home]}/.config/tmux/plugins" do
   owner node[:setup][:user]
   group node[:setup][:group]
@@ -7,26 +15,16 @@ directory "#{node[:setup][:home]}/.config/tmux/plugins" do
   action :create
 end
 
-# Block here until SSH-to-GitHub works — the git pull below clones a private
-# repo. On a fresh machine the user needs to add their public key (placed by
-# the ssh-keys cookbook) to github.com first.
-tmux_git_dir = "#{node[:setup][:home]}/.config/tmux/.git"
-require_external_auth(
-  tool_name: "GitHub SSH access",
-  check_command: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | grep -q 'successfully authenticated'",
-  instructions: "Add ~/.ssh/<host>_ed25519.pub to https://github.com/settings/keys, then press Enter.",
-  skip_if: -> { File.exist?(tmux_git_dir) },
-) do
-  execute "Initialise tmux config directory" do
-    command <<EOF
-      GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' && export GIT_SSH_COMMAND &&\n
-      git init &&\n
-      git remote add origin git@github.com:shin1ohno/tmux.git &&\n
-      git pull --rebase origin main &&\n
-      git push --set-upstream origin main
+execute "Initialise tmux config directory" do
+  command <<EOF
+    GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' && export GIT_SSH_COMMAND &&\n
+    git init &&\n
+    git remote add origin git@github.com:shin1ohno/tmux.git &&\n
+    git pull --rebase origin main &&\n
+    git push --set-upstream origin main
 EOF
-    cwd "#{node[:setup][:home]}/.config/tmux"
-  end
+  cwd "#{node[:setup][:home]}/.config/tmux"
+  not_if { File.exist? "#{node[:setup][:home]}/.config/tmux/.git" }
 end
 
 execute "Initialise TPM" do

@@ -8,9 +8,13 @@
 # - SSH config entries for peer devices
 #
 # Prerequisites:
-#   - AWS CLI with configured profile
+#   - AWS CLI configured (require_external_auth gates this below)
 #   - SSH keys provisioned in SSM (via home-monitor Terraform)
 #   - Hostname matching a device name in devices.json
+
+# Ensure aws CLI is on disk before we try to fetch SSM. awscli cookbook
+# is idempotent — no-op on hosts that already have it.
+include_cookbook "awscli"
 
 # Load device configuration
 config_file = File.join(File.dirname(__FILE__), "files", "devices.json")
@@ -18,12 +22,6 @@ config = JSON.parse(File.read(config_file))
 devices = config["devices"]
 aws_profile = config["aws_profile"]
 aws_region = config["aws_region"]
-
-# Guard: skip if aws cli not available
-unless run_command("which aws", error: false).exit_status == 0
-  MItamae.logger.info("ssh-keys: aws cli not found, skipping")
-  return
-end
 
 # Identify current device by hostname
 current_device_name = run_command("hostname -s").stdout.strip.downcase
@@ -39,6 +37,16 @@ if current_device["client_only"]
   MItamae.logger.info("ssh-keys: device '#{current_device_name}' is client-only, skipping")
   return
 end
+
+# AWS auth required to fetch keys from SSM. Pause here on a fresh machine
+# until `aws configure` is done — without this, fetch_ssm returns nil
+# silently and downstream cookbooks (dot-tmux, managed-projects) fail at
+# `ssh -T git@github.com` because the local private key was never placed.
+require_external_auth(
+  tool_name: "AWS CLI (ssh-keys SSM fetches)",
+  check_command: "aws sts get-caller-identity",
+  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+)
 
 user = node[:setup][:user]
 group = node[:setup][:group]
@@ -173,6 +181,18 @@ devices.each do |dev|
   config_entries << "    IdentitiesOnly yes"
   config_entries << ""
 end
+
+# github.com stanza — re-uses the device private key. The matching public
+# key is registered to github.com/shin1ohno via home-monitor's
+# `github_user_ssh_key.device[*]` Terraform resource. Without this stanza,
+# `ssh git@github.com` falls through to the default identity files
+# (~/.ssh/id_ed25519 etc.) which don't exist on a fresh machine.
+config_entries << "Host github.com"
+config_entries << "    HostName github.com"
+config_entries << "    User git"
+config_entries << "    IdentityFile #{ssh_dir}/#{current_device["key_file"]}"
+config_entries << "    IdentitiesOnly yes"
+config_entries << ""
 
 file "#{ssh_dir}/config.d/ssh-keys" do
   owner user

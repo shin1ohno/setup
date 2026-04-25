@@ -10,26 +10,24 @@
 
 ## Interactive bootstrap (first-time machine)
 
-The cookbook expects an interactive TTY on first run. It pauses at three points for you to complete external setup, then continues:
+The cookbook expects an interactive TTY on first run. It pauses for AWS auth and any sudo prompts; otherwise everything is wired up by ordering (the `ssh-keys` cookbook places the device's private key, registers a `Host github.com` stanza, and downstream cookbooks that need GitHub access depend on it).
 
-- **AWS CLI auth** (before cookbooks like `ingest-drop`, `cognee`, `hydra`, `ai-memory`, `codex-cli`, `mcp`)
+**Prerequisite (one-time, before running on this machine):**
+
+The new device's public key must already be registered to https://github.com/shin1ohno via home-monitor's Terraform (`github_user_ssh_key.device[*]`). Run `terraform apply` in `home-monitor/` if you've added a new device to `local.ssh_devices`.
+
+**Pause points during the run:**
+
+- **AWS CLI auth** (gates `ssh-keys` and the SSM-fetching cookbooks: `ingest-drop`, `cognee`, `hydra`, `ai-memory`, `codex-cli`, `mcp`)
   ```
   aws configure                              # default profile
   # OR
   aws configure --profile <name>
-  export AWS_PROFILE=<name>                  # for the running mitamae shell
+  export AWS_PROFILE=<name>                  # for the running shell
   ```
   Run in another terminal, then return and press Enter to resume.
 
-- **GitHub SSH access** (before cookbooks like `dot-tmux`, `managed-projects`)
-  - The `ssh-keys` cookbook (in core role) places `~/.ssh/<host>_ed25519`
-  - Add the matching `*.pub` to https://github.com/settings/keys
-  - Test: `ssh -T git@github.com` should say "successfully authenticated"
-  - Then return and press Enter to resume.
-
 - **sudo password** (e.g. `pm2 startup launchd`, `mac-apps fdautil`, `zsh chsh`)
-  - Just type your password when prompted. No external setup needed.
+  - Just type your password when prompted.
 
-After the first successful bootstrap, every subsequent `./bin/mitamae local darwin.rb` runs straight through with no prompts (the `await_external_auth` checks pass immediately).
-
-If you've already configured everything before invoking mitamae, you'll never see the prompts.
+After the first successful bootstrap, every subsequent run goes straight through (the auth checks pass immediately).
