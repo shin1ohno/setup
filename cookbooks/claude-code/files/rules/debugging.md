@@ -12,6 +12,24 @@ When you cannot directly observe the effect of a fix from the source code alone:
 4. **Re-observe** — confirm the state changed as expected
 5. Only then report success to the user
 
+## Noisy Non-Failure Pattern
+
+The inverse of a silent failure: a warning, error string, or health-check entry is visibly present, but the system is functioning correctly. Treating the noise as a defect to fix can cause more harm than the noise itself, especially if the "fix" disables a fallback path the system is depending on.
+
+When the user reports something that looks like a problem (a warning, a red entry in `status` output, a recurring log line, a health-check failure):
+
+1. **Test the function the warning is about, end-to-end, before believing the warning** — if `tailscale status` complains about DNS, run `getent hosts <peer>` and `tailscale ping <peer>` first. If `systemctl --failed` lists a service, query whatever the service provides before treating it as broken
+2. **Classify the noise as cosmetic, partial, or load-bearing**:
+   - **Cosmetic** — warning emitted by a path the system already abandoned (failed and fell through to a working fallback). Fix is optional; suppressing it is fine, but verify the fix doesn't disable the working path
+   - **Partial** — degraded mode is in effect; the system works for the tested operations but a class of operations is broken (typically slow paths, edge cases, or specific peers)
+   - **Load-bearing** — the warning describes the actual broken behavior the user noticed
+3. **Only Cosmetic noise is safe to silence by removal/diversion**. For Partial/Load-bearing, fix the real problem
+4. **State the classification to the user before proposing a fix** — "DNS works (verified with `getent`); the resolvconf warning is from a failed shim path that tailscaled abandoned. Cosmetic. Proposed fix: divert the shim so the path isn't tried at all"
+
+The trap: warning-driven debugging starts from "this looks broken, fix it" and skips the function test. The fix often disables the OS feature that was holding things together. Function-test first, classify the noise, then act.
+
+This rule exists because the 2026-04-26 session correctly applied this protocol on a tailscale resolvconf warning — DNS was verified working before the divert was proposed. Codifying the approach so it generalizes.
+
 ## Do Not Report Success Without State Evidence
 
 The following are NOT evidence that a fix worked:
