@@ -129,6 +129,30 @@ Present the union of A and B as a single candidate list, cross-reference each ag
 
 This rule exists because the 2026-04-24 weave session ran only `git branch --no-merged origin/main` in the first pass (detected 3 squash-merged branches) and missed 2 true-merge-commit branches (`docs/operational-assumptions`, `feat/connections-first-ui`). The user had to reply "消してください" a second time after the remaining candidates were surfaced post-deletion.
 
+## Stacked PR Merge Guard — retarget downstream PRs before `--delete-branch`
+
+Before running `gh pr merge --squash --delete-branch <n>`, check whether any *open* PR uses this PR's head branch as its base. GitHub auto-closes a PR when its base branch is deleted, so merging a stacked PR with `--delete-branch` silently kills its downstreams — recovery requires cherry-picking each closed PR's commits onto a fresh main-rooted branch and re-opening, which is 2-3 round-trips per dependent.
+
+**Pre-merge check** — for the PR you're about to merge (call its head branch `$head`):
+
+```
+gh pr list --base "$head" --state open --json number,title,headRefName
+```
+
+If the result is non-empty, retarget each dependent to `main` first, then merge the bottom of the stack:
+
+```
+gh pr edit <downstream-pr-number> --base main
+# repeat for each downstream
+gh pr merge <bottom-pr> --squash --delete-branch
+```
+
+Once the downstream PR's base is `main`, GitHub computes the diff against the post-squash main commit (content-equivalent), so the diff stays clean.
+
+**Workflow integration** — when running a PR-merge sequence (typical /retro session, multi-PR feature shipping), do the retarget pass *before* the first merge in the chain, not interleaved per-merge. Discovering a missed dependent after the parent PR has already been merged + branch deleted means GitHub has already auto-closed it.
+
+This rule exists because the 2026-04-26 iOS session merged #45 with `--delete-branch`, which auto-closed stacked PRs #46 and #47. Recovery cost: cherry-pick → fresh branches → re-open as #48 / #50 → re-run CI. Two avoidable round-trips. The pre-merge `gh pr list --base` query takes one second.
+
 ## GPG Signing Failures
 
 If `git commit` fails with a GPG signing error or timeout, present the user with the full cache-refresh command:
