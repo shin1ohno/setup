@@ -154,7 +154,7 @@ directory "#{node[:setup][:home]}/.claude/rules" do
   action :create
 end
 
-%w(ruby.md shell.md infrastructure.md writing.md sub-agents.md git-commit.md remote-trigger.md mcp-config.md rust.md architecture.md data-collection.md debugging.md claude-code-plugins.md editing.md frontend-dev.md mise-migration.md).each do |file_name|
+%w(ruby.md shell.md infrastructure.md writing.md sub-agents.md git-commit.md remote-trigger.md mcp-config.md rust.md architecture.md data-collection.md debugging.md claude-code-plugins.md editing.md frontend-dev.md mise-migration.md ios-build.md weave-protocol.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
     source "files/rules/#{file_name}"
     owner node[:setup][:user]
