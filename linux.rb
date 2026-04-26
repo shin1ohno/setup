@@ -33,8 +33,6 @@ include_cookbook "roon-server"
 include_cookbook "edge-agent"
 include_cookbook "roon-mcp"
 include_role "mcp-server"
-include_cookbook "samba"
-include_cookbook "smartmontools"
-include_cookbook "obsidian_file_sync"
-include_cookbook "s3-backup"
-include_cookbook "gpg-backup"
+# samba / smartmontools / obsidian_file_sync / s3-backup / gpg-backup
+# now live in roles/server/default.rb
+
