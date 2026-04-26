@@ -6,6 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a **mitamae-based infrastructure automation system** for setting up development environments on macOS (Darwin) and Linux. Mitamae is a Ruby-based configuration management tool similar to Chef/Ansible.
 
+## Scope
+
+This repository configures:
+
+- Linux hosts that run `linux.rb` (e.g. `pro`, `neo`, future hosts) — Ubuntu / Debian family
+- macOS hosts that run `darwin.rb` (e.g. `air`, `ohnos-macbook`)
+
+This repository does NOT configure:
+
+- AWS-managed EC2 (Amazon Linux 2023, `nrt-subnet-router`) — see `~/ManagedProjects/home-monitor/scripts/tailscale-setup/`
+- Physical network devices (YAMAHA RTX) — see `~/ManagedProjects/home-monitor/`
+
+**Decision rule** for new fixes: when the root cause reproduces across multiple Linux / macOS hosts (even if discovered on one specific host), the fix belongs here. The Cross-OS Scope Gate rule in `~/.claude/rules/infrastructure.md` covers the inverse case (don't drop OS-specific Ubuntu fixes into a cookbook that also runs on AL2023).
+
 ### Core Structure
 
 **Platform Entry Points:**
