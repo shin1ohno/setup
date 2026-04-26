@@ -77,6 +77,21 @@ After implementing a cookbook change:
 
 Dry-run passing is the commit gate for cookbook changes. Never leave cookbook changes uncommitted after a passing dry-run.
 
+## Cross-OS Scope Gate Before Cookbookifying a Hotfix
+
+When codifying a manual fix into a cookbook, before writing the resource block, identify the target host(s) the cookbook actually runs on and confirm the fix applies to that OS. The fix's host (where the manual hotfix worked) is not always representative of every host the cookbook covers.
+
+**Before adding to a cookbook, answer**:
+
+1. Which repo owns this fix? List the candidate repos (`setup` for personal Linux/macOS, `home-monitor` for AWS EC2, `edge-agent` for embedded targets, etc.). Don't default to "wherever I saw the manual fix" — pick the cookbook whose target hosts have the failing condition
+2. What OS / package manager / init system does the failing condition require? `dpkg-divert` is Debian/Ubuntu only. `systemd-resolved` shipping a `resolvconf` shim is recent Ubuntu only. Amazon Linux 2023 doesn't have either
+3. Does the cookbook run on hosts that don't satisfy the precondition? If yes, gate the resource with `only_if` so it skips on non-matching hosts. Don't rely on the resource silently failing — write an explicit guard
+4. State the target OS in the commit message ("Ubuntu 24.04 ships ..."), not just the symptom
+
+**Anti-pattern**: discovering a Linux-specific fix on `pro` and adding it unguarded into a cookbook that also runs on macOS or AL2023. The wrong-OS branches will either silently no-op (best case) or fail loudly on every dry-run (worse case, blocks unrelated work).
+
+This rule exists because the 2026-04-26 session correctly identified that the `dpkg-divert` fix belonged in `setup/cookbooks/tailscale/` (Ubuntu hosts), not `home-monitor/scripts/tailscale_setup.sh` (Amazon Linux 2023 EC2). The decision was sound — codifying the pattern so the OS-scope question is asked before, not after, picking a destination.
+
 ## Long-Running Operations
 
 `terraform plan`, `terraform apply`, and other commands that typically take 30+ seconds must run in a background sub-agent (`run_in_background: true`) so the main conversation remains interactive. Pattern:
