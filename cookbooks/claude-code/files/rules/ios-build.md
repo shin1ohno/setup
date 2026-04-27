@@ -79,6 +79,32 @@ Unlock interactively in the user's terminal (so they can type the password to th
 
 Compose the unlock + build + install + launch into one chain (per the debugging.md "compose verify with fix" rule) so the user runs one `!` block instead of four. The keychain stays unlocked for the rest of that SSH session and idle-locks again later — re-running the chain on next session is normal.
 
+## macOS launchd `.app` bundle binary update
+
+When the macOS edge-agent (or any launchd-managed service installed via the cookbook's `.app` bundle pattern) needs a binary update, `cargo install` alone is **not** sufficient — the launchd plist's `Program` path points at the bundle, not at the cargo bin.
+
+```
+launchctl list com.shin1ohno.edge-agent | grep -E 'Program|PID'
+# "Program" = "/Users/<user>/Applications/EdgeAgent.app/Contents/MacOS/edge-agent"
+# "PID" = ... (or "LastExitStatus" if not running)
+
+ls -la ~/.cargo/bin/edge-agent ~/Applications/EdgeAgent.app/Contents/MacOS/edge-agent
+# mtimes diverge after `cargo install` — the cargo bin is fresh, the bundle binary is stale
+```
+
+**Update protocol** (when not running mitamae):
+
+1. `cargo install edge-agent --version <ver> --features <set> --locked` — refresh the cargo bin
+2. `cp ~/.cargo/bin/edge-agent ~/Applications/EdgeAgent.app/Contents/MacOS/edge-agent` — overwrite the bundle binary
+3. `launchctl kickstart -k gui/$(id -u)/com.shin1ohno.edge-agent` — terminate + respawn
+4. Verify the running version: tail the agent's stdout/stderr log AND check `weave-server` connect logs for the new version string
+
+**Preferred path**: run mitamae cookbook on the Mac. The recipe performs the cp + kickstart as part of the resource ordering. `cargo install` alone is never the complete operation for `.app`-bundled launchd services.
+
+**`OnDemand=true` in the plist** does not auto-respawn after a SIGKILL. After `pkill -f cargo/bin/edge-agent` or similar, the service stays down until `launchctl start` (or the next demand trigger). Don't assume launchd will restart the service — verify with `launchctl list` and an explicit `launchctl start` if `LastExitStatus` is set and `PID` is absent.
+
+This rule exists because the 2026-04-27 cross-edge session ran `cargo install edge-agent@0.10.0` on neo expecting the running service to pick up 0.10.0 on the next reconnect. The cargo bin updated but the launchd plist still pointed at the unmodified `.app` bundle, so neo reconnected to weave-server still announcing version 0.8.0 — invisible until the cross-edge dispatch routed a `ServerToEdge::DispatchIntent` to neo and the 0.8.0 deserializer dropped it. Two diagnostic turns lost finding the version mismatch.
+
 ## Putting it all together
 
 A clean fresh-Mac bootstrap, in order:

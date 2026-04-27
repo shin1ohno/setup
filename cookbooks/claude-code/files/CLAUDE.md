@@ -37,7 +37,13 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
 - Communicate in Japanese
 - Git commit messages, source code comments, and spec documentation must be in English
-- **Non-trivial tasks**: ALWAYS enter plan mode before implementation. Non-trivial = any task touching 2+ files, any task spanning 2+ repositories, any config change with deploy steps, any new agent/hook/skill creation. **Exception**: hardware/protocol debugging where root cause is unknown — use hypothesis-driven iteration instead (state hypothesis → minimal code change → user tests on device → confirm or invalidate → next hypothesis). Enter plan mode only after root cause is identified and the fix scope is clear
+- **Non-trivial tasks**: ALWAYS enter plan mode before implementation. Non-trivial = any task touching 2+ files, any task spanning 2+ repositories, any config change with deploy steps, any new agent/hook/skill creation. **Exception**: hardware/protocol debugging where root cause is unknown — use hypothesis-driven iteration instead (state hypothesis → minimal code change → user tests on device → confirm or invalidate → next hypothesis). Enter plan mode only after root cause is identified and the fix scope is clear.
+
+  **Frequently misclassified as trivial — these still require plan mode:**
+  - Adding an enum variant when the producer and consumer live in different crates / repos, even if the diff is one line per side
+  - A "small UI fix" whose verification requires a corresponding contract / schema change in a sibling file
+  - Any fix that requires restarting a deployed service (docker compose, systemd, launchd) to verify
+  - **Hardware verification loop = non-trivial by definition**: if confirming the fix needs a BLE press, a Roon zone state change, a Hue light reaction, or any other physical-device observation, it's non-trivial regardless of file count. The cost of a bad design surfaces during the round-trip with the human, not at the type-check step
 - **Every conversation**: launch background sub-agents to search Cognee and Mem0 at conversation start. Also read `TODO.md` in the project memory directory — if it has open items, mention them to the user. Continue interacting with the user immediately — feed results back when agents complete. No exceptions except trivial edits, typo fixes, and git operations
 - **Deferred work → TODO.md**: when a task is deferred to a future session ("次回セッションで対応"), write a TODO item to the project memory `TODO.md` with: task description, why it was deferred, and the concrete first step or prompt to resume. When completing a unit of work, check if it resolves any TODO item — if so, delete that item from TODO.md in the same commit
 - **RAG gap → TODO.md**: when RAG search returns no relevant results after 2+ query attempts on a topic that clearly belongs in the knowledge base, write a TODO.md entry immediately — without waiting for explicit "次回対応" language. Entry must include: what was missing, why it matters, and the concrete ingest command or source URL
@@ -85,9 +91,13 @@ When the task is UX revision, IA redesign, or any frontend feature with multiple
 3. **Scope / Out-of-scope** — explicit boundaries
 4. **構造変更 (structural changes)** — code-level changes grouped by module, derived from the use cases above
 5. **ファイル一覧 + 既存ユーティリティの再利用**
-6. **Verification** — manual + static checks referencing the UC numbers
+6. **Verification** — split into two subsections:
+   - **Claude-runnable tests** — every check Claude can execute without the user's hardware: type checks, unit tests, integration tests against real services running locally (sqlite, docker, weave-server), API curl probes that surface the bug class, end-to-end test scripts that spin up containers / mock devices. List the exact command for each, AND the bug class it would have caught. **This subsection is mandatory** — if a bug shipped to user-hardware verification could have been caught by a script Claude could run, that script belongs here.
+   - **User hardware verification** — only the steps that genuinely require a physical device (BLE press, Roon zone playback state, Hue light reaction). Number them so the user can report "step 3 failed" rather than describing the failure ad-hoc.
 
-Why this order: flat lists of "痛点 → implementation" produce plans whose top-level structure doesn't match how users experience the product. Organizing by user journey first makes the plan scannable AND makes the implementation phase's priority ordering obvious (primary UC → secondary UC → rare UC). This rule exists because a session that led with implementation-list structure cost one full plan rewrite when the user asked "最初にユースケースごとの操作を書いて".
+Why the split: many bug classes (mapping save 422 from missing enum variant, dispatch routing to wrong edge, device tile fails to fire on input) are observable from server logs + crafted curl requests + state hub introspection — Claude can verify these without involving the user. Conflating them with hardware-required tests produces sessions where every fix turns into a user round-trip even when a 30-second curl probe would have caught the regression.
+
+Why this order: flat lists of "痛点 → implementation" produce plans whose top-level structure doesn't match how users experience the product. Organizing by user journey first makes the plan scannable AND makes the implementation phase's priority ordering obvious (primary UC → secondary UC → rare UC). This rule exists because a session that led with implementation-list structure cost one full plan rewrite when the user asked "最初にユースケースごとの操作を書いて". The Verification split rule was added after a session where 11 user-reported bugs cascaded because each fix was deployed without the autonomous test pass that would have caught the regression class.
 
 ### Design-to-Plan Transition
 
