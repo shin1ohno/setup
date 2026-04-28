@@ -106,6 +106,48 @@ cd ios && xcodegen           # generates pbxproj + Info.plist from project.yml
 
 Once `DEVELOPMENT_TEAM` lands in `project.yml`, drop the per-invocation override.
 
+## Pre-deploy preflight probe — gather environment in one ssh round-trip
+
+Before constructing any iOS build/deploy chain to a remote Mac, run this single probe and read the output. Use the output to construct the actual deploy chain — do NOT ask the user for hostname, UDID, rustup targets, or other machine-queryable values.
+
+```sh
+ssh <host>.local 'export PATH=$HOME/.cargo/bin:/opt/homebrew/bin:$PATH; \
+  echo "=== hostname ==="; hostname; \
+  echo "=== rustup targets ==="; rustup target list --installed 2>/dev/null || echo MISSING; \
+  echo "=== devicectl ==="; xcrun devicectl list devices 2>/dev/null; \
+  echo "=== toolchain ==="; which xcodegen xcodebuild xcrun cargo 2>&1; \
+  echo "=== keychain ==="; security list-keychains -d user 2>&1 | head -2'
+```
+
+What the output gives you, with no further user interaction needed:
+
+- **Hostname** — confirms which Mac you reached (catches typos like `neo.local` vs `XMHTM6QVQX.local`)
+- **rustup targets installed** — surfaces missing iOS targets BEFORE the chain trips on `error: missing rustup target`. If MISSING is reported, present `! ssh <host>.local 'export PATH=...; rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios'` as a separate one-shot.
+- **devicectl device table** — `Name / Hostname / Identifier / State / Model` columns. Read the iPad's `Identifier` directly. **Do NOT write a `--json-output -` jq selector blind** — see `debugging.md` "CLI tool JSON output — probe schema before writing jq". For tabular output, `awk '/iPad/ {print $3}'` is enough; if you must use JSON, run the command once with `--json-output -` and inspect the actual key path before writing the selector.
+- **toolchain presence** — `xcodegen` and `xcodebuild` paths confirmed
+- **keychain hint** — confirms the user has a login keychain (codesign will need this unlocked at deploy time, see CLI build prerequisites #4)
+
+Probe must come BEFORE any AskUserQuestion about iOS environment. The 2026-04-28 weave session burned 3 round-trips on rustup/PATH/UDID issues that this single probe would have caught at once.
+
+## Auto-resolution table — never ask, always probe
+
+When constructing an iOS deploy command, these "questions" must be self-resolved with the listed probe — never with AskUserQuestion:
+
+| Tempted question | Self-check command |
+|---|---|
+| Which Mac should I build on? | grep this conversation for `ssh <host>` patterns; or `ssh neo.local hostname && ssh <other>.local hostname` |
+| What is the iPad UDID? | `ssh <mac> 'xcrun devicectl list devices'` — read Identifier column |
+| Is Xcode installed on `<host>`? | `ssh <host> 'xcode-select -p 2>/dev/null && echo OK'` |
+| Are rustup iOS targets installed? | `ssh <host> 'export PATH=$HOME/.cargo/bin:$PATH; rustup target list --installed'` |
+| Which device is connected? | `ssh <host> 'xcrun devicectl list devices'` (filter by State=connected if multiple) |
+| What's the DEVELOPMENT_TEAM ID? | grep `project.yml` for `DEVELOPMENT_TEAM`, or `security find-identity -v -p codesigning \| grep "Apple Development"` on the Mac |
+| Where is the .app bundle? | `xcodebuild -showBuildSettings 2>/dev/null \| awk -F= '/CONFIGURATION_BUILD_DIR/{print $2}'` (already scripted in `ios/deploy.sh`) |
+
+Escalate to AskUserQuestion only when:
+- The probe fails (host unreachable, no device matches, multiple ambiguous candidates with no disambiguating context)
+- The user has expressed a preference that overrides the probe result
+- The choice is genuinely about user intent (e.g., "install on iPhone or iPad — both connected")
+
 ## Origin
 
-This rule exists because the 2026-04-26 iOS session walked the four prerequisites one error at a time, costing roughly four extra round-trips before the iPad finally received its first build. Codifying them as a single checklist saves that walk on the next fresh Mac.
+This rule exists because the 2026-04-26 iOS session walked the four prerequisites one error at a time, costing roughly four extra round-trips before the iPad finally received its first build. The 2026-04-28 weave session compounded this: I asked the user to copy-paste the iPad UDID after a guessed jq selector returned empty, and I AskUserQuestion'd the build host instead of probing. The user explicitly corrected me with "neo.localにsshしてUUIDを取得してください" — codifying that the value should be probed, not asked.

@@ -129,6 +129,32 @@ These all look identical from a plan-agent's web summary. They diverge only when
 
 This rule exists because PR #32 (2026-04-25 brew→mise migration in `~/ManagedProjects/setup`) shipped 8 of these failure modes in a single PR, producing 6 cleanup PRs (#33, #34, #36, #37, #38, #41) over the same session. The full pre-migration checklist is in `~/.claude/rules/mise-migration.md`; the executable batch is the `/verify-mise-backend` skill.
 
+### CLI tool JSON output — probe schema before writing jq
+
+When a CLI tool offers a JSON-output flag (`--json-output`, `--json`, `-o json`, `--format json`), NEVER write a jq selector against guessed key paths. Probe the actual shape first.
+
+**Sequence**:
+
+1. Run the command once with the JSON flag and pipe through `python3 -m json.tool | head -50` (or `jq '.' | head -50` if jq is available). Inspect the actual nesting and key names.
+2. Read off the exact path you need.
+3. Only then write the jq selector.
+
+**Anti-pattern (from 2026-04-28 weave session)**:
+- Guessed `xcrun devicectl list devices --json-output -` would expose `.result.devices[].hardwareProperties.platform` matching `"iPadOS"`.
+- Actual JSON nested differently; selector returned empty.
+- Next step became "please copy-paste the UDID" — pushing onto the user what a 2-second probe would have answered.
+
+**Faster alternative — skip JSON entirely**: if the default tabular output already contains what you need, parse columns with awk:
+
+```sh
+xcrun devicectl list devices | awk '/iPad/ {print $3}'   # Identifier column for any device matching iPad
+gh pr list --state open | awk -F'\t' '{print $1}'        # PR number column
+```
+
+For tools whose tabular output has stable column counts (most do), awk is shorter, more obvious, and impossible to break with a wrong jq selector.
+
+**Same principle covers**: `gh api`, `aws ... --output json`, `kubectl get ... -o json`, `terraform show -json`, `cargo metadata --format-version 1`. Probe shape, then query.
+
 ## Frame the Failure Class Before Writing the Fix
 
 When fixing a bug, the first design question is **"what shape is this failure class?"**, not "what minimal change makes this error stop?". Silencing the specific error often leaves the underlying fragility in place — correct only until the next instance.

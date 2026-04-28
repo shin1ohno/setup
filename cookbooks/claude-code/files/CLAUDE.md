@@ -31,6 +31,18 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
 **When AskUserQuestion is not needed**: when instructions are clear, only one implementation path exists, and all operations are reversible. Same applies during execution of an approved plan — steps included in the plan do not require individual confirmation.
 
+**Verify-before-ask gate**: before using AskUserQuestion to obtain a *value* (a UDID, a hostname, a file path, a version string, a build output, a JSON field name, an env var), confirm the value cannot be obtained by running a command yourself. If a 1–5 second probe (`ssh`, `grep`, `curl`, `xcrun`, `gh api`, `git log`) would return the answer, run the probe first. Asking the user for machine-queryable values is a rule violation equivalent to asking them to reproduce a bug they already reported. AskUserQuestion is for genuine *intent* ambiguity, not for missing facts you didn't try to look up.
+
+Examples of values that must be probed, not asked:
+- iPad / device UDID → `xcrun devicectl list devices`
+- Mac / remote host identity → `ssh <host> hostname`
+- Installed rustup targets → `ssh <host> rustup target list --installed`
+- JSON field schema before writing a jq selector → run the command with `--json-output -` first, inspect the actual key path
+- Open PR list, CI status, recent commits → `gh pr list`, `gh run list`, `git log --oneline`
+- Whether a file/branch/symbol exists → `ls`, `grep`, `git rev-parse`
+
+This rule exists because the 2026-04-28 weave session asked the user to copy-paste an iPad UDID into a deploy command after a guessed jq selector failed. The user explicitly corrected with "neo.local に ssh して UUID を取得してください" — the value was 1 ssh command away.
+
 **When a diagnosis yields 5+ issues**: do NOT flatten them into a single "which of these do you care about?" AskUserQuestion — the user ends up with a question whose shape doesn't match how they think about the product. Instead, group the issues by user-goal theme (not by file, not by severity) and make the themes the options. Example: 7 痛点 across Edit form → group into "フォーム内部 / 行内アクション / drawer 差別化 / Save モデル" and ask which themes to tackle. This makes the plan's top-level structure correct from the start and avoids rewriting it after the user corrects the framing.
 
 ## Critical Rules — General
