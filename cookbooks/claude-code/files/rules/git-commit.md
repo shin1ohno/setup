@@ -10,6 +10,21 @@ description: "Git commit message format rules — loaded when creating commits"
 - Prefer contextful verbs over generic "Change", "Add", "Fix", "Update"
 - Explain the "why", not just the "what"
 
+## Deferred Stubs in PR Description
+
+When a PR adds a public symbol (function, method, trait, type, FFI export) that has no in-tree caller because the consumer is intentionally deferred to a follow-up PR, add a `## Deferred` section to the PR description naming the stub and the follow-up. Without this, the diff looks like dead code to a reviewer or future reader, and the trail-off (e.g., "Swift side ships in a later PR") is invisible.
+
+Format:
+
+```
+## Deferred
+- `weave_ios_core::EdgeClient::publish_edge_status(wifi)` — public stub awaiting Swift `NEHotspotNetwork` reader + 10s timer in WeaveIos app repo
+```
+
+This applies even when the plan or commit body already mentions the deferral — the PR description is the durable artifact reviewers see, and the section is where reviewers expect "what's intentionally not finished here." A `// TODO: Swift impl` source comment is NOT a substitute; reviewers don't grep new public symbols.
+
+This rule exists because the 2026-04-26 weave session shipped `EdgeClient::publish_edge_status` as a stub for a deferred iOS Swift side, mentioned it in the commit body, but the PR description had no Deferred section — the unused public symbol could read as oversight rather than scope decision.
+
 ## Default to PR Branch; Do Not Push to main
 
 When a commit needs to reach remote `main`, default to:
