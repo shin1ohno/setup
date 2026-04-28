@@ -88,7 +88,7 @@ This rule exists because the 2026-04-28 weave session asked the user to copy-pas
 
 - Use `/plan` mode to create a thorough plan before starting any non-trivial task
 - Get user confirmation on the plan before proceeding
-- **Batch plan-phase questions**: when a plan has multiple independent preference or scope decisions, consolidate them into a single AskUserQuestion (multiSelect when choices are non-exclusive) at the end of the plan draft — do not ask each decision sequentially. Sequential confirmation creates artificial wait cycles; the user reviews all open choices at once
+- **Batch plan-phase questions**: when a plan has multiple independent preference or scope decisions, consolidate them into a single AskUserQuestion (multiSelect when choices are non-exclusive) at the end of the plan draft — do not ask each decision sequentially. Sequential confirmation creates artificial wait cycles; the user reviews all open choices at once. **Partial-answer guard**: when the response includes inline prose (`notes` field, free-text reply) instead of a structured selection for every question, count which questions were actually answered. If any question in the batch has no explicit answer, do NOT proceed with the recommended default for that one — re-issue a single-question AskUserQuestion for the missing decision before continuing. Silent fallback to the recommendation violates the "Never proceed when ambiguous" rule even when the recommendation turns out correct
 - **After plan approval, execute the full implementation autonomously** — do not stop to ask permission at each step
 - Produce a PR as the reviewable artifact: branch, implement, test, commit, then `gh pr create`
 - The user reviews the PR, not the intermediate steps
@@ -132,6 +132,7 @@ These are plan-mode entry triggers, not chat questions. Writing them in chat mea
 | Ambiguity discovered not covered by the plan | AskUserQuestion |
 | Scope creep temptation | AskUserQuestion |
 | Destructive operation not in the plan | AskUserQuestion |
+| Technically-necessary additive change discovered mid-implementation (shared schema needs an extra field/variant the plan didn't enumerate; no behavior change to scope) | Proceed without asking, but append a one-line note to the plan file in the same turn so the plan stays in sync with what shipped. Future readers must be able to reconstruct the decision from the plan alone |
 | Implementation complete | Create PR; immediately launch a background `gh pr checks --watch` loop. If any check fails, read the log, fix, push without prompting; repeat until CI is fully green. Do NOT declare the task complete or notify the user until every required check passes. `gh pr create` is not the terminal step — green CI is |
 | Unit of work committed, more items remain | Proceed to next item immediately |
 | All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
