@@ -80,6 +80,44 @@ Instead:
 
 **Signal**: same symptom after 3 cycles = wrong design assumption, not wrong implementation detail. Continuing to iterate on implementation is sunk-cost behavior.
 
+**Batch fixes within a rebuild cycle**: when a debugging loop involves an expensive rebuild (`docker compose up --build`, `cargo build --release`, `xcodebuild`, `terraform apply` — anything that takes more than ~60s end to end), collect ALL hypothesized format / config fixes for the *current* observable failure before triggering the rebuild. Do not submit one change, wait for the build, observe the same-class failure, then submit a second change.
+
+If 3 hypotheses each have 50/50 odds and the rebuild costs 5 min, sequential evaluation costs ~15 min plus mental context switching; batched evaluation costs ~5 min and forces you to enumerate the candidate space up front. Exception: when the second fix genuinely depends on observing the first fix's partial effect (e.g. you cannot guess header B's value without seeing the connection survive header A's wrong value first). When in doubt, batch.
+
+This rule exists because the 2026-04-28 roon-mcp / SSE session ran ~7 docker rebuild cycles back-to-back — each cycle added one of {snake_case session_id, trailing slash on `/messages/`, `X-Accel-Buffering: no` header, `charset=utf-8` on content-type, default `sse_path = "/sse"`} — every one of which was diagnosable from the same `curl --hex-dump` against the cognee reference server before the first rebuild. ~35 minutes of build wall-clock recoverable by batching.
+
+## Wire-Protocol Reverse Engineering — Capture Reference Bytes First
+
+When implementing a transport, webhook receiver, or protocol endpoint to satisfy an external client whose format expectations are undocumented (Anthropic Claude.ai MCP connector, Slack RTM/Socket Mode, an MCP client SDK, a vendor's webhook-validation handshake), capture the *raw bytes* from a known-working reference server BEFORE writing any implementation code.
+
+**Sequence**:
+
+1. Identify the nearest working reference deployment. Same vendor on a sibling endpoint (`https://mcp.ohno.be/cognee/sse` next to your new `/roon/sse`), an open-source server with public docs, an in-tree example. There is almost always one.
+2. Capture the wire bytes:
+   ```
+   curl -sN -H "Accept: text/event-stream" '<reference-url>' | head -c 400 | xxd
+   curl -sIL '<reference-url>'   # response headers
+   ```
+3. Write the implementation.
+4. Diff your output against the reference at the same hex-dump granularity:
+   ```
+   diff <(curl -sN '<reference>' | head -c 400 | xxd) \
+        <(curl -sN '<new>'       | head -c 400 | xxd)
+   ```
+5. Fix every divergence in **one** batch (per the Fix-Loop Escalation rule above). Do not submit one fix per rebuild cycle.
+
+**Anti-pattern**: iterating on format hypotheses one-at-a-time across expensive rebuilds without ground truth. Common divergences hex-dump catches in one pass:
+
+- LF vs CRLF line endings
+- `event:` named events vs unnamed `data:`-only frames
+- Path conventions (`/messages` vs `/messages/`, `sessionId=` vs `session_id=`)
+- Required intermediary-control headers (`X-Accel-Buffering: no`, `Cache-Control: no-store`, charset)
+- URL shape in payload (relative vs absolute, with or without proxy prefix)
+
+**Trigger**: "the client says NG but my server returns 200 OK". The client has format expectations your code does not satisfy yet. Stop hypothesizing; start observing.
+
+This rule exists because the 2026-04-28 roon-mcp SSE session burned ~35 min iterating on SSE format hypotheses before running a single hex-diff against the cognee reference server. The diff revealed all five divergences in one pass.
+
 ## Read the Source Before Researching Patterns
 
 When the failure is an observable error string from a third-party Rust / Go / Python SDK (e.g., `BLE error: Device not found`, `connection refused`, `unauthorized`), **grep the SDK source for the exact error string before launching a web-research sub-agent**.

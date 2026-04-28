@@ -138,6 +138,27 @@ These are plan-mode entry triggers, not chat questions. Writing them in chat mea
 | All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
 | Blocked waiting for manual user action (sudo, restart, deploy) | Launch background retro/Cognee/TODO agents immediately |
 
+### Adversarial Plan Review for Security-Sensitive Features
+
+When a plan involves any of the following, launch an **adversarial plan review** sub-agent BEFORE beginning implementation. This is required, not optional:
+
+- OAuth / OIDC flows (DCR, consent, token issuance / validation, JWKS)
+- JWT validation, audience / issuer / scope checks
+- Secret mounts (tokens.json, ssh keys, TLS certs) with bind-mount path / UID semantics
+- nginx `auth_request` or other reverse-proxy access gates
+- Privilege boundaries between cooperating services (auth-proxy → MCP server, edge agent → home server)
+- ALLOWED_EMAILS / IP allow-lists / firewall rules
+
+Prompt template for the review agent:
+> Review this plan as an adversary. For each component, identify:
+> 1. Authentication bypasses or token leaks
+> 2. Privilege escalation paths
+> 3. Environment assumptions that break in production (IP addresses, NIC configurations, path assumptions, container user mappings)
+> 4. Configuration mismatches between layers (nginx ↔ docker-compose ↔ application)
+> Number each concern and assign severity (blocker / risk / non-issue).
+
+This is distinct from the post-implementation `code-reviewer` plugin — it catches **design-level** problems while redesign costs minutes, not sessions. The 2026-04-28 roon-mcp OAuth session ran this review and surfaced 10 pre-implementation concerns (JWKS fetch loop, audience claim mismatch, IP gate vs dual-NIC reality, token mount rw + UID, etc.) that collectively would have cost 3-5 debugging sessions to discover post-implementation.
+
 ### Research-to-Plan Pipeline
 
 When a task requires research before planning, run research and planning in parallel — never sequentially:
