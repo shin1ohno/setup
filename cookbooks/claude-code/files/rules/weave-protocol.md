@@ -40,3 +40,42 @@ Or: you're designing the JSON shape for a new edge state stream (Apple Music now
 ## Origin
 
 This rule exists because the 2026-04-26 iOS session shipped PR #50 / #52 publishing all of `state`, `volume`, `title`, `artist` under a single `property: "now_playing"` whose value was a JSON object. The user had configured Roon-style feedback rules (`{"state": "playback", "feedback_type": "glyph", "mapping": {"playing": "play", …}}`) which were structurally correct but never matched, because the property name and value type didn't line up. Discovery happened only when LED feedback testing returned a dark Nuimo. PR #54 fixed it by splitting into three separate publishes — at the cost of a follow-up PR that could have been avoided by checking the shape at PR #50 design time.
+
+# Cross-edge Dispatch — Capability Advertisement vs Runtime Readiness
+
+`Hello.capabilities` is a **compile-time** flag — `cfg!(feature = "hue")`, `cfg!(feature = "roon")`, etc. It declares "this binary *can* connect to the adapter." It does **not** declare "this binary *is currently authenticated and dispatching*." The two diverge whenever:
+
+- The adapter's pairing token is missing (e.g. `hue-token.json` not present on the host)
+- The adapter's network target is unreachable (Roon Core down, Hue Bridge offline)
+- The adapter is mid-boot (capability announced before adapter task spawns successfully)
+
+When designing **cross-edge dispatch logic** (`weave-server`'s `find_edge_for_service`, MQTT routing target selection, anything that picks an edge from a pool), do **not** treat capability presence as proof of dispatch readiness.
+
+## Selection guidance
+
+**Prefer**, in order:
+1. Edge that has emitted a recent successful `Command { result: Ok }` for the same `service_type` — observable proof the adapter dispatched something
+2. Edge with the highest reported `version` — newer binaries are more likely to have the receive-side handler for newer `ServerToEdge` variants
+3. Alphabetical `edge_id` as a deterministic tiebreak
+
+**Avoid**:
+- HashMap iteration order (non-deterministic, picks randomly between healthy and broken edges)
+- Static config like "always pick pro" (brittle when topology changes)
+
+## Failure handling
+
+When a forwarded intent fails on the target edge (deserializer rejects unknown variant, adapter returns auth error, edge disconnects mid-dispatch), the server should:
+
+1. **Log the failure class** with `source_edge`, `target_edge`, `service_type`, and the exception type
+2. **Try the next capable edge** in the preference order, if one exists
+3. **Surface the failure to `/ws/ui`** as `UiFrame::Command { result: Err { message } }` so the user sees the reason in the live console — not just "the press did nothing"
+
+A silent dispatch drop is worse than a visible error: the user sees their hardware press and observes no reaction, with no diagnostic on screen. The `Err` frame anchors the failure to a wallclock moment and surfaces the error class.
+
+## Edge-agent improvement (deferred)
+
+Long-term: edge-agent should announce capabilities **based on runtime adapter state**, not just compile-time features. A `hue` capability should be advertised only after `hue-token.json` loads and the adapter task reports ready. Until that change ships, the server-side selection logic above is the workaround.
+
+## Origin (cross-edge)
+
+This section exists because the 2026-04-27 cross-edge intent forwarding session forwarded an iPad-routed Hue intent to neo (which advertised `hue` capability via `cfg!(feature = "hue")` but had no `hue-token.json`). The forwarded intent silently failed on neo because (a) neo was on edge-agent v0.8.0 and couldn't deserialize `ServerToEdge::DispatchIntent`, and (b) even after a 0.10.0 upgrade, neo's runtime hue adapter would have failed to dispatch. The user observed "press the Nuimo, Hue light doesn't react" with no UI signal explaining why. Recovery required killing neo's edge-agent + adding version-preference to `find_edge_for_service` + plus this rule.
