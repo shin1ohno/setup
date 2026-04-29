@@ -111,6 +111,23 @@ Why the split: many bug classes (mapping save 422 from missing enum variant, dis
 
 Why this order: flat lists of "痛点 → implementation" produce plans whose top-level structure doesn't match how users experience the product. Organizing by user journey first makes the plan scannable AND makes the implementation phase's priority ordering obvious (primary UC → secondary UC → rare UC). This rule exists because a session that led with implementation-list structure cost one full plan rewrite when the user asked "最初にユースケースごとの操作を書いて". The Verification split rule was added after a session where 11 user-reported bugs cascaded because each fix was deployed without the autonomous test pass that would have caught the regression class.
 
+### Plan-Time Audit for FFI Boundaries
+
+When a plan touches an FFI boundary (UniFFI Rust↔Swift, JNI Rust↔Kotlin, WASM↔JS, any cross-language schema/value crossing), the plan MUST include an explicit **encoding audit** subsection that enumerates type/encoding assumptions on BOTH sides before implementation. Structural correctness alone is insufficient — encoding divergence on one side is invisible to the other side's tests.
+
+**Audit checklist** (include as plan section, with concrete answer per item):
+
+1. **String canonicalization**: any types serialized as strings have a single canonical form on both sides? (e.g., `CBUUID.uuidString` returns short form for Bluetooth-assigned UUIDs while `uuid::Uuid::parse_str` requires 128-bit — mismatch silently fails)
+2. **Byte order**: little-endian vs big-endian for multi-byte integers crossing the boundary
+3. **Encoding**: UTF-8 vs UTF-16 for strings, lossy vs lossless conversions
+4. **Optionality**: how `Option<T>` / `nil` / `null` traverses the boundary (UniFFI nullable annotations, presence-vs-empty-string)
+5. **Char limits / truncation**: filename / identifier length caps that differ between sides (e.g., HFS+ vs APFS, FAT32, registry hives)
+6. **Numeric ranges**: signed/unsigned coercion at the boundary (e.g., u8 ↔ Int, i64 ↔ Number lossy past 2^53)
+
+For each item, write down the **observed value on each side** (e.g., "Swift: `CBUUID(string: "00002A19...")`.uuidString → `"2A19"`; Rust: `Uuid::from_u128(0x00002A19...)`.to_string() → `"00002a19-0000-1000-8000-00805f9b34fb"`. **DIVERGE** — Swift→Rust direction needs canonical-form helper").
+
+This rule exists because the 2026-04-29 weave session's plan correctly identified the structural failure (missing initial battery read on iOS NuimoDevice) but assumed "the existing parse path handles it" — which was true for Linux/macOS callers using btleplug but false for iOS via `CBUUID.uuidString`. The encoding divergence cost a second PR (#84) and a full hardware re-deploy cycle. An FFI audit at plan time would have caught the `CBUUID.uuidString` short-form behavior before the first deploy.
+
 ### Design-to-Plan Transition
 
 When an exploratory conversation ("考えてみてください" / "think about it", "どう思う？" / "what do you think?", "どうすればいい？" / "how should we approach this?") converges on a directional decision ("この方向でやろう" / "let's go with this", "いい案だ" / "good idea", user accepts a design proposal), that convergence is the plan-mode entry trigger — not a chat proposal or consent question.

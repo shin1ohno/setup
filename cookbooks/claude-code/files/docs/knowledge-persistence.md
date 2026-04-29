@@ -114,6 +114,30 @@ After every `cognify` or `save_interaction` call via MCP, verify the data was ac
 
 This applies to all cognify calls, not just PDF ingestion. MCP cognify returns success even when the background pipeline fails silently.
 
+### Cognify Timeout Fallback
+
+When a `cognify` MCP call returns a timeout error (typically after ~60s waiting for the LLM extraction step), do NOT silently drop the knowledge — the commit log is not a substitute for graph search. Two cognify timeouts in the same session = the graph won't ever ingest these findings without manual intervention.
+
+**Fallback procedure** when cognify times out twice on the same content:
+
+1. Write the structured note to `~/.claude/pending-cognify/<YYYY-MM-DD>-<topic-slug>.md` using the same format from "Save Format" above (preserved cognify body, not abbreviated)
+2. Add a TODO.md entry in the project memory (or `~/.claude/pending-cognify/TODO.md` if no project context) with the concrete re-ingest command:
+   ```
+   ## Re-ingest pending cognify: <topic>
+   **File**: ~/.claude/pending-cognify/2026-04-29-cbuuid-uniffi.md
+   **Command**:
+       cat ~/.claude/pending-cognify/2026-04-29-cbuuid-uniffi.md | \
+         curl -s -X POST http://localhost:8001/api/v1/add \
+         -H "Authorization: Bearer $TOKEN" \
+         -F "data=@-" -F "datasetName=main_dataset"
+   ```
+3. Do NOT block the current task on Cognee recovery — the fallback file is the durable artifact
+4. On next session start, before running `cognify` for new content, drain `~/.claude/pending-cognify/*.md` first
+
+**When to use Mem0 fallback instead**: if the content is short (1-2 sentences, single fact about user attribute or possession), the Mem0 `add_memories` MCP tool is faster and has different infrastructure. Cross-session knowledge that's larger (debug pattern, architectural decision, multi-paragraph rationale) belongs in cognify even if it has to wait for re-ingest.
+
+This rule exists because the 2026-04-29 weave session lost two cognify saves (the iOS Nuimo battery debug pattern + the CBUUID FFI gotcha) to back-to-back timeouts. The knowledge survived in commits and the cookbook rules but is invisible to graph search until manually re-ingested. Without this fallback, the same trap is rediscovered next session.
+
 ### Ingestion Method Selection
 
 | Data | Method | When |

@@ -132,6 +132,80 @@ cd ios && xcodegen           # generates pbxproj + Info.plist from project.yml
 
 Once `DEVELOPMENT_TEAM` lands in `project.yml`, drop the per-invocation override.
 
+### `CoreDeviceError 3002 / Connection interrupted` is transient
+
+If `xcrun devicectl device install app` fails with `Error Domain=com.apple.dt.CoreDeviceError Code=3002 "Connection interrupted"` (often paired with `IXRemoteErrorDomain Code=6` "Connection with the remote side was unexpectedly closed"), retry the identical command **once** before diagnosing. This is a USB / Wi-Fi handoff transient — the build itself completed (`** BUILD SUCCEEDED **`) and the `.app` bundle is intact; only the wire transfer to the device flaked.
+
+The instinct on first sighting is to suspect codesigning or provisioning. Don't — verify it's transient by re-running the install command first. A second identical-failure means the diagnosis is real and worth a deeper look (device locked, paired-but-not-trusted, etc.).
+
+This rule exists because the 2026-04-29 weave session's first install attempt failed with this exact pair (3002 + IX domain 6); a single retry succeeded with no code change.
+
+## FFI Boundary Error Visibility
+
+`catch` / error branches in iOS code that parses data crossing a UniFFI boundary MUST log at `Logger().error(...)` unconditionally — never gated behind `#if DEBUG`, `WEAVE_DEBUG_BLE=1`, or other compile-/runtime-time switches. Silent FFI parse failures on hardware-only paths cost a full plan → implement → CI → xcframework rebuild → device redeploy cycle per discovery.
+
+The pattern that triggers this: at the FFI boundary, Rust `Result::Err` is converted into a Swift `throw`, and the call site uses `do { try ... } catch { /* silent unless flag set */ }`. The flag-gated logging silences exactly the case where the bug is invisible — on real devices in production-like configs.
+
+Correct shape:
+
+```swift
+do {
+    if let event = try parseNuimoNotification(charUuid: charUUID, data: data) {
+        owner?.record(event, from: identifier)
+    }
+} catch {
+    nuimoLogger.error(
+        "parseNuimoNotification failed: char=\(charUUID, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+    )
+}
+```
+
+If the volume is genuinely high, log at `.debug` only the noisy successful-no-match case — never the catch branch. Same applies to `peripheral(_:didUpdateValueFor:error:)` non-nil `error`: log at `.error` so read failures from CoreBluetooth (insufficient permissions, encryption mid-handshake) surface immediately instead of disappearing.
+
+This rule exists because the 2026-04-29 weave session's PR #82 (initial battery read) shipped correctly but battery still didn't appear on hardware — a `WEAVE_DEBUG_BLE=1`-gated catch swallowed the `Uuid::parse_str` failure on Bluetooth-assigned UUIDs (see CoreBluetooth UUID encoding below). The flag-gated diagnostic was set to off in production, so the bug stayed silent through a 40-minute plan-implement-CI-deploy cycle. PR #84 fixed both the encoding and the silent-catch.
+
+## CoreBluetooth UUID encoding — canonical 128-bit form across UniFFI
+
+`CBUUID.uuidString` returns the **short (16- or 32-bit) form** for any UUID inside the Bluetooth Base UUID range:
+
+| UUID | `CBUUID.uuidString` |
+|---|---|
+| `0x00002A19-0000-1000-8000-00805F9B34FB` (Battery Level) | `"2A19"` |
+| `0x0000180F-0000-1000-8000-00805F9B34FB` (Battery Service) | `"180F"` |
+| `0xF29B1525-CB19-40F3-BE5C-7241ECB82FD2` (Nuimo custom) | `"F29B1525-CB19-40F3-BE5C-7241ECB82FD2"` |
+
+The short form does NOT round-trip through `uuid::Uuid::parse_str` on the Rust side — it expects a full 128-bit form.
+
+**Rule**: when passing a `CBUUID` to Rust via UniFFI, always use a `canonical128String` helper that pads short-form UUIDs against the Bluetooth Base UUID before serializing. Never call `.uuidString` directly for FFI. Reference implementation in `edge-agent/ios/WeaveIos/Core/NuimoDevice.swift::CBUUID.canonical128String`:
+
+```swift
+extension CBUUID {
+    var canonical128String: String {
+        let bytes = [UInt8](self.data)
+        var full: [UInt8] = [
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+            0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB,
+        ]
+        switch bytes.count {
+        case 16: full = bytes
+        case 4:
+            full[0] = bytes[0]; full[1] = bytes[1]
+            full[2] = bytes[2]; full[3] = bytes[3]
+        case 2: full[2] = bytes[0]; full[3] = bytes[1]
+        default: break
+        }
+        return String(format: "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                      full[0], full[1], full[2], full[3], full[4], full[5],
+                      full[6], full[7], full[8], full[9],
+                      full[10], full[11], full[12], full[13], full[14], full[15])
+    }
+}
+```
+
+**Why custom UUIDs masked the bug**: Nuimo input characteristics (button / rotate / touch / fly under `f29b15…`) are outside the Bluetooth Base, so `.uuidString` returns the full 128-bit form and the Rust parser accepted them. Battery is `0x2A19`, inside the Base — short-form serialized, parser rejected, error swallowed. Linux/macOS edge-agent does not hit this because btleplug always hands the parser a full `Uuid` value with no string round-trip.
+
+This applies beyond battery: heart rate (0x2A37), blood pressure (0x2A35), any other Bluetooth-assigned characteristic the iOS app might read in the future. Use `canonical128String`, never `uuidString`, for FFI input.
+
 ## Pre-deploy preflight probe — gather environment in one ssh round-trip
 
 Before constructing any iOS build/deploy chain to a remote Mac, run this single probe and read the output. Use the output to construct the actual deploy chain — do NOT ask the user for hostname, UDID, rustup targets, or other machine-queryable values.
