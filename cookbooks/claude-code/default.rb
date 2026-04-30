@@ -85,6 +85,12 @@ execute "register saladdays-skills marketplace" do
   not_if "test -f #{known_marketplaces} && grep -q saladdays-skills #{known_marketplaces}"
 end
 
+execute "register openai-codex marketplace" do
+  user node[:setup][:user]
+  command "#{claude_path} plugin marketplace add openai/codex-plugin-cc"
+  not_if "test -f #{known_marketplaces} && grep -q openai-codex #{known_marketplaces}"
+end
+
 remote_file "#{node[:setup][:home]}/.claude/CLAUDE.md" do
   source "files/CLAUDE.md"
   owner node[:setup][:user]
