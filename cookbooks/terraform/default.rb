@@ -14,6 +14,6 @@ else
       sudo apt update && sudo apt install terraform
     EOF
     user node[:setup][:system_user]
-    not_if "which terraform"
+    not_if { File.exist?("/usr/bin/terraform") || File.exist?("/usr/local/bin/terraform") }
   end
 end

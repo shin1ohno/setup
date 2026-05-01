@@ -65,7 +65,7 @@ fi
 sync_obsidian() {
   log "Starting bidirectional sync of Obsidian vault"
   rclone bisync "$SOURCE_DIR" "${REMOTE_NAME}:${REMOTE_PATH}" --create-empty-src-dirs --exclude ".obsidian/workspace.json" --exclude ".trash/**" 2>&1 | tee -a "$LOG_FILE"
-  
+
   log "Sync completed"
 }
 
@@ -141,6 +141,9 @@ EOM
     command "systemctl --user daemon-reload && systemctl --user enable obsidian-sync.timer && systemctl --user start obsidian-sync.timer"
     only_if "which systemctl"
     only_if "test -f #{node[:setup][:home]}/.config/systemd/user/obsidian-sync.timer"
+    # Skip when the timer is already active — without this the
+    # daemon-reload + enable + start chain runs every mitamae apply.
+    not_if "systemctl --user is-active obsidian-sync.timer"
   end
 else
   # Create launchd plist on macOS
@@ -200,7 +203,7 @@ This script synchronizes your Obsidian vault between devices using rclone.
    ```
    rclone config
    ```
-   
+
 2. Create a new remote named "obsidian" pointing to your preferred cloud storage:
    - For Google Drive, select "drive" as the type
    - For Dropbox, select "dropbox" as the type
