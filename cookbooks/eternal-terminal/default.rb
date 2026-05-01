@@ -56,10 +56,14 @@ when "darwin"
   end
 
 when "ubuntu"
-  # Install via PPA on Ubuntu
+  # Install via PPA on Ubuntu. add-apt-repository on Ubuntu 24.04+ writes
+  # deb822-format `.sources` files instead of legacy `.list`, so the guard
+  # must check both extensions — otherwise this re-runs every mitamae apply
+  # and trips on transient Launchpad outages even when the PPA is already
+  # registered locally.
   execute "add eternal-terminal ppa" do
     command "add-apt-repository -y ppa:jgmath2000/et"
-    not_if "grep -q 'jgmath2000/et' /etc/apt/sources.list.d/*.list 2>/dev/null"
+    not_if "grep -rqE 'jgmath2000/(ubuntu/)?et' /etc/apt/sources.list.d/ 2>/dev/null"
     user node[:setup][:system_user]
   end
 
