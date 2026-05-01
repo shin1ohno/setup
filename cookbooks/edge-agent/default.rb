@@ -1,12 +1,16 @@
 # frozen_string_literal: true
 #
 # edge-agent: Nuimo BLE → Roon/Hue controller, published as a crate on crates.io.
+# Tracks the latest stable release via mise's cargo backend with @latest semantics.
 # Per-host deploy:
-#   - cargo install edge-agent --features hue   → ~/.cargo/bin/edge-agent
+#   - mise install cargo:edge-agent[features=hue,locked=true]@latest
+#       → ~/.local/share/mise/installs/cargo-edge-agent/<version>/bin/edge-agent
+#       → ~/.local/share/mise/shims/edge-agent (active-version shim)
 #   - $XDG_CONFIG_HOME/edge-agent/config.toml   (per-host config from files/config-<variant>.toml)
 #   - $XDG_STATE_HOME/edge-agent/               (tokens, cache, stdout/stderr logs)
-#   - Linux  : systemd --user unit, user runs `systemctl --user enable --now edge-agent`
-#   - macOS  : wraps the raw cargo binary in an .app bundle (~/Applications/EdgeAgent.app)
+#   - Linux  : systemd --user unit pointing at the mise shim, user runs
+#              `systemctl --user enable --now edge-agent` (and `restart` after upgrades)
+#   - macOS  : wraps the mise-resolved binary in an .app bundle (~/Applications/EdgeAgent.app)
 #              so macOS Local Network Privacy can register a grant keyed by
 #              CFBundleIdentifier. Without the bundle + Info.plist, LAN access under
 #              launchd returns `No route to host (os error 65)` even though SSH-launched
@@ -15,9 +19,10 @@
 #              binary replacement because it keys on the (stable) bundle ID rather than
 #              the binary's cdhash.
 #
+# Auto-upgrade: `mise install <spec>@latest` re-resolves @latest on every mitamae run
+# and installs the new version automatically when a newer release lands on crates.io.
+#
 # Hosts that aren't in HOSTNAME_TO_VARIANT are skipped — same pattern as ssh-keys.
-
-EDGE_AGENT_VERSION = "0.14.0"
 
 HOSTNAME_TO_VARIANT = {
   "pro" => "pro",
@@ -35,16 +40,20 @@ end
 
 user = node[:setup][:user]
 home = node[:setup][:home]
-cargo_bin = "#{home}/.cargo/bin/edge-agent"
+mise_bin = "#{home}/.local/bin/mise"
+edge_spec = "cargo:edge-agent[features=hue,locked=true]"
 
-# Binary install — idempotent via .crates.toml grep. `cargo install` would also
-# short-circuit on a matching version, but the metadata fetch still costs a few
-# hundred ms and emits noise; the grep skips the invocation entirely.
-execute "cargo install edge-agent #{EDGE_AGENT_VERSION}" do
-  command "#{home}/.cargo/bin/cargo install edge-agent --version #{EDGE_AGENT_VERSION} --features hue --locked"
+# Install (and auto-upgrade) via mise's cargo backend. mise resolves @latest each
+# call, so a newer crates.io release is picked up on the next mitamae run.
+execute "mise install #{edge_spec}@latest" do
+  command "#{mise_bin} install '#{edge_spec}@latest'"
   user user
-  cwd home
-  not_if "grep -q '\"edge-agent #{EDGE_AGENT_VERSION} (registry' #{home}/.cargo/.crates.toml 2>/dev/null"
+end
+
+execute "mise use --global #{edge_spec}@latest" do
+  command "#{mise_bin} use --global '#{edge_spec}@latest'"
+  user user
+  not_if "grep -q 'cargo:edge-agent' #{home}/.config/mise/config.toml 2>/dev/null"
 end
 
 directory "#{home}/.config/edge-agent" do
@@ -65,10 +74,11 @@ directory "#{home}/.local/state/edge-agent" do
 end
 
 if node[:platform] == "darwin"
-  # macOS: wrap ~/.cargo/bin/edge-agent in an .app bundle so Local Network Privacy
-  # attaches its grant to a stable CFBundleIdentifier. The bundle's copy of the
-  # binary must be re-synced + re-signed whenever cargo replaces ~/.cargo/bin/edge-agent
-  # (handled below by an mtime check).
+  # macOS: wrap the mise-resolved edge-agent binary in an .app bundle so macOS
+  # Local Network Privacy attaches its grant to a stable CFBundleIdentifier. The
+  # bundle's copy of the binary must be re-synced + re-signed whenever mise
+  # installs a new version (handled below by an mtime check that compares the
+  # bundle copy to the live `mise where` install path).
 
   app_bundle = "#{home}/Applications/EdgeAgent.app"
   bundle_exec = "#{app_bundle}/Contents/MacOS/edge-agent"
@@ -100,9 +110,9 @@ if node[:platform] == "darwin"
           <key>CFBundleExecutable</key>
           <string>edge-agent</string>
           <key>CFBundleVersion</key>
-          <string>#{EDGE_AGENT_VERSION}</string>
+          <string>0.0.0</string>
           <key>CFBundleShortVersionString</key>
-          <string>#{EDGE_AGENT_VERSION}</string>
+          <string>0.0.0</string>
           <key>CFBundlePackageType</key>
           <string>APPL</string>
           <key>LSUIElement</key>
@@ -121,20 +131,24 @@ if node[:platform] == "darwin"
     PLIST
   end
 
-  # Sync binary + ad-hoc sign + reload launchd whenever cargo_bin is newer than
-  # the bundled copy (or the copy is missing). `-nt` is true when the right-hand
-  # side is *not newer*, so `not_if` fires when the bundle is already up to date.
-  # The unload tolerates "not currently loaded" (first run before interactive
-  # bootstrap) via `2>/dev/null || true`; load is only reached if cp + codesign
-  # succeeded so a failing codesign leaves the old binary + launchd state intact.
+  # Sync binary + ad-hoc sign + reload launchd whenever the mise-resolved binary
+  # is newer than the bundled copy (or the copy is missing). `mise where` returns
+  # the active install dir at converge time, so this picks up any version bump
+  # `mise install ...@latest` produced earlier in the run. `-nt` is true when the
+  # right-hand side is *not newer*, so `not_if` fires when the bundle is up to
+  # date. The unload tolerates "not currently loaded" (first run before
+  # interactive bootstrap) via `2>/dev/null || true`; load is only reached if cp
+  # + codesign succeeded so a failing codesign leaves the old binary + launchd
+  # state intact.
   execute "sync EdgeAgent.app binary, codesign, and reload launchd" do
-    command "cp -f #{cargo_bin} #{bundle_exec} && " \
+    command "src=\"$(#{mise_bin} where cargo:edge-agent)/bin/edge-agent\" && " \
+            "cp -f \"$src\" #{bundle_exec} && " \
             "codesign --force --deep --sign - #{app_bundle} && " \
             "{ launchctl unload #{launchd_plist} 2>/dev/null || true; } && " \
             "launchctl load #{launchd_plist}"
     user user
-    only_if "test -x #{cargo_bin}"
-    not_if "test -x #{bundle_exec} && ! [ #{cargo_bin} -nt #{bundle_exec} ]"
+    only_if "test -x \"$(#{mise_bin} where cargo:edge-agent 2>/dev/null)/bin/edge-agent\""
+    not_if  "test -x #{bundle_exec} && ! [ \"$(#{mise_bin} where cargo:edge-agent 2>/dev/null)/bin/edge-agent\" -nt #{bundle_exec} ]"
   end
 
   directory "#{home}/Library/LaunchAgents" do
@@ -208,7 +222,7 @@ else
 
       [Service]
       Type=simple
-      ExecStart=%h/.cargo/bin/edge-agent
+      ExecStart=%h/.local/share/mise/shims/edge-agent
       Environment=RUST_LOG=info
       Restart=on-failure
       RestartSec=5s
