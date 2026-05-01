@@ -181,8 +181,16 @@ define :install_package, darwin: nil, ubuntu: nil, arch: nil do
       if platform == "darwin"
         package pkg
       else
+        # Proc-form `not_if`: mitamae's specinfra check_package_is_installed
+        # runs through the resource's `user` attribute (here system_user =
+        # "root"), which on this host is wrapped with `sudo -u root` and
+        # silently fails to non-zero — so the built-in idempotency check
+        # always reports the package as not installed. The Proc evaluates
+        # in mitamae's own Ruby context (no user wrap), so the dpkg-query
+        # actually succeeds and suppresses the no-op apt-get install.
         package pkg do
           user node[:setup][:system_user]
+          not_if { run_command("dpkg-query -W -f='${Status}' #{pkg} 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
         end
       end
     end
