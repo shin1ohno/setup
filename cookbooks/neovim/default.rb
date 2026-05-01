@@ -20,6 +20,7 @@ if node[:platform] == "ubuntu"
   %w(ninja-build gettext libtool libtool-bin autoconf automake cmake g++ pkg-config unzip curl).each do |pkg|
     package pkg do
       user node[:setup][:system_user]
+      not_if { run_command("dpkg-query -W -f='${Status}' #{pkg} 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
     end
   end
 

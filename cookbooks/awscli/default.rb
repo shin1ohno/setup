@@ -11,6 +11,7 @@ when "ubuntu"
   archive_path = "#{node[:setup][:root]}/awscli/awscliv2.zip"
   package "unzip" do
     user node[:setup][:system_user]
+    not_if { run_command("dpkg-query -W -f='${Status}' unzip 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
   end
 
   execute "curl --silent --fail https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o #{archive_path.shellescape}" do
