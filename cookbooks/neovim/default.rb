@@ -10,6 +10,10 @@ nvim_source_dir = "neovim-#{NVIM_VERSION.delete_prefix('v')}"
 if node[:platform] == "ubuntu"
   execute "apt-get update" do
     user node[:setup][:system_user]
+    # Skip if /var/cache/apt/pkgcache.bin was refreshed within the last 24h.
+    # Proc form: see cookbooks/docker-engine/default.rb for the rationale
+    # (string not_if is broken under the `user "root"` sudo wrap).
+    not_if { run_command("find /var/cache/apt/pkgcache.bin -mmin -1440 2>/dev/null | grep -q .", error: false).exit_status == 0 }
   end
 
   # Install dependencies

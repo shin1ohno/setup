@@ -19,6 +19,15 @@ end
 execute "update_package_index" do
   command "apt-get update"
   user node[:setup][:system_user]
+  # Skip if /var/cache/apt/pkgcache.bin was refreshed within the last 24h —
+  # apt-get update is a network round-trip that delays every mitamae run
+  # even when the index is fresh.
+  #
+  # Proc form (not string) because mitamae auto-wraps string not_if commands
+  # with `sudo -u <user>` when the resource has a `user` attribute, and that
+  # wrap silently fails to non-zero on this host — bypassing the guard.
+  # Procs evaluate in mitamae's own Ruby context (no user wrap).
+  not_if { run_command("find /var/cache/apt/pkgcache.bin -mmin -1440 2>/dev/null | grep -q .", error: false).exit_status == 0 }
 end
 
 %w(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin).each do |pkg|

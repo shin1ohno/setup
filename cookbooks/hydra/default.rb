@@ -102,7 +102,18 @@ end
 
 # Everything below requires .env — skip if not yet generated
 if File.exist?(env_output_path)
-  # Create hydra database on Aurora (uses ephemeral postgres container)
+  # Create hydra database on Aurora (uses ephemeral postgres container).
+  # not_if uses a marker file rather than re-querying Aurora every run —
+  # the previous `docker run --rm postgres:16-alpine sh -c 'psql ...'` not_if
+  # took 5–30s on warm runs and could hang indefinitely if Aurora was
+  # unreachable. The marker is touched only on successful CREATE DATABASE
+  # (or on the OR-fallthrough when the DB already exists), so a transient
+  # failure does not falsely permanent-skip the resource.
+  #
+  # Migration: existing hosts with the DB already created should
+  #   touch ~/deploy/hydra/.hydra-db-created
+  # before the next mitamae run.
+  db_marker = "#{deploy_dir}/.hydra-db-created"
   execute "create hydra database on Aurora" do
     command %W[
       docker run --rm --env-file #{deploy_dir}/.env
@@ -110,31 +121,29 @@ if File.exist?(env_output_path)
       sh -c 'psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
       -c "SELECT 1 FROM pg_database WHERE datname = '"'"'hydra'"'"'" | grep -q 1 ||
       psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
-      -c "CREATE DATABASE hydra;"'
+      -c "CREATE DATABASE hydra;"' && touch #{db_marker}
     ].join(" ")
     user node[:setup][:user]
-    not_if %W[
-      docker run --rm --env-file #{deploy_dir}/.env
-      postgres:16-alpine
-      sh -c 'psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
-      -tc "SELECT 1 FROM pg_database WHERE datname = '"'"'hydra'"'"'" | grep -q 1'
-    ].join(" ")
+    not_if "test -f #{db_marker}"
   end
 
   compose_path = "#{deploy_dir}/docker-compose.yml"
 
-  # Ensure containers are running (cheap idempotency check). Fires only when a
-  # declared service is not currently running.
+  # Ensure containers are running. `docker compose ps --filter` is unusably
+  # slow (timeouts >60s on this host), so we resolve "running" state via
+  # `docker ps` with the compose-project label — fast and unaffected by
+  # compose env-var expansion. Excludes hydra-migrate (one-shot migration
+  # job that exits on success). Fires when any of {hydra, consent} is not
+  # in a running state.
+  project_name = File.basename(deploy_dir)
   execute "ensure hydra running" do
     command "docker compose -f #{compose_path} up -d --build"
     user node[:setup][:user]
     only_if <<~SH.tr("\n", " ").strip
-      services=$(docker compose -f #{compose_path} config --services 2>/dev/null);
-      [ -n "$services" ] || exit 1;
-      for s in $services; do
-        docker compose -f #{compose_path} ps --services --filter status=running 2>/dev/null | grep -qx "$s" || exit 0;
-      done;
-      exit 1
+      running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
+                          --filter status=running --format '{{.Label "com.docker.compose.service"}}'
+                | grep -v '^hydra-migrate$' | sort | tr '\\n' ' ');
+      test "$running" = "consent hydra " && exit 1 || exit 0
     SH
   end
 else
