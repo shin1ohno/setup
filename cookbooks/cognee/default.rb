@@ -94,6 +94,26 @@ end
   end
 end
 
+# Cognee MCP server runtime patches. Mounted as read-only volumes by the
+# cognee-mcp container (see docker-compose.yml). Source of truth lives in
+# this cookbook so mitamae re-runs cannot drift from the committed copy.
+directory "#{deploy_dir}/patches" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w[mcp-server.py mcp-cognee-client.py].each do |f|
+  remote_file "#{deploy_dir}/patches/#{f}" do
+    source "files/patches/#{f}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    notifies :run, "execute[docker compose restart cognee]"
+  end
+end
+
 %w[bulk_ingest.py export_vault.py watch_and_export.py].each do |f|
   remote_file "#{deploy_dir}/scripts/#{f}" do
     source "files/scripts/#{f}"
