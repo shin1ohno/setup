@@ -1,19 +1,23 @@
 execute "update_and_install_deps" do
   command "apt-get update && apt-get install -y ca-certificates curl"
-  not_if "dpkg -s ca-certificates curl"
   user node[:setup][:system_user]
+  not_if {
+    %w(ca-certificates curl).all? { |pkg|
+      run_command("dpkg-query -W -f='${Status}' #{pkg} 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0
+    }
+  }
 end
 
 execute "add_docker_gpg_key" do
   command "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -"
-  not_if "apt-key list | grep Docker"
   user node[:setup][:system_user]
+  not_if { run_command("apt-key list 2>/dev/null | grep -q Docker", error: false).exit_status == 0 }
 end
 
 execute "add_docker_repo" do
   command 'add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu noble stable"'
-  not_if 'grep -R "download.docker.com" /etc/apt/sources.list /etc/apt/sources.list.d'
   user node[:setup][:system_user]
+  not_if { run_command('grep -R "download.docker.com" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null', error: false).exit_status == 0 }
 end
 
 execute "update_package_index" do
@@ -38,15 +42,22 @@ end
   end
 end
 
-# Start and enable Docker service
+# Start and enable Docker service. The service resource's built-in state
+# check is unreliable under the `user "root"` sudo wrap (and even without
+# it, mitamae's `enabled` detection mis-fires on this host); use a Proc
+# not_if to short-circuit on the systemctl-truth.
 service "docker" do
   action [:start, :enable]
   user node[:setup][:system_user]
+  not_if {
+    run_command("systemctl is-active docker", error: false).exit_status == 0 &&
+      run_command("systemctl is-enabled docker", error: false).exit_status == 0
+  }
 end
 
 # Add the setup user to the docker group for rootless access
 execute "usermod -aG docker #{node[:setup][:user]}" do
   user node[:setup][:system_user]
-  not_if "id -nG #{node[:setup][:user]} | grep -qw docker"
+  not_if { run_command("id -nG #{node[:setup][:user]} | grep -qw docker", error: false).exit_status == 0 }
 end
 

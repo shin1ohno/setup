@@ -44,7 +44,7 @@ else
 
   execute script_path do
     user node[:setup][:system_user]
-    not_if "test -e /opt/RoonServer"
+    not_if { File.exist?("/opt/RoonServer") }
   end
 
   staging_unit = "#{node[:setup][:root]}/roon-server/roonserver.service"
