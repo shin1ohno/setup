@@ -83,30 +83,42 @@ if File.exist?(env_temp_path)
   end
 end
 
-# Ensure pgvector extension exists on Aurora (uses ephemeral postgres container)
+# Ensure pgvector extension exists on Aurora (uses ephemeral postgres container).
+# Marker file replaces the previous unguarded `docker run psql` which fired
+# every mitamae run (network round-trip + container pull). The OR-fallthrough
+# in the command makes `CREATE EXTENSION IF NOT EXISTS` itself idempotent;
+# the marker ensures we don't pay the network cost after first success.
+#
+# Migration: existing hosts with the extension already enabled should
+#   touch ~/deploy/memory/.pgvector-enabled
+# before the next mitamae run.
+pgvector_marker = "#{deploy_dir}/.pgvector-enabled"
 execute "enable pgvector extension on Aurora" do
   command %W[
     docker run --rm --env-file #{deploy_dir}/.env
     postgres:16-alpine
-    sh -c 'psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"'
+    sh -c 'psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"' && touch #{pgvector_marker}
   ].join(" ")
   user node[:setup][:user]
+  not_if "test -f #{pgvector_marker}"
 end
 
 compose_path = "#{deploy_dir}/docker-compose.yml"
 
-# Ensure containers are running (cheap idempotency check). Fires only when a
-# declared service is not currently running.
+# Ensure containers are running. `docker compose ps --filter` is unusably
+# slow (>60s timeouts on this host); we resolve "running" state via
+# `docker ps` with the compose-project label instead.
+project_name = File.basename(deploy_dir)
 execute "ensure ai-memory running" do
   command "docker compose -f #{compose_path} up -d --wait --wait-timeout 120"
   user node[:setup][:user]
   only_if <<~SH.tr("\n", " ").strip
-    services=$(docker compose -f #{compose_path} config --services 2>/dev/null);
-    [ -n "$services" ] || exit 1;
-    for s in $services; do
-      docker compose -f #{compose_path} ps --services --filter status=running 2>/dev/null | grep -qx "$s" || exit 0;
-    done;
-    exit 1
+    expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
+    [ -n "$expected" ] || exit 1;
+    running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
+                        --filter status=running --format '{{.Label "com.docker.compose.service"}}'
+              | sort | tr '\\n' ' ');
+    test "$running" = "$expected" && exit 1 || exit 0
   SH
 end
 

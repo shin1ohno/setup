@@ -182,18 +182,21 @@ end
 if File.exist?(env_output_path)
   compose_path = "#{deploy_dir}/docker-compose.yml"
 
-  # Ensure containers are running (cheap idempotency check). Fires only when a
-  # declared service is not currently running.
+  # Ensure containers are running. `docker compose ps --filter` is unusably
+  # slow (>60s on this host); resolve "running" state via `docker ps` with
+  # the compose-project label instead — fast and unaffected by compose
+  # env-var expansion.
+  project_name = File.basename(deploy_dir)
   execute "ensure cognee running" do
     command "docker compose -f #{compose_path} up -d --build"
     user node[:setup][:user]
     only_if <<~SH.tr("\n", " ").strip
-      services=$(docker compose -f #{compose_path} config --services 2>/dev/null);
-      [ -n "$services" ] || exit 1;
-      for s in $services; do
-        docker compose -f #{compose_path} ps --services --filter status=running 2>/dev/null | grep -qx "$s" || exit 0;
-      done;
-      exit 1
+      expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
+      [ -n "$expected" ] || exit 1;
+      running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
+                          --filter status=running --format '{{.Label "com.docker.compose.service"}}'
+                | sort | tr '\\n' ' ');
+      test "$running" = "$expected" && exit 1 || exit 0
     SH
   end
 end
