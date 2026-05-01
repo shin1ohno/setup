@@ -25,7 +25,10 @@ execute "install arp-flux sysctl drop-in" do
     chmod 644 /etc/sysctl.d/30-arp-flux.conf
   BASH
   user node[:setup][:system_user]
-  not_if "test -f /etc/sysctl.d/30-arp-flux.conf && diff -q #{source} /etc/sysctl.d/30-arp-flux.conf"
+  # Proc form: see comment in cookbooks/functions/default.rb. String not_if
+  # is wrapped with `sudo -u root` here and silently fails to non-zero on
+  # this host, defeating the guard.
+  not_if { run_command("test -f /etc/sysctl.d/30-arp-flux.conf && diff -q #{source} /etc/sysctl.d/30-arp-flux.conf", error: false).exit_status == 0 }
 end
 
 # Apply the new values to the running kernel without a reboot.
@@ -36,10 +39,15 @@ end
 execute "apply arp-flux sysctl" do
   command "sysctl --system"
   user node[:setup][:system_user]
-  not_if <<~BASH
-    sysctl -n net.ipv4.conf.all.arp_ignore | grep -q '^1$' && \
-    sysctl -n net.ipv4.conf.all.arp_announce | grep -q '^2$' && \
-    sysctl -n net.ipv4.conf.default.arp_ignore | grep -q '^1$' && \
-    sysctl -n net.ipv4.conf.default.arp_announce | grep -q '^2$'
-  BASH
+  not_if {
+    %w(
+      net.ipv4.conf.all.arp_ignore=1
+      net.ipv4.conf.all.arp_announce=2
+      net.ipv4.conf.default.arp_ignore=1
+      net.ipv4.conf.default.arp_announce=2
+    ).all? { |kv|
+      key, value = kv.split("=")
+      run_command("sysctl -n #{key} 2>/dev/null", error: false).stdout.strip == value
+    }
+  }
 end

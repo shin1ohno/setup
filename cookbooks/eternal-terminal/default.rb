@@ -63,14 +63,17 @@ when "ubuntu"
   # registered locally.
   execute "add eternal-terminal ppa" do
     command "add-apt-repository -y ppa:jgmath2000/et"
-    not_if "grep -rqE 'jgmath2000/(ubuntu/)?et' /etc/apt/sources.list.d/ 2>/dev/null"
     user node[:setup][:system_user]
+    not_if { run_command("grep -rqE 'jgmath2000/(ubuntu/)?et' /etc/apt/sources.list.d/ 2>/dev/null", error: false).exit_status == 0 }
   end
 
   execute "apt-get update for eternal-terminal" do
     command "apt-get update"
-    not_if "which et"
     user node[:setup][:system_user]
+    # Skip if `et` is already installed (the PPA was already added in a
+    # previous run and the package landed). Ruby File.exist? avoids the
+    # PATH-dependent `which et` which fails when wrapped via `sudo -u root`.
+    not_if { File.exist?("/usr/bin/et") }
   end
 
   package "et" do
@@ -82,8 +85,8 @@ when "ubuntu"
   # Enable and start etserver service
   execute "enable etserver service" do
     command "systemctl enable --now et.service"
-    not_if "systemctl is-active et.service"
     user node[:setup][:system_user]
+    not_if { run_command("systemctl is-active et.service", error: false).exit_status == 0 }
   end
 
 when "debian"
@@ -113,8 +116,8 @@ when "debian"
   # Enable and start etserver service
   execute "enable etserver service" do
     command "systemctl enable --now et.service"
-    not_if "systemctl is-active et.service"
     user node[:setup][:system_user]
+    not_if { run_command("systemctl is-active et.service", error: false).exit_status == 0 }
   end
 
 when "arch"
@@ -127,8 +130,8 @@ when "arch"
   # Enable and start etserver service
   execute "enable etserver service" do
     command "systemctl enable --now et.service"
-    not_if "systemctl is-active et.service"
     user node[:setup][:system_user]
+    not_if { run_command("systemctl is-active et.service", error: false).exit_status == 0 }
   end
 end
 

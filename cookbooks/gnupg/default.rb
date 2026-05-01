@@ -12,6 +12,12 @@ end
 
 execute "chmod 700 #{node[:setup][:home]}/.gnupg" do
   only_if { Dir.exist?("#{node[:setup][:home]}/.gnupg") }
+  # Skip when the directory is already 0700 — `execute "chmod 700"` is
+  # otherwise a no-op call every run.
+  not_if {
+    File.exist?("#{node[:setup][:home]}/.gnupg") &&
+      run_command("stat -c %a #{node[:setup][:home]}/.gnupg", error: false).stdout.strip == "700"
+  }
 end
 
 # Add configuration for macOS to use pinentry-mac

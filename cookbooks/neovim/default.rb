@@ -26,7 +26,7 @@ if node[:platform] == "ubuntu"
 
   execute "mkdir -p #{neovim_root}" do
     user node[:setup][:system_user]
-    not_if "test -d #{neovim_root}"
+    not_if { Dir.exist?(neovim_root) }
   end
 
   execute "Download Neovim #{NVIM_VERSION}" do
