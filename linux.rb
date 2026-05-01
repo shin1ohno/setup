@@ -26,6 +26,7 @@ include_role "manage" # Managed projects setup
 include_role "network" # Network configuration
 include_role "server" # Server-specific setup
 
+include_cookbook "arp-flux"
 include_cookbook "bluez"
 include_cookbook "zeroconf"
 include_cookbook "broadcom-wifi"
