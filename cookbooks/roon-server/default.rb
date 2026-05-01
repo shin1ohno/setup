@@ -20,9 +20,10 @@ if node[:platform] == "darwin"
     only_if "test -f /Library/LaunchDaemons/com.roon.server.plist"
   end 
 else
-  %w(curl ffmpeg cifs-utils).each do |pkg| 
+  %w(curl ffmpeg cifs-utils).each do |pkg|
     package pkg do
       user node[:setup][:system_user]
+      not_if { run_command("dpkg-query -W -f='${Status}' #{pkg} 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
     end
   end
 

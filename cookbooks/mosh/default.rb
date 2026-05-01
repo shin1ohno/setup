@@ -1,7 +1,13 @@
 # frozen_string_literal: true
 
-package "mosh" do
-  user (node[:platform] == "darwin" ? node[:setup][:user] : node[:setup][:system_user])
+case node[:platform]
+when "darwin"
+  package "mosh"
+else
+  package "mosh" do
+    user node[:setup][:system_user]
+    not_if { run_command("dpkg-query -W -f='${Status}' mosh 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
+  end
 end
 
 if node[:platform] == "darwin"

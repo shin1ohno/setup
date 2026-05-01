@@ -22,14 +22,11 @@ if node[:platform] == "darwin"
     only_if { brew_tap?("takai/tap") }
   end
 else
-  package "git" do
-    user node[:setup][:system_user]
-  end
-  package "git-lfs" do
-    user node[:setup][:system_user]
-  end
-  package "gh" do
-    user node[:setup][:system_user]
+  %w(git git-lfs gh).each do |pkg|
+    package pkg do
+      user node[:setup][:system_user]
+      not_if { run_command("dpkg-query -W -f='${Status}' #{pkg} 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
+    end
   end
 end
 
