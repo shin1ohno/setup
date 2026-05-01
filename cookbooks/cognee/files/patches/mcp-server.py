@@ -232,14 +232,23 @@ async def cognify(
                 logger.error("Cognify process failed.")
                 raise ValueError(f"Failed to cognify: {str(e)}")
 
-    await cognify_task(
-        data=data,
-        graph_model_file=graph_model_file,
-        graph_model_name=graph_model_name,
-        custom_prompt=custom_prompt,
+    # Fire-and-forget: launch cognify_task in the background and return
+    # immediately so the MCP tool call does not block on the LLM extraction
+    # step. Status can be checked with the cognify_status tool. Matches the
+    # docstring above ("launches a background task and returns immediately").
+    asyncio.create_task(
+        cognify_task(
+            data=data,
+            graph_model_file=graph_model_file,
+            graph_model_name=graph_model_name,
+            custom_prompt=custom_prompt,
+        )
     )
 
-    text = "Cognify completed successfully. Data has been processed and saved to the knowledge graph."
+    text = (
+        "Cognify task launched in background. "
+        "Use cognify_status to check progress."
+    )
 
     return [
         types.TextContent(
@@ -291,11 +300,14 @@ async def save_interaction(data: str) -> list:
                 logger.error("Save interaction process failed.")
                 raise ValueError(f"Failed to Save interaction: {str(e)}")
 
-    await save_user_agent_interaction(
-        data=data,
-    )
+    # Fire-and-forget: same rationale as cognify above. Long-running LLM
+    # extraction must not block the MCP tool response.
+    asyncio.create_task(save_user_agent_interaction(data=data))
 
-    text = "Interaction saved successfully. Data has been processed and saved to the knowledge graph."
+    text = (
+        "Interaction save task launched in background. "
+        "Use cognify_status to check progress."
+    )
 
     return [
         types.TextContent(
