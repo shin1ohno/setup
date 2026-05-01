@@ -37,6 +37,7 @@ This repository does NOT configure:
 - `roles/extras/` - Specialized development tools (terraform, neovim, docker)
 - `roles/manage/` - Managed projects setup from JSON configuration
 - `roles/server/` - Server-specific setup (Linux only, deploy directory)
+- `roles/mcp-server/` - Self-hosted MCP servers (Linux only)
 
 **Implementation Pattern:**
 
@@ -82,13 +83,12 @@ This repository does NOT configure:
 - Always include user/group/mode for file operations
 - **External URLs**: Verify external resources (GitHub releases, Homebrew packages, URLs) with `curl -sI` before commit. Dry-run does not fetch external resources — it is not evidence that a URL exists
 
-**Custom Helpers Available:**
+**Custom Helpers Available** (defined in `cookbooks/functions/default.rb`):
 
-- `include_role(name)` - Include role from roles/ directory
-- `include_cookbook(name)` - Include cookbook from cookbooks/ directory
-- `add_profile(name, bash_content:, priority:, fish_content:)` - Add shell profile script (fish_content requires SETUP_FISH=1)
-- `install_package(darwin:, ubuntu:, arch:)` - Cross-platform package installation
-- `git_clone(uri:, cwd:, user:)` - Git repository cloning
+- `include_role(name)` / `include_cookbook(name)` - Include from `roles/` or `cookbooks/`
+- `require_external_auth(tool_name:, check_command:, instructions:, skip_if:)` - Gate cookbook on external auth (SSM, gh, etc.); skips in non-TTY contexts
+- `prepend_path(*dirs)` - Prepend dirs to PATH for the current recipe run
+- `brew_formula?(name)` / `brew_cask?(name)` / `brew_tap?(name)` - Cached lookup against `brew list/tap` (cache populated by `cookbooks/homebrew`)
 
 **Node Configuration Access:**
 
@@ -104,8 +104,9 @@ This repository does NOT configure:
 ## Important Notes
 
 - Always test cookbook changes with `--dry-run` first
+- The project hook `.claude/hooks/guard-mitamae-dry-run.rb` blocks `mitamae` without `--dry-run` for Claude. Apply runs are user-only — present them as `! ./bin/mitamae local <platform>.rb` for the user to run
 - Use `run_command("command", error: false)` for status code checking
 - Profile scripts are loaded from `~/.setup_shin1ohno/profile.d/` with priority ordering
-- Linux includes hardware-specific cookbooks directly (bluez, broadcom-wifi, etc.)
-- macOS includes client-specific setup (mac-settings, mac-apps) directly in darwin.rb
+- Linux includes Linux-only cookbooks directly in `linux.rb` (bluez, broadcom-wifi, zeroconf for hardware; edge-agent, roon-server, roon-mcp for services)
+- macOS includes client-specific setup (mac-settings, mac-apps) directly in `darwin.rb`
 
