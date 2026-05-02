@@ -32,6 +32,21 @@ mcp_servers:
     transport: sse
     url: "https://mcp.ohno.be/memory/mcp/claude/sse/shin1ohno"
 
+  roon:
+    type: http
+    transport: sse
+    url: "https://mcp.ohno.be/roon/sse"
+
+  cognee:
+    type: http
+    transport: sse
+    url: "https://mcp.ohno.be/cognee/sse"
+
+  sage:
+    type: http
+    transport: http
+    url: "https://mcp.ohno.be/mcp"
+
   langmem-mcp:
     command: "npx"
     args:
