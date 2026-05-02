@@ -118,6 +118,7 @@ require_external_auth(
   execute "generate hydra-server .env" do
     command <<~SH
       set -e
+      umask 077
       AURORA_ENDPOINT=$(aws ssm get-parameter --name /memory/aurora-endpoint --query Parameter.Value --output text)
       HYDRA_PASSWORD=$(aws ssm get-parameter --name /hydra/aurora-password --with-decryption --query Parameter.Value --output text)
       SECRETS_SYSTEM=$(aws ssm get-parameter --name /hydra/system-secret --with-decryption --query Parameter.Value --output text)

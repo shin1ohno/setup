@@ -81,6 +81,7 @@ require_external_auth(
   execute "generate memory-server .env" do
     command <<~SH
       set -e
+      umask 077
       AURORA_ENDPOINT=$(aws ssm get-parameter --name /memory/aurora-endpoint --query Parameter.Value --output text)
       AURORA_PASSWORD=$(aws ssm get-parameter --name /memory/aurora-password --with-decryption --query Parameter.Value --output text)
       OPENAI_KEY=$(aws ssm get-parameter --name /mcp/openai-api-key --with-decryption --query Parameter.Value --output text)
