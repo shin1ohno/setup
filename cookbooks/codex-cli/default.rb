@@ -54,11 +54,15 @@ require_external_auth(
   instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
 ) do
   execute "generate and deploy codex config.toml" do
+    # Wrap in `bash -c` because mitamae's execute runs via /bin/sh, which is
+    # dash on Ubuntu and rejects `set -o pipefail`.
     command <<~CMD.strip
-      set -euo pipefail
-      bash #{generator_script} #{mcp_yaml_path} #{temp_path}
-      install -m 644 #{temp_path} #{output_path}
-      rm -f #{temp_path}
+      bash -c '
+        set -euo pipefail
+        bash #{generator_script} #{mcp_yaml_path} #{temp_path}
+        install -m 644 #{temp_path} #{output_path}
+        rm -f #{temp_path}
+      '
     CMD
     user node[:setup][:user]
   end
