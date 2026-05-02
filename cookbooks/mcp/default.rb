@@ -66,7 +66,6 @@ if node[:platform] == "darwin"
   # ran before the execute and skipped declaring the merge on clean runs.
   local_ruby_block "merge claude_desktop_config.json" do
     block do
-      require "json"
       managed  = JSON.parse(File.read(temp_path))
       existing = File.exist?(output_path) ? (JSON.parse(File.read(output_path)) rescue {}) : {}
 
