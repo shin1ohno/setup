@@ -60,28 +60,25 @@ if node[:platform] == "darwin"
   end
 
   # Merge managed config into existing file, preserving user-added mcpServers.
-  # During --dry-run the execute above is a no-op so temp_path won't exist;
-  # during a real run, a generate failure halts execution before reaching here.
-  if File.exist?(temp_path)
-    managed  = JSON.parse(File.read(temp_path))
-    existing = File.exist?(output_path) ? (JSON.parse(File.read(output_path)) rescue {}) : {}
+  # Runs in a local_ruby_block so the merge logic and only_if check both
+  # evaluate at converge time, after the preceding execute has produced
+  # temp_path. A bare Ruby `if File.exist?(temp_path)` at recipe-load time
+  # ran before the execute and skipped declaring the merge on clean runs.
+  local_ruby_block "merge claude_desktop_config.json" do
+    block do
+      require "json"
+      managed  = JSON.parse(File.read(temp_path))
+      existing = File.exist?(output_path) ? (JSON.parse(File.read(output_path)) rescue {}) : {}
 
-    # Deep-merge mcpServers: keep user-added servers, update managed ones
-    merged_servers = (existing["mcpServers"] || {}).merge(managed["mcpServers"] || {})
-    merged = existing.merge(managed)
-    merged["mcpServers"] = merged_servers
+      merged_servers = (existing["mcpServers"] || {}).merge(managed["mcpServers"] || {})
+      merged = existing.merge(managed)
+      merged["mcpServers"] = merged_servers
 
-    file output_path do
-      content JSON.pretty_generate(merged) + "\n"
-      owner node[:setup][:user]
-      group node[:setup][:group]
-      mode "644"
+      File.write(output_path, JSON.pretty_generate(merged) + "\n")
+      File.chmod(0o644, output_path)
+      File.delete(temp_path)
     end
-
-    # Clean up temporary file (contains sensitive SSM values)
-    file temp_path do
-      action :delete
-    end
+    only_if { File.exist?(temp_path) }
   end
 end
 

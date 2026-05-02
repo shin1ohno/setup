@@ -40,31 +40,26 @@ output_path = "#{node[:setup][:home]}/.codex/config.toml"
 
 # generate_config.sh fetches MCP server credentials from SSM. Block here
 # until AWS auth is in place — interactive pause + re-check loop.
+#
+# Generate, install, and clean up in one atomic execute. A previous split
+# into separate generate / remote_file / file resources had a compile-vs-
+# converge ordering bug: the deploy step gated by Ruby's `if File.exist?(
+# temp_path)` evaluated at recipe-load time, before the generate execute
+# had run, so the deploy and cleanup resources were never declared on a
+# clean run. Folding the three steps into one shell pipeline sidesteps the
+# ordering issue entirely.
 require_external_auth(
   tool_name: "AWS CLI (for MCP server SSM params)",
   check_command: "aws sts get-caller-identity",
   instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
 ) do
-  # Generate config to temporary location in setup root
-  execute "generate codex config.toml" do
-    command "bash #{generator_script} #{mcp_yaml_path} #{temp_path}"
+  execute "generate and deploy codex config.toml" do
+    command <<~CMD.strip
+      set -euo pipefail
+      bash #{generator_script} #{mcp_yaml_path} #{temp_path}
+      install -m 644 #{temp_path} #{output_path}
+      rm -f #{temp_path}
+    CMD
     user node[:setup][:user]
-  end
-end
-
-# Deploy and clean up only when the generated file exists.
-# During --dry-run the execute above is a no-op so temp_path won't exist;
-# during a real run, a generate failure halts execution before reaching here.
-if File.exist?(temp_path)
-  remote_file output_path do
-    source temp_path
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "644"
-  end
-
-  # Clean up temporary file (contains sensitive SSM values)
-  file temp_path do
-    action :delete
   end
 end
