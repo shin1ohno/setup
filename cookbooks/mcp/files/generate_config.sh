@@ -40,59 +40,50 @@ for name in $server_names; do
 
   server_type=$(echo "$server" | jq -r '.type // "stdio"')
 
+  # Claude Desktop's claude_desktop_config.json only accepts stdio MCP
+  # servers (command + args + env). HTTP/SSE entries are silently skipped
+  # by Claude Desktop with "not valid MCP server settings". For HTTP-type
+  # servers, configure them via Claude.ai's connectors UI instead — the
+  # cookbook does not duplicate them into the Desktop config.
   if [ "$server_type" = "http" ]; then
-    # HTTP server
-    url=$(echo "$server" | jq -r '.url')
+    continue
+  fi
 
-    # Check if url is an SSM reference
-    if echo "$server" | jq -e '.url.ssm' > /dev/null 2>&1; then
-      ssm_path=$(echo "$server" | jq -r '.url.ssm')
-      url=$(fetch_ssm "$ssm_path")
-    fi
+  # STDIO server
+  command=$(echo "$server" | jq -r '.command' | sed "s|\${HOME}|${HOME_DIR}|g")
 
-    transport=$(echo "$server" | jq -r '.transport // "sse"')
+  # Build args array
+  args=$(echo "$server" | jq -r '.args // []' | jq 'map(gsub("\\${HOME}"; env.HOME))')
 
-    server_config=$(jq -n \
-      --arg url "$url" \
-      --arg transport "$transport" \
-      '{type: "http", url: $url, transport: $transport}')
-  else
-    # STDIO server
-    command=$(echo "$server" | jq -r '.command' | sed "s|\${HOME}|${HOME_DIR}|g")
+  # Build env object with SSM resolution
+  env_obj="{}"
+  if echo "$server" | jq -e '.env' > /dev/null 2>&1; then
+    env_keys=$(echo "$server" | jq -r '.env | keys[]')
+    for key in $env_keys; do
+      value=$(echo "$server" | jq -r ".env[\"$key\"]")
 
-    # Build args array
-    args=$(echo "$server" | jq -r '.args // []' | jq 'map(gsub("\\${HOME}"; env.HOME))')
+      # Check if value is an SSM reference
+      if echo "$server" | jq -e ".env[\"$key\"].ssm" > /dev/null 2>&1; then
+        ssm_path=$(echo "$server" | jq -r ".env[\"$key\"].ssm")
+        value=$(fetch_ssm "$ssm_path")
+      else
+        # Expand ${HOME}
+        value=$(echo "$value" | sed "s|\${HOME}|${HOME_DIR}|g")
+      fi
 
-    # Build env object with SSM resolution
-    env_obj="{}"
-    if echo "$server" | jq -e '.env' > /dev/null 2>&1; then
-      env_keys=$(echo "$server" | jq -r '.env | keys[]')
-      for key in $env_keys; do
-        value=$(echo "$server" | jq -r ".env[\"$key\"]")
+      env_obj=$(echo "$env_obj" | jq --arg k "$key" --arg v "$value" '. + {($k): $v}')
+    done
+  fi
 
-        # Check if value is an SSM reference
-        if echo "$server" | jq -e ".env[\"$key\"].ssm" > /dev/null 2>&1; then
-          ssm_path=$(echo "$server" | jq -r ".env[\"$key\"].ssm")
-          value=$(fetch_ssm "$ssm_path")
-        else
-          # Expand ${HOME}
-          value=$(echo "$value" | sed "s|\${HOME}|${HOME_DIR}|g")
-        fi
+  # Build server config
+  server_config=$(jq -n --arg cmd "$command" '{command: $cmd}')
 
-        env_obj=$(echo "$env_obj" | jq --arg k "$key" --arg v "$value" '. + {($k): $v}')
-      done
-    fi
+  if [ "$(echo "$args" | jq 'length')" -gt 0 ]; then
+    server_config=$(echo "$server_config" | jq --argjson args "$args" '. + {args: $args}')
+  fi
 
-    # Build server config
-    server_config=$(jq -n --arg cmd "$command" '{command: $cmd}')
-
-    if [ "$(echo "$args" | jq 'length')" -gt 0 ]; then
-      server_config=$(echo "$server_config" | jq --argjson args "$args" '. + {args: $args}')
-    fi
-
-    if [ "$env_obj" != "{}" ]; then
-      server_config=$(echo "$server_config" | jq --argjson env "$env_obj" '. + {env: $env}')
-    fi
+  if [ "$env_obj" != "{}" ]; then
+    server_config=$(echo "$server_config" | jq --argjson env "$env_obj" '. + {env: $env}')
   fi
 
   mcp_servers=$(echo "$mcp_servers" | jq --arg name "$name" --argjson config "$server_config" '. + {($name): $config}')
