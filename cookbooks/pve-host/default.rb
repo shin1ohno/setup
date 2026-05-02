@@ -90,6 +90,57 @@ execute "bring up vmbr1" do
 end
 
 # ------------------------------------------------------------------------
+# Data disk mounts: sdb (Media) and sdc (data)
+# ------------------------------------------------------------------------
+# These external ext4 disks survived the auto-install untouched (the ZFS
+# rpool was size-filtered to the ~932 GB SSD only). Mount them at boot so
+# LXC bind-mounts (created by Terraform) have valid sources.
+#
+# Defaults match the `pro` Mac Pro 5,1 layout. UUIDs are stable across
+# the reinstall because the ext4 superblock was preserved. Override per
+# host via node[:pve_host][:data_mounts] when adding a 2nd PVE node.
+#
+# `nofail` lets boot proceed if a disk is missing; `device-timeout=10s`
+# bounds the wait so a flaky cable doesn't hang systemd's local-fs.target.
+
+data_mounts = node.dig(:pve_host, :data_mounts) || [
+  {
+    path: "/mnt/Media",
+    uuid: "cceb11bc-9685-4932-aa2d-660b0827a2c5", # sdb1, 3.6 TB
+    fstype: "ext4",
+    options: "defaults,nofail,x-systemd.device-timeout=10s",
+  },
+  {
+    path: "/mnt/data",
+    uuid: "0a85e7ba-b61f-4f84-bef8-8101a760c82b", # sdc1, 1.8 TB
+    fstype: "ext4",
+    options: "defaults,nofail,x-systemd.device-timeout=10s",
+  },
+]
+
+data_mounts.each do |m|
+  fstab_line = "UUID=#{m[:uuid]} #{m[:path]} #{m[:fstype]} #{m[:options]} 0 2"
+
+  execute "create mountpoint #{m[:path]}" do
+    command "sudo install -d -m 755 -o root -g root #{m[:path]}"
+    not_if "test -d #{m[:path]}"
+  end
+
+  execute "add #{m[:path]} to /etc/fstab" do
+    # printf via sudo tee -a for atomic append. grep guard makes the
+    # resource idempotent regardless of which form (UUID= or path) the
+    # operator may have hand-edited in a prior run.
+    command %(printf '%s\\n' '#{fstab_line}' | sudo tee -a /etc/fstab >/dev/null)
+    not_if "grep -qE '#{m[:uuid]}|[[:space:]]#{m[:path]}[[:space:]]' /etc/fstab"
+  end
+
+  execute "mount #{m[:path]}" do
+    command "sudo mount #{m[:path]}"
+    not_if "mountpoint -q #{m[:path]}"
+  end
+end
+
+# ------------------------------------------------------------------------
 # Pattern 1 break-glass tailscaled (tag:emergency-admin only)
 # ------------------------------------------------------------------------
 # Subnet route advertise + AWS VPC tunnel live on the pro-router LXC.
