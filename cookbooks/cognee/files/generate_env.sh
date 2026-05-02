@@ -20,7 +20,7 @@ fetch_ssm() {
 
 LLM_ENDPOINT=$(fetch_ssm "/cognee/llm-endpoint")
 LLM_API_KEY=$(fetch_ssm "/cognee/llm-api-key")
-LLM_MODEL=$(fetch_ssm "/cognee/llm-model" 2>/dev/null || echo "openai/gpt-4o")
+LLM_MODEL=$(fetch_ssm "/cognee/llm-model" 2>/dev/null || echo "openai/gpt-5-mini")
 EMBEDDING_MODEL=$(fetch_ssm "/cognee/embedding-model" 2>/dev/null || echo "openai/text-embedding-3-small")
 
 cat > "${OUTPUT_FILE}" <<EOF
