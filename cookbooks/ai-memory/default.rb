@@ -69,18 +69,21 @@ require_external_auth(
   end
 end
 
-if File.exist?(env_temp_path)
-  remote_file env_output_path do
-    source env_temp_path
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "600"
-    notifies :run, "execute[docker compose restart ai-memory]"
-  end
+# Deploy and clean up at converge time. Replaces a compile-time
+# `if File.exist?(env_temp_path)` that ran before the preceding execute,
+# so on clean runs the resources were never declared.
+remote_file env_output_path do
+  source env_temp_path
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "600"
+  notifies :run, "execute[docker compose restart ai-memory]"
+  only_if "test -f #{env_temp_path}"
+end
 
-  file env_temp_path do
-    action :delete
-  end
+file env_temp_path do
+  action :delete
+  only_if "test -f #{env_temp_path}"
 end
 
 # Ensure pgvector extension exists on Aurora (uses ephemeral postgres container).

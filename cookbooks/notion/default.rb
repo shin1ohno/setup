@@ -28,51 +28,66 @@ end
 
 # Set up Notion MCP for Claude Code (official hosted version via OAuth)
 # This uses Notion's official MCP server at mcp.notion.com
+#
+# Each resource below uses `only_if "test -f #{claude_path}"` so the
+# claude-binary check happens at converge time — on a clean run the
+# claude-code cookbook's mise install populates the binary before we get
+# here. A previous compile-time `if File.exist?(claude_path)` wrapper
+# evaluated before any execute had run, skipping the entire block on
+# clean runs.
 claude_path = "#{node[:setup][:home]}/.local/bin/claude"
 
-if File.exist?("#{ENV['HOME']}/.local/bin/claude")
-  execute "setup notion mcp for claude code" do
-    command "#{claude_path} mcp add -s user --transport http notion https://mcp.notion.com/mcp"
-    not_if "#{claude_path} mcp list | grep -q notion"
-  end
+execute "setup notion mcp for claude code" do
+  command "#{claude_path} mcp add -s user --transport http notion https://mcp.notion.com/mcp"
+  only_if "test -f #{claude_path}"
+  not_if "#{claude_path} mcp list | grep -q notion"
+end
 
-  # Deploy the upstream "notion" skill (vendored from
-  # nyosegawa/notion-cli@a325ac7a, v0.3.3). The skill drives ncli usage from
-  # Claude Code; it requires `ncli login` (OAuth) and optionally
-  # `ncli rest login` (integration token) as one-time manual steps.
-  skill_dir = "#{node[:setup][:home]}/.claude/skills/notion"
+# Deploy the upstream "notion" skill (vendored from
+# nyosegawa/notion-cli@a325ac7a, v0.3.3). The skill drives ncli usage from
+# Claude Code; it requires `ncli login` (OAuth) and optionally
+# `ncli rest login` (integration token) as one-time manual steps.
+skill_dir = "#{node[:setup][:home]}/.claude/skills/notion"
 
-  directory skill_dir do
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "755"
-    action :create
-  end
+directory skill_dir do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+  only_if "test -f #{claude_path}"
+end
 
-  remote_file "#{skill_dir}/SKILL.md" do
-    source "files/skills/notion/SKILL.md"
+remote_file "#{skill_dir}/SKILL.md" do
+  source "files/skills/notion/SKILL.md"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  action :create
+  only_if "test -f #{claude_path}"
+end
+
+directory "#{skill_dir}/references" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+  only_if "test -f #{claude_path}"
+end
+
+%w(command-reference.md id-patterns.md).each do |file_name|
+  remote_file "#{skill_dir}/references/#{file_name}" do
+    source "files/skills/notion/references/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
     action :create
+    only_if "test -f #{claude_path}"
   end
+end
 
-  directory "#{skill_dir}/references" do
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "755"
-    action :create
-  end
-
-  %w(command-reference.md id-patterns.md).each do |file_name|
-    remote_file "#{skill_dir}/references/#{file_name}" do
-      source "files/skills/notion/references/#{file_name}"
-      owner node[:setup][:user]
-      group node[:setup][:group]
-      mode "644"
-      action :create
-    end
-  end
-else
-  MItamae.logger.info "Claude Code is not installed, skipping Notion MCP and skill configuration"
+# Operator hint when claude binary is missing (claude-code cookbook
+# disabled or install failed earlier in the run).
+local_ruby_block "log notion claude-missing hint" do
+  block { MItamae.logger.info "Claude Code is not installed, skipping Notion MCP and skill configuration" }
+  not_if "test -f #{claude_path}"
 end
