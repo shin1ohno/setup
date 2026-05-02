@@ -67,20 +67,25 @@ end
 env_temp_path   = "#{generated_dir}/memory-server.env"
 env_system_path = "#{MEMORY_HOME}/.env"
 
+# Reuses cookbooks/ai-memory SSM names (/memory/* + /mcp/*) to avoid
+# requiring new SSM writes on home-monitor for this PR. openmemory-mcp
+# shares the mem0 user / mem0 database. Phase 0.5-Z Z-2 verifies
+# schema co-existence; if upstream openmemory needs an isolated DB,
+# follow-up PR adds /memory/openmemory-* params + dedicated DB role.
 require_external_auth(
-  tool_name: "AWS CLI (for /ai-memory/* SSM params)",
-  check_command: "aws sts get-caller-identity",
+  tool_name: "AWS CLI (for /memory/* + /mcp/openai-api-key SSM params)",
+  check_command: "aws ssm get-parameter --name /memory/aurora-endpoint --query Parameter.Value --output text >/dev/null 2>&1",
   instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
   skip_if: -> { File.exist?(env_system_path) },
 ) do
   execute "generate memory-server .env" do
     command <<~SH
       set -e
-      AURORA_ENDPOINT=$(aws ssm get-parameter --name /ai-memory/aurora-endpoint --query Parameter.Value --output text)
-      MEMORY_PASSWORD=$(aws ssm get-parameter --name /ai-memory/memory-db-password --with-decryption --query Parameter.Value --output text)
-      OPENAI_KEY=$(aws ssm get-parameter --name /ai-memory/openai-api-key --with-decryption --query Parameter.Value --output text)
+      AURORA_ENDPOINT=$(aws ssm get-parameter --name /memory/aurora-endpoint --query Parameter.Value --output text)
+      AURORA_PASSWORD=$(aws ssm get-parameter --name /memory/aurora-password --with-decryption --query Parameter.Value --output text)
+      OPENAI_KEY=$(aws ssm get-parameter --name /mcp/openai-api-key --with-decryption --query Parameter.Value --output text)
       cat > #{env_temp_path} <<EOF
-      DATABASE_URL=postgresql://memory:$MEMORY_PASSWORD@$AURORA_ENDPOINT:5432/memory?sslmode=require
+      DATABASE_URL=postgresql://mem0:$AURORA_PASSWORD@$AURORA_ENDPOINT:5432/mem0?sslmode=require
       OPENAI_API_KEY=$OPENAI_KEY
       OPENMEMORY_HOST=0.0.0.0
       OPENMEMORY_PORT=8766

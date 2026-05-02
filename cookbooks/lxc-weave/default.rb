@@ -21,6 +21,18 @@ user = node[:setup][:user]
 group = node[:setup][:group]
 deploy_dir = "#{node[:setup][:home]}/deploy/weave"
 
+# Roon Core LXC reachable over LAN. Override via node[:roon_core][:host].
+roon_core_host = node.dig(:roon_core, :host) || "192.168.1.20"
+
+# TODO: pin :latest tags. Pre-pin tag values are unknown at write time —
+# track the actual digest of shin1ohno/{roon-hub,weave-server,weave-web}
+# in a follow-up PR. Override via node[:weave][:image_tags] = { ... }
+# if pin needed before upstream PR lands.
+image_tags = node.dig(:weave, :image_tags) || {}
+roon_hub_image    = image_tags[:roon_hub]    || "shin1ohno/roon-hub:latest"
+weave_server_image = image_tags[:weave_server] || "shin1ohno/weave-server:latest"
+weave_web_image    = image_tags[:weave_web]    || "shin1ohno/weave-web:latest"
+
 directory deploy_dir do
   owner user
   group group
@@ -71,13 +83,13 @@ file "#{deploy_dir}/docker-compose.yml" do
           - ./mosquitto-log:/mosquitto/log
 
       roon-hub:
-        image: shin1ohno/roon-hub:latest
+        image: #{roon_hub_image}
         container_name: weave-roon-hub
         restart: unless-stopped
         depends_on:
           - mosquitto
         environment:
-          ROON_CORE_HOST: 192.168.1.20
+          ROON_CORE_HOST: #{roon_core_host}
           ROON_CORE_PORT: 9330
           MQTT_HOST: mosquitto
           MQTT_PORT: 1883
@@ -85,7 +97,7 @@ file "#{deploy_dir}/docker-compose.yml" do
           - ./roon-hub-data:/data
 
       weave-server:
-        image: shin1ohno/weave-server:latest
+        image: #{weave_server_image}
         container_name: weave-server
         restart: unless-stopped
         depends_on:
@@ -99,7 +111,7 @@ file "#{deploy_dir}/docker-compose.yml" do
           - ./weave-data:/data
 
       weave-web:
-        image: shin1ohno/weave-web:latest
+        image: #{weave_web_image}
         container_name: weave-web
         restart: unless-stopped
         depends_on:

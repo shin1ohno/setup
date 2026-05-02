@@ -46,6 +46,11 @@ include_cookbook "arp-flux"
 vmbr1_staging = "#{node[:setup][:root]}/pve-host/vmbr1"
 vmbr1_system  = "/etc/network/interfaces.d/vmbr1"
 
+# Service NIC for vmbr1. Default enp12s0 matches the original PVE host
+# build; PVE hosts with different NIC naming must override via
+# node[:pve_host][:service_nic].
+service_nic = node.dig(:pve_host, :service_nic) || "enp12s0"
+
 directory "#{node[:setup][:root]}/pve-host" do
   owner node[:setup][:user]
   group node[:setup][:group]
@@ -58,15 +63,15 @@ file vmbr1_staging do
   group node[:setup][:group]
   mode "644"
   content <<~CFG
-    # vmbr1: LXC service LAN bridge over enp12s0
+    # vmbr1: LXC service LAN bridge over #{service_nic}
     # Managed by setup/cookbooks/pve-host. Do not edit /etc/network/interfaces.d/vmbr1
     # by hand — the next mitamae run will overwrite it.
-    auto enp12s0
-    iface enp12s0 inet manual
+    auto #{service_nic}
+    iface #{service_nic} inet manual
 
     auto vmbr1
     iface vmbr1 inet manual
-        bridge-ports enp12s0
+        bridge-ports #{service_nic}
         bridge-stp off
         bridge-fd 0
   CFG

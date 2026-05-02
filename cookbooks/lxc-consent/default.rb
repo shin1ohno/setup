@@ -3,7 +3,8 @@
 # lxc-consent (CT 110): Hydra consent app — Google OAuth login + DCR proxy
 # + consent UI rendering.
 #
-# Tightly coupled to hydra LXC (admin API on 192.168.1.33:4445) but
+# Tightly coupled to hydra LXC (admin API on
+# node[:hydra_server][:lan_host]:4445, default 192.168.1.33:4445) but
 # isolated for per-service ZFS rollback granularity.
 #
 # Phase 0.5-Z Z-1 result determines path:
@@ -23,6 +24,11 @@ user = node[:setup][:user]
 group = node[:setup][:group]
 deploy_dir = "#{node[:setup][:home]}/deploy/consent"
 
+# Hydra admin reachable cross-LXC over LAN. Override per-deployment via
+# node[:hydra_server][:lan_host].
+hydra_lan_host = node.dig(:hydra_server, :lan_host) || "192.168.1.33"
+hydra_admin_url = "http://#{hydra_lan_host}:4445"
+
 directory deploy_dir do
   owner user
   group group
@@ -37,22 +43,23 @@ end
   end
 end
 
-# Consent app source — copied from cookbooks/hydra/files/consent-app/
-# to keep the canonical implementation co-located with the cookbook
-# that owns it. files/consent-app/ contains Dockerfile + requirements.txt
-# + app.py.
+# Consent app source — read from cookbooks/hydra/files/consent-app/ to
+# keep one canonical implementation. Avoids byte-for-byte duplication
+# between cookbooks/hydra and cookbooks/lxc-consent.
+hydra_consent_dir = File.expand_path("../hydra/files/consent-app", __dir__)
 %w[Dockerfile requirements.txt app.py].each do |f|
-  remote_file "#{deploy_dir}/consent-app/#{f}" do
-    source "files/consent-app/#{f}"
+  src_content = File.read("#{hydra_consent_dir}/#{f}")
+  file "#{deploy_dir}/consent-app/#{f}" do
     owner user
     group group
     mode "644"
+    content src_content
     notifies :run, "execute[restart consent]"
   end
 end
 
 # docker-compose.yml — single service (consent-app); hydra admin API
-# reached over LAN at 192.168.1.33:4445.
+# reached over LAN at hydra_admin_url.
 file "#{deploy_dir}/docker-compose.yml" do
   owner user
   group group
@@ -67,14 +74,17 @@ file "#{deploy_dir}/docker-compose.yml" do
         ports:
           - "9020:9020"
         environment:
-          HYDRA_ADMIN_URL: http://192.168.1.33:4445
+          HYDRA_ADMIN_URL: #{hydra_admin_url}
           HYDRA_PUBLIC_URL: https://mcp.ohno.be
+          GOOGLE_REDIRECT_URI: https://mcp.ohno.be/consent/google/callback
           PORT: 9020
   COMPOSE
   notifies :run, "execute[restart consent]"
 end
 
-# Generate .env from SSM (Google OAuth client_id/secret + ALLOWED_EMAILS)
+# Generate .env from SSM (Google OAuth client_id/secret + ALLOWED_EMAILS).
+# Reuses cookbooks/hydra (docker variant) SSM names — see
+# cookbooks/hydra/files/generate_env.sh for the canonical paths.
 generated_dir = "#{node[:setup][:root]}/generated"
 directory generated_dir do
   owner user
@@ -86,16 +96,16 @@ env_temp_path   = "#{generated_dir}/consent.env"
 env_output_path = "#{deploy_dir}/.env"
 
 require_external_auth(
-  tool_name: "AWS CLI (for /hydra/consent/* SSM params)",
-  check_command: "aws sts get-caller-identity",
+  tool_name: "AWS CLI (for /hydra/* SSM params)",
+  check_command: "aws ssm get-parameter --name /hydra/google-client-id --with-decryption --query Parameter.Value --output text >/dev/null 2>&1",
   instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
   skip_if: -> { File.exist?(env_output_path) },
 ) do
   execute "generate consent .env" do
     command <<~SH
       set -e
-      GOOGLE_CLIENT_ID=$(aws ssm get-parameter --name /hydra/consent/google-client-id --with-decryption --query Parameter.Value --output text)
-      GOOGLE_CLIENT_SECRET=$(aws ssm get-parameter --name /hydra/consent/google-client-secret --with-decryption --query Parameter.Value --output text)
+      GOOGLE_CLIENT_ID=$(aws ssm get-parameter --name /hydra/google-client-id --with-decryption --query Parameter.Value --output text)
+      GOOGLE_CLIENT_SECRET=$(aws ssm get-parameter --name /hydra/google-client-secret --with-decryption --query Parameter.Value --output text)
       ALLOWED_EMAILS=$(aws ssm get-parameter --name /hydra/allowed-emails --with-decryption --query Parameter.Value --output text)
       cat > #{env_temp_path} <<EOF
       GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID

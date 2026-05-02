@@ -1,0 +1,66 @@
+# Ory Hydra config for native systemd deployment.
+#
+# MUST stay in sync with cookbooks/hydra/files/hydra.yml until both
+# deployments are consolidated. Differences from the docker variant:
+#   - serve.public.host / serve.admin.host are added (docker compose
+#     binds via port mapping; native systemd needs the host explicitly).
+#   - serve.admin.host defaults to 127.0.0.1 (safe). Override via
+#     node[:hydra_server][:admin_bind_host] for cross-LXC reachability.
+#
+# `secrets:` is intentionally omitted — Hydra's YAML loader does NOT
+# perform shell-style ${VAR} interpolation. SECRETS_SYSTEM is supplied
+# via the systemd unit's EnvironmentFile=/etc/hydra/.env which Hydra
+# reads natively as an env override.
+
+serve:
+  public:
+    port: 4444
+    host: 0.0.0.0
+    cors:
+      enabled: true
+      allowed_origins:
+        - "*"
+      allowed_methods:
+        - POST
+        - GET
+        - PUT
+        - PATCH
+        - DELETE
+      allowed_headers:
+        - Authorization
+        - Content-Type
+      exposed_headers:
+        - Content-Type
+  admin:
+    port: 4445
+    host: __ADMIN_BIND_HOST__
+
+urls:
+  self:
+    issuer: https://mcp.ohno.be
+  login: https://mcp.ohno.be/consent/login
+  consent: https://mcp.ohno.be/consent/consent
+
+strategies:
+  access_token: jwt
+
+oidc:
+  dynamic_client_registration:
+    enabled: true
+  subject_identifiers:
+    supported_types:
+      - public
+
+oauth2:
+  pkce:
+    enforced_for_public_clients: true
+
+ttl:
+  access_token: 1h
+  id_token: 1h
+  refresh_token: 720h
+  auth_code: 10m
+
+log:
+  level: info
+  format: json

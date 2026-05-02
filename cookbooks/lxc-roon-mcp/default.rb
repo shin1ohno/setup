@@ -20,9 +20,10 @@ include_cookbook "docker-engine"
 
 ROON_MCP_VERSION = "0.5.3"
 ROON_MCP_HTTP_PORT = 8080
-# Roon Core lives in lxc-roon (CT 100, IP 192.168.1.20). Reachable from
-# this LXC over the LAN bridge.
-ROON_MCP_CORE_HOST = "192.168.1.20"
+# Roon Core lives in lxc-roon (CT 100, default IP 192.168.1.20).
+# Override via node[:roon_core][:host] when the Terraform-managed IP
+# changes.
+ROON_MCP_CORE_HOST = node.dig(:roon_core, :host) || "192.168.1.20"
 ROON_MCP_CORE_PORT = 9330
 ROON_MCP_PUBLIC_HOST = "mcp.ohno.be"
 ROON_MCP_ISSUER = "https://mcp.ohno.be"
@@ -87,13 +88,17 @@ file "#{home}/deploy/roon-mcp/docker-compose.yml" do
           - "#{ROON_MCP_CORE_HOST}"
           - --port
           - "#{ROON_MCP_CORE_PORT}"
+          - --allowed-host
+          - "#{ROON_MCP_PUBLIC_HOST}"
           - --issuer
           - "#{ROON_MCP_ISSUER}"
           - --audience
           - "#{ROON_MCP_AUDIENCE}"
           - --jwks-url
           - "#{ROON_MCP_JWKS_URL}"
+          - --require-auth
   COMPOSE
+  notifies :run, "execute[restart roon-mcp]"
 end
 
 compose_path = "#{home}/deploy/roon-mcp/docker-compose.yml"
@@ -110,4 +115,10 @@ execute "ensure roon-mcp running" do
               | sort | tr '\\n' ' ');
     test "$running" = "$expected" && exit 1 || exit 0
   SH
+end
+
+execute "restart roon-mcp" do
+  command "docker compose -f #{compose_path} up -d --build"
+  user user
+  action :nothing
 end

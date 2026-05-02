@@ -5,7 +5,9 @@
 # This is intentionally separate from linux.rb — the PVE host runs a tiny
 # subset of cookbooks (network bridges + arp-flux + minimal tailscaled).
 # All workloads (Roon, samba, docker stacks, dev workspace) live inside
-# LXC guests and use lxc-*.rb entry points.
+# LXC guests, each running its own cookbooks/lxc-*/default.rb invoked
+# via mitamae from inside the LXC after Terraform provisioning. There
+# are no root-level lxc-*.rb entry points — only this file.
 #
 # Run after fresh PVE 9.x install (see ~/pve-auto-install/dist/pve-auto_9.1-1.iso):
 #   ./bin/setup                     # Fetch mitamae binary
