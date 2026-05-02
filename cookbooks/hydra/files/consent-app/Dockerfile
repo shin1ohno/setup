@@ -9,4 +9,7 @@ COPY app.py .
 
 EXPOSE 9020
 
+# Drop privileges before running the OAuth-facing FastAPI app.
+USER nobody:nogroup
+
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "9020"]

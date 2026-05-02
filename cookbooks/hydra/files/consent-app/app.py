@@ -4,6 +4,7 @@ import json
 import os
 import secrets
 import urllib.parse
+from collections import OrderedDict
 from html import escape
 
 import httpx
@@ -18,8 +19,19 @@ GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 GOOGLE_REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
 ALLOWED_EMAILS = set(os.environ.get("ALLOWED_EMAILS", "").split(","))
 
-# In-memory state store for Google OAuth flow (maps state → login_challenge)
-_state_store: dict[str, str] = {}
+# In-memory state store for Google OAuth flow (maps state → login_challenge).
+# Bounded FIFO: oldest pending state is evicted at the cap so the dict
+# cannot grow unboundedly. State entries are short-lived (one redirect
+# round-trip) so eviction is unreachable in normal flow; the cap exists
+# to bound an attacker that floods /consent/login.
+_STATE_STORE_MAX = 1024
+_state_store: "OrderedDict[str, str]" = OrderedDict()
+
+
+def _state_store_set(state: str, login_challenge: str) -> None:
+    if len(_state_store) >= _STATE_STORE_MAX:
+        _state_store.popitem(last=False)
+    _state_store[state] = login_challenge
 
 COMMON_STYLE = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -92,7 +104,7 @@ async def login(login_challenge: str = ""):
 
     # Start Google OAuth flow
     state = secrets.token_urlsafe(32)
-    _state_store[state] = login_challenge
+    _state_store_set(state, login_challenge)
 
     google_auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(
         {
