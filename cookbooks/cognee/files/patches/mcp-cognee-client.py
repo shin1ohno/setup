@@ -46,10 +46,17 @@ class CogneeClient:
             self.cognee = _cognee
 
     def _get_headers(self) -> Dict[str, str]:
-        """Get headers for API requests."""
+        """Get headers for API requests.
+
+        Cognee accepts two auth schemes:
+        - JWT in `Authorization: Bearer <jwt>` (short-lived, from /auth/login)
+        - API key in `X-API-Key: <key>` (long-lived, from /auth/api-keys)
+        We send via X-API-Key so a stable key from SSM keeps working past
+        any JWT expiry window.
+        """
         headers = {"Content-Type": "application/json"}
         if self.api_token:
-            headers["Authorization"] = f"Bearer {self.api_token}"
+            headers["X-API-Key"] = self.api_token
         return headers
 
     async def add(
@@ -88,7 +95,7 @@ class CogneeClient:
                 endpoint,
                 files=files,
                 data=form_data,
-                headers={"Authorization": f"Bearer {self.api_token}"} if self.api_token else {},
+                headers={"X-API-Key": self.api_token} if self.api_token else {},
             )
             response.raise_for_status()
             return response.json()
