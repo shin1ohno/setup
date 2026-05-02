@@ -86,68 +86,78 @@ require_external_auth(
   end
 end
 
-if File.exist?(env_temp_path)
-  remote_file env_output_path do
-    source env_temp_path
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "600"
-    notifies :run, "execute[docker compose restart hydra]"
-  end
-
-  file env_temp_path do
-    action :delete
-  end
+# Deploy and clean up at converge time. Replaces a compile-time
+# `if File.exist?(env_temp_path)` that ran before the preceding execute,
+# so on clean runs the resources were never declared.
+remote_file env_output_path do
+  source env_temp_path
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "600"
+  notifies :run, "execute[docker compose restart hydra]"
+  only_if "test -f #{env_temp_path}"
 end
 
-# Everything below requires .env — skip if not yet generated
-if File.exist?(env_output_path)
-  # Create hydra database on Aurora (uses ephemeral postgres container).
-  # not_if uses a marker file rather than re-querying Aurora every run —
-  # the previous `docker run --rm postgres:16-alpine sh -c 'psql ...'` not_if
-  # took 5–30s on warm runs and could hang indefinitely if Aurora was
-  # unreachable. The marker is touched only on successful CREATE DATABASE
-  # (or on the OR-fallthrough when the DB already exists), so a transient
-  # failure does not falsely permanent-skip the resource.
-  #
-  # Migration: existing hosts with the DB already created should
-  #   touch ~/deploy/hydra/.hydra-db-created
-  # before the next mitamae run.
-  db_marker = "#{deploy_dir}/.hydra-db-created"
-  execute "create hydra database on Aurora" do
-    command %W[
-      docker run --rm --env-file #{deploy_dir}/.env
-      postgres:16-alpine
-      sh -c 'psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
-      -c "SELECT 1 FROM pg_database WHERE datname = '"'"'hydra'"'"'" | grep -q 1 ||
-      psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
-      -c "CREATE DATABASE hydra;"' && touch #{db_marker}
-    ].join(" ")
-    user node[:setup][:user]
-    not_if "test -f #{db_marker}"
-  end
+file env_temp_path do
+  action :delete
+  only_if "test -f #{env_temp_path}"
+end
 
-  compose_path = "#{deploy_dir}/docker-compose.yml"
+# Resources below require .env in place. Each only_if shell guard runs at
+# converge time so they fire on the same run that generated .env (a previous
+# compile-time `if File.exist?(env_output_path)` wrapper skipped declaration
+# on clean runs).
+#
+# Create hydra database on Aurora (uses ephemeral postgres container).
+# not_if uses a marker file rather than re-querying Aurora every run —
+# the previous `docker run --rm postgres:16-alpine sh -c 'psql ...'` not_if
+# took 5–30s on warm runs and could hang indefinitely if Aurora was
+# unreachable. The marker is touched only on successful CREATE DATABASE
+# (or on the OR-fallthrough when the DB already exists), so a transient
+# failure does not falsely permanent-skip the resource.
+#
+# Migration: existing hosts with the DB already created should
+#   touch ~/deploy/hydra/.hydra-db-created
+# before the next mitamae run.
+db_marker = "#{deploy_dir}/.hydra-db-created"
+execute "create hydra database on Aurora" do
+  command %W[
+    docker run --rm --env-file #{deploy_dir}/.env
+    postgres:16-alpine
+    sh -c 'psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
+    -c "SELECT 1 FROM pg_database WHERE datname = '"'"'hydra'"'"'" | grep -q 1 ||
+    psql "postgresql://hydra:${HYDRA_PASSWORD}@${AURORA_ENDPOINT}:5432/postgres?sslmode=require"
+    -c "CREATE DATABASE hydra;"' && touch #{db_marker}
+  ].join(" ")
+  user node[:setup][:user]
+  only_if "test -f #{env_output_path} && ! test -f #{db_marker}"
+end
 
-  # Ensure containers are running. `docker compose ps --filter` is unusably
-  # slow (timeouts >60s on this host), so we resolve "running" state via
-  # `docker ps` with the compose-project label — fast and unaffected by
-  # compose env-var expansion. Excludes hydra-migrate (one-shot migration
-  # job that exits on success). Fires when any of {hydra, consent} is not
-  # in a running state.
-  project_name = File.basename(deploy_dir)
-  execute "ensure hydra running" do
-    command "docker compose -f #{compose_path} up -d --build"
-    user node[:setup][:user]
-    only_if <<~SH.tr("\n", " ").strip
-      running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
-                          --filter status=running --format '{{.Label "com.docker.compose.service"}}'
-                | grep -v '^hydra-migrate$' | sort | tr '\\n' ' ');
-      test "$running" = "consent hydra " && exit 1 || exit 0
-    SH
-  end
-else
-  MItamae.logger.info "hydra: .env not found — run ~/deploy/hydra/setup-hydra.sh first, then re-run mitamae"
+compose_path = "#{deploy_dir}/docker-compose.yml"
+
+# Ensure containers are running. `docker compose ps --filter` is unusably
+# slow (timeouts >60s on this host), so we resolve "running" state via
+# `docker ps` with the compose-project label — fast and unaffected by
+# compose env-var expansion. Excludes hydra-migrate (one-shot migration
+# job that exits on success). Fires when any of {hydra, consent} is not
+# in a running state.
+project_name = File.basename(deploy_dir)
+execute "ensure hydra running" do
+  command "docker compose -f #{compose_path} up -d --build"
+  user node[:setup][:user]
+  only_if <<~SH.tr("\n", " ").strip
+    test -f #{env_output_path} || exit 1;
+    running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
+                        --filter status=running --format '{{.Label "com.docker.compose.service"}}'
+              | grep -v '^hydra-migrate$' | sort | tr '\\n' ' ');
+    test "$running" = "consent hydra " && exit 1 || exit 0
+  SH
+end
+
+# Operator hint when .env isn't generated yet (e.g. SSM params not registered).
+local_ruby_block "log hydra setup hint" do
+  block { MItamae.logger.info "hydra: .env not found — run ~/deploy/hydra/setup-hydra.sh first, then re-run mitamae" }
+  not_if { File.exist?(env_output_path) }
 end
 
 # Recreate containers when compose config or built image sources change.

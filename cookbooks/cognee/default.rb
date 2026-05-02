@@ -164,41 +164,41 @@ require_external_auth(
   end
 end
 
-if File.exist?(env_temp_path)
-  remote_file env_output_path do
-    source env_temp_path
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "600"
-    notifies :run, "execute[docker compose restart cognee]"
-  end
-
-  file env_temp_path do
-    action :delete
-  end
+# Deploy and clean up at converge time. Replaces a compile-time
+# `if File.exist?(env_temp_path)` that ran before the preceding execute,
+# so on clean runs the resources were never declared.
+remote_file env_output_path do
+  source env_temp_path
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "600"
+  notifies :run, "execute[docker compose restart cognee]"
+  only_if "test -f #{env_temp_path}"
 end
 
-# Everything below requires .env — skip if not yet generated
-if File.exist?(env_output_path)
-  compose_path = "#{deploy_dir}/docker-compose.yml"
+file env_temp_path do
+  action :delete
+  only_if "test -f #{env_temp_path}"
+end
 
-  # Ensure containers are running. `docker compose ps --filter` is unusably
-  # slow (>60s on this host); resolve "running" state via `docker ps` with
-  # the compose-project label instead — fast and unaffected by compose
-  # env-var expansion.
-  project_name = File.basename(deploy_dir)
-  execute "ensure cognee running" do
-    command "docker compose -f #{compose_path} up -d --build"
-    user node[:setup][:user]
-    only_if <<~SH.tr("\n", " ").strip
-      expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
-      [ -n "$expected" ] || exit 1;
-      running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
-                          --filter status=running --format '{{.Label "com.docker.compose.service"}}'
-                | sort | tr '\\n' ' ');
-      test "$running" = "$expected" && exit 1 || exit 0
-    SH
-  end
+# Bring containers up. Requires .env in place; the only_if shell guard runs
+# at converge time so this resource fires on the same run that generated
+# .env (a previous compile-time `if File.exist?(env_output_path)` wrapper
+# skipped declaration on clean runs).
+compose_path = "#{deploy_dir}/docker-compose.yml"
+project_name = File.basename(deploy_dir)
+execute "ensure cognee running" do
+  command "docker compose -f #{compose_path} up -d --build"
+  user node[:setup][:user]
+  only_if <<~SH.tr("\n", " ").strip
+    test -f #{env_output_path} || exit 1;
+    expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
+    [ -n "$expected" ] || exit 1;
+    running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
+                        --filter status=running --format '{{.Label "com.docker.compose.service"}}'
+              | sort | tr '\\n' ' ');
+    test "$running" = "$expected" && exit 1 || exit 0
+  SH
 end
 
 # Recreate containers when compose config or built image sources change.
