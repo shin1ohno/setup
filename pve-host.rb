@@ -28,4 +28,15 @@ node.reverse_merge!(
   }
 )
 
+# Per-host attribute overrides. The pve-host cookbook defaults assume
+# generic systemd predictable interface names; the `pro` Mac Pro 5,1
+# install exposes the onboard Intel NIC pair as `nic0` (UP, used by the
+# installer-created vmbr0 management bridge) and `nic1` (DOWN, claimed
+# here as vmbr1's LXC service LAN parent).
+node.reverse_merge!(
+  pve_host: {
+    service_nic: "nic1",
+  }
+)
+
 include_cookbook "pve-host"
