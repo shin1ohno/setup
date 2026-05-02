@@ -3,8 +3,9 @@
 # Cognee — Knowledge graph memory engine backed by Kuzu + ChromaDB
 # Deploys Docker Compose with cognee API, ChromaDB vector store, a
 # drop-folder watcher, and an optional MCP server (profile-gated). LLM
-# and embedding requests are routed through the existing litellm proxy
-# (host CPUs without AVX2 cannot run fastembed/lancedb).
+# and embedding requests go directly to the OpenAI API (host CPUs
+# without AVX2 cannot run fastembed/lancedb, so a remote provider is
+# required).
 
 return if node[:platform] == "darwin"
 

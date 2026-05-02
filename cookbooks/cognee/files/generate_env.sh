@@ -20,7 +20,7 @@ fetch_ssm() {
 
 LLM_ENDPOINT=$(fetch_ssm "/cognee/llm-endpoint")
 LLM_API_KEY=$(fetch_ssm "/cognee/llm-api-key")
-LLM_MODEL=$(fetch_ssm "/cognee/llm-model" 2>/dev/null || echo "openai/claude-sonnet-4-6")
+LLM_MODEL=$(fetch_ssm "/cognee/llm-model" 2>/dev/null || echo "openai/gpt-5-mini")
 EMBEDDING_MODEL=$(fetch_ssm "/cognee/embedding-model" 2>/dev/null || echo "openai/text-embedding-3-small")
 
 cat > "${OUTPUT_FILE}" <<EOF
@@ -30,8 +30,8 @@ LLM_MODEL=${LLM_MODEL}
 LLM_ENDPOINT=${LLM_ENDPOINT}
 LLM_API_KEY=${LLM_API_KEY}
 
-# Embeddings proxied through litellm too — fastembed/onnxruntime require AVX2
-# which the deploy host does not provide.
+# Embeddings hit the same OpenAI endpoint — fastembed/onnxruntime require
+# AVX2 which the deploy host does not provide, so a remote provider is required.
 EMBEDDING_PROVIDER=openai
 EMBEDDING_MODEL=${EMBEDDING_MODEL}
 EMBEDDING_ENDPOINT=${LLM_ENDPOINT}
