@@ -73,7 +73,7 @@ if node[:platform] == "darwin"
       merged = existing.merge(managed)
       merged["mcpServers"] = merged_servers
 
-      File.write(output_path, JSON.pretty_generate(merged) + "\n")
+      File.open(output_path, "w") { |f| f.write(JSON.pretty_generate(merged) + "\n") }
       File.chmod(0o644, output_path)
       File.delete(temp_path)
     end
