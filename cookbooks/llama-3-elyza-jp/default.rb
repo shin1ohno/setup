@@ -1,3 +1,12 @@
+# Same opt-out as cookbooks/ollama: an LXC without ollama installed
+# (e.g. lxc-pro-dev) sets node[:llm][:skip_ollama] = true. Without
+# this guard the `ollama create` execute below fails with
+# "/bin/sh: 1: ollama: not found".
+if node.dig(:llm, :skip_ollama)
+  MItamae.logger.info("llama-3-elyza-jp: skipped (node[:llm][:skip_ollama] set)")
+  return
+end
+
 result = run_command("ollama list | fgrep -q 'elyza:jp8b'", error: false)
 return if result.exit_status == 0
 
