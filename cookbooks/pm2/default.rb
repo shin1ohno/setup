@@ -7,7 +7,8 @@ mise_tool "pm2" do
   backend "npm"
 end
 
-c = "sudo env PATH=$PATH:#{node[:setup][:home]}/.local/share/mise/shims #{node[:setup][:home]}/.local/share/mise/shims/pm2 startup launchd -u $USER --hp #{node[:setup][:home]}"
+init_system = node[:platform] == "darwin" ? "launchd" : "systemd"
+c = "sudo env PATH=$PATH:#{node[:setup][:home]}/.local/share/mise/shims #{node[:setup][:home]}/.local/share/mise/shims/pm2 startup #{init_system} -u $USER --hp #{node[:setup][:home]}"
 
 if node[:platform] == "darwin"
   # Pre-create ~/Library/LaunchAgents. pm2 6.0.14's `startup launchd` tries
