@@ -1,11 +1,16 @@
 # frozen_string_literal: true
 
-execute "curl -LSsf https://apt.corretto.aws/corretto.key | sudo apt-key add -" do
-  not_if "apt-key adv --list-keys 6DC3636DAE534049C8B94623A122542AB04F24E3"
+# apt-key was removed in Debian 12+ / Ubuntu 22.04+; modern apt sources
+# bind the keyring file directly via signed-by.
+keyring = "/etc/apt/keyrings/corretto-archive-keyring.gpg"
+
+execute "install corretto apt keyring" do
+  command "sudo install -d -m 0755 /etc/apt/keyrings && curl -LSsf https://apt.corretto.aws/corretto.key | sudo gpg --dearmor -o #{keyring}"
+  not_if "test -f #{keyring}"
 end
 
 execute "add corretto apt source" do
-  command "echo 'deb https://apt.corretto.aws stable main' | sudo tee /etc/apt/sources.list.d/corretto.list > /dev/null"
+  command "echo 'deb [signed-by=#{keyring}] https://apt.corretto.aws stable main' | sudo tee /etc/apt/sources.list.d/corretto.list > /dev/null"
   not_if "test -f /etc/apt/sources.list.d/corretto.list"
   notifies :run, "execute[apt-get update for corretto]"
 end
