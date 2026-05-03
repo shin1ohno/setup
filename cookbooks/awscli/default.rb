@@ -23,7 +23,10 @@ when "ubuntu"
   end
 
   execute "sudo -p 'Enter your password to install awscli: ' #{node[:setup][:root]}/awscli/aws/install" do
-    not_if "which aws"
+    # Direct filesystem check — `which aws` was failing under mitamae's
+    # specinfra wrapper PATH and re-firing the installer, which then
+    # errored with "Found preexisting AWS CLI installation".
+    not_if "test -d /usr/local/aws-cli/v2/current"
   end
 when "darwin"
   pkg_path = "#{node[:setup][:root]}/awscli/AWSCLIV2.pkg"
