@@ -66,7 +66,6 @@ if node[:platform] == "darwin"
   # ran before the execute and skipped declaring the merge on clean runs.
   local_ruby_block "merge claude_desktop_config.json" do
     block do
-      require "json"
       managed  = JSON.parse(File.read(temp_path))
       existing = File.exist?(output_path) ? (JSON.parse(File.read(output_path)) rescue {}) : {}
 
@@ -74,7 +73,7 @@ if node[:platform] == "darwin"
       merged = existing.merge(managed)
       merged["mcpServers"] = merged_servers
 
-      File.write(output_path, JSON.pretty_generate(merged) + "\n")
+      File.open(output_path, "w") { |f| f.write(JSON.pretty_generate(merged) + "\n") }
       File.chmod(0o644, output_path)
       File.delete(temp_path)
     end
