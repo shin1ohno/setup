@@ -8,14 +8,22 @@ execute "update_and_install_deps" do
   }
 end
 
+# Detect distro family + codename from /etc/os-release; Docker publishes
+# separate channels for ubuntu and debian. The previous form hardcoded
+# linux/ubuntu and `noble`, breaking on Debian 13 trixie LXC templates.
+distro_id = `. /etc/os-release && echo $ID`.strip
+distro_codename = `. /etc/os-release && echo $VERSION_CODENAME`.strip
+
 execute "add_docker_gpg_key" do
-  command "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -"
+  # apt-key was removed in Debian 12+ / Ubuntu 22.04+. Use signed-by
+  # keyring under /etc/apt/keyrings/. --batch --yes for non-TTY mitamae.
+  command "install -d -m 0755 /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/#{distro_id}/gpg | gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg && chmod a+r /etc/apt/keyrings/docker.gpg"
   user node[:setup][:system_user]
-  not_if { run_command("apt-key list 2>/dev/null | grep -q Docker", error: false).exit_status == 0 }
+  not_if { File.exist?("/etc/apt/keyrings/docker.gpg") }
 end
 
 execute "add_docker_repo" do
-  command 'add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu noble stable"'
+  command "echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/#{distro_id} #{distro_codename} stable' > /etc/apt/sources.list.d/docker.list"
   user node[:setup][:system_user]
   not_if { run_command('grep -R "download.docker.com" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null', error: false).exit_status == 0 }
 end
