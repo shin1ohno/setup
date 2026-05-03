@@ -59,6 +59,7 @@ require_external_auth(
     command <<~CMD.strip
       bash -c '
         set -euo pipefail
+        export PATH="#{node[:setup][:home]}/.local/share/mise/shims:$PATH"
         bash #{generator_script} #{mcp_yaml_path} #{temp_path}
         install -m 644 #{temp_path} #{output_path}
         rm -f #{temp_path}
