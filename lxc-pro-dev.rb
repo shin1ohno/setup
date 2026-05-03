@@ -29,4 +29,10 @@ node.reverse_merge!(
   }
 )
 
+# Skip ollama: pro-dev is a CPU-only LXC, the bundled install.sh
+# 404s on its download, and a local LLM runtime is not in scope.
+node.reverse_merge!(
+  llm: { skip_ollama: true },
+)
+
 include_cookbook "lxc-pro-dev"
