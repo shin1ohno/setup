@@ -11,6 +11,37 @@
 
 return if node[:platform] == "darwin"
 
+# Common LXC user provisioning (shin1ohno + sudo + ssh authorized_keys).
+include_cookbook "lxc-shared-user"
+
+# IP forwarding is required for `tailscale up --advertise-routes`. Without
+# this sysctl any node accepting the advertised 192.168.1.0/24 route via
+# tailnet will black-hole packets through this LXC. Persisted via drop-in
+# so it survives reboots and `pct restart`.
+file "#{node[:setup][:root]}/lxc-pro-router-ip-forward.conf" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  content <<~CFG
+    # Managed by setup/cookbooks/lxc-pro-router. Do not edit
+    # /etc/sysctl.d/99-lxc-pro-router-ip-forward.conf by hand — the next
+    # mitamae run will overwrite it.
+    net.ipv4.ip_forward = 1
+    net.ipv6.conf.all.forwarding = 1
+  CFG
+end
+
+execute "install pro-router ip-forward sysctl drop-in" do
+  command "sudo install -m 644 -o root -g root #{node[:setup][:root]}/lxc-pro-router-ip-forward.conf /etc/sysctl.d/99-lxc-pro-router-ip-forward.conf"
+  not_if "diff -q #{node[:setup][:root]}/lxc-pro-router-ip-forward.conf /etc/sysctl.d/99-lxc-pro-router-ip-forward.conf 2>/dev/null"
+  notifies :run, "execute[apply pro-router ip-forward sysctl]"
+end
+
+execute "apply pro-router ip-forward sysctl" do
+  command "sudo sysctl -p /etc/sysctl.d/99-lxc-pro-router-ip-forward.conf"
+  action :nothing
+end
+
 # Reuse the canonical Tailscale install path.
 include_cookbook "tailscale"
 
