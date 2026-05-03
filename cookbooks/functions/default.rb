@@ -173,13 +173,18 @@ MItamae::RecipeContext.send(:include, RecipeHelper)
 # there too so brew_formula?, brew_cask?, brew_tap? resolve in those blocks.
 MItamae::ResourceContext.send(:include, RecipeHelper)
 
+# Normalize node[:platform]: PVE 9 LXC trixie templates report "debian"
+# but ~13 cookbooks (awscli / golang / jdk / fzf / etc.) branch on
+# "ubuntu" / "darwin" only and raise "Unsupported platform debian".
+# apt is identical between Debian and Ubuntu, so alias once at the
+# functions layer instead of patching `case node[:platform] when "ubuntu",
+# "debian"` across every cookbook. Anything that genuinely needs to
+# distinguish the two distros can read /etc/os-release directly.
+node[:platform] = "ubuntu" if node[:platform] == "debian"
+
 define :install_package, darwin: nil, ubuntu: nil, arch: nil do
   platform = node[:platform]
-  # debian (PVE LXC trixie templates) shares apt with ubuntu — alias the
-  # platform key so existing `install_package(ubuntu: "git")` callers also
-  # cover Debian-based hosts without per-cookbook duplication.
-  platform_key = platform == "debian" ? :ubuntu : platform.to_sym
-  pkgs = params[platform_key]
+  pkgs = params[platform.to_sym]
   if pkgs
     Array(pkgs).each do |pkg|
       if platform == "darwin"
