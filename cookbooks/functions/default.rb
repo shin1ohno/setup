@@ -175,7 +175,11 @@ MItamae::ResourceContext.send(:include, RecipeHelper)
 
 define :install_package, darwin: nil, ubuntu: nil, arch: nil do
   platform = node[:platform]
-  pkgs = params[platform.to_sym]
+  # debian (PVE LXC trixie templates) shares apt with ubuntu — alias the
+  # platform key so existing `install_package(ubuntu: "git")` callers also
+  # cover Debian-based hosts without per-cookbook duplication.
+  platform_key = platform == "debian" ? :ubuntu : platform.to_sym
+  pkgs = params[platform_key]
   if pkgs
     Array(pkgs).each do |pkg|
       if platform == "darwin"
