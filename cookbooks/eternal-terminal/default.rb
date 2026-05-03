@@ -4,7 +4,25 @@
 # A resilient SSH alternative that maintains connectivity during network changes
 # https://github.com/MisterTea/EternalTerminal
 
-case node[:platform]
+# node[:platform] is normalized to "ubuntu" for any debian-family host
+# (see cookbooks/functions/default.rb #90), but eternal-terminal has
+# distinct install paths per distro: Ubuntu uses Launchpad PPA, Debian
+# uses MisterTea's debian-et repo. Probe /etc/os-release ID directly so
+# debian hosts (PVE LXC trixie templates) don't fall into the PPA branch
+# which fails with "add-apt-repository: not found".
+distro_platform = if node[:platform] == "darwin"
+  "darwin"
+else
+  os_release_id = `. /etc/os-release && echo $ID`.strip
+  case os_release_id
+  when "ubuntu" then "ubuntu"
+  when "debian" then "debian"
+  when "arch", "manjaro", "endeavouros" then "arch"
+  else node[:platform]
+  end
+end
+
+case distro_platform
 when "darwin"
   # MisterTea/EternalTerminal does not publish prebuilt binaries on its
   # GitHub releases (assets is empty on every recent tag). mise's github
