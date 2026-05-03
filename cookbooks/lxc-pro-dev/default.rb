@@ -21,20 +21,8 @@
 
 return if node[:platform] == "darwin"
 
-include_recipe "cookbooks/functions/default"
-
-user = ENV["USER"]
-group = `id -gn`.strip
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: group,
-    system_user: "root",
-    system_group: "root",
-  }
-)
+# functions + node[:setup] seeded by lxc-pro-dev.rb entry recipe.
+# Cookbooks must be invoked via that entry, not `mitamae local cookbooks/lxc-pro-dev/default.rb`.
 
 # Full development environment, mirrors linux.rb's modular role set
 # (minus server/mcp-server/edge-agent/roon-server/roon-mcp which live in
