@@ -1,5 +1,13 @@
 # frozen_string_literal: true
 
+# Allow callers (e.g. CPU-only LXC entry recipes such as lxc-pro-dev.rb)
+# to opt out without forking the llm role. Set node[:llm][:skip_ollama]
+# = true before including this cookbook (or include_role "llm").
+if node.dig(:llm, :skip_ollama)
+  MItamae.logger.info("ollama: skipped (node[:llm][:skip_ollama] set)")
+  return
+end
+
 case node[:platform]
 when "darwin"
   package "ollama" do
