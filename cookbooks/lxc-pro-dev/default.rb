@@ -24,6 +24,9 @@ return if node[:platform] == "darwin"
 # functions + node[:setup] seeded by lxc-pro-dev.rb entry recipe.
 # Cookbooks must be invoked via that entry, not `mitamae local cookbooks/lxc-pro-dev/default.rb`.
 
+# Common LXC user provisioning (shin1ohno + sudo + ssh authorized_keys).
+include_cookbook "lxc-shared-user"
+
 # Full development environment, mirrors linux.rb's modular role set
 # (minus server/mcp-server/edge-agent/roon-server/roon-mcp which live in
 # their own LXCs). bluez/zeroconf/broadcom-wifi are intentionally absent —
