@@ -104,6 +104,10 @@ execute "enable pgvector extension on Aurora" do
   ].join(" ")
   user node[:setup][:user]
   not_if "test -f #{pgvector_marker}"
+  # Skip when .env was not generated (SSM auth absent / non-interactive
+  # bootstrap). `docker run --env-file` aborts with exit 125 when the
+  # file is missing.
+  only_if "test -f #{env_output_path}"
 end
 
 compose_path = "#{deploy_dir}/docker-compose.yml"
@@ -116,6 +120,7 @@ execute "ensure ai-memory running" do
   command "docker compose -f #{compose_path} up -d --wait --wait-timeout 120"
   user node[:setup][:user]
   only_if <<~SH.tr("\n", " ").strip
+    test -f #{env_output_path} || exit 1;
     expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
     [ -n "$expected" ] || exit 1;
     running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
@@ -131,4 +136,8 @@ execute "docker compose restart ai-memory" do
   command "docker compose -f #{compose_path} up -d --wait --wait-timeout 120"
   user node[:setup][:user]
   action :nothing
+  # Skip when .env was not generated (SSM auth absent / non-interactive
+  # bootstrap). Restart would otherwise start containers with empty
+  # credentials and fail at runtime.
+  only_if "test -f #{env_output_path}"
 end

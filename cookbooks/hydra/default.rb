@@ -163,8 +163,11 @@ end
 # Recreate containers when compose config or built image sources change.
 # Notified by remote_file resources above; no-op otherwise.
 # Defined unconditionally so notifies: resolve even before .env is generated.
+# only_if guards against running compose without .env (hydra-migrate would
+# fail trying to reach Aurora with empty credentials).
 execute "docker compose restart hydra" do
   command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build"
   user node[:setup][:user]
   action :nothing
+  only_if "test -f #{env_output_path}"
 end
