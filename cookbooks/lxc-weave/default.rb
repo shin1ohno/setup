@@ -25,14 +25,17 @@ deploy_dir = "#{node[:setup][:home]}/deploy/weave"
 # node[:roon_core][:host] when running against a non-LXC Roon deployment.
 roon_core_host = node.dig(:roon_core, :host) || "roon-lxc.home.local"
 
-# TODO: pin :latest tags. Pre-pin tag values are unknown at write time —
-# track the actual digest of shin1ohno/{roon-hub,weave-server,weave-web}
-# in a follow-up PR. Override via node[:weave][:image_tags] = { ... }
-# if pin needed before upstream PR lands.
-image_tags = node.dig(:weave, :image_tags) || {}
-roon_hub_image    = image_tags[:roon_hub]    || "shin1ohno/roon-hub:latest"
-weave_server_image = image_tags[:weave_server] || "shin1ohno/weave-server:latest"
-weave_web_image    = image_tags[:weave_web]    || "shin1ohno/weave-web:latest"
+# Build images from the upstream weave repo at apply time. Earlier draft
+# referenced shin1ohno/{roon-hub,weave-server,weave-web}:latest on Docker
+# Hub, but those images aren't published — `docker pull` returned
+# "pull access denied for shin1ohno/roon-hub". Switch to git-source
+# `build:` (same pattern as cookbooks/lxc-roon-mcp) so the images are
+# constructed from the canonical source on every apply.
+#
+# Override the ref via node[:weave][:git_ref] (default "main"). For a
+# stable pin, set to a release tag like "weave-server-v0.1.8".
+weave_git_ref = node.dig(:weave, :git_ref) || "main"
+weave_git_url = "https://github.com/shin1ohno/weave.git##{weave_git_ref}"
 
 directory deploy_dir do
   owner user
@@ -84,7 +87,10 @@ file "#{deploy_dir}/docker-compose.yml" do
           - ./mosquitto-log:/mosquitto/log
 
       roon-hub:
-        image: #{roon_hub_image}
+        build:
+          context: #{weave_git_url}
+          dockerfile: deploy/roon-hub/Dockerfile
+        image: weave-roon-hub:#{weave_git_ref}
         container_name: weave-roon-hub
         restart: unless-stopped
         depends_on:
@@ -98,7 +104,10 @@ file "#{deploy_dir}/docker-compose.yml" do
           - ./roon-hub-data:/data
 
       weave-server:
-        image: #{weave_server_image}
+        build:
+          context: #{weave_git_url}
+          dockerfile: crates/weave-server/Dockerfile
+        image: weave-server:#{weave_git_ref}
         container_name: weave-server
         restart: unless-stopped
         depends_on:
@@ -112,7 +121,10 @@ file "#{deploy_dir}/docker-compose.yml" do
           - ./weave-data:/data
 
       weave-web:
-        image: #{weave_web_image}
+        build:
+          context: #{weave_git_url}
+          dockerfile: weave-web/Dockerfile
+        image: weave-web:#{weave_git_ref}
         container_name: weave-web
         restart: unless-stopped
         depends_on:
@@ -129,7 +141,7 @@ compose_path = "#{deploy_dir}/docker-compose.yml"
 project_name = File.basename(deploy_dir)
 
 execute "ensure weave running" do
-  command "docker compose -f #{compose_path} up -d"
+  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
   user user
   only_if <<~SH.tr("\n", " ").strip
     expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
@@ -142,7 +154,7 @@ execute "ensure weave running" do
 end
 
 execute "restart weave" do
-  command "docker compose -f #{compose_path} up -d"
+  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
   user user
   action :nothing
 end
