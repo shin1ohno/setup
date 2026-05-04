@@ -14,4 +14,8 @@ node.reverse_merge!(
   }
 )
 
+# Required before managed-projects so `codecommit::*` URIs in
+# repositories.json resolve at clone time.
+include_cookbook "git-remote-codecommit"
+
 include_cookbook "managed-projects"
