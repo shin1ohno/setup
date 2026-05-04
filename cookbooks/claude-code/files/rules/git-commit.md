@@ -181,3 +181,29 @@ The first part reloads the agent; the second forces a `gpg --clearsign` in the u
 Do not use the shorter `gpg-connect-agent reloadagent /bye` alone — it reloads the agent but does not pre-cache the passphrase, so the very next commit can trigger a fresh pinentry that times out in the sandbox.
 
 Do not bypass signing with `-c commit.gpgsign=false` unless the user explicitly requests it.
+
+**Output integrity**: present the full two-part chain as a single uninterrupted code line — never let a response truncation boundary split it. The user copy-pastes whatever you emit; if your output ends with `… echo "test" | gp` (truncated mid-word), the user runs `echo "test" | gpg` (no `--clearsign`), gpg returns "no command supplied" warning, and the pinentry cache is NOT primed. The very next commit then fails with the same "No passphrase given" error and the user has wasted a turn re-running.
+
+Before emitting the GPG cache-refresh `!` line, scan the line you are about to write and verify both halves are intact. If you cannot fit the full command on a single line, emit it as a fenced code block (which preserves it as one logical unit) — never inline-formatted at the end of a sentence where the line wrap can swallow trailing tokens.
+
+This rule exists because the 2026-05-04 retro session emitted `! gpg-connect-agent reloadagent /bye && echo "test" | gp` (truncated mid-word at line wrap), the user ran the truncated form, the pinentry cache stayed cold, and the next signed commit failed exactly the same way until the full command was re-emitted.
+
+## Working directory `.git` check before first file write
+
+Before writing any file inside a directory whose name suggests it is a deploy / extracted copy (`*-main`, `*-deploy`, `~/setup-main`, `~/deploy/*`), run a 1-second probe to confirm the directory is actually a git repository:
+
+```
+ls .git 2>/dev/null || echo "no .git here — likely a deploy copy"
+```
+
+If `.git` is absent, locate the tracked source-of-truth before editing:
+
+```
+find ~/ManagedProjects -maxdepth 4 -name "$(basename "$PWD" | sed 's/-main$//;s/-deploy$//')" -type d 2>/dev/null | head -3
+```
+
+Edit the tracked copy in `~/ManagedProjects/`, not the deploy copy. The deploy copy is regenerated on each `mitamae` apply (or equivalent), so changes there are silently discarded.
+
+**Why this fires reliably**: this `setup` repo is intentionally dual-located — `~/ManagedProjects/setup/` is the git-tracked source, `~/setup-main/` (or similar tarball-extracted directory) is the deploy copy that mitamae operates on. Future bootstraps of this same pattern (any pull-and-extract delivery model) will hit the same trap.
+
+This rule exists because the 2026-05-03 LXC bootstrap session edited 14 cookbook files in `~/setup-main/` (deploy copy, no `.git`) before the user asked `git status` and the dual-location issue surfaced. Recovery required syncing all 14 files into `~/ManagedProjects/setup/`, creating a branch there, and committing — work that would have been done in-place from the start with the up-front `.git` check.
