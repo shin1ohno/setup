@@ -71,12 +71,12 @@ module RecipeHelper
     end
 
     # Non-interactive context (CI / dry-run / agent-driven): can't pause for
-    # user input. Skip the gate silently and yield the block. If the inner
-    # resources actually need the auth, they'll fail at command-execution
-    # time with a clearer downstream error than blocking on STDIN forever.
+    # user input AND the auth check failed. Skip the inner block entirely.
+    # Yielding here would queue a resource that will fail at converge, which
+    # aborts the whole mitamae run. Skipping with a loud warning lets the
+    # rest of the recipe proceed; the user can re-run after configuring auth.
     unless STDIN.tty?
-      MItamae.logger.warn("[bootstrap] #{tool_name} not configured but STDIN is not a TTY — skipping auth gate (non-interactive run).")
-      yield if block_given?
+      MItamae.logger.warn("[bootstrap] #{tool_name} not configured AND STDIN is not a TTY — skipping auth-gated block. Configure auth and re-run mitamae to apply.")
       return
     end
 

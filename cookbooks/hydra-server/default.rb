@@ -201,4 +201,8 @@ end
 execute "restart hydra" do
   command "sudo systemctl restart hydra.service"
   action :nothing
+  # Skip when systemd unit was not yet installed or service is masked
+  # (.env not generated; SSM-gated bootstrap pending). Restart would
+  # otherwise fail with "Unit hydra.service not found".
+  only_if "systemctl list-unit-files hydra.service 2>/dev/null | grep -q hydra.service"
 end
