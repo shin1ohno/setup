@@ -42,17 +42,25 @@ end
 execute "update_package_index" do
   command "apt-get update"
   user node[:setup][:system_user]
-  # Skip if /var/cache/apt/pkgcache.bin was refreshed within the last 24h —
-  # apt-get update is a network round-trip that delays every mitamae run
-  # even when the index is fresh. add_docker_repo's :immediately notify
-  # above forces a refresh when the docker source is newly added, so this
-  # 24h skip only applies to subsequent idempotent runs.
+  # Skip only when (a) the apt cache was refreshed within 24h AND (b) the
+  # docker repo is actually visible to apt — i.e. apt-cache has a real
+  # candidate version for docker-ce. The (b) check covers the recovery
+  # case where a prior mitamae run created /etc/apt/sources.list.d/docker.list
+  # but failed before refreshing the cache. On the next run,
+  # add_docker_repo is idempotently skipped (its not_if matches the file)
+  # and the :immediately notify never fires; without (b), the 24h freshness
+  # check would skip the refresh and `package "docker-ce"` would fail with
+  # "no installation candidate".
   #
   # Proc form (not string) because mitamae auto-wraps string not_if commands
   # with `sudo -u <user>` when the resource has a `user` attribute, and that
   # wrap silently fails to non-zero on this host — bypassing the guard.
   # Procs evaluate in mitamae's own Ruby context (no user wrap).
-  not_if { run_command("find /var/cache/apt/pkgcache.bin -mmin -1440 2>/dev/null | grep -q .", error: false).exit_status == 0 }
+  not_if {
+    cache_fresh = run_command("find /var/cache/apt/pkgcache.bin -mmin -1440 2>/dev/null | grep -q .", error: false).exit_status == 0
+    docker_visible = run_command("apt-cache policy docker-ce 2>/dev/null | grep -qE 'Candidate: [^(]'", error: false).exit_status == 0
+    cache_fresh && docker_visible
+  }
 end
 
 %w(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin).each do |pkg|
