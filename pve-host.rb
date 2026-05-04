@@ -40,3 +40,16 @@ node.reverse_merge!(
 )
 
 include_cookbook "pve-host"
+
+# Build /root/.ssh/authorized_keys with the public keys of every device
+# in cookbooks/ssh-keys/files/devices.json. PVE host's hostname is `pro`
+# (matches the existing `pro` entry, ssh_user=root) — the cookbook fetches
+# /ssh-keys/devices/pro/private into /root/.ssh/pro_ed25519 and adds the
+# managed-section authorized_keys entries that let every other client
+# (pro-dev, air, neo, nrt, ipad, iphone) ssh in as root.
+#
+# Requires AWS credentials on the PVE host. The cookbook's
+# require_external_auth gate skips with a warning on a fresh host
+# without auth — run `aws configure --profile sh1admn` (or `aws login
+# --profile sh1admn`) and re-apply.
+include_cookbook "ssh-keys"
