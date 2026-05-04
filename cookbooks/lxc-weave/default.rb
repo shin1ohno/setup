@@ -88,10 +88,12 @@ file "#{deploy_dir}/docker-compose.yml" do
 
       roon-hub:
         build:
-          # BuildKit `#ref:subdir` syntax — Dockerfile expects to run from
-          # within deploy/roon-hub/ (relative paths). Requires
-          # DOCKER_BUILDKIT=1.
-          context: #{weave_git_url}:deploy/roon-hub
+          # roon-hub is part of the cargo workspace at the repo root —
+          # building from deploy/roon-hub/ (subdir context) breaks workspace
+          # inheritance. Build from repo root, point dockerfile at the
+          # subpath. Same applies to weave-server below.
+          context: #{weave_git_url}
+          dockerfile: deploy/roon-hub/Dockerfile
         image: weave-roon-hub:#{weave_git_ref}
         container_name: weave-roon-hub
         restart: unless-stopped
@@ -107,7 +109,11 @@ file "#{deploy_dir}/docker-compose.yml" do
 
       weave-server:
         build:
-          context: #{weave_git_url}:crates/weave-server
+          # Cargo workspace root is the repo top-level (Cargo.toml uses
+          # workspace.package.edition); subdir context fails with
+          # "failed to find a workspace root". Build from repo root.
+          context: #{weave_git_url}
+          dockerfile: crates/weave-server/Dockerfile
         image: weave-server:#{weave_git_ref}
         container_name: weave-server
         restart: unless-stopped
