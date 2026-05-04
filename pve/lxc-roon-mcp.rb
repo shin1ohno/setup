@@ -7,9 +7,9 @@
 #   apt-get install -y git curl ca-certificates sudo
 #   git clone https://github.com/shin1ohno/setup.git /root/setup
 #   cd /root/setup && ./bin/setup
-#   ./bin/mitamae local lxc-roon-mcp.rb
+#   ./bin/mitamae local pve/lxc-roon-mcp.rb
 
-include_recipe "cookbooks/functions/default"
+include_recipe "../cookbooks/functions/default"
 
 user = ENV["USER"]
 group = `id -gn`.strip

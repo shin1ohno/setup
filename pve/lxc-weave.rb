@@ -1,16 +1,16 @@
 # frozen_string_literal: true
 #
-# Entry recipe for the memory LXC (CT 107): OpenMemory MCP server (native
-# Python venv by default; set MEMORY_SERVER_DOCKER_FALLBACK=1 to switch to
-# the docker compose path via cookbooks/ai-memory).
+# Entry recipe for the weave LXC (CT 109): weave 4-component MQTT mesh
+# (mosquitto + roon-hub + weave-server + weave-web). Connects to lxc-roon at
+# roon-lxc.home.local:9330 via roon-hub.
 #
 # Run inside the LXC after the Terraform layer has provisioned it:
 #   apt-get install -y git curl ca-certificates sudo
 #   git clone https://github.com/shin1ohno/setup.git /root/setup
 #   cd /root/setup && ./bin/setup
-#   ./bin/mitamae local lxc-memory.rb
+#   ./bin/mitamae local pve/lxc-weave.rb
 
-include_recipe "cookbooks/functions/default"
+include_recipe "../cookbooks/functions/default"
 
 user = ENV["USER"]
 group = `id -gn`.strip
@@ -25,4 +25,4 @@ node.reverse_merge!(
   }
 )
 
-include_cookbook "lxc-memory"
+include_cookbook "lxc-weave"

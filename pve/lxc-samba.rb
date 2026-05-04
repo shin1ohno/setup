@@ -1,15 +1,14 @@
 # frozen_string_literal: true
 #
-# Entry recipe for the consent LXC (CT 110): Hydra consent app (Google OAuth +
-# DCR proxy + consent UI). Connects to lxc-hydra at hydra.home.local:4445.
+# Entry recipe for the samba LXC (CT 101): SMB share for [Media] read-only.
 #
 # Run inside the LXC after the Terraform layer has provisioned it:
 #   apt-get install -y git curl ca-certificates sudo
 #   git clone https://github.com/shin1ohno/setup.git /root/setup
 #   cd /root/setup && ./bin/setup
-#   ./bin/mitamae local lxc-consent.rb
+#   ./bin/mitamae local pve/lxc-samba.rb
 
-include_recipe "cookbooks/functions/default"
+include_recipe "../cookbooks/functions/default"
 
 user = ENV["USER"]
 group = `id -gn`.strip
@@ -24,4 +23,4 @@ node.reverse_merge!(
   }
 )
 
-include_cookbook "lxc-consent"
+include_cookbook "lxc-samba"

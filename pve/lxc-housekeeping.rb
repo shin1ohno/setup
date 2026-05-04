@@ -1,16 +1,15 @@
 # frozen_string_literal: true
 #
-# Entry recipe for the weave LXC (CT 109): weave 4-component MQTT mesh
-# (mosquitto + roon-hub + weave-server + weave-web). Connects to lxc-roon at
-# roon-lxc.home.local:9330 via roon-hub.
+# Entry recipe for the housekeeping LXC (CT 103): personal sync (s3-backup +
+# obsidian_file_sync).
 #
 # Run inside the LXC after the Terraform layer has provisioned it:
 #   apt-get install -y git curl ca-certificates sudo
 #   git clone https://github.com/shin1ohno/setup.git /root/setup
 #   cd /root/setup && ./bin/setup
-#   ./bin/mitamae local lxc-weave.rb
+#   ./bin/mitamae local pve/lxc-housekeeping.rb
 
-include_recipe "cookbooks/functions/default"
+include_recipe "../cookbooks/functions/default"
 
 user = ENV["USER"]
 group = `id -gn`.strip
@@ -25,4 +24,4 @@ node.reverse_merge!(
   }
 )
 
-include_cookbook "lxc-weave"
+include_cookbook "lxc-housekeeping"

@@ -11,9 +11,9 @@
 #
 # Run after fresh PVE 9.x install (see ~/pve-auto-install/dist/pve-auto_9.1-1.iso):
 #   ./bin/setup                     # Fetch mitamae binary
-#   ./bin/mitamae local pve-host.rb # Apply
+#   ./bin/mitamae local pve/pve-host.rb # Apply
 
-include_recipe "cookbooks/functions/default"
+include_recipe "../cookbooks/functions/default"
 
 user = ENV["USER"]
 group = `id -gn`.strip

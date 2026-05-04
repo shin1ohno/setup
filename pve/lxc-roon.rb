@@ -1,18 +1,14 @@
 # frozen_string_literal: true
 #
-# Entry recipe for the pro-router LXC (CT 102): Tailscale subnet route
-# advertise + AWS VPC tunnel (Pattern 2 main path).
+# Entry recipe for the roon LXC (CT 100): Roon Server (RAAT/SOOD multicast).
 #
 # Run inside the LXC after the Terraform layer has provisioned it:
 #   apt-get install -y git curl ca-certificates sudo
 #   git clone https://github.com/shin1ohno/setup.git /root/setup
 #   cd /root/setup && ./bin/setup
-#   ./bin/mitamae local lxc-pro-router.rb
-#
-# `tailscale up` is intentionally not part of the cookbook — auth-key
-# fetch + tag flag is an operator step (see cookbook log_warn hint).
+#   ./bin/mitamae local pve/lxc-roon.rb
 
-include_recipe "cookbooks/functions/default"
+include_recipe "../cookbooks/functions/default"
 
 user = ENV["USER"]
 group = `id -gn`.strip
@@ -27,4 +23,4 @@ node.reverse_merge!(
   }
 )
 
-include_cookbook "lxc-pro-router"
+include_cookbook "lxc-roon"
