@@ -2,6 +2,23 @@
 
 include_recipe "cookbooks/functions/default"
 
+# Bare-metal-only entry recipe. Refuse to run inside any container —
+# pro-dev and similar LXC workstations should run lxc-pro-dev.rb;
+# service LXCs have their own lxc-<service>.rb. The hardware cookbooks
+# below (broadcom-wifi, bluez, zeroconf, edge-agent) make strong
+# assumptions about kernel module access, hardware presence, and
+# multi-NIC physical networking that LXC namespaces violate.
+unless ENV["MITAMAE_FORCE_BARE_METAL"] == "1"
+  container = run_command("systemd-detect-virt -c 2>/dev/null", error: false).stdout.strip
+  if container != "" && container != "none"
+    raise "linux.rb is bare-metal-only — running inside a #{container} container is not supported. " \
+          "For developer LXCs use lxc-pro-dev.rb (or a sibling lxc-*-dev.rb). " \
+          "For service LXCs use the matching lxc-<service>.rb. " \
+          "If this is a bare-metal host that systemd-detect-virt -c misclassifies, " \
+          "set MITAMAE_FORCE_BARE_METAL=1 to bypass."
+  end
+end
+
 user = ENV["USER"]
 group = `id -gn`.strip
 node.reverse_merge!(
