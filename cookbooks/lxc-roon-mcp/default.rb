@@ -4,10 +4,10 @@
 #
 # Re-implements the deployment shape of cookbooks/roon-mcp but without the
 # bare-metal IP gate (cookbooks/roon-mcp checks current_ip == 192.168.1.20
-# to scope to legacy pro_1, which doesn't apply inside the LXC at .35).
+# to scope to legacy pro_1, which doesn't apply inside this LXC).
 #
 # Network: vmbr0 (single interface, no host network sharing). The HTTP
-# port 8080 is reachable on 192.168.1.35:8080 via the bridge.
+# port 8080 is reachable on roon-mcp.home.local:8080 via the bridge.
 #
 # Bind-mount (set up by Terraform):
 #   - host /mnt/data/roon-mcp/tokens.json → /root/.config/roon-rs/tokens.json
@@ -20,10 +20,11 @@ include_cookbook "docker-engine"
 
 ROON_MCP_VERSION = "0.5.3"
 ROON_MCP_HTTP_PORT = 8080
-# Roon Core lives in lxc-roon (CT 100, default IP 192.168.1.20).
-# Override via node[:roon_core][:host] when the Terraform-managed IP
-# changes.
-ROON_MCP_CORE_HOST = node.dig(:roon_core, :host) || "192.168.1.20"
+# Roon Core lives in lxc-roon (CT 100). Resolved via home.local DNS so the
+# devices.tf single source of truth flows through the RTX-served zone into
+# this cookbook with no IP hardcoded here. Override via
+# node[:roon_core][:host] when the Terraform DNS records change.
+ROON_MCP_CORE_HOST = node.dig(:roon_core, :host) || "roon-lxc.home.local"
 ROON_MCP_CORE_PORT = 9330
 ROON_MCP_PUBLIC_HOST = "mcp.ohno.be"
 ROON_MCP_ISSUER = "https://mcp.ohno.be"

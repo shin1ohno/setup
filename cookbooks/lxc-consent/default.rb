@@ -4,7 +4,7 @@
 # + consent UI rendering.
 #
 # Tightly coupled to hydra LXC (admin API on
-# node[:hydra_server][:lan_host]:4445, default 192.168.1.33:4445) but
+# node[:hydra_server][:lan_host]:4445, default hydra.home.local:4445) but
 # isolated for per-service ZFS rollback granularity.
 #
 # Phase 0.5-Z Z-1 result determines path:
@@ -24,9 +24,10 @@ user = node[:setup][:user]
 group = node[:setup][:group]
 deploy_dir = "#{node[:setup][:home]}/deploy/consent"
 
-# Hydra admin reachable cross-LXC over LAN. Override per-deployment via
-# node[:hydra_server][:lan_host].
-hydra_lan_host = node.dig(:hydra_server, :lan_host) || "192.168.1.33"
+# Hydra admin reachable cross-LXC over the home.local DNS zone. Override
+# per-deployment via node[:hydra_server][:lan_host] (e.g. when running
+# against the bare-metal hydra deployment that lives on a different host).
+hydra_lan_host = node.dig(:hydra_server, :lan_host) || "hydra.home.local"
 hydra_admin_url = "http://#{hydra_lan_host}:4445"
 
 directory deploy_dir do
