@@ -43,14 +43,15 @@ include_role "manage" # Managed projects setup
 include_role "network" # Network configuration
 include_role "server" # Server-specific setup
 
+# Physical-host hardware controllers. MCP servers and Roon Server / MCP
+# previously included here have migrated to dedicated LXCs
+# (lxc-{cognee,hydra,memory,roon,roon-mcp}); bare-metal pro now hosts
+# only physical-hardware-coupled cookbooks.
 include_cookbook "arp-flux"
 include_cookbook "bluez"
 include_cookbook "zeroconf"
 include_cookbook "broadcom-wifi"
-include_cookbook "roon-server"
 include_cookbook "edge-agent"
-include_cookbook "roon-mcp"
-include_role "mcp-server"
 # samba / smartmontools / obsidian_file_sync / s3-backup / gpg-backup
 # now live in roles/server/default.rb
 
