@@ -30,6 +30,13 @@ execute "add_docker_repo" do
   command "echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/#{distro_id} #{distro_codename} stable' > /etc/apt/sources.list.d/docker.list"
   user node[:setup][:system_user]
   not_if { run_command('grep -R "download.docker.com" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null', error: false).exit_status == 0 }
+  # Refresh apt index immediately when this resource added the docker repo,
+  # so the package "docker-ce" install below sees the new repo. Without
+  # this notify, the 24h freshness guard on update_package_index skips the
+  # refresh on freshly-bootstrapped LXCs (where apt-get update ran during
+  # bootstrap, before the docker repo was added) — failing with
+  # `Package docker-ce has no installation candidate`.
+  notifies :run, "execute[update_package_index]", :immediately
 end
 
 execute "update_package_index" do
@@ -37,7 +44,9 @@ execute "update_package_index" do
   user node[:setup][:system_user]
   # Skip if /var/cache/apt/pkgcache.bin was refreshed within the last 24h —
   # apt-get update is a network round-trip that delays every mitamae run
-  # even when the index is fresh.
+  # even when the index is fresh. add_docker_repo's :immediately notify
+  # above forces a refresh when the docker source is newly added, so this
+  # 24h skip only applies to subsequent idempotent runs.
   #
   # Proc form (not string) because mitamae auto-wraps string not_if commands
   # with `sudo -u <user>` when the resource has a `user` attribute, and that

@@ -148,7 +148,12 @@ end
 # little value here.
 db_marker = "#{HYDRA_HOME}/.hydra-migrated"
 execute "hydra migrate sql" do
-  command "sudo bash -c 'set -a; . #{env_system_path}; set +a; #{HYDRA_BINARY} migrate sql --yes' && sudo touch #{db_marker}"
+  # `hydra migrate sql` (without subcommand) is deprecated since v2.x and
+  # falls through to a usage path that demands the DSN as a positional
+  # argument, ignoring the env-loaded value — the sourced DSN is silently
+  # discarded and migration aborts with "Please provide the database URL."
+  # `hydra migrate sql up` is the canonical form and reads DSN from env.
+  command "sudo bash -c 'set -a; . #{env_system_path}; set +a; #{HYDRA_BINARY} migrate sql up --yes' && sudo touch #{db_marker}"
   only_if "test -f #{env_system_path} && ! test -f #{db_marker}"
 end
 
