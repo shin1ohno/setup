@@ -10,8 +10,15 @@ This is a **mitamae-based infrastructure automation system** for setting up deve
 
 This repository configures:
 
-- Linux hosts that run `linux.rb` (e.g. `pro`, `neo`, future hosts) — Ubuntu / Debian family
-- macOS hosts that run `darwin.rb` (e.g. `air`, `ohnos-macbook`)
+| Host type | Example | Entry recipe |
+|---|---|---|
+| Bare-metal Linux workstation | `pro` | `linux.rb` (refuses to apply inside any container — guarded by `systemd-detect-virt -c`; bypass with `MITAMAE_FORCE_BARE_METAL=1`) |
+| Proxmox VE host | the host that runs the LXCs | `pve-host.rb` |
+| Developer workstation LXC | `pro-dev` (CT 104), future `*-dev` | `lxc-pro-dev.rb` (delegates to the `lxc-dev-workstation` cookbook; future LXCs reuse the cookbook with their own `node[:lxc_dev][:*]` overrides) |
+| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router` | matching `lxc-<service>.rb` |
+| macOS | `air`, `ohnos-macbook` | `darwin.rb` |
+
+`linux.rb` is bare-metal-only. MCP servers (cognee, ai-memory, hydra, hydra-consent) and Roon Server / MCP have migrated to dedicated LXCs and are NOT installed on bare-metal pro.
 
 This repository does NOT configure:
 
@@ -107,6 +114,6 @@ This repository does NOT configure:
 - The project hook `.claude/hooks/guard-mitamae-dry-run.rb` blocks `mitamae` without `--dry-run` for Claude. Apply runs are user-only — present them as `! ./bin/mitamae local <platform>.rb` for the user to run
 - Use `run_command("command", error: false)` for status code checking
 - Profile scripts are loaded from `~/.setup_shin1ohno/profile.d/` with priority ordering
-- Linux includes Linux-only cookbooks directly in `linux.rb` (bluez, broadcom-wifi, zeroconf for hardware; edge-agent, roon-server, roon-mcp for services)
+- Linux includes hardware-coupled cookbooks directly in `linux.rb` (bluez, broadcom-wifi, zeroconf, edge-agent). Roon Server / MCP and the rest of the MCP server stack run in dedicated LXCs and are no longer pulled into `linux.rb`
 - macOS includes client-specific setup (mac-settings, mac-apps) directly in `darwin.rb`
 
