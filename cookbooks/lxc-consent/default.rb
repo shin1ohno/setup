@@ -47,7 +47,7 @@ end
 # Consent app source — read from cookbooks/hydra/files/consent-app/ to
 # keep one canonical implementation. Avoids byte-for-byte duplication
 # between cookbooks/hydra and cookbooks/lxc-consent.
-hydra_consent_dir = File.expand_path("../hydra/files/consent-app", __dir__)
+hydra_consent_dir = File.expand_path("../hydra/files/consent-app", File.dirname(__FILE__))
 %w[Dockerfile requirements.txt app.py].each do |f|
   src_content = File.read("#{hydra_consent_dir}/#{f}")
   file "#{deploy_dir}/consent-app/#{f}" do
