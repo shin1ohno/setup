@@ -19,12 +19,12 @@
 #   apt-get install -y git curl ca-certificates sudo
 #   git clone https://github.com/shin1ohno/setup.git /root/setup
 #   cd /root/setup && ./bin/setup
-#   ./bin/mitamae local lxc-pro-dev.rb
+#   ./bin/mitamae local pve/lxc-pro-dev.rb
 #
 # Phase 4 follow-up: ManagedProjects rsync, AWS profile, GPG keys are
 # restored from /mnt/data/pve-migration-backup-* via host bind-mount.
 
-include_recipe "cookbooks/functions/default"
+include_recipe "../cookbooks/functions/default"
 
 user = ENV["USER"]
 group = `id -gn`.strip

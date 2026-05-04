@@ -13,9 +13,9 @@ This repository configures:
 | Host type | Example | Entry recipe |
 |---|---|---|
 | Bare-metal Linux workstation | `pro` | `linux.rb` (refuses to apply inside any container — guarded by `systemd-detect-virt -c`; bypass with `MITAMAE_FORCE_BARE_METAL=1`) |
-| Proxmox VE host | the host that runs the LXCs | `pve-host.rb` |
-| Developer workstation LXC | `pro-dev` (CT 104), future `*-dev` | `lxc-pro-dev.rb` (delegates to the `lxc-dev-workstation` cookbook; future LXCs reuse the cookbook with their own `node[:lxc_dev][:*]` overrides) |
-| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router` | matching `lxc-<service>.rb` |
+| Proxmox VE host | the host that runs the LXCs | `pve/pve-host.rb` |
+| Developer workstation LXC | `pro-dev` (CT 104), future `*-dev` | `pve/lxc-pro-dev.rb` (delegates to the `lxc-dev-workstation` cookbook; future LXCs reuse the cookbook with their own `node[:lxc_dev][:*]` overrides) |
+| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router` | matching `pve/lxc-<service>.rb` (apply all in parallel via `bin/apply-pve-lxcs`) |
 | macOS | `air`, `ohnos-macbook` | `darwin.rb` |
 
 `linux.rb` is bare-metal-only. MCP servers (cognee, ai-memory, hydra, hydra-consent) and Roon Server / MCP have migrated to dedicated LXCs and are NOT installed on bare-metal pro.
