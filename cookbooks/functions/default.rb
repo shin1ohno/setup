@@ -55,9 +55,15 @@ module RecipeHelper
   #     returns when check passes; "skip" raises so the cookbook's
   #     unconditional resources still surface the missing prereq).
   #
-  # Caveat: STDIN.gets blocks in non-TTY contexts. The bootstrap assumes
-  # an interactive first-time run; non-interactive contexts should
-  # pre-configure auth before invoking mitamae.
+  # Non-TTY context (CI / agent-driven runs / `mitamae` invoked from a
+  # background script): if `check_command` succeeds, the block runs
+  # normally. If `check_command` fails, the block is SKIPPED with a
+  # warning rather than yielded — yielding would queue resources that
+  # fail at converge and abort the whole run, while skipping lets the
+  # rest of the recipe proceed and the operator re-runs after configuring
+  # auth. Downstream cookbooks that depend on the block's side effects
+  # (e.g. .env files) should guard their consumers with `only_if "test
+  # -f <path>"`.
   def require_external_auth(tool_name:, check_command:, instructions:, skip_if: nil)
     if skip_if && skip_if.call
       return
