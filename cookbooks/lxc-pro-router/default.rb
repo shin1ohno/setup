@@ -45,6 +45,82 @@ end
 # Reuse the canonical Tailscale install path.
 include_cookbook "tailscale"
 
+# Subnet routing: pro-router needs to forward LAN packets (192.168.1.x)
+# to AWS VPC (10.33.128.0/18) over tailscale0. This requires:
+#   1. accept-routes on tailscale (to register 10.33.128.0/18 as a peer route)
+#   2. removing the conflicting 192.168.0.0/16 route from hnd-subnet-router
+#      that gets installed on tailscale0 alongside 10.33.128.0/18 — that
+#      overlaps with our LAN's 192.168.1.0/24 (eth0) and breaks LAN traffic
+#   3. systemd unit that re-applies (1) + (2) on every boot, since
+#      `tailscale set` is in-process state and routes are kernel state
+#
+# The systemd unit also defends against future hnd-subnet-router peers
+# advertising any 192.168.x.x supernet — we explicitly del the 192.168.0.0/16
+# route. The routes for 100.64.0.0/10 (CGNAT) and 10.33.128.0/18 (VPC) we
+# keep.
+file "#{node[:setup][:root]}/lxc-pro-router-tailnet-routes.sh" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  content <<~SH
+    #!/bin/bash
+    # Managed by setup/cookbooks/lxc-pro-router. Do not edit by hand.
+    #
+    # Tailscale's `--accept-routes=true` installs peer-advertised routes into
+    # both the main routing table and table 52 (selected by `ip rule
+    # 5270: from all lookup 52`). hnd-subnet-router advertises 192.168.0.0/16
+    # which overlaps with our LAN's 192.168.1.0/24 — and table 52 is consulted
+    # BEFORE main, so any reply from pro-router to a LAN host gets routed via
+    # tailscale0 instead of eth0, breaking LAN connectivity entirely
+    # (cognee → pro-router:22 → timeout, observed empirically).
+    #
+    # Fix: drop the 192.168.0.0/16 route from BOTH tables. The remaining
+    # tailnet routes (10.33.128.0/18, 100.64.0.0/10) stay so the LXC can
+    # forward LAN traffic to AWS VPC.
+    set -euo pipefail
+    /usr/bin/tailscale set --accept-routes=true
+    sleep 2
+    /usr/sbin/ip route del 192.168.0.0/16 dev tailscale0 2>/dev/null || true
+    /usr/sbin/ip route del 192.168.0.0/16 dev tailscale0 table 52 2>/dev/null || true
+  SH
+end
+
+execute "install pro-router tailnet-routes script" do
+  command "sudo install -m 755 -o root -g root #{node[:setup][:root]}/lxc-pro-router-tailnet-routes.sh /usr/local/sbin/lxc-pro-router-tailnet-routes.sh"
+  not_if "diff -q #{node[:setup][:root]}/lxc-pro-router-tailnet-routes.sh /usr/local/sbin/lxc-pro-router-tailnet-routes.sh 2>/dev/null"
+end
+
+file "#{node[:setup][:root]}/lxc-pro-router-tailnet-routes.service" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  content <<~UNIT
+    [Unit]
+    Description=Apply pro-router VPC subnet routing through tailscale0
+    After=tailscaled.service network-online.target
+    Wants=tailscaled.service network-online.target
+
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/sbin/lxc-pro-router-tailnet-routes.sh
+    RemainAfterExit=true
+
+    [Install]
+    WantedBy=multi-user.target
+  UNIT
+end
+
+execute "install pro-router tailnet-routes systemd unit" do
+  command "sudo install -m 644 -o root -g root #{node[:setup][:root]}/lxc-pro-router-tailnet-routes.service /etc/systemd/system/lxc-pro-router-tailnet-routes.service"
+  not_if "diff -q #{node[:setup][:root]}/lxc-pro-router-tailnet-routes.service /etc/systemd/system/lxc-pro-router-tailnet-routes.service 2>/dev/null"
+  notifies :run, "execute[reload + enable pro-router tailnet-routes]"
+end
+
+execute "reload + enable pro-router tailnet-routes" do
+  command "sudo systemctl daemon-reload && sudo systemctl enable --now lxc-pro-router-tailnet-routes.service"
+  action :nothing
+end
+
 # Helper output: tell the operator the exact `tailscale up` command for
 # this LXC. Auth key fetched from SSM at install time.
 local_ruby_block "log lxc-pro-router tailscale up hint" do
