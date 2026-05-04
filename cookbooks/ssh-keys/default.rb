@@ -108,9 +108,13 @@ end
 MANAGED_BEGIN = "# BEGIN ssh-keys-managed"
 MANAGED_END = "# END ssh-keys-managed"
 
-# Collect public keys from all devices
+# Collect public keys from all devices. Multiple devices may share an
+# SSM prefix (e.g. pro and pro-dev are twins) — dedup by [key_type,
+# key_data] so authorized_keys never carries two visually-different
+# lines that resolve to the same key.
 managed_keys = []
 managed_key_data = [] # [key_type, key_data] pairs for dedup
+seen_keys = {} # "<key_type> <key_data>" => index in managed_keys
 devices.each do |dev|
   pub = fetch_ssm.call("#{dev["ssm_prefix"]}/public")
   next unless pub
@@ -120,6 +124,19 @@ devices.each do |dev|
   parts = pub_line.split(/\s+/)
   pub_line = "#{pub_line} #{dev["name"]}" if parts.length < 3
 
+  key_id = "#{parts[0]} #{parts[1]}"
+  if seen_keys.key?(key_id)
+    # Merge the new device's name into the existing line's comment
+    # field so both names are recorded (e.g. "ssh-ed25519 AAAA... pro,pro-dev").
+    idx = seen_keys[key_id]
+    existing = managed_keys[idx].split(/\s+/, 3)
+    existing_comment = existing[2] || ""
+    new_comment = (existing_comment.split(",") + [dev["name"]]).uniq.join(",")
+    managed_keys[idx] = "#{existing[0]} #{existing[1]} #{new_comment}"
+    next
+  end
+
+  seen_keys[key_id] = managed_keys.length
   managed_keys << pub_line
   managed_key_data << parts[0..1] # [key_type, base64_data]
 end

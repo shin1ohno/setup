@@ -32,12 +32,13 @@ execute "install arp-flux sysctl drop-in" do
 end
 
 # Apply the new values to the running kernel without a reboot.
-# `sysctl --system` reloads every drop-in under /etc/sysctl.d/, so it
-# also re-asserts any sibling files (disable-ipv6, etc.). Cheap and
-# idempotent. The not_if checks all four target values are already
-# in effect.
+# Apply ONLY this drop-in (`-p <file>`) instead of `--system`, because
+# `--system` re-evaluates every drop-in under /etc/sysctl.d/ and exits
+# non-zero if any unrelated key is restricted (e.g. `kernel.*`,
+# `fs.protected_*` are read-only inside LXC containers). The arp-flux
+# keys themselves are network-namespace-scoped and writable in LXC.
 execute "apply arp-flux sysctl" do
-  command "sysctl --system"
+  command "sysctl -p /etc/sysctl.d/30-arp-flux.conf"
   user node[:setup][:system_user]
   not_if {
     %w(

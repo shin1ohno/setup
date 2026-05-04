@@ -209,4 +209,8 @@ execute "docker compose restart cognee" do
   command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build"
   user node[:setup][:user]
   action :nothing
+  # Skip when .env was not generated (SSM auth absent / non-interactive
+  # bootstrap). Restart would otherwise start containers with empty
+  # credentials and fail at runtime.
+  only_if "test -f #{env_output_path}"
 end

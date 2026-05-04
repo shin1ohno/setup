@@ -17,6 +17,14 @@ when "darwin"
 
   execute "brew services restart ollama"
 else # Linux
+  # Recent Ollama releases (>= v0.12) ship as .tar.zst; the bundled installer
+  # falls back to .tgz only when the .zst asset is absent. Install zstd up
+  # front so the .zst path can be taken without aborting.
+  package "zstd" do
+    user node[:setup][:system_user]
+    not_if { run_command("dpkg-query -W -f='${Status}' zstd 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
+  end
+
   remote_file "#{node[:setup][:root]}/ollama-install-linux.sh" do
     owner node[:setup][:user]
     group node[:setup][:group]

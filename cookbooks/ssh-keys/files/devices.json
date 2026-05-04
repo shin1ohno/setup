@@ -10,6 +10,13 @@
       "ssh_user": "shin1ohno"
     },
     {
+      "name": "pro-dev",
+      "ssm_prefix": "/ssh-keys/devices/pro",
+      "key_file": "pro_ed25519",
+      "ssh_host": "pro-dev",
+      "ssh_user": "shin1ohno"
+    },
+    {
       "name": "air",
       "ssm_prefix": "/ssh-keys/devices/air",
       "key_file": "air_ed25519",

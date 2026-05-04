@@ -55,9 +55,15 @@ module RecipeHelper
   #     returns when check passes; "skip" raises so the cookbook's
   #     unconditional resources still surface the missing prereq).
   #
-  # Caveat: STDIN.gets blocks in non-TTY contexts. The bootstrap assumes
-  # an interactive first-time run; non-interactive contexts should
-  # pre-configure auth before invoking mitamae.
+  # Non-TTY context (CI / agent-driven runs / `mitamae` invoked from a
+  # background script): if `check_command` succeeds, the block runs
+  # normally. If `check_command` fails, the block is SKIPPED with a
+  # warning rather than yielded — yielding would queue resources that
+  # fail at converge and abort the whole run, while skipping lets the
+  # rest of the recipe proceed and the operator re-runs after configuring
+  # auth. Downstream cookbooks that depend on the block's side effects
+  # (e.g. .env files) should guard their consumers with `only_if "test
+  # -f <path>"`.
   def require_external_auth(tool_name:, check_command:, instructions:, skip_if: nil)
     if skip_if && skip_if.call
       return
@@ -71,12 +77,12 @@ module RecipeHelper
     end
 
     # Non-interactive context (CI / dry-run / agent-driven): can't pause for
-    # user input. Skip the gate silently and yield the block. If the inner
-    # resources actually need the auth, they'll fail at command-execution
-    # time with a clearer downstream error than blocking on STDIN forever.
+    # user input AND the auth check failed. Skip the inner block entirely.
+    # Yielding here would queue a resource that will fail at converge, which
+    # aborts the whole mitamae run. Skipping with a loud warning lets the
+    # rest of the recipe proceed; the user can re-run after configuring auth.
     unless STDIN.tty?
-      MItamae.logger.warn("[bootstrap] #{tool_name} not configured but STDIN is not a TTY — skipping auth gate (non-interactive run).")
-      yield if block_given?
+      MItamae.logger.warn("[bootstrap] #{tool_name} not configured AND STDIN is not a TTY — skipping auth-gated block. Configure auth and re-run mitamae to apply.")
       return
     end
 
