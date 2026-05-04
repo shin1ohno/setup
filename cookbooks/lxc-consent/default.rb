@@ -137,7 +137,7 @@ compose_path = "#{deploy_dir}/docker-compose.yml"
 project_name = File.basename(deploy_dir)
 
 execute "ensure consent running" do
-  command "docker compose -f #{compose_path} up -d --build"
+  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
   user user
   only_if <<~SH.tr("\n", " ").strip
     test -f #{env_output_path} || exit 1;
@@ -151,7 +151,7 @@ execute "ensure consent running" do
 end
 
 execute "restart consent" do
-  command "docker compose -f #{compose_path} up -d --build"
+  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
   user user
   action :nothing
 end
