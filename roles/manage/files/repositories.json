@@ -3,6 +3,10 @@
     {
       "name": "setup",
       "uri": "git@github.com:shin1ohno/setup.git"
+    },
+    {
+      "name": "home-monitor",
+      "uri": "codecommit::ap-northeast-1://sh1admn@home-monitor"
     }
   ]
 }
