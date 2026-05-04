@@ -43,6 +43,19 @@ Examples of values that must be probed, not asked:
 
 This rule exists because the 2026-04-28 weave session asked the user to copy-paste an iPad UDID into a deploy command after a guessed jq selector failed. The user explicitly corrected with "neo.local に ssh して UUID を取得してください" — the value was 1 ssh command away.
 
+**Capability claims are values too — probe before asserting**: the gate above covers values you might *ask the user* for. The same discipline applies when you are about to *assert a fact* to the user about whether a tool / backend / library supports a feature ("can mise manage X?", "does brew have Y?", "can pipx inject Z?"). Recall-from-training is not evidence; the upstream API / registry is. Run the verification probe before writing the assertion.
+
+Examples of capability claims that must be probed, not recalled:
+- "Can `mise` manage `<tool>`?" → `mise registry <tool>`, `gh api repos/<owner>/<repo>/releases/latest --jq '.assets[].name'`, `mise install <backend>:<tool> --dry-run` — see `~/.claude/rules/mise-migration.md`
+- "Does `brew` have `<formula>`?" → `brew info <formula>` (online, definitive)
+- "Does `<tool>` support `<flag>`?" → `<tool> --help 2>&1 | grep -- <flag>`
+- "Is `<package>` on PyPI / npm / crates.io?" → `pip index versions <pkg>` / `npm view <pkg>` / `cargo search <pkg>`
+- "Does `<service>`'s API expose `<endpoint>`?" → `curl -fsI <base>/<endpoint>` or read the OpenAPI spec
+
+A confidently-wrong capability claim is more expensive than asking the user, because the user trusts the answer, builds on it, and discovers the blocker downstream — sometimes after a full implementation pivot. The probe is 30 seconds; the wrong-claim pivot can be 30 minutes.
+
+This rule exists because the 2026-05-04 git-remote-codecommit session answered "yes, mise can manage it via pipx backend" without probing. Hit two real blockers in sequence (pipx not on PATH, mise pipx venvs cannot be `pipx inject`-ed for runtime extras), pivoted the entire cookbook to pyenv pip, total cost ~30 min + an approach rewrite. The 5-check verification batch run before the assertion would have surfaced both blockers instantly.
+
 **When a diagnosis yields 5+ issues**: do NOT flatten them into a single "which of these do you care about?" AskUserQuestion — the user ends up with a question whose shape doesn't match how they think about the product. Instead, group the issues by user-goal theme (not by file, not by severity) and make the themes the options. Example: 7 痛点 across Edit form → group into "フォーム内部 / 行内アクション / drawer 差別化 / Save モデル" and ask which themes to tackle. This makes the plan's top-level structure correct from the start and avoids rewriting it after the user corrects the framing.
 
 ## Critical Rules — General
