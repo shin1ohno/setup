@@ -70,3 +70,21 @@ PR #32 (2026-04-25 mitamae brew→mise migration) shipped 8 distinct upstream-fa
 ## Anti-pattern: trusting plan-agent backend mappings without verification
 
 A Plan agent may return: "xcodes → `ubi:XcodesOrg/xcodes`, aria2 → `ubi:aria2/aria2`, macism → `go:github.com/laishulu/macism`". Each mapping looks plausible but is wrong (tag format, no darwin asset, wrong language). The agent constructed the mappings from web-search summaries that did not include upstream API state. **Run the 5-check batch on each one before adopting.**
+
+## Feasibility questions — verify before answering
+
+This rule fires for **direct user questions** ("can mise manage X?", "is X available via mise?", "what's the best way to install X via mise?"), not just cookbook-writing-time. A verbal "yes" that turns out wrong costs more than the 30-second probe — the user trusts the answer, builds on it, and discovers blockers downstream.
+
+Apply the 5-check verification batch before answering. In addition, for **Python tools specifically**, two non-obvious facts of the mise pipx backend break the typical cookbook shape:
+
+- **`mise pipx:<tool>` requires `pipx` itself to already be on PATH** — the backend does not bootstrap pipx. On a fresh host, install pipx first (apt: `pipx`, or `mise use aqua:pypa/pipx`) before any `mise use pipx:<tool>`. If pipx is missing the backend fails with `failed to execute command: pipx install <tool>: No such file or directory (os error 2)`.
+
+- **`mise pipx:<tool>` creates uv-managed venvs that the `pipx` CLI cannot introspect** — the venv lives under `~/.local/share/mise/installs/pipx-<tool>/<ver>/<tool>/` and was created by uv (the fast pipx replacement that mise uses internally), not standard pipx. Therefore:
+  - `pipx inject <tool> "extra-package"` fails with "Can't inject … into nonexistent Virtual Environment".
+  - The venv has no `pip` module installed, so `<venv>/bin/python -m pip install …` also fails ("No module named pip").
+
+  If a tool needs runtime extras (`package[crt]`-style optional dependencies, or post-install dependency injection), **do not use mise pipx**. Use pyenv pip directly (matches `cookbooks/speedtest-cli` pattern) so the tool and its extras land in a single managed environment.
+
+Concrete example: `git-remote-codecommit` needs `botocore[crt]` to read `aws login`-style session credentials. mise pipx installs the base tool fine but `pipx inject` to add `botocore[crt]` is impossible. Pyenv pip handles both in one command: `$HOME/.pyenv/shims/pip install git-remote-codecommit 'botocore[crt]'`.
+
+This rule exists because the 2026-05-04 git-remote-codecommit session answered "yes, mise can manage it via pipx backend" without probing, then hit both blockers sequentially (pipx not on PATH → install pipx → pipx inject fails → pivot to pyenv). Total cost: ~30 minutes + one full cookbook rewrite. The 5-check verification batch — extended to cover capability claims, not just URLs — would have caught at least the pipx-not-on-PATH issue in 30 seconds.
