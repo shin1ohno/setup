@@ -9,9 +9,9 @@ any container — so the right one matters.
 | Host type | Example | Entry recipe | What it installs |
 |---|---|---|---|
 | Physical Linux workstation | `pro` (Mac Pro 5,1) | `linux.rb` | Standard roles + physical-hardware cookbooks (broadcom-wifi, bluez, zeroconf, edge-agent, arp-flux). MCP servers and Roon are NOT here — they live in their own LXCs |
-| Proxmox VE host | the PVE host that hosts the LXCs | `pve-host.rb` | Minimal: bridges + arp-flux + tailscaled |
-| Developer workstation LXC | `pro-dev` (CT 104), future `*-dev` | `lxc-pro-dev.rb` (delegates to `lxc-dev-workstation` cookbook) | Standard roles minus hardware cookbooks. New dev LXCs follow the same shape — set `node[:lxc_dev][:hostname]` / `:tailscale_ssm_key` and include the cookbook |
-| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router` | matching `lxc-<service>.rb` | Service-specific (existing) |
+| Proxmox VE host | the PVE host that hosts the LXCs | `pve/pve-host.rb` | Minimal: bridges + arp-flux + tailscaled |
+| Developer workstation LXC | `pro-dev` (CT 104), future `*-dev` | `pve/lxc-pro-dev.rb` (delegates to `lxc-dev-workstation` cookbook) | Standard roles minus hardware cookbooks. New dev LXCs follow the same shape — set `node[:lxc_dev][:hostname]` / `:tailscale_ssm_key` and include the cookbook |
+| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router` | matching `pve/lxc-<service>.rb` | Service-specific (existing). Apply all PVE-virtualized LXCs in parallel via `bin/apply-pve-lxcs` |
 | macOS | `air`, `ohnos-macbook` | `darwin.rb` | macOS dev environment + mac-apps |
 
 Override the `linux.rb` container guard with `MITAMAE_FORCE_BARE_METAL=1`
