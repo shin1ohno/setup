@@ -21,8 +21,9 @@ user = node[:setup][:user]
 group = node[:setup][:group]
 deploy_dir = "#{node[:setup][:home]}/deploy/weave"
 
-# Roon Core LXC reachable over LAN. Override via node[:roon_core][:host].
-roon_core_host = node.dig(:roon_core, :host) || "192.168.1.20"
+# Roon Core LXC reachable over the home.local DNS zone. Override via
+# node[:roon_core][:host] when running against a non-LXC Roon deployment.
+roon_core_host = node.dig(:roon_core, :host) || "roon-lxc.home.local"
 
 # TODO: pin :latest tags. Pre-pin tag values are unknown at write time —
 # track the actual digest of shin1ohno/{roon-hub,weave-server,weave-web}
