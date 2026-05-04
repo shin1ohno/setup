@@ -29,6 +29,14 @@ if node[:platform] == "darwin"
     not_if "which rclone"
   end
 else #linux
+  # The rclone install.sh extracts a release zip and aborts with
+  # "None of the supported tools for extracting zip archives (unzip 7z
+  # busybox) were found" on minimal Debian 13 LXCs that lack unzip.
+  package "unzip" do
+    user node[:setup][:system_user]
+    not_if { run_command("dpkg-query -W -f='${Status}' unzip 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
+  end
+
   execute "RCLONE_NO_UPDATE_PROFILE=1 #{node[:setup][:root]}/rclone-install.sh" do
     not_if "which rclone"
     user node[:setup][:system_user]

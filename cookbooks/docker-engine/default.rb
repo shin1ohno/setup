@@ -1,8 +1,12 @@
 execute "update_and_install_deps" do
-  command "apt-get update && apt-get install -y ca-certificates curl"
+  # gnupg is required by `gpg --dearmor` in add_docker_gpg_key below.
+  # Debian 13 LXC trixie templates ship without gnupg, so the bare
+  # ca-certificates+curl install is insufficient on a fresh PVE-provisioned
+  # LXC.
+  command "apt-get update && apt-get install -y ca-certificates curl gnupg"
   user node[:setup][:system_user]
   not_if {
-    %w(ca-certificates curl).all? { |pkg|
+    %w(ca-certificates curl gnupg).all? { |pkg|
       run_command("dpkg-query -W -f='${Status}' #{pkg} 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0
     }
   }
