@@ -7,7 +7,7 @@
       "ssm_prefix": "/ssh-keys/devices/pro",
       "key_file": "pro_ed25519",
       "ssh_host": "pro",
-      "ssh_user": "shin1ohno"
+      "ssh_user": "root"
     },
     {
       "name": "pro-dev",
