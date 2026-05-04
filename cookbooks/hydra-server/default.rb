@@ -190,6 +190,10 @@ end
 execute "hydra systemctl daemon-reload" do
   command "sudo systemctl daemon-reload && sudo systemctl restart hydra"
   action :nothing
+  # Skip the restart half when .env is missing (e.g. fresh apply where
+  # the AWS auth gate skipped SSM env generation in non-TTY context).
+  # Without DSN, hydra fails to start and aborts the run.
+  only_if "test -f #{env_system_path}"
 end
 
 execute "enable + start hydra" do

@@ -151,6 +151,10 @@ end
 execute "openmemory systemctl daemon-reload" do
   command "sudo systemctl daemon-reload && sudo systemctl restart openmemory"
   action :nothing
+  # Skip the restart half when .env is missing (e.g. fresh apply where
+  # the AWS auth gate skipped SSM env generation in non-TTY context).
+  # Without DATABASE_URL, openmemory fails to start and aborts the run.
+  only_if "test -f #{env_system_path}"
 end
 
 execute "enable + start openmemory" do
