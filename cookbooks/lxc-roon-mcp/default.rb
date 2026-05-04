@@ -106,7 +106,7 @@ compose_path = "#{home}/deploy/roon-mcp/docker-compose.yml"
 project_name = "roon-mcp"
 
 execute "ensure roon-mcp running" do
-  command "docker compose -f #{compose_path} up -d --build"
+  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
   user user
   only_if <<~SH.tr("\n", " ").strip
     expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
@@ -119,7 +119,7 @@ execute "ensure roon-mcp running" do
 end
 
 execute "restart roon-mcp" do
-  command "docker compose -f #{compose_path} up -d --build"
+  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
   user user
   action :nothing
 end
