@@ -3,20 +3,25 @@
 # LXCs in parallel via SSH.
 #
 # Assumes:
-#   - SSH alias for each host resolves (Tailscale Magic DNS or local DNS)
+#   - LAN-internal DNS resolves "<host><HOSTNAME_SUFFIX>" for each host
+#     (default suffix .home.local matches the home-router DNS;
+#     LXCs are NOT on Tailscale, so bare names do not resolve via
+#     Magic DNS)
 #   - shared setup repo at REPO_PATH on each target (default /root/setup)
 #   - passwordless sudo for the SSH user on each LXC
 #
 # Usage:
-#   bin/apply-pve-lxcs                    # all 11 LXCs in parallel
-#   bin/apply-pve-lxcs cognee hydra       # subset only
-#   PARALLEL_JOBS=2 bin/apply-pve-lxcs    # cap concurrency
+#   bin/apply-pve-lxcs                       # all 11 LXCs in parallel
+#   bin/apply-pve-lxcs cognee hydra          # subset only
+#   PARALLEL_JOBS=2 bin/apply-pve-lxcs       # cap concurrency
 #   REPO_PATH=/opt/setup bin/apply-pve-lxcs
+#   HOSTNAME_SUFFIX="" bin/apply-pve-lxcs    # bare names (use ssh aliases)
 
 set -euo pipefail
 
 REPO_PATH="${REPO_PATH:-/root/setup}"
 PARALLEL_JOBS="${PARALLEL_JOBS:-4}"
+HOSTNAME_SUFFIX="${HOSTNAME_SUFFIX-.home.local}"
 
 declare -a hosts=(
   cognee
@@ -35,12 +40,13 @@ declare -a hosts=(
 
 apply_one() {
   local host=$1
+  local target="${host}${HOSTNAME_SUFFIX}"
   local recipe="pve/lxc-${host}.rb"
-  ssh -o BatchMode=yes "${host}" \
+  ssh -o BatchMode=yes "${target}" \
     "sudo -n bash -c 'set -euo pipefail; cd ${REPO_PATH} && git pull --ff-only && ./bin/setup && ./bin/mitamae local ${recipe}'"
 }
 export -f apply_one
-export REPO_PATH
+export REPO_PATH HOSTNAME_SUFFIX
 
 if command -v parallel >/dev/null 2>&1; then
   printf '%s\n' "${hosts[@]}" \
