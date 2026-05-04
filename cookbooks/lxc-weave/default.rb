@@ -88,8 +88,10 @@ file "#{deploy_dir}/docker-compose.yml" do
 
       roon-hub:
         build:
-          context: #{weave_git_url}
-          dockerfile: deploy/roon-hub/Dockerfile
+          # BuildKit `#ref:subdir` syntax — Dockerfile expects to run from
+          # within deploy/roon-hub/ (relative paths). Requires
+          # DOCKER_BUILDKIT=1.
+          context: #{weave_git_url}:deploy/roon-hub
         image: weave-roon-hub:#{weave_git_ref}
         container_name: weave-roon-hub
         restart: unless-stopped
@@ -105,8 +107,7 @@ file "#{deploy_dir}/docker-compose.yml" do
 
       weave-server:
         build:
-          context: #{weave_git_url}
-          dockerfile: crates/weave-server/Dockerfile
+          context: #{weave_git_url}:crates/weave-server
         image: weave-server:#{weave_git_ref}
         container_name: weave-server
         restart: unless-stopped
@@ -116,21 +117,25 @@ file "#{deploy_dir}/docker-compose.yml" do
           MQTT_HOST: mosquitto
           MQTT_PORT: 1883
         ports:
-          - "8888:8888"
+          # weave-server listens on 3001 (api_port) per its source. The
+          # legacy nginx upstream config in home-monitor still maps 8888
+          # → keep both port mappings so old + new clients work. Long-term
+          # the home-monitor upstream config should switch to 3001.
+          - "3001:3001"
+          - "8888:3001"
         volumes:
           - ./weave-data:/data
 
       weave-web:
         build:
-          context: #{weave_git_url}
-          dockerfile: weave-web/Dockerfile
+          context: #{weave_git_url}:weave-web
         image: weave-web:#{weave_git_ref}
         container_name: weave-web
         restart: unless-stopped
         depends_on:
           - weave-server
         environment:
-          NEXT_PUBLIC_WEAVE_SERVER: http://weave-server:8888
+          NEXT_PUBLIC_WEAVE_SERVER: http://weave-server:3001
         ports:
           - "3000:3000"
   COMPOSE
@@ -141,7 +146,12 @@ compose_path = "#{deploy_dir}/docker-compose.yml"
 project_name = File.basename(deploy_dir)
 
 execute "ensure weave running" do
-  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
+  # BuildKit (default) is required for the `#ref:subdir` git context syntax
+  # used by roon-hub / weave-server / weave-web above. Classic builder
+  # (DOCKER_BUILDKIT=0) does not support subdir context. The weave LXC has
+  # features_nesting=true (home-monitor#4), so BuildKit's rbind requirements
+  # are satisfied.
+  command "docker compose -f #{compose_path} up -d --build"
   user user
   only_if <<~SH.tr("\n", " ").strip
     expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
@@ -154,7 +164,12 @@ execute "ensure weave running" do
 end
 
 execute "restart weave" do
-  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
+  # BuildKit (default) is required for the `#ref:subdir` git context syntax
+  # used by roon-hub / weave-server / weave-web above. Classic builder
+  # (DOCKER_BUILDKIT=0) does not support subdir context. The weave LXC has
+  # features_nesting=true (home-monitor#4), so BuildKit's rbind requirements
+  # are satisfied.
+  command "docker compose -f #{compose_path} up -d --build"
   user user
   action :nothing
 end

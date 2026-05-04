@@ -78,6 +78,15 @@ file "#{home}/deploy/roon-mcp/docker-compose.yml" do
         ports:
           - "#{ROON_MCP_HTTP_PORT}:#{ROON_MCP_HTTP_PORT}"
         user: "${UID}:${GID}"
+        # Default container DNS does not include the LAN's home.local zone
+        # (RTX-served), so `roon-lxc.home.local` (ROON_MCP_CORE_HOST) fails
+        # to resolve inside the container. Pin Cloudflare for general
+        # internet + the LAN's RTX (192.168.1.253) for *.home.local. The
+        # RTX entries in cookbooks/lxc-roon-mcp's hardcoded list keep this
+        # working even if DHCP-served DNS changes.
+        dns:
+          - 192.168.1.253
+          - 1.1.1.1
         volumes:
           - #{home}/.config/roon-rs:/root/.config/roon-rs:rw
         command:
