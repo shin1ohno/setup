@@ -83,7 +83,7 @@ end
 # DCR, CORS, PKCE) live in the file resource itself.
 hydra_config_staging = "#{node[:setup][:root]}/hydra-server/hydra.yml"
 hydra_config_system  = "#{HYDRA_HOME}/hydra.yml"
-hydra_config_template = File.read(File.expand_path("files/hydra.yml", __dir__))
+hydra_config_template = File.read(File.expand_path("files/hydra.yml", File.dirname(__FILE__)))
 
 file hydra_config_staging do
   owner node[:setup][:user]
