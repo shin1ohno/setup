@@ -52,26 +52,26 @@ roon_mcp_state_dir = "#{roon_mcp_state_root}/state"
 roon_mcp_app_state_dir = "#{roon_mcp_state_dir}/roon-rs"
 
 directory roon_mcp_state_root do
-  owner 1000
-  group 1000
+  owner "1000"
+  group "1000"
   mode "755"
 end
 
 directory roon_mcp_state_dir do
-  owner 1000
-  group 1000
+  owner "1000"
+  group "1000"
   mode "755"
 end
 
 directory roon_mcp_app_state_dir do
-  owner 1000
-  group 1000
+  owner "1000"
+  group "1000"
   mode "755"
 end
 
 file "#{roon_mcp_app_state_dir}/tokens.json" do
-  owner 1000
-  group 1000
+  owner "1000"
+  group "1000"
   mode "600"
   content "{}\n"
   not_if "test -s #{roon_mcp_app_state_dir}/tokens.json"
