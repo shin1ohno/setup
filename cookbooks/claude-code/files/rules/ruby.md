@@ -178,3 +178,43 @@ Any restart resource without an `only_if "test -f <env>"` is a candidate, especi
 
 This rule exists because the 2026-05-04 `linux.rb` LXC bootstrap session hit `hydra-migrate` failing to reach Aurora with empty credentials, traced back to the `docker compose restart hydra` execute firing despite the `.env` generator being skipped (no AWS auth on the LXC). Fixed by adding `.env`-existence guards to hydra / cognee / ai-memory / hydra-server restart resources in PR #103.
 
+## Docker Build in Unprivileged PVE LXC
+
+`docker build` / `docker compose up --build` inside an unprivileged PVE LXC requires **two** prerequisites to be true simultaneously:
+
+1. `features_nesting=true` on the LXC config (Terraform: `features_nesting = true`). Without it the containerd overlayfs snapshotter cannot rbind-mount image layers and aborts during pull / extract with `permission denied` / `failed to mount /var/lib/containerd/tmpmounts/...`. This is a PVE-side change — `pct set <vmid> --features nesting=1` or via the bpg/proxmox provider — and requires LXC restart.
+
+2. `DOCKER_BUILDKIT=0` prefix on every `docker compose up --build` and `docker build` invocation. BuildKit's mount namespacing fails inside the container even with nesting enabled (`failed to mount … rbind ro: permission denied` in the buildkit-mount step). The classic builder is happy with the same setup. Cookbook pattern:
+
+```ruby
+execute "ensure <stack> running" do
+  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
+  user user
+end
+```
+
+**Caveat — git context with subdirectory**: BuildKit supports `https://repo.git#ref:subdir` to make build context a subdirectory of the repo. Classic builder does NOT support that syntax. If your Dockerfile MUST be built from a subdir (e.g., a Next.js app whose `Dockerfile` does `COPY package.json` expecting `package.json` at root), you cannot use classic builder. Workarounds: (a) bind-mount a pre-cloned tree as the context, (b) move the Dockerfile to expect a wider context, or (c) put the build on a Docker host that isn't unprivileged (e.g., on the PVE host directly).
+
+This rule exists because PRs #115 → #119 in setup spent 5 PR cycles iterating through this combination during the 2026-05-04 PVE-migration session. The discovery sequence was: nesting=false → containerd rbind fail; nesting=true alone → buildkit rbind fail; nesting=true + BUILDKIT=0 → success for repo-root Dockerfiles; the weave-web subdir case forced one Dockerfile back onto BuildKit (classic doesn't support subdir context) which then needed nesting alone. Documenting the matrix prevents the next mitamae-on-PVE-LXC author from rediscovering each step.
+
+## Debian 13 Minimal LXC — Mandatory Bootstrap Packages
+
+PVE Debian 13 (`bookworm` / `trixie`) **unprivileged LXC templates ship without** `gnupg`, `unzip`, and `ca-certificates`, and the apt index is not populated until first `apt-get update`. Cookbooks targeting fresh LXCs that omit any of these will fail in non-obvious ways:
+
+- `gnupg` missing → `gpg --dearmor` step in any apt-key import (Docker, NodeSource, Postgres) errors with `gpg: command not found`. Recovery requires apt-installing gnupg, but the install needs apt index, and the index needs the repo, and the repo needs the key…
+- `unzip` missing → installer scripts that fetch a zipped release (rclone `install.sh`, awscli `awscliv2.zip`) abort with cryptic "no extractor found" errors
+- Stale apt index → `apt-get install <pkg>` succeeds for things in the base image's dpkg cache and silently misses anything published after image build
+
+**Required first resource** in any cookbook targeting Debian 13 unprivileged LXCs:
+
+```ruby
+execute "install bootstrap deps" do
+  command "apt-get update -qq && apt-get install -y gnupg unzip ca-certificates curl"
+  not_if "dpkg -s gnupg unzip ca-certificates curl >/dev/null 2>&1"
+end
+```
+
+Run before any apt repo addition, any zip extraction, or any package install that came in via custom apt sources.
+
+This rule exists because PRs #108-#110 in setup were three sequential apply cycles to fix the same class of bug — each cookbook (docker-engine, rclone, awscli) was missing the bootstrap-deps guard and failing on a different downstream step of the same root cause. A single cookbook-side check at the beginning of the PVE-LXC entry recipes would have collapsed all three PRs into zero.
+

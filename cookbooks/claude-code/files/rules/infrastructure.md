@@ -151,3 +151,51 @@ When a command is blocked by any permission restriction — `sudo` required, too
 3. After the user runs it, verify the result before moving on
 
 Applies equally to sudo, project-hook guards, and `deny`-listed Bash patterns.
+
+## Stale Terraform State Lock Recovery
+
+When `terraform plan` or `terraform apply` aborts with `Error acquiring the state lock`, the previous run left a DynamoDB lock that was not released (process killed, network drop, container shutdown). Recovery:
+
+1. Read the lock ID from the error block (`ID: a845a182-6011-acf6-e431-005ee971d1c5`)
+2. Confirm no other apply is in flight — check background sub-agents (`TaskList`), other terminals on the same host, and the lock's `Who` / `Created` fields in the error to gauge age
+3. `terraform force-unlock -force <lock-id>`
+4. Re-run the original command
+
+Never `force-unlock` while another apply may legitimately hold the lock — overlapping writes corrupt state. Stale locks more than ~10 min old with no visible apply process are safe to break.
+
+This rule exists because the 2026-05-04 PVE-migration session inherited a 14-hour-old lock from a yesterday-aborted apply; rediscovering the `force-unlock` path cost time. The lock's `Who: shin1ohno@pro-dev` field made it identifiable as a self-orphan.
+
+## Tailscale `accept-routes=true` + Kernel Policy Routing Conflict
+
+When a host enables `tailscale set --accept-routes=true` while also serving as a LAN router or gateway, Tailscale injects peer-advertised routes into kernel **routing table 52**, selected by `ip rule 5270: from all lookup 52` — which is consulted **before** the main table. If any tailnet peer advertises a supernet that overlaps with the host's own LAN CIDR (classic example: `hnd-subnet-router` advertises `192.168.0.0/16` while the host's eth0 is on `192.168.1.0/24`), every reply from the host to a LAN address gets routed via `tailscale0` instead of `eth0`. Local connectivity silently breaks; SSH from LAN, intra-LAN HTTP probes, and reverse-proxy upstream reachability all start timing out.
+
+Diagnosis:
+
+```
+ip rule show           # confirm `5270: from all lookup 52` is present
+ip route show table 52 # see which peer routes Tailscale injected
+```
+
+Fix: drop the conflicting supernet from table 52 (and from main, if also present):
+
+```
+ip route del <conflicting-cidr> dev tailscale0 table 52 || true
+ip route del <conflicting-cidr> dev tailscale0 || true
+```
+
+Codify in a oneshot systemd unit so the cleanup re-runs on every tailscaled restart / LXC reboot. Reference cookbook: `cookbooks/lxc-pro-router/default.rb` (PR #115, 2026-05-04). The remaining peer routes (`10.33.128.0/18` for AWS VPC, `100.64.0.0/10` for tailnet CGNAT) are safe to keep — only LAN supernets cause the conflict.
+
+Detection signal: LAN reachability to the Tailscale router host suddenly drops the moment `accept-routes=true` is set, even though all other Tailscale functionality (subnet advertise, peer ping) keeps working. The asymmetry is the tell.
+
+## Short-lived STS Token Refresh Before Multi-Host mitamae Apply
+
+`aws-login` / `aws sso login` issues STS tokens with 15-60 minute lifetimes. A multi-LXC mitamae batch (8+ hosts in sequence with image pulls) can outlast a freshly-fetched token. Tokens that were `scp`'d to LXC nodes go stale **independently** of the local copy — even if `aws sts get-caller-identity` still works on the orchestrator, the LXC's `~/.aws/credentials` may already be expired.
+
+Pre-batch checklist:
+
+1. `aws sts get-caller-identity --profile <profile>` immediately before launching the batch — confirms the local token is valid
+2. If credentials are SCP'd to LXCs: re-SCP after every refresh; do not assume the local-side validity propagates
+3. For batches expected to take >10 min: refresh + re-SCP at the start AND set a wakeup to re-check at half the token lifetime
+4. Prefer **IAM instance profiles** on LXCs (or workload-identity equivalents) over SCP'd temporary credentials — instance profiles auto-rotate via IMDS and never need re-SCP
+
+This rule exists because the 2026-05-04 PVE-migration session burned 4 separate refresh-and-re-SCP cycles when the token expired mid-batch. Each cycle required pausing apply, re-fetching, re-distributing, then resuming — a ~3-min loss per cycle that is fully preventable by pre-batch validation + instance profiles for steady-state.
