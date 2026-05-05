@@ -210,6 +210,42 @@ After all hosts have migrated, simplify the guard back to `test -f` in a follow-
 
 This rule exists because setup PR #130 (2026-05-05) migrated edge-agent's `config_server_url` from `192.168.1.20:3101` (pre-PVE weave-server on pro) to `weave.home.local:8888` (PVE CT 109). The cookbook had `not_if "test -f #{config}"`, which would have left neo / air pinned to the dead endpoint forever despite the cookbook source being correct. The migration-specific grep guard solved this without changing semantics for new-host installs.
 
+## mitamae directory/file `owner`/`group` MUST be String, not Integer
+
+mitamae's `directory` and `file` resources accept `owner` / `group` as a **String** only — Integer literals raise `MItamae::Resource::InvalidTypeError: owner attribute should be String` at converge time. The error fires per-resource at apply on the target host, NOT at compile or `mitamae --dry-run` time, so the typo survives `ruby -c`, CI's syntax-check job, and even the cookbook's own dry-run gate.
+
+**Wrong** (silently passes CI, fails on first apply):
+
+```ruby
+directory "/var/lib/myservice/state" do
+  owner 1000
+  group 1000
+  mode "755"
+end
+```
+
+**Right** (use string form even for numeric UIDs):
+
+```ruby
+directory "/var/lib/myservice/state" do
+  owner "1000"
+  group "1000"
+  mode "755"
+end
+```
+
+The String requirement is the same whether the value is a username (`"shin1ohno"`) or a numeric UID stringified (`"1000"`). The latter is the only safe form when the cookbook needs an explicit UID that does not match a `useradd`-created system user — typical for container-mounted state directories where the `owner` must match a docker compose `user: "${UID}:${GID}"` directive.
+
+**Detection** — when reviewing or writing a cookbook with bare numeric `owner`/`group`:
+
+```
+git grep -nE 'owner\s+[0-9]+|group\s+[0-9]+' cookbooks/
+```
+
+A non-empty result is a bug. Quote each match.
+
+This rule exists because setup PR #131 (2026-05-05) introduced `owner 1000` (Integer) for `/var/lib/roon-mcp/state/` resources. CI passed. The mitamae apply on CT 108 immediately failed with `InvalidTypeError`, requiring hotfix PR #133. One full PR + CI cycle wasted on a class of bug no static check catches. The grep above run before commit would have caught it.
+
 ## Docker Build in Unprivileged PVE LXC
 
 `docker build` / `docker compose up --build` inside an unprivileged PVE LXC requires **two** prerequisites to be true simultaneously:

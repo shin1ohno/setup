@@ -58,6 +58,44 @@ Add a status/observe command *as part of the feature*, not as a follow-up, when:
 
 If no observation tool exists in the codebase yet, build a minimal one (`status` subcommand, `--verbose` flag, status query script) during the same unit of work.
 
+## Auth-boundary error visibility — log Err variant on every reject
+
+Authentication and authorization gates (JWT validators, OAuth bearer verifiers, `auth_request` handlers, API key checks, session cookie validators, mTLS peer cert checks) MUST log the rejection variant at WARN or ERROR level **unconditionally** — never gated behind `#[cfg(debug_assertions)]`, `RUST_LOG=trace`, `DEBUG=1`, or any compile/runtime flag that defaults off in production.
+
+The pattern that triggers this rule: a `verify_*` or `authenticate_*` function returns `Result<Claims, AuthError>` (or equivalent) where `AuthError` is a rich enum (`WrongIssuer`, `WrongAudience`, `Expired`, `InvalidSignature`, `Other(String)`, etc.), and the call site discards the variant — emitting a flat HTTP 401 / 403 with no log line that names which variant fired.
+
+```rust
+// WRONG — silent: every rejection looks identical to the operator
+match verify_bearer(header, &cache, &cfg).await {
+    Ok(claims) => /* ... */,
+    Err(_) => return unauthorized_response(),
+}
+
+// RIGHT — variant + relevant claim values logged before the response
+match verify_bearer(header, &cache, &cfg).await {
+    Ok(claims) => /* ... */,
+    Err(e) => {
+        tracing::warn!(
+            error_variant = ?e,
+            error = %e,
+            expected_iss = %cfg.issuer,
+            "auth rejected"
+        );
+        return unauthorized_response();
+    }
+}
+```
+
+Or place the `tracing::warn!` inside the verify function itself at the final reject site, so every caller benefits without coordinated changes.
+
+The cost of a silent auth gate: every wrong-token / wrong-issuer / expired-token / kid-not-in-jwks failure looks identical to the operator (a 401 with the same body). Diagnosing requires a debug build with added logging, deploy, retry, decode logs — typically 30+ minutes per session. With unconditional logging the diagnosis is one `docker logs ... | grep "auth rejected"` away.
+
+**Don't** log the full token (logs end up in centralized aggregation; tokens are credentials). DO log: the variant, the kid extracted from the JWT header, the expected issuer/audience/scope from server config, a 16-char token prefix to disambiguate concurrent requests. Never the full Authorization header value.
+
+This rule is the server-side counterpart to the iOS rule "FFI Boundary Error Visibility" (`~/.claude/rules/ios-build.md`) — both codify that the boundary between trusted-caller and untrusted-input must surface its rejection variant, not just its rejection.
+
+This rule exists because roon-mcp's `verify_bearer` (in `crates/roon-mcp/src/auth.rs`) returned `Result<Claims, AuthError>` with rich variants but the call site at /sse just emitted HTTP 401 invalid_token — every reject looked identical. The 2026-05-05 session debug arc spanned PR #128 (RUST_LOG=info,roon_mcp::auth=debug, no effect because the Err arm had no debug! either), through the present session's debug branch with added `tracing::warn!` at line 240, before the actual variant (`AuthError::WrongAudience`) was visible. With unconditional logging the diagnosis would have been minutes, not the 3-session arc it became.
+
 ## Do Not Push Error Reproduction to the User
 
 The user asking "試してみてください" / "run it and check" is a fallback, not a default. Before reaching that fallback:
