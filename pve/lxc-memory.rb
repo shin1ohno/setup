@@ -25,4 +25,15 @@ node.reverse_merge!(
   }
 )
 
+# Force docker fallback. The native systemd path expects
+# `pip install openmemory-mcp` to ship an `openmemory` CLI binary at
+# `venv/bin/openmemory`, but the published PyPI package only provides
+# the library (`import openmemory_mcp`) — no console_scripts entry
+# point. systemd's `ExecStart=/opt/openmemory/venv/bin/openmemory
+# serve …` fails with `status=203/EXEC` in a tight restart loop.
+# The docker variant (cookbooks/ai-memory + ghcr.io/mem0ai/openmemory-mcp)
+# is the only working topology today (Phase 0.5-Z Z-2 result).
+# Drop this override once openmemory-mcp ships a CLI binary.
+ENV["MEMORY_SERVER_DOCKER_FALLBACK"] = "1"
+
 include_cookbook "lxc-memory"
