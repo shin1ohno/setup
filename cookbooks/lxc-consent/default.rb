@@ -74,6 +74,14 @@ file "#{deploy_dir}/docker-compose.yml" do
         env_file: .env
         ports:
           - "9020:9020"
+        # Default Docker container DNS does not include the LAN's home.local
+        # zone (RTX-served at 192.168.1.253). consent's DCR proxy and admin
+        # API client (HYDRA_ADMIN_URL → hydra.home.local:4445) fail to
+        # resolve and abort with `httpx.ConnectError: [Errno -2] Name or
+        # service not known`, surfacing as HTTP 500 on /oauth2/register.
+        dns:
+          - 192.168.1.253
+          - 1.1.1.1
         environment:
           HYDRA_ADMIN_URL: #{hydra_admin_url}
           HYDRA_PUBLIC_URL: https://mcp.ohno.be
