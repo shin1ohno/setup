@@ -44,6 +44,29 @@ end
   end
 end
 
+# Patched openmemory app/database.py — bind-mounted into the container
+# at /usr/src/openmemory/app/database.py to disable SQLite-only
+# `check_same_thread` flag for PostgreSQL deployments. Without this the
+# upstream openmemory image rejects pgvector with
+# `TypeError: 'check_same_thread' is an invalid keyword argument for
+# this function`. Mount target referenced from
+# cookbooks/ai-memory/files/docker-compose.yml.
+patches_dir = "#{deploy_dir}/patches"
+directory patches_dir do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+remote_file "#{patches_dir}/database.py" do
+  source "files/patches/database.py"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  notifies :run, "execute[docker compose restart ai-memory]"
+end
+
 # Generate .env with secrets from SSM Parameter Store
 generated_dir = "#{node[:setup][:root]}/generated"
 directory generated_dir do
