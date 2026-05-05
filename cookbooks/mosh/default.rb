@@ -64,11 +64,21 @@ if node[:platform] == "darwin"
     not_if "test -f #{node[:setup][:home]}/.ssh/environment && grep -q '/usr/local/bin' #{node[:setup][:home]}/.ssh/environment"
   end
 
-  # Enable Remote Login (SSH) - required for mosh connections
-  execute "enable remote login for mosh" do
-    command "systemsetup -setremotelogin on"
-    user node[:setup][:system_user]
-    not_if "systemsetup -getremotelogin | grep -q 'On'"
+  # Enable Remote Login (SSH) - required for mosh connections.
+  # macOS Ventura+ requires Full Disk Access for `systemsetup -setremotelogin`,
+  # which mitamae's invoking shell does not have. Skip the toggle and emit a
+  # one-line guidance message when remote login is currently off — the user
+  # enables it via System Settings → General → Sharing → Remote Login (one
+  # click, persists across mitamae runs).
+  local_ruby_block "check remote login for mosh" do
+    block do
+      MItamae.logger.warn("=" * 60)
+      MItamae.logger.warn("Remote Login is OFF. Enable it manually:")
+      MItamae.logger.warn("  System Settings → General → Sharing → Remote Login")
+      MItamae.logger.warn("(macOS Ventura+ requires Full Disk Access for CLI toggle)")
+      MItamae.logger.warn("=" * 60)
+    end
+    only_if "systemsetup -getremotelogin 2>/dev/null | grep -q 'Off'"
   end
 
   # Add mosh-server to firewall allow list
