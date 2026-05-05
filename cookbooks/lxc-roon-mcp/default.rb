@@ -20,11 +20,15 @@ include_cookbook "docker-engine"
 
 ROON_MCP_VERSION = "0.5.3"
 ROON_MCP_HTTP_PORT = 8080
-# Roon Core lives in lxc-roon (CT 100). Resolved via home.local DNS so the
-# devices.tf single source of truth flows through the RTX-served zone into
-# this cookbook with no IP hardcoded here. Override via
-# node[:roon_core][:host] when the Terraform DNS records change.
-ROON_MCP_CORE_HOST = node.dig(:roon_core, :host) || "roon-lxc.home.local"
+# Roon Core lives in lxc-roon (CT 100) at 192.168.1.20 (Phase 9 cutover IP).
+# Default is the direct IP rather than `roon-lxc.home.local` because the
+# container DNS (via Docker's embedded resolver, even with RTX 192.168.1.253
+# upstream) returns NAT64-mapped IPv6 addresses (e.g. 64:ff9b::c0a8:114) for
+# *.home.local A-record lookups in some configurations, and the Roon binary's
+# tokio TCP connect chokes on the IPv6 form. Direct IPv4 sidesteps the
+# resolver entirely. Override via node[:roon_core][:host] when LAN DNS
+# returns a clean A record. Same rationale as cookbooks/lxc-weave (PR #126).
+ROON_MCP_CORE_HOST = node.dig(:roon_core, :host) || "192.168.1.20"
 ROON_MCP_CORE_PORT = 9330
 ROON_MCP_PUBLIC_HOST = "mcp.ohno.be"
 ROON_MCP_ISSUER = "https://mcp.ohno.be"
