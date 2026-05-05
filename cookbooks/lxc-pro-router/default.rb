@@ -82,6 +82,32 @@ file "#{node[:setup][:root]}/lxc-pro-router-tailnet-routes.sh" do
     sleep 2
     /usr/sbin/ip route del 192.168.0.0/16 dev tailscale0 2>/dev/null || true
     /usr/sbin/ip route del 192.168.0.0/16 dev tailscale0 table 52 2>/dev/null || true
+
+    # SNAT fallback for forwarded subnet-router traffic.
+    #
+    # Tailscale's own ts-postrouting MASQUERADE rule matches on netfilter
+    # mark 0x40000 — which tailscaled is supposed to set on packets that
+    # traverse the FORWARD chain on a subnet router. After an LXC restart,
+    # the mark stops being applied (root cause TBD; reproduced 2026-05-05).
+    # Without SNAT:
+    #   - LAN → tailnet packets keep source 192.168.1.x; AWS VPC has no
+    #     return route, replies black-hole.
+    #   - tailnet → LAN packets keep source 100.x.x.x; LAN clients route
+    #     replies via RTX (.253) which has a static route for 100.0.0.0/8
+    #     back to pro-router, but the asymmetric path drops conntrack and
+    #     the connection stalls in SYN-SENT.
+    #
+    # Workaround: explicit MASQUERADE in nat/POSTROUTING. Independent of
+    # Tailscale's mark-based chain, idempotent via -C check.
+    for spec in \\
+      "-s 192.168.1.0/24 -o tailscale0 -j MASQUERADE" \\
+      "-s 100.64.0.0/10 -o eth0 -j MASQUERADE"; do
+      # shellcheck disable=SC2086
+      if ! /usr/sbin/iptables -t nat -C POSTROUTING $spec 2>/dev/null; then
+        # shellcheck disable=SC2086
+        /usr/sbin/iptables -t nat -A POSTROUTING $spec
+      fi
+    done
   SH
 end
 
