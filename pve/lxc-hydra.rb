@@ -24,4 +24,17 @@ node.reverse_merge!(
   }
 )
 
+# Bind hydra admin API on all interfaces so the consent LXC (CT 110)
+# can reach it cross-LXC for the OAuth login/consent flow. The default
+# in cookbooks/hydra-server is 127.0.0.1 (loopback-only) for safety;
+# that breaks `/consent/login` when the consent app's httpx client
+# hits hydra.home.local:4445 from a different LXC. The hydra LXC
+# itself sits on a private LAN (192.168.1.0/24, no public exposure)
+# so the loopback-only invariant isn't load-bearing here.
+node.reverse_merge!(
+  hydra_server: {
+    admin_bind_host: "0.0.0.0",
+  },
+)
+
 include_cookbook "lxc-hydra"
