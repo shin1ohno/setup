@@ -9,8 +9,11 @@
 # Network: vmbr0 (single interface, no host network sharing). The HTTP
 # port 8080 is reachable on roon-mcp.home.local:8080 via the bridge.
 #
-# Bind-mount (set up by Terraform):
-#   - host /mnt/data/roon-mcp/tokens.json → /root/.config/roon-rs/tokens.json
+# State directory:
+#   host /var/lib/roon-mcp/state → container /data (XDG_CONFIG_HOME=/data),
+#   owner UID 1000:GID 1000 to match compose `user: "${UID}:${GID}"`.
+#   Application resolves `dirs_next::config_dir().join("roon-rs/tokens.json")`
+#   to `/data/roon-rs/tokens.json`.
 #
 # RAM 1 GiB / CPU 1.
 
@@ -38,16 +41,40 @@ ROON_MCP_JWKS_URL = "https://mcp.ohno.be/.well-known/jwks.json"
 user = node[:setup][:user]
 home = node[:setup][:home]
 
-directory "#{home}/.config/roon-rs" do
-  owner user
+# State directory tree owned by container UID 1000 (matches compose
+# `user: "${UID}:${GID}"`). /var/lib is the conventional system-state
+# location and is mode-755 root:root by default → traversable for UID 1000.
+# `/root/.config/...` cannot be used: container `HOME=/` resolves
+# `dirs_next::config_dir()` to `/.config` (unwritable for UID 1000), and
+# `/root` is mode 700 root:root in the container image (untraversable).
+roon_mcp_state_root = "/var/lib/roon-mcp"
+roon_mcp_state_dir = "#{roon_mcp_state_root}/state"
+roon_mcp_app_state_dir = "#{roon_mcp_state_dir}/roon-rs"
+
+directory roon_mcp_state_root do
+  owner 1000
+  group 1000
   mode "755"
 end
 
-file "#{home}/.config/roon-rs/tokens.json" do
-  owner user
+directory roon_mcp_state_dir do
+  owner 1000
+  group 1000
+  mode "755"
+end
+
+directory roon_mcp_app_state_dir do
+  owner 1000
+  group 1000
+  mode "755"
+end
+
+file "#{roon_mcp_app_state_dir}/tokens.json" do
+  owner 1000
+  group 1000
   mode "600"
   content "{}\n"
-  not_if "test -s #{home}/.config/roon-rs/tokens.json"
+  not_if "test -s #{roon_mcp_app_state_dir}/tokens.json"
 end
 
 directory "#{home}/deploy/roon-mcp" do
@@ -86,6 +113,10 @@ file "#{home}/deploy/roon-mcp/docker-compose.yml" do
         # impossible to triage server-side.
         environment:
           RUST_LOG: "info,roon_mcp::auth=debug"
+          # XDG_CONFIG_HOME drives `dirs_next::config_dir()` inside the
+          # container. Pinning to /data routes state writes into the
+          # bind-mounted host path /var/lib/roon-mcp/state (owner UID 1000).
+          XDG_CONFIG_HOME: "/data"
         ports:
           - "#{ROON_MCP_HTTP_PORT}:#{ROON_MCP_HTTP_PORT}"
         user: "${UID}:${GID}"
@@ -99,7 +130,7 @@ file "#{home}/deploy/roon-mcp/docker-compose.yml" do
           - 192.168.1.253
           - 1.1.1.1
         volumes:
-          - #{home}/.config/roon-rs:/root/.config/roon-rs:rw
+          - #{roon_mcp_state_dir}:/data:rw
         command:
           - --transport
           - http
