@@ -18,18 +18,34 @@ raise "auto_mitamae.setup_dir must be set by the caller" unless node[:auto_mitam
 role_file = node[:auto_mitamae][:role_file]
 setup_dir = node[:auto_mitamae][:setup_dir]
 setup_root = node[:setup][:root]
+cookbook_dir = "#{setup_root}/auto-mitamae"
 
-# 1. Stage the runner script in user-space (chmod 755 needs no sudo).
-remote_file "#{setup_root}/auto-mitamae.sh" do
+# 1. Ensure parent setup_root + per-cookbook subdirectory exist. Other
+# cookbooks (lxc-pro-router etc.) drop files directly under setup_root
+# and assume an earlier cookbook in the chain already created it; PVE
+# LXCs that bootstrap straight from `apt install … && git clone … && bin/setup
+# && bin/mitamae local pve/lxc-*.rb` do NOT yet have it on first run.
+# Be defensive. The per-cookbook subdirectory follows the awscli /
+# eternal-terminal convention.
+directory setup_root do
+  mode "755"
+end
+
+directory cookbook_dir do
+  mode "755"
+end
+
+# 2. Stage the runner script (chmod 755 needs no sudo since we're under
+# setup_root, owned by the user running mitamae).
+remote_file "#{cookbook_dir}/auto-mitamae.sh" do
   source "files/auto-mitamae.sh"
   mode "755"
 end
 
-# 2. Stage the systemd unit files in user-space, with role_file substituted
-# into the service's Description and Environment line. Inline `content` is
-# preferred over a `files/` template because per-host substitution is
-# essentially trivial — matches the s3-backup cookbook pattern.
-file "#{setup_root}/auto-mitamae.service" do
+# 3. Stage the systemd unit files. Inline `content` is preferred over a
+# `files/` template because per-host substitution is trivial — matches
+# the s3-backup cookbook pattern.
+file "#{cookbook_dir}/auto-mitamae.service" do
   mode "644"
   content <<~SERVICE
     [Unit]
@@ -42,7 +58,7 @@ file "#{setup_root}/auto-mitamae.service" do
     Type=oneshot
     Environment=SETUP_DIR=#{setup_dir}
     Environment=ROLE_FILE=#{role_file}
-    ExecStart=#{setup_root}/auto-mitamae.sh
+    ExecStart=#{cookbook_dir}/auto-mitamae.sh
     StandardOutput=journal
     StandardError=journal
     # Hardening: deny new privileges and use a private /tmp. mitamae itself
@@ -55,7 +71,7 @@ file "#{setup_root}/auto-mitamae.service" do
   SERVICE
 end
 
-file "#{setup_root}/auto-mitamae.timer" do
+file "#{cookbook_dir}/auto-mitamae.timer" do
   mode "644"
   content <<~TIMER
     [Unit]
@@ -74,21 +90,21 @@ file "#{setup_root}/auto-mitamae.timer" do
   TIMER
 end
 
-# 3. Install service + timer into /etc/systemd/system/ via sudo. The
+# 4. Install service + timer into /etc/systemd/system/ via sudo. The
 # `not_if "diff -q ..."` makes this idempotent — re-applies of mitamae
 # do not re-trigger daemon-reload unless the staged file actually
 # differs from the deployed one. Pattern copied from cookbooks/lxc-pro-router.
 execute "install auto-mitamae.service" do
   command "sudo install -m 644 -o root -g root " \
-          "#{setup_root}/auto-mitamae.service /etc/systemd/system/auto-mitamae.service"
-  not_if "diff -q #{setup_root}/auto-mitamae.service /etc/systemd/system/auto-mitamae.service 2>/dev/null"
+          "#{cookbook_dir}/auto-mitamae.service /etc/systemd/system/auto-mitamae.service"
+  not_if "diff -q #{cookbook_dir}/auto-mitamae.service /etc/systemd/system/auto-mitamae.service 2>/dev/null"
   notifies :run, "execute[auto-mitamae daemon-reload + enable]"
 end
 
 execute "install auto-mitamae.timer" do
   command "sudo install -m 644 -o root -g root " \
-          "#{setup_root}/auto-mitamae.timer /etc/systemd/system/auto-mitamae.timer"
-  not_if "diff -q #{setup_root}/auto-mitamae.timer /etc/systemd/system/auto-mitamae.timer 2>/dev/null"
+          "#{cookbook_dir}/auto-mitamae.timer /etc/systemd/system/auto-mitamae.timer"
+  not_if "diff -q #{cookbook_dir}/auto-mitamae.timer /etc/systemd/system/auto-mitamae.timer 2>/dev/null"
   notifies :run, "execute[auto-mitamae daemon-reload + enable]"
 end
 
