@@ -65,7 +65,12 @@ remote_file "#{home}/.config/edge-agent/config.toml" do
   owner user
   mode "644"
   source "files/config-#{variant}.toml"
-  not_if "test -f #{home}/.config/edge-agent/config.toml"
+  # Skip when config exists AND no longer references the pre-PVE weave-server
+  # endpoint (pro:3101). Hosts still pinned to the old endpoint get the file
+  # re-deployed on next mitamae apply. Once neo / air have been migrated, this
+  # guard can revert to the simple `test -f` form.
+  not_if "test -f #{home}/.config/edge-agent/config.toml && " \
+         "! grep -q '192.168.1.20:3101' #{home}/.config/edge-agent/config.toml"
 end
 
 directory "#{home}/.local/state/edge-agent" do
