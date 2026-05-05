@@ -178,6 +178,38 @@ Any restart resource without an `only_if "test -f <env>"` is a candidate, especi
 
 This rule exists because the 2026-05-04 `linux.rb` LXC bootstrap session hit `hydra-migrate` failing to reach Aurora with empty credentials, traced back to the `docker compose restart hydra` execute firing despite the `.env` generator being skipped (no AWS auth on the LXC). Fixed by adding `.env`-existence guards to hydra / cognee / ai-memory / hydra-server restart resources in PR #103.
 
+## remote_file idempotency guard — file-existence vs content-aware
+
+`not_if "test -f #{path}"` on a `remote_file` resource guards against re-downloading on every run, but it does NOT detect when the cookbook source has changed since the file was first placed. During migrations (endpoint changes, address rotations, URL rewrites) the deployed file persists indefinitely with the old value — cookbook updates never propagate to existing hosts and the migration silently fails on the consumer side.
+
+**Default for static configs**: `test -f` is fine. Use it when the cookbook's value for the file is not expected to change (e.g., a one-shot fetch of an upstream binary, a license file).
+
+**When content drift matters** — config holds addresses, URLs, ports, or keys that the cookbook owns and may rewrite — switch to a content-aware guard:
+
+```ruby
+# grep-based: re-deploy whenever the expected new value is absent
+remote_file config_path do
+  source "files/config.toml"
+  not_if "grep -qF '#{expected_value}' #{config_path} 2>/dev/null"
+end
+```
+
+**Migration-specific pattern**: when a cookbook is mid-migration from an old value to a new one, write the guard against the *old* value with negation. This re-deploys exactly the hosts still pinned to the old value, leaves migrated hosts untouched, and self-heals across the fleet without flag days:
+
+```ruby
+remote_file config_path do
+  source "files/config-#{variant}.toml"
+  # Skip when the file exists AND no longer references the old endpoint.
+  # Hosts still pinned to the old value get re-deployed on next mitamae apply.
+  not_if "test -f #{config_path} && " \
+         "! grep -q 'OLD_ENDPOINT' #{config_path}"
+end
+```
+
+After all hosts have migrated, simplify the guard back to `test -f` in a follow-up commit. Leaving the migration-specific grep permanently is harmless but adds noise for the next maintainer.
+
+This rule exists because setup PR #130 (2026-05-05) migrated edge-agent's `config_server_url` from `192.168.1.20:3101` (pre-PVE weave-server on pro) to `weave.home.local:8888` (PVE CT 109). The cookbook had `not_if "test -f #{config}"`, which would have left neo / air pinned to the dead endpoint forever despite the cookbook source being correct. The migration-specific grep guard solved this without changing semantics for new-host installs.
+
 ## Docker Build in Unprivileged PVE LXC
 
 `docker build` / `docker compose up --build` inside an unprivileged PVE LXC requires **two** prerequisites to be true simultaneously:
