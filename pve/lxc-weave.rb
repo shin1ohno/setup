@@ -22,7 +22,12 @@ node.reverse_merge!(
     group: group,
     system_user: "root",
     system_group: "root",
+  },
+  auto_mitamae: {
+    role_file: "pve/lxc-weave.rb",
+    setup_dir: "#{ENV["HOME"]}/setup",
   }
 )
 
 include_cookbook "lxc-weave"
+include_cookbook "auto-mitamae"
