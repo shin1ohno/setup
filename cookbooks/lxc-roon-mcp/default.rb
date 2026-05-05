@@ -79,6 +79,13 @@ file "#{home}/deploy/roon-mcp/docker-compose.yml" do
         image: roon-mcp:#{ROON_MCP_VERSION}
         container_name: roon-mcp
         restart: unless-stopped
+        # Debug-level logging on the auth path so token validation
+        # rejections (audience / issuer / signature mismatch) surface in
+        # `docker logs roon-mcp`. Default INFO suppresses the reason and
+        # makes claude.ai's "Authorization with the MCP server failed"
+        # impossible to triage server-side.
+        environment:
+          RUST_LOG: "info,roon_mcp::auth=debug"
         ports:
           - "#{ROON_MCP_HTTP_PORT}:#{ROON_MCP_HTTP_PORT}"
         user: "${UID}:${GID}"
