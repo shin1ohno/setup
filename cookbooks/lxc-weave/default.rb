@@ -21,9 +21,12 @@ user = node[:setup][:user]
 group = node[:setup][:group]
 deploy_dir = "#{node[:setup][:home]}/deploy/weave"
 
-# Roon Core LXC reachable over the home.local DNS zone. Override via
-# node[:roon_core][:host] when running against a non-LXC Roon deployment.
-roon_core_host = node.dig(:roon_core, :host) || "roon-lxc.home.local"
+# Roon Core LXC reachable on 192.168.1.20 (Phase 9 cutover IP). Default
+# is the direct IP rather than `roon-lxc.home.local` because the weave
+# LXC's resolv.conf points at 1.1.1.1 (Cloudflare) which cannot resolve
+# *.home.local. Override via node[:roon_core][:host] when LAN DNS for
+# home.local becomes available (HANDOFF Issue 2.6).
+roon_core_host = node.dig(:roon_core, :host) || "192.168.1.20"
 
 # Build images from the upstream weave repo at apply time. Earlier draft
 # referenced shin1ohno/{roon-hub,weave-server,weave-web}:latest on Docker
@@ -67,6 +70,36 @@ file "#{deploy_dir}/mosquitto.conf" do
   notifies :run, "execute[restart weave]"
 end
 
+# roon-hub binary reads /etc/roon-hub/roon-hub.toml at startup; it does
+# NOT read bare env vars like MQTT_HOST (the binary expects ROON_HUB_*
+# prefix, e.g. ROON_HUB_MQTT_HOST). Without this file the binary falls
+# back to compiled-in defaults that target localhost MQTT, producing
+# perpetual "MQTT error: Connection refused (os error 111)" loops.
+# token_path is /data/tokens.json so the Roon pairing survives container
+# rebuilds via the ./roon-hub-data:/data volume mount.
+file "#{deploy_dir}/roon-hub.toml" do
+  owner user
+  group group
+  mode "644"
+  content <<~TOML
+    [roon]
+    extension_id = "com.roon-rs.hub"
+    display_name = "roon-hub"
+    publisher = "roon-rs"
+    email = "dev@example.com"
+    token_path = "/data/tokens.json"
+    host = "#{roon_core_host}"
+    port = 9330
+
+    [mqtt]
+    host = "mosquitto"
+    port = 1883
+    client_id = "roon-hub"
+    topic_prefix = "roon"
+  TOML
+  notifies :run, "execute[restart weave]"
+end
+
 # docker-compose.yml — uses upstream-built images for now. When weave-rs
 # images are not on a registry, switch to git-source builds (like roon-mcp).
 file "#{deploy_dir}/docker-compose.yml" do
@@ -99,6 +132,10 @@ file "#{deploy_dir}/docker-compose.yml" do
         restart: unless-stopped
         depends_on:
           - mosquitto
+        # NOTE: roon-hub binary reads /etc/roon-hub/roon-hub.toml (mounted
+        # below), NOT these env vars (it expects ROON_HUB_* prefix). Env
+        # vars are kept as documentation of intent in case upstream adds
+        # a no-prefix env var path in the future.
         environment:
           ROON_CORE_HOST: #{roon_core_host}
           ROON_CORE_PORT: 9330
@@ -106,6 +143,7 @@ file "#{deploy_dir}/docker-compose.yml" do
           MQTT_PORT: 1883
         volumes:
           - ./roon-hub-data:/data
+          - ./roon-hub.toml:/etc/roon-hub/roon-hub.toml:ro
 
       weave-server:
         build:
