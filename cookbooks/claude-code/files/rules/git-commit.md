@@ -168,6 +168,50 @@ Once the downstream PR's base is `main`, GitHub computes the diff against the po
 
 This rule exists because the 2026-04-26 iOS session merged #45 with `--delete-branch`, which auto-closed stacked PRs #46 and #47. Recovery cost: cherry-pick → fresh branches → re-open as #48 / #50 → re-run CI. Two avoidable round-trips. The pre-merge `gh pr list --base` query takes one second.
 
+## Tag a release immediately when fixing auth/security on a downstream-consumed library
+
+When a fix lands on a library's `main` branch that changes auth, signature verification, audience/issuer/scope checking, secret handling, token validation, or any other security-relevant behavior — AND that library is consumed by a sibling repo via a pinned git tag (cookbook, deploy compose, dependent crate using `tag = "..."`) — cut a new release tag in the **same merge turn**, before moving to other work. Then in the consuming repo, bump the pin in a follow-up commit.
+
+The trap: a fix sits unreleased on `main` for days while every consumer of the prior tag continues to ship the broken behavior. The fix is invisible to anyone who doesn't read the merged-but-untagged commit log. When the bug eventually surfaces in production, the diagnostic arc costs more than the original fix did — the consumer searches the released tags, finds nothing, assumes upstream hasn't fixed it, and starts independent debugging.
+
+**Trigger** — apply when ALL of:
+
+1. The merged change touches auth / signing / verification / secret / scope / audience / issuer logic
+2. The library is consumed via a pinned tag in at least one cookbook or deploy spec (find with `git grep -rE '<library>.*#v[0-9]'` in sibling repos)
+3. The pinned consumer would observably misbehave without the fix
+
+**Workflow**:
+
+1. Merge the fix PR
+2. `git tag -a v<next> -m "<changelog including the fix line>"` from the post-merge `main`
+3. `git push origin v<next>`
+4. In the consuming repo, bump the pin in a separate commit: cookbook `VERSION = "..."` or `Cargo.toml` `tag = "v..."`
+5. Apply / deploy the consumer to validate
+
+Don't defer step 2-3 to a "release later" pile. The five seconds of tag-cutting closes the gap; the multi-day gap is what makes the fix invisible.
+
+This rule exists because roon-rs commit `f6b5491` ("roon-mcp: add SSE server transport") landed on `main` 2026-05-02 and disabled JWT audience validation as a side effect — but no release tag was cut. The lxc-roon-mcp cookbook stayed pinned to `v0.5.3` (audience-validation-enabled) and rejected every claude.ai Bearer token with HTTP 401 invalid_token (`AuthError::WrongAudience`) for 3 days. The 2026-05-05 session burned the entire 401 debug arc — including a debug branch with added `tracing::warn!` and a full container rebuild — before diff'ing `v0.5.3..main` revealed the released-but-not-tagged fix. Tagging `v0.5.4` and bumping the cookbook took 2 minutes after the diagnosis; the cost would have been zero if the tag had been cut at merge time.
+
+## `gh pr create` body containing code → use `--body-file`
+
+When the PR description contains backticks, fenced code blocks, or inline command examples, do NOT pass the body via inline HEREDOC to `gh pr create --body "$(cat <<'EOF' ... EOF)"`. The shell or `gh` CLI mis-parses the embedded backticks / dollar signs / pipes and the command aborts with a usage-error blurb that hides the actual parsing failure.
+
+**Always**:
+
+```
+cat > /tmp/pr-body.md <<'EOF'
+## Summary
+- ...
+## Test plan
+- `cmd1` … `cmd2` …
+EOF
+gh pr create --base main --title "..." --body-file /tmp/pr-body.md
+```
+
+The body file is plain Markdown — no escaping, no quoting concerns, no parser ambiguity. Apply unconditionally when the PR body has any of: backticks, code fences, `$()`, `${...}`, single quotes inside double quotes, or multi-paragraph structure.
+
+This rule exists because setup PR #135 (2026-05-05) used inline HEREDOC with backticks around `\`https://mcp.ohno.be/roon\`` in the body. `gh pr create` printed `--title string` usage hints and aborted without creating the PR. Retry with `--body-file /tmp/pr-body-bump.md` succeeded immediately. This recurs every few sessions on different repos — the body-file approach has zero failure modes.
+
 ## GPG Signing Failures
 
 If `git commit` fails with a GPG signing error or timeout, present the user with the full cache-refresh command:

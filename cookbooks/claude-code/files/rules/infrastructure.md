@@ -152,6 +152,59 @@ When a command is blocked by any permission restriction — `sudo` required, too
 
 Applies equally to sudo, project-hook guards, and `deny`-listed Bash patterns.
 
+## Container state path audit when `user:` is non-root
+
+When designing or reviewing a `docker-compose` service that:
+
+1. Runs as a non-root UID (`user: "1000:1000"`, `user: "${UID}:${GID}"`, or any explicit non-zero UID)
+2. AND persists state via a path derived from `$HOME` or any `XDG_*` environment variable (Rust `dirs_next::config_dir()`, Python `appdirs`, Go `os.UserConfigDir`, Node `os.homedir()`, etc.)
+3. AND has a bind-mount intended to receive that state on the host
+
+…audit explicitly what `$HOME` resolves to **inside the container** before the mount is wired. Three traps in sequence:
+
+**Trap 1 — `HOME=/`**: Many minimal base images (`alpine`, `debian:bookworm-slim`, distroless variants) do not set `HOME` for non-root UIDs that lack a `useradd` entry. The process inherits `HOME=/` from the docker init env. `dirs_next::config_dir()` returns `/.config`, which a non-root UID cannot create or write under.
+
+**Trap 2 — mount destination unreachable from the resolved path**: Even when the host bind-mount lands at `/root/.config/roon-rs` (the cookbook's `home` interpolation), the application uses `/.config/...` not `/root/.config/...` — so the mount catches zero writes. The state is silently written to the container's writable layer (or fails) and lost on restart.
+
+**Trap 3 — `/root` mode 700**: If `HOME=/root` is set but the running UID is not 0, the default image `/root` mode 700 root:root blocks traversal. `Permission denied` even when the deeper directory is correctly chowned.
+
+**Audit checklist** before merging the cookbook / compose change:
+
+1. `docker exec <c> sh -c 'id; env | grep -E HOME=|XDG_'` — confirm running UID and what `HOME` / `XDG_*` resolve to
+2. `docker exec <c> sh -c 'ls -ld / /root /home 2>&1'` — confirm traversability for the running UID
+3. Choose ONE of:
+   - Set `XDG_CONFIG_HOME` (or the language-specific equivalent) explicitly in the `environment:` block to a path **inside the bind-mount**, e.g. `XDG_CONFIG_HOME: /data` + mount `/var/lib/<service>:/data:rw`
+   - OR set `HOME` explicitly to a path you know is mounted and traversable for the running UID
+   - OR add a Dockerfile `USER <name>` directive that creates a real home directory at image build time
+4. Verify with `docker exec <c> sh -c 'echo probe > $XDG_CONFIG_HOME/probe && rm $XDG_CONFIG_HOME/probe'` after deploy
+
+Prefer option (a) `XDG_CONFIG_HOME` override + system-standard `/var/lib/<service>/`: it's traversable by any UID by default (mode 755 root:root inherited from `/var`), system-conventional, and decouples the host path from any home-directory ambiguity. Avoid `/root/...` for non-root containers entirely.
+
+**Codify in the cookbook**:
+
+```ruby
+# State directory tree owned by container UID (matches compose `user:` directive).
+# /var/lib/<service>/ is system-standard and traversable; /root/... is unsafe
+# for non-root containers because the default image /root mode is 700 root:root.
+state_dir = "/var/lib/<service>/state"
+
+directory state_dir do
+  owner "1000"   # MUST be String per ~/.claude/rules/ruby.md
+  group "1000"
+  mode "755"
+end
+```
+
+```yaml
+# compose
+environment:
+  XDG_CONFIG_HOME: "/data"
+volumes:
+  - /var/lib/<service>/state:/data:rw
+```
+
+This rule exists because lxc-roon-mcp cookbook (PR #131, 2026-05-05) initially mounted `${home}/.config/roon-rs:/root/.config/roon-rs:rw` while the container ran as UID 1000 with `HOME=/`. The application wrote to `/.config/roon-rs/` (unwritable for UID 1000), the bind-mount caught zero writes, and `roon_api::registry: Failed to persist token: Permission denied (os error 13)` warns repeated on every Roon Core handshake. Fixed by switching to `/var/lib/roon-mcp/state` host path + `XDG_CONFIG_HOME=/data` env. The audit checklist would have caught this at plan time.
+
 ## Stale Terraform State Lock Recovery
 
 When `terraform plan` or `terraform apply` aborts with `Error acquiring the state lock`, the previous run left a DynamoDB lock that was not released (process killed, network drop, container shutdown). Recovery:
