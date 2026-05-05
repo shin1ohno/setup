@@ -7,6 +7,58 @@
     {
       "name": "home-monitor",
       "uri": "codecommit::ap-northeast-1://sh1admn@home-monitor"
+    },
+    {
+      "name": "astro",
+      "uri": "git@github.com:shin1ohno/astro.git"
+    },
+    {
+      "name": "nuimo-rs",
+      "uri": "git@github.com:shin1ohno/nuimo-rs.git"
+    },
+    {
+      "name": "roon-rs",
+      "uri": "git@github.com:shin1ohno/roon-rs.git"
+    },
+    {
+      "name": "SwiftLM",
+      "uri": "git@github.com:shin1ohno/SwiftLM.git"
+    },
+    {
+      "name": "gws.nvim",
+      "uri": "git@github.com:shin1ohno/gws.nvim.git"
+    },
+    {
+      "name": "sage",
+      "uri": "git@github.com:shin1ohno/sage.git"
+    },
+    {
+      "name": "terraform-provider-rtx",
+      "uri": "git@github.com:shin1ohno/terraform-provider-rtx.git"
+    },
+    {
+      "name": "edge-agent",
+      "uri": "git@github.com:shin1ohno/edge-agent.git"
+    },
+    {
+      "name": "weave",
+      "uri": "git@github.com:shin1ohno/weave.git"
+    },
+    {
+      "name": "rust-sdk",
+      "uri": "git@github.com:shin1ohno/rust-sdk.git"
+    },
+    {
+      "name": "roon.nvim",
+      "uri": "git@github.com:shin1ohno/roon.nvim.git"
+    },
+    {
+      "name": "tmux",
+      "uri": "git@github.com:shin1ohno/tmux.git"
+    },
+    {
+      "name": "mcat",
+      "uri": "git@github.com:shin1ohno/mcat.git"
     }
   ]
 }
