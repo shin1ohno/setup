@@ -143,7 +143,18 @@ end
 
 if managed_keys.any?
   authorized_keys_path = "#{ssh_dir}/authorized_keys"
-  existing_content = File.exist?(authorized_keys_path) ? File.read(authorized_keys_path) : ""
+
+  # PVE host: /root/.ssh/authorized_keys is a symlink to
+  # /etc/pve/priv/authorized_keys (pmxcfs FUSE mount). pmxcfs disallows chown,
+  # so mitamae's file resource (which uses `cp -p` to preserve ownership) fails
+  # with "Operation not permitted". Detect the symlink, resolve it, and write
+  # via shell redirection so ownership stays as pmxcfs-enforced
+  # (root:www-data 0640) — the same path PVE Web UI / cluster setup uses.
+  is_pmxcfs_target = File.symlink?(authorized_keys_path) &&
+                     File.realpath(authorized_keys_path).start_with?("/etc/pve/")
+  resolved_path = is_pmxcfs_target ? File.realpath(authorized_keys_path) : authorized_keys_path
+
+  existing_content = File.exist?(resolved_path) ? File.read(resolved_path) : ""
   lines = existing_content.lines.map(&:chomp)
 
   # Split into unmanaged and managed sections
@@ -178,11 +189,37 @@ if managed_keys.any?
   new_lines << MANAGED_END
   new_content = new_lines.join("\n") + "\n"
 
-  file authorized_keys_path do
-    owner user
-    group group
-    mode "0600"
-    content new_content
+  if is_pmxcfs_target
+    # Stage in user space, then `cat > target` rewrites pmxcfs file content
+    # without touching ownership. mitamae's file resource would chown via
+    # `cp -p` and fail.
+    staging_dir = "#{node[:setup][:root]}/ssh-keys"
+    staging_path = "#{staging_dir}/authorized_keys.staged"
+
+    directory staging_dir do
+      owner user
+      group group
+      mode "0700"
+    end
+
+    file staging_path do
+      owner user
+      group group
+      mode "0600"
+      content new_content
+    end
+
+    execute "deploy authorized_keys to pmxcfs (#{resolved_path})" do
+      command "cat '#{staging_path}' > '#{resolved_path}'"
+      not_if "diff -q '#{staging_path}' '#{resolved_path}' >/dev/null 2>&1"
+    end
+  else
+    file authorized_keys_path do
+      owner user
+      group group
+      mode "0600"
+      content new_content
+    end
   end
 end
 
