@@ -21,7 +21,7 @@ return if node[:platform] == "darwin"
 
 include_cookbook "docker-engine"
 
-ROON_MCP_VERSION = "0.5.3"
+ROON_MCP_VERSION = "0.5.4"
 ROON_MCP_HTTP_PORT = 8080
 # Roon Core lives in lxc-roon (CT 100) at 192.168.1.20 (Phase 9 cutover IP).
 # Default is the direct IP rather than `roon-lxc.home.local` because the
