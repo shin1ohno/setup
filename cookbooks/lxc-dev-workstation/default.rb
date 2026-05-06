@@ -40,9 +40,34 @@ tailscale_ssm_key = node[:lxc_dev][:tailscale_ssm_key] || "/tailscale/#{lxc_host
 # Common LXC user provisioning (shin1ohno + sudo + ssh authorized_keys).
 include_cookbook "lxc-shared-user"
 
+# Default AWS profile config for ssh-keys cookbook. Per-host role files
+# can override via reverse_merge before this include — e.g. to add a
+# 2nd profile, point at different SSM paths, or set a bootstrap_profile
+# for the initial fetch on a fresh LXC.
+#
+# This block must come BEFORE `include_role "core"` because the core
+# role pulls in ssh-keys, which in turn requires the AWS profile to be
+# configured at the require_external_auth gate.
+node.reverse_merge!(
+  aws_credentials: {
+    profiles: {
+      "pve-bootstrap-ssm" => {
+        access_key_id_ssm:     "/home-monitor/iam/pve-bootstrap-ssm/access-key-id",
+        secret_access_key_ssm: "/home-monitor/iam/pve-bootstrap-ssm/secret-access-key",
+        region:                "ap-northeast-1",
+      },
+    },
+  }
+)
+# Bootstrap pve-bootstrap-ssm to ~/.aws/credentials before ssh-keys runs.
+# On a fresh LXC the operator passes admin creds via env vars once; this
+# cookbook fetches the limited credentials from SSM and persists them.
+include_cookbook "aws-credentials"
+
 # Full development environment, mirrors linux.rb's modular role set
 # minus server/mcp-server/edge-agent/roon-server/roon-mcp which live
-# in their own LXCs.
+# in their own LXCs. The core role pulls in ssh-keys, which now finds
+# the pve-bootstrap-ssm profile already configured by aws-credentials.
 include_role "core"
 include_role "programming"
 include_role "llm"
@@ -50,8 +75,8 @@ include_role "extras"
 include_role "manage"
 include_role "network"
 
-# Independent tailscaled. ssh-keys cookbook handles the private key
-# fetch from /ssh-keys/devices/<hostname>/private.
+# Independent tailscaled. ssh-keys (already pulled in via core) handles
+# the private key fetch from /ssh-keys/devices/<hostname>/private.
 include_cookbook "tailscale"
 include_cookbook "ssh-keys"
 
