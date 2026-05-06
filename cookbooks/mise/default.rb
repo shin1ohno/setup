@@ -87,3 +87,30 @@ add_profile "mise" do
     end
   FISH
 end
+
+# Trust mise.toml in known setup-repo locations. mise refuses to auto-load
+# untrusted configs (security posture); pre-trust the cookbook-managed
+# setup repo so `cd <setup>` followed by mise-managed tool invocations
+# work without an interactive prompt that mitamae has no way to satisfy.
+#
+# Defaults cover the two clone paths used during PVE rebuild:
+#   - {home}/setup/mise.toml           (root@LXC bootstrap, e.g. /root/setup/)
+#   - {home}/ManagedProjects/setup/mise.toml (shin1ohno user workspace)
+#
+# Override per host via node[:mise][:trust_paths] = [...] when the setup
+# repo lives elsewhere.
+
+default_trust_paths = [
+  "#{node[:setup][:home]}/setup/mise.toml",
+  "#{node[:setup][:home]}/ManagedProjects/setup/mise.toml",
+]
+trust_paths = node.dig(:mise, :trust_paths) || default_trust_paths
+
+trust_paths.each do |path|
+  execute "mise trust #{path}" do
+    command "$HOME/.local/bin/mise trust '#{path}'"
+    user node[:setup][:user]
+    only_if "test -f '#{path}'"
+    not_if "$HOME/.local/bin/mise trust --show 2>&1 | grep -qF '#{path}'"
+  end
+end
