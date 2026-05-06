@@ -85,7 +85,12 @@ while IFS= read -r entry; do
     label=$(jq -r '.label' <<<"${entry}")
 
     cmd_start=$(date +%s)
-    if output=$(ssh \
+    # ssh -n is critical: without it, ssh inherits parent stdin (the
+    # process-substitution `< <(jq ...)` feeding the while-read loop) and
+    # consumes pending lines, so subsequent iterations see EOF and the
+    # second host is silently skipped. Classic bash trap — see bug
+    # discovery in PR description.
+    if output=$(ssh -n \
             -i "${SSH_KEY}" \
             -o BatchMode=yes \
             -o ConnectTimeout=5 \
