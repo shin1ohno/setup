@@ -56,6 +56,10 @@ file "#{cookbook_dir}/auto-mitamae.service" do
 
     [Service]
     Type=oneshot
+    # systemd PID 1 spawns services with HOME unset; mitamae cookbooks use
+    # ENV["HOME"] for path resolution, so pin it explicitly here. Belt-and-
+    # suspenders with auto-mitamae.sh's getent-based HOME fallback.
+    Environment=HOME=#{node[:setup][:home]}
     Environment=SETUP_DIR=#{setup_dir}
     Environment=ROLE_FILE=#{role_file}
     ExecStart=#{cookbook_dir}/auto-mitamae.sh

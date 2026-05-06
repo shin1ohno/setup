@@ -14,6 +14,19 @@ shopt -s inherit_errexit
 : "${SETUP_DIR:?SETUP_DIR must be set}"
 : "${ROLE_FILE:?ROLE_FILE must be set}"
 
+# systemd PID 1 starts oneshot services with HOME unset (or empty), but mitamae
+# cookbooks use ENV["HOME"] to compute paths like node[:setup][:root] and
+# node[:auto_mitamae][:setup_dir]. An unset HOME makes mitamae render
+# `/.setup_shin1ohno/...` (leading slash, no `/root`) and silently re-deploy a
+# corrupted service unit on the next timer fire — observed on CT 109 between
+# the 2026-05-05 17:49 manual apply and the 2026-05-06 04:02 timer-driven
+# regression. Pin HOME from the password DB so mitamae sees the same value
+# regardless of how the script was invoked (manual `bash -l`, systemd timer).
+if [[ -z "${HOME:-}" ]]; then
+    HOME=$(getent passwd "$(id -u)" | cut -d: -f6)
+    export HOME
+fi
+
 # Lock + log placement: root path uses /run + /var/log; user path falls back
 # to XDG_RUNTIME_DIR / ~/.cache so the same script can be reused for the
 # user-mode tracks (pro-dev / Mac) in later phases.
