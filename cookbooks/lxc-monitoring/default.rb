@@ -86,10 +86,29 @@ directory state_dir do
   mode "755"
 end
 
-%w[prometheus grafana].each do |sub|
+# Per-service state subdirs. Each container runs as its own non-root UID
+# and writes sqlite WAL / lock / journal files INTO the parent dir (not
+# just inside subdirs the container creates) — so the dir itself must be
+# writable by the container's UID.
+#
+# Grafana 11.x → uid=472(grafana). Without uid 472 ownership, grafana.db
+# opens read-only, sqlite raises "attempt to write a readonly database",
+# and login fails with "Internal Server Error". Per CLAUDE.md
+# `infrastructure.md` "Container state path audit when `user:` is non-root".
+#
+# Prometheus 2.x → uid=65534(nobody). TSDB writes (chunks_head/, wal/,
+# lock, queries.active) all happen inside /prometheus.
+#
+# Set per-service explicitly with String UIDs (Integer raises
+# InvalidTypeError per `ruby.md` "owner/group must be String").
+state_dir_owners = {
+  "prometheus" => "65534", # nobody (prom/prometheus standard)
+  "grafana"    => "472",   # grafana (grafana/grafana standard)
+}
+state_dir_owners.each do |sub, uid|
   directory "#{state_dir}/#{sub}" do
-    owner "root"
-    group "root"
+    owner uid
+    group uid
     mode "755"
   end
 end
