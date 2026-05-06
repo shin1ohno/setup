@@ -146,7 +146,7 @@ remote_file "#{deploy_dir}/grafana/provisioning/dashboards/dashboards.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
-%w[node-exporter-full.json auto-mitamae-fleet.json].each do |dash|
+%w[node-exporter-full.json auto-mitamae-fleet.json proxmox-via-prometheus.json].each do |dash|
   remote_file "#{deploy_dir}/grafana/dashboards/#{dash}" do
     source "files/grafana/dashboards/#{dash}"
     owner user

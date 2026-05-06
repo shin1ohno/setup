@@ -44,3 +44,30 @@ services:
       - /data/monitoring/grafana:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/etc/grafana/dashboards:ro
+
+  # prometheus-pve-exporter polls PVE's API and exposes metrics in
+  # Prometheus exposition format. Auth via a read-only API token
+  # (prometheus@pve, role PVEAuditor) supplied through PVE_TOKEN_VALUE
+  # in the .env file (sourced from SSM /monitoring/pve-exporter-token).
+  #
+  # The scrape config (prometheus.yml `pve` job) hits this exporter via
+  # 127.0.0.1:9221/pve?target=<pve-host-ip>; relabel_configs sets the
+  # `target` query param to the actual PVE host. LAN-only bind: 127.0.0.1
+  # is sufficient since the only consumer is the sibling prometheus
+  # container — no need to expose it on the LXC's network interface.
+  pve-exporter:
+    image: prompve/prometheus-pve-exporter:3.5.4
+    container_name: monitoring-pve-exporter
+    restart: unless-stopped
+    environment:
+      PVE_USER: prometheus@pve
+      PVE_TOKEN_NAME: monitoring
+      PVE_TOKEN_VALUE: ${PVE_TOKEN_VALUE}
+      # PVE host's TLS cert is the auto-installer self-signed cert,
+      # not in any system trust store. Verifying would need cookbookified
+      # cert distribution (out of scope). The PVE host ↔ exporter path
+      # stays inside the LAN + tailnet ACL, mTLS is over-engineering at
+      # this stage.
+      PVE_VERIFY_SSL: "false"
+    ports:
+      - "127.0.0.1:9221:9221"
