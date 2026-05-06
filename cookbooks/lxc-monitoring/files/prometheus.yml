@@ -1,9 +1,11 @@
 # Prometheus config for the home-LAN monitoring fleet.
 #
-# Phase 2a scrape targets: monitoring (self) + weave only. Phase 3 expands
-# to the rest of the LXC fleet + PVE host + pro-dev. Job names align with
-# `host` label conventions used by auto-mitamae-orchestrator (Phase 2b)
-# textfile metrics so PromQL queries can join across `host`.
+# Phase 3a scrape targets: monitoring (self) + weave + 5 service LXC
+# (hydra, consent, cognee, memory, roon-mcp) + bare-metal PVE host + PVE
+# API exporter. Phase 3b/3c will expand to roon, samba, housekeeping,
+# pro-dev, pro-router. Job names align with `host` label conventions used
+# by auto-mitamae-orchestrator (Phase 2b) textfile metrics so PromQL
+# queries can join across `host`.
 #
 # honor_labels: true — preserve `host` (and any other) labels emitted by
 # the orchestrator/drift-checker textfile metrics instead of letting
@@ -33,6 +35,49 @@ scrape_configs:
           - "192.168.1.74:9100"
         labels:
           host: weave
+
+  # Phase 3a service LXCs. Order: hydra → consent reflects the apply-time
+  # dependency consent has on hydra's admin API (4445). cognee / memory /
+  # roon-mcp have no apply-time deps on their siblings here.
+  - job_name: node-hydra
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.71:9100"
+        labels:
+          host: hydra
+
+  - job_name: node-consent
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.75:9100"
+        labels:
+          host: consent
+
+  - job_name: node-cognee
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.70:9100"
+        labels:
+          host: cognee
+
+  - job_name: node-memory
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.72:9100"
+        labels:
+          host: memory
+
+  - job_name: node-roon-mcp
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.73:9100"
+        labels:
+          host: roon-mcp
 
   # Bare-metal PVE host (`pro` = 192.168.1.10) OS-level metrics.
   # node_exporter installed via cookbooks/node-exporter, included from
