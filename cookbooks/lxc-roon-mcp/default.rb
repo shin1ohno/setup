@@ -170,7 +170,10 @@ execute "ensure roon-mcp running" do
 end
 
 execute "restart roon-mcp" do
-  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
+  # --force-recreate forces re-creation even when image + compose spec are
+  # unchanged, picking up bind-mounted config edits that bare `up -d`
+  # silently skips on already-running containers.
+  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build --force-recreate"
   user user
   action :nothing
 end
