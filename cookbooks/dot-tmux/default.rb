@@ -39,3 +39,17 @@ execute "update tmux config" do
   cwd "#{node[:setup][:home]}/.config/tmux"
   only_if "test -d #{node[:setup][:home]}/.config/tmux/.git"
 end
+
+# TPM (Tmux Plugin Manager) and many tmux plugins assume the legacy
+# ~/.tmux.conf path. The actual config lives at ~/.config/tmux/tmux.conf
+# (XDG-compliant). Symlink so plugin scripts resolving relative to
+# ~/.tmux.conf find the real file.
+tmux_conf_legacy = "#{node[:setup][:home]}/.tmux.conf"
+tmux_conf_xdg    = "#{node[:setup][:home]}/.config/tmux/tmux.conf"
+
+execute "symlink #{tmux_conf_legacy} -> #{tmux_conf_xdg}" do
+  command "ln -sf '#{tmux_conf_xdg}' '#{tmux_conf_legacy}'"
+  user node[:setup][:user]
+  only_if "test -f '#{tmux_conf_xdg}'"
+  not_if "test -L '#{tmux_conf_legacy}' && test \"$(readlink '#{tmux_conf_legacy}')\" = '#{tmux_conf_xdg}'"
+end
