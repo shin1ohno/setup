@@ -22,12 +22,15 @@ node.reverse_merge!(
     group: group,
     system_user: "root",
     system_group: "root",
-  },
-  auto_mitamae: {
-    role_file: "pve/lxc-weave.rb",
-    setup_dir: "#{ENV["HOME"]}/setup",
   }
 )
 
 include_cookbook "lxc-weave"
-include_cookbook "auto-mitamae"
+# Phase 2: per-host systemd timer (cookbooks/auto-mitamae) is replaced by
+# centralised SSH-push from the monitoring LXC's orchestrator. This host
+# now installs the orchestrator-side receiver (forced-command in
+# authorized_keys + mitamae-runner) and node_exporter for fleet metrics.
+# Phase 2b will git rm -r cookbooks/auto-mitamae and the user disables
+# the legacy auto-mitamae.timer on this LXC.
+include_cookbook "node-exporter"
+include_cookbook "auto-mitamae-target"

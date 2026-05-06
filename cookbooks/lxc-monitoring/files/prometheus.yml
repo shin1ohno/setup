@@ -1,0 +1,25 @@
+# Prometheus config for the home-LAN monitoring fleet.
+#
+# Phase 2a scrape targets: monitoring (self) + weave only. Phase 3 expands
+# to the rest of the LXC fleet + PVE host + pro-dev. Job names align with
+# `host` label conventions used by auto-mitamae-orchestrator (Phase 2b)
+# textfile metrics so PromQL queries can join across `host`.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: node-monitoring
+    static_configs:
+      - targets:
+          - "192.168.1.76:9100"
+        labels:
+          host: monitoring
+
+  - job_name: node-weave
+    static_configs:
+      - targets:
+          - "192.168.1.74:9100"
+        labels:
+          host: weave

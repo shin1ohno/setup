@@ -1,0 +1,15 @@
+apiVersion: 1
+
+# Auto-provisioned datasource. Grafana reloads provisioned datasources on
+# container start; edits in the UI are not persisted across container
+# restarts (Grafana provisioning policy).
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # Container-name resolution via the docker-compose default network.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s

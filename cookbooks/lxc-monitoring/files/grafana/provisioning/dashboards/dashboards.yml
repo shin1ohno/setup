@@ -1,0 +1,16 @@
+apiVersion: 1
+
+# Auto-provisioned dashboard provider. Files in /etc/grafana/dashboards/*
+# (mounted from cookbooks/lxc-monitoring/files/grafana/dashboards/) are
+# loaded on container start.
+providers:
+  - name: 'fleet'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false
