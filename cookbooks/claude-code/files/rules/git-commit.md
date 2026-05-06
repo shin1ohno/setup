@@ -40,8 +40,13 @@ Do **NOT** default to `git push origin main`. The harness blocks direct pushes t
 
 - User has already said "push directly to main" in the current conversation
 - Single-developer repo with no CI and the user has said "skip PR for this one"
+- **Established repo convention** (no explicit opt-in needed, but verify the signal first): run `git log --oneline origin/main -10` on the target repo. If the last 5+ commits all reached `main` directly (no `Merge pull request #` titles, no squash-merge `(#nnn)` suffixes, all the same commit-shape e.g. solo HANDOFF/CHANGELOG updates), treat that history as the established convention for this file in this repo. The user-facing flow is unchanged — still present `! git push origin main` for the user to authorize, never auto-push — but skip the "should I open a PR?" ceremony when the history shows the answer is "no" for this file class.
 
-Absent an explicit opt-in, always go PR branch → `gh pr create`. If a commit was just made on a local `main` tracking branch, redirect before pushing: `git branch -m <branch>; git push -u origin <branch>; gh pr create`.
+Absent an explicit opt-in OR an established convention, always go PR branch → `gh pr create`. If a commit was just made on a local `main` tracking branch, redirect before pushing: `git branch -m <branch>; git push -u origin <branch>; gh pr create`.
+
+**The convention signal is per-file-class, not per-repo**: a repo can have HANDOFF/log files that go direct-to-main while code changes still go through PRs. When the file being committed is a different class than the historical direct-to-main commits, the convention does NOT apply — fall back to PR branch.
+
+This rule exists because the 2026-05-05 PVE migration session ended with 3 unpushed `HANDOFF.md` commits on `main` of the `ultraplan-pve-roundtable` repo. The repo's `git log --oneline origin/main -10` showed every prior HANDOFF commit went direct to `main` with no PR — a clear convention. Per the rule's prior wording I correctly presented `! git push origin main` for user authorization, but had also asked the user about PR-vs-direct ceremony when the history already answered. The git-log signal is machine-readable and can resolve the question without burning a user turn.
 
 **Deny-list scope note**: The `Bash(git push:*)` deny entry matches commands that *start with* `git push`. A compound command `cd /repo && git push ...` bypasses the matcher. This is a known limitation. The behavioral rule (always present the blocked push as `! git push ...` and let the user run it) is the reliable enforcement mechanism — not the deny entry alone. Do not exploit the compound-form loophole to auto-push.
 
