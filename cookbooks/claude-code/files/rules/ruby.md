@@ -246,6 +246,55 @@ A non-empty result is a bug. Quote each match.
 
 This rule exists because setup PR #131 (2026-05-05) introduced `owner 1000` (Integer) for `/var/lib/roon-mcp/state/` resources. CI passed. The mitamae apply on CT 108 immediately failed with `InvalidTypeError`, requiring hotfix PR #133. One full PR + CI cycle wasted on a class of bug no static check catches. The grep above run before commit would have caught it.
 
+## Defensive `directory` resource for `node[:setup][:root]` and its subdirs
+
+Any cookbook that places files (`remote_file`, `file`) under `node[:setup][:root]` (typically `~/.setup_shin1ohno`) MUST declare a `directory` resource for the parent path BEFORE the first write — even though most existing LXCs already have the directory from a prior cookbook run.
+
+```ruby
+directory node[:setup][:root] do
+  mode "755"
+end
+
+directory "#{node[:setup][:root]}/<cookbook-name>" do
+  mode "755"
+end
+
+remote_file "#{node[:setup][:root]}/<cookbook-name>/<artifact>" do
+  source "files/<artifact>"
+  mode "755"
+end
+```
+
+Why both the parent and a per-cookbook subdirectory:
+- **Parent**: the `node[:setup][:root]` directory is *conventionally* expected to exist, but no single cookbook owns its creation. It happens to exist on dev boxes from prior mitamae runs; on a freshly-bootstrapped LXC (`apt install git curl && git clone && ./bin/setup && ./bin/mitamae local pve/lxc-<name>.rb`) the first cookbook to write under it sees a missing parent and fails with `cp: cannot create regular file '...': No such file or directory`.
+- **Per-cookbook subdir**: matches the `cookbooks/awscli` and `cookbooks/eternal-terminal` convention and keeps each cookbook's staged artifacts in their own namespace, simplifying cleanup and audit.
+
+The dry-run gate does NOT catch this — `mitamae local --dry-run` on the dev box reports the file resource as "exist will change from false to true" because it only previews, and the directory existence on the dev box hides the runtime mkdir need.
+
+Detection: `git grep -nE 'node\[:setup\]\[:root\]' cookbooks/ | grep -v 'directory '` — any hit not associated with a `directory` resource is a candidate.
+
+This rule exists because setup PR #137 (2026-05-05) shipped `auto-mitamae` placing `auto-mitamae.sh` under `node[:setup][:root]` without a defensive `directory` resource. Dry-run on the dev box passed. CT 109 bootstrap failed at converge with `cp: cannot create regular file '/root/.setup_shin1ohno/auto-mitamae.sh'`. Hotfix PR #138 added the two `directory` resources and re-namespaced into `<setup_root>/auto-mitamae/`.
+
+## When automating mitamae, enumerate the privilege boundary at plan time
+
+Any cookbook that schedules `mitamae local <role>.rb` (systemd timer, cron, launchd LaunchAgent, CI runner) MUST answer this question in the plan BEFORE writing the timer unit:
+
+> Does the target role include resources that need root? Check for: `sudo` in `execute` commands, system package installs (`apt install`, `brew --root` paths), service restarts that touch `/etc/systemd/system/`, file resources writing under `/etc/`, `/usr/`, `/var/lib/`, or any path outside the user's home.
+
+The answer determines the timer's privilege model:
+
+| Need root? | Timer model |
+|---|---|
+| Yes (cookbook touches /etc, /usr, services) | systemd **system** timer (`/etc/systemd/system/`, `User=root`) — bootstrap requires 1-time `sudo mitamae`, all subsequent fires run as root |
+| No (user-space only: dotfiles, mise, ~/.config/*) | systemd **user** timer (`~/.config/systemd/user/`, `loginctl enable-linger <user>`) — never needs sudo |
+| Mixed | Split the role into a user-mode subset (`roles/auto-mitamae-userspace.rb`) for the timer + keep the full role for manual `sudo mitamae` |
+
+If you put a root-needing role behind a user-mode timer, mitamae **silently skips or partially fails** root resources (`Permission denied`) without raising — drift accumulates invisibly until something breaks.
+
+If your design enumerates "I need to run mitamae automatically" without spelling out which of the three rows above applies, the design is incomplete. Treat this as a plan-completeness check, equivalent to listing affected files.
+
+This rule exists because the auto-mitamae plan (PR #137, 2026-05-05) initially proposed a user-mode systemd timer modeled on `cookbooks/s3-backup`'s pattern, without auditing whether the target role had root resources. The user surfaced the gap mid-plan-review with "mitamae 実行に sudo が必要ですが、どうしますか？", costing one full plan-revision cycle. The fix landed as a 4-row decision in the plan; the rule above prevents the next planner from missing it.
+
 ## Docker Build in Unprivileged PVE LXC
 
 `docker build` / `docker compose up --build` inside an unprivileged PVE LXC requires **two** prerequisites to be true simultaneously:
