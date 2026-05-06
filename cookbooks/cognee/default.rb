@@ -11,6 +11,16 @@ return if node[:platform] == "darwin"
 
 include_cookbook "awscli"
 
+# Reuse the AWS profile / region convention from cookbooks/ssh-keys so the
+# require_external_auth check_command and the .env generator both target the
+# same IAM principal. Per CLAUDE.md "Auth-check gate must match the cookbook's
+# actual invocation profile" — `aws sts get-caller-identity` is a false gate
+# that passes against any default profile and lets the cookbook proceed even
+# when the principal it actually invokes lacks /cognee/* SSM access.
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "devices.json")))
+aws_profile = ssh_keys_config["aws_profile"]
+aws_region  = ssh_keys_config["aws_region"]
+
 deploy_dir = "#{node[:setup][:home]}/deploy/cognee"
 vault_dir = "#{node[:setup][:home]}/ObsidianVaults/cognee-generated"
 
@@ -154,13 +164,18 @@ env_output_path = "#{deploy_dir}/.env"
 
 # Skip generation if .env already exists — edit by hand to override
 require_external_auth(
-  tool_name: "AWS CLI (for /cognee/* SSM params)",
-  check_command: "aws sts get-caller-identity",
-  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /cognee/* SSM params",
+  check_command: "aws ssm get-parameter --name /cognee/llm-endpoint " \
+                 "--profile #{aws_profile} --region #{aws_region} " \
+                 "> /dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on /cognee/* in " \
+                "#{aws_region}. On a fresh machine: aws configure --profile " \
+                "#{aws_profile}. Then press Enter.",
   skip_if: -> { File.exist?(env_output_path) },
 ) do
   execute "generate cognee .env" do
-    command "bash #{generate_env_script} #{env_temp_path}"
+    command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+            "bash #{generate_env_script} #{env_temp_path}"
     user node[:setup][:user]
   end
 end
