@@ -33,3 +33,44 @@ scrape_configs:
           - "192.168.1.74:9100"
         labels:
           host: weave
+
+  # Bare-metal PVE host (`pro` = 192.168.1.10) OS-level metrics.
+  # node_exporter installed via cookbooks/node-exporter, included from
+  # pve/pve-host.rb. Same systemd unit + textfile collector pattern as
+  # CT 111 / CT 109 — appears in Node Exporter Full dashboard's host
+  # selector as `host=pve-host`.
+  - job_name: node-pve
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.10:9100"
+        labels:
+          host: pve-host
+
+  # Proxmox-specific metrics (VM/CT counts, storage IO, cluster status,
+  # backup history) via prometheus-pve-exporter (sibling container in
+  # CT 111). Multi-target relabel pattern: the exporter listens on a
+  # single address, the target query parameter selects which PVE node
+  # to poll. Single PVE host today; expand `targets:` when adding a
+  # second PVE node.
+  #
+  # Read-only auth via the PVE_TOKEN_VALUE env supplied to the exporter
+  # (see docker-compose.yml `pve-exporter` service). Token comes from
+  # SSM /monitoring/pve-exporter-token, populated out-of-band by the
+  # operator with `pveum user token add prometheus@pve monitoring`.
+  - job_name: pve
+    metrics_path: /pve
+    static_configs:
+      - targets:
+          - 192.168.1.10
+    params:
+      module: [default]
+      cluster: ['1']
+      node: ['1']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 127.0.0.1:9221
