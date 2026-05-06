@@ -49,3 +49,18 @@ execute "copy authorized_keys to #{username}" do
   only_if "test -f /root/.ssh/authorized_keys"
   not_if "test -f /home/#{username}/.ssh/authorized_keys"
 end
+
+# Enable systemd lingering for both root and the provisioned user. Several
+# downstream cookbooks (s3-backup, obsidian_file_sync, ingest-drop,
+# aws-cost-monitor) install user-level systemd units that must start at
+# boot without an interactive login. Without lingering the user manager
+# stops between logins and the timers/services don't fire.
+#
+# linger files are at /var/lib/systemd/linger/<user>; presence is the
+# idempotency check.
+[username, "root"].uniq.each do |u|
+  execute "enable systemd linger for #{u}" do
+    command "sudo loginctl enable-linger #{u}"
+    not_if "test -f /var/lib/systemd/linger/#{u}"
+  end
+end
