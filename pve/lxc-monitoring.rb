@@ -36,13 +36,11 @@ node.reverse_merge!(
   }
 )
 
-# SSH login key + authorized_keys for monitoring (existing flow). Match
-# pve/lxc-cognee.rb / pve/lxc-weave.rb pattern — ssh-keys uses
-# devices.json to identify the host by `hostname -s`. The monitoring LXC
-# entry must be added to cookbooks/ssh-keys/files/devices.json in a
-# follow-up commit (or as part of this PR if the SSM keypair is
-# provisioned by the sibling home-monitor PR).
-include_cookbook "ssh-keys"
+# Service LXCs do not include the ssh-keys cookbook — login keys are
+# injected at LXC provision time via the home-monitor terraform
+# `local.ssh_devices` for_each loop (matches pve/lxc-cognee.rb /
+# pve/lxc-weave.rb / pve/lxc-hydra.rb convention). Operator direct SSH
+# uses the SSM-stored private key for /ssh-keys/devices/monitoring/private.
 include_cookbook "lxc-monitoring"
 include_cookbook "node-exporter"
 include_cookbook "auto-mitamae-target"
