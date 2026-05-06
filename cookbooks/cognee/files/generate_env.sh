@@ -1,11 +1,16 @@
 #!/bin/bash
 # Generate .env for cognee Docker Compose from AWS SSM Parameter Store
 # Usage: generate_env.sh <output_path>
+#
+# AWS_PROFILE + AWS_REGION are passed in by the default.rb caller (sourced
+# from cookbooks/ssh-keys/files/devices.json) so the script always targets
+# the same IAM principal as the require_external_auth gate.
 
 set -euo pipefail
 
 OUTPUT_FILE="$1"
 AWS_REGION="${AWS_REGION:-ap-northeast-1}"
+AWS_PROFILE="${AWS_PROFILE:-pve-bootstrap-ssm}"
 
 fetch_ssm() {
   local param_path="$1"
@@ -14,6 +19,7 @@ fetch_ssm() {
     --with-decryption \
     --query "Parameter.Value" \
     --output text \
+    --profile "${AWS_PROFILE}" \
     --region "${AWS_REGION}" 2>/dev/null \
     || { echo "SSM_FETCH_FAILED:${param_path}" >&2; return 1; }
 }
