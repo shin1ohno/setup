@@ -72,5 +72,10 @@ scrape_configs:
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
+      # Prometheus runs in the same docker-compose project as pve-exporter;
+      # use the service name (resolved by the compose default network),
+      # NOT 127.0.0.1 — that points to the prometheus container itself,
+      # not the LXC's loopback. Service-name resolution mirrors how the
+      # grafana service reaches "prometheus:9090".
       - target_label: __address__
-        replacement: 127.0.0.1:9221
+        replacement: pve-exporter:9221
