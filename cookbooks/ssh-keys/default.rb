@@ -23,9 +23,13 @@ devices = config["devices"]
 aws_profile = config["aws_profile"]
 aws_region = config["aws_region"]
 
-# Identify current device by hostname
+# Identify current device by hostname-s. devices.json entries can override
+# matching with an explicit `hostname` field when the device's OS-level
+# hostname differs from its conceptual name — e.g. a Mac whose factory
+# serial-format short hostname (`XMHTM6QVQX`) is unrelated to the human
+# label (`air`) used in SSH config / authorized_keys comments.
 current_device_name = run_command("hostname -s").stdout.strip.downcase
-current_device = devices.find { |d| d["name"] == current_device_name }
+current_device = devices.find { |d| (d["hostname"] || d["name"]).downcase == current_device_name }
 
 unless current_device
   MItamae.logger.info("ssh-keys: hostname '#{current_device_name}' not in devices.json, skipping")
