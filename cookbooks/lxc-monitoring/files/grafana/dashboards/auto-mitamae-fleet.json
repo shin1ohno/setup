@@ -1,8 +1,6 @@
 {
-  "annotations": {
-    "list": []
-  },
-  "description": "Phase 2a minimal: hosts-up count + per-host last_apply timestamp + role info. TODO Phase 2b: extend with drift_commits, last_apply_status (success/mitamae_fail/sha_mismatch/etc.), commit-info pin vs setup_main_head_commit_info, GitHub API health banner.",
+  "annotations": { "list": [] },
+  "description": "Phase 2b fleet dashboard: per-host apply status, drift commits, GitHub API health, commit pinning.",
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -11,97 +9,202 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Hosts whose mitamae-runner reported a successful apply within the last 30 minutes.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Hosts whose last apply ended with status=success.",
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
+          "color": { "mode": "thresholds" },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
+              { "color": "red",   "value": null },
               { "color": "yellow", "value": 1 },
-              { "color": "green", "value": 2 }
+              { "color": "green",  "value": 2 }
             ]
           },
           "unit": "none"
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
       "id": 1,
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
         "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
       "pluginVersion": "11.6.14",
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "count(auto_mitamae_last_apply_timestamp >= time() - 1800)",
-          "instant": true,
-          "legendFormat": "hosts up",
-          "range": false,
-          "refId": "A"
+          "expr": "count(auto_mitamae_last_apply_status{result=\"success\"} == 1)",
+          "instant": true, "legendFormat": "succeeded", "range": false, "refId": "A"
         }
       ],
-      "title": "Hosts up (last_apply within 30 min)",
+      "title": "Hosts: last apply succeeded",
       "type": "stat"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Per-host last_apply timestamp + role label. Phase 2b extends with status / drift / commit columns.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Hosts whose last apply did NOT end success — covers mitamae_fail, sha_mismatch, ssh_unreachable, etc.",
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": { "type": "auto" },
-            "inspect": false
-          },
+          "color": { "mode": "thresholds" },
           "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red",   "value": 1 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "count(auto_mitamae_last_apply_status{result!=\"success\"} == 1) or vector(0)",
+          "instant": true, "legendFormat": "failing", "range": false, "refId": "A"
+        }
+      ],
+      "title": "Hosts: last apply failing",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "drift-checker's last poll outcome. Red = api_failure (rate-limit / 5xx). Yellow = parse_failure. Green = ok.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "ok":             { "color": "green",  "index": 0, "text": "OK" } },             "type": "value" },
+            { "options": { "api_failure":    { "color": "red",    "index": 1, "text": "API FAILURE" } },    "type": "value" },
+            { "options": { "parse_failure":  { "color": "yellow", "index": 2, "text": "PARSE FAILURE" } },  "type": "value" }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null }
             ]
-          }
+          },
+          "unit": "string"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/^result$/", "values": true },
+        "textMode": "value"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "setup_main_head_check_status == 1",
+          "format": "table",
+          "instant": true, "legendFormat": "__auto", "range": false, "refId": "A"
+        }
+      ],
+      "title": "GitHub API status",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "main HEAD commit observed by drift-checker.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] },
+          "unit": "string"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/^commit$/", "values": true },
+        "textMode": "value"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "setup_main_head_commit_info",
+          "format": "table",
+          "instant": true, "legendFormat": "__auto", "range": false, "refId": "A"
+        }
+      ],
+      "title": "setup main HEAD",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Per-host: last apply status + drift commits behind main + duration + last apply timestamp + applied SHA.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Value" },
+            "matcher": { "id": "byName", "options": "Value #A" },
             "properties": [
+              { "id": "displayName", "value": "Status" },
+              { "id": "mappings", "value": [ { "options": { "1": { "color": "green", "index": 0, "text": "✓" } }, "type": "value" } ] },
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Value #B" },
+            "properties": [
+              { "id": "displayName", "value": "Drift (commits)" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Value #C" },
+            "properties": [
+              { "id": "displayName", "value": "Duration (s)" },
+              { "id": "unit", "value": "s" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Value #D" },
+            "properties": [
+              { "id": "displayName", "value": "Last apply (UTC)" },
               { "id": "unit", "value": "dateTimeAsIso" },
-              { "id": "displayName", "value": "Last apply (UTC)" }
+              { "id": "custom.cellOptions", "value": { "type": "auto" } },
+              { "id": "custom.transformValue", "value": "value*1000" }
             ]
           }
         ]
       },
-      "gridPos": { "h": 10, "w": 16, "x": 8, "y": 0 },
-      "id": 2,
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 5 },
+      "id": 5,
       "options": {
         "cellHeight": "sm",
         "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
@@ -110,33 +213,43 @@
       "pluginVersion": "11.6.14",
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "auto_mitamae_last_apply_timestamp * 1000",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "A"
+          "expr": "auto_mitamae_last_apply_status == 1",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "A"
         },
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "auto_mitamae_role_info",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "B"
+          "expr": "auto_mitamae_last_apply_drift_commits",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "auto_mitamae_last_apply_duration_seconds",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "auto_mitamae_last_apply_timestamp_seconds * 1000",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "D"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "auto_mitamae_last_apply_sha_info",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "E"
         }
       ],
-      "title": "Per-host last_apply + role",
+      "title": "Per-host fleet status",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": { "byField": "host", "mode": "outer" }
+        }
+      ],
       "type": "table"
     }
   ],
@@ -149,6 +262,6 @@
   "timezone": "",
   "title": "Auto-mitamae Fleet",
   "uid": "auto-mitamae-fleet",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
