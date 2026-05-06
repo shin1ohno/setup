@@ -4,6 +4,14 @@
 # to the rest of the LXC fleet + PVE host + pro-dev. Job names align with
 # `host` label conventions used by auto-mitamae-orchestrator (Phase 2b)
 # textfile metrics so PromQL queries can join across `host`.
+#
+# honor_labels: true — preserve `host` (and any other) labels emitted by
+# the orchestrator/drift-checker textfile metrics instead of letting
+# Prometheus rename them to `exported_host` due to collision with the
+# scrape target's static label. Without this, dashboard queries that
+# group by `host` fail because the orchestrator's host="monitoring" /
+# host="weave" labels become exported_host="..." at scrape time, while
+# the target's static label still wins on `host`.
 
 global:
   scrape_interval: 15s
@@ -11,6 +19,7 @@ global:
 
 scrape_configs:
   - job_name: node-monitoring
+    honor_labels: true
     static_configs:
       - targets:
           - "192.168.1.76:9100"
@@ -18,6 +27,7 @@ scrape_configs:
           host: monitoring
 
   - job_name: node-weave
+    honor_labels: true
     static_configs:
       - targets:
           - "192.168.1.74:9100"
