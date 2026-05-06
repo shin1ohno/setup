@@ -197,3 +197,54 @@ execute "restart tailscaled after resolvconf divert (pve)" do
   only_if "systemctl is-active --quiet tailscaled"
   action :nothing
 end
+
+# ------------------------------------------------------------------------
+# TUN device passthrough for LXCs running tailscaled
+# ------------------------------------------------------------------------
+# tailscaled requires /dev/net/tun. Unprivileged LXCs by default cannot
+# access /dev — the cgroup device whitelist + mount entry below punches a
+# specific hole for the TUN char device (major 10 minor 200). Without
+# this, tailscaled fails with "Failed to start tun ... operation not
+# permitted" or silently produces a degraded mode where peer routes
+# don't install.
+#
+# CT IDs default to the tailscale-running LXCs in
+# home-monitor/pve-lxcs.tf (pro-router=102, pro-dev=104). Override per
+# host via node[:pve_host][:tun_ctids] when adding more or running on a
+# 2nd PVE node. Existing manual entries (matching the literal
+# `lxc.cgroup2.devices.allow: c 10:200 rwm` line) are detected by the
+# not_if guard and skipped — no duplicate writes.
+#
+# The LXC reboot only fires via `notifies` when the file was actually
+# modified, so steady-state mitamae runs are no-ops. On a fresh-rebuild
+# pass (TF creates LXC → pve-host mitamae adds TUN → LXC reboot), the
+# notify chain converges in one apply.
+
+tun_ctids = node.dig(:pve_host, :tun_ctids) || [102, 104]
+
+tun_ctids.each do |vmid|
+  conf_path = "/etc/pve/lxc/#{vmid}.conf"
+
+  execute "inject TUN passthrough in #{conf_path}" do
+    command <<~CMD
+      sudo tee -a #{conf_path} > /dev/null <<'EOF'
+
+      # BEGIN tun-managed-by-mitamae
+      lxc.cgroup2.devices.allow: c 10:200 rwm
+      lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
+      # END tun-managed-by-mitamae
+      EOF
+    CMD
+    only_if "test -f #{conf_path}"
+    not_if "grep -qE 'tun-managed-by-mitamae|lxc\\.cgroup2\\.devices\\.allow:.*c 10:200 rwm' #{conf_path}"
+    notifies :run, "execute[restart LXC #{vmid} to pick up TUN config]"
+  end
+
+  # `pct stop` returns non-zero on already-stopped CTs; suppress and
+  # always `pct start` afterwards. The 2 s sleep gives kernel namespace
+  # teardown time before re-creating.
+  execute "restart LXC #{vmid} to pick up TUN config" do
+    command "sudo pct stop #{vmid} 2>/dev/null; sleep 2; sudo pct start #{vmid}"
+    action :nothing
+  end
+end
