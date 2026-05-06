@@ -220,8 +220,14 @@ end
 # Recreate containers when compose config or built image sources change.
 # Notified by remote_file resources above; no-op otherwise.
 # Defined unconditionally so notifies: resolve even before .env is generated.
+#
+# --force-recreate is critical: bare `up -d` is a no-op when the image is
+# unchanged and the compose spec is unchanged, so a bind-mounted config
+# file edit never takes effect until a manual `docker restart`. The
+# notify-driven path is exactly the case where we know the file changed
+# and want the running container to pick it up.
 execute "docker compose restart cognee" do
-  command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build"
+  command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build --force-recreate"
   user node[:setup][:user]
   action :nothing
   # Skip when .env was not generated (SSM auth absent / non-interactive

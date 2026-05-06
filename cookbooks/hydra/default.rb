@@ -166,7 +166,10 @@ end
 # only_if guards against running compose without .env (hydra-migrate would
 # fail trying to reach Aurora with empty credentials).
 execute "docker compose restart hydra" do
-  command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build"
+  # --force-recreate forces re-creation even when image + compose spec are
+  # unchanged, picking up bind-mounted config edits that bare `up -d`
+  # silently skips on already-running containers.
+  command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build --force-recreate"
   user node[:setup][:user]
   action :nothing
   only_if "test -f #{env_output_path}"

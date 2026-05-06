@@ -213,7 +213,11 @@ execute "restart weave" do
   # (DOCKER_BUILDKIT=0) does not support subdir context. The weave LXC has
   # features_nesting=true (home-monitor#4), so BuildKit's rbind requirements
   # are satisfied.
-  command "docker compose -f #{compose_path} up -d --build"
+  #
+  # --force-recreate forces re-creation even when image + compose spec are
+  # unchanged, picking up bind-mounted config edits that bare `up -d`
+  # silently skips on already-running containers.
+  command "docker compose -f #{compose_path} up -d --build --force-recreate"
   user user
   action :nothing
 end

@@ -155,8 +155,11 @@ end
 
 # Recreate containers when compose config or built image sources change.
 # Notified by remote_file resources above; no-op otherwise.
+# --force-recreate is critical: bare `up -d` is a no-op when image +
+# compose spec are unchanged, so a bind-mounted config file edit never
+# takes effect on already-running containers.
 execute "docker compose restart ai-memory" do
-  command "docker compose -f #{compose_path} up -d --wait --wait-timeout 120"
+  command "docker compose -f #{compose_path} up -d --force-recreate --wait --wait-timeout 120"
   user node[:setup][:user]
   action :nothing
   # Skip when .env was not generated (SSM auth absent / non-interactive
