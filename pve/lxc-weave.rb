@@ -26,11 +26,10 @@ node.reverse_merge!(
 )
 
 include_cookbook "lxc-weave"
-# Phase 2: per-host systemd timer (cookbooks/auto-mitamae) is replaced by
-# centralised SSH-push from the monitoring LXC's orchestrator. This host
-# now installs the orchestrator-side receiver (forced-command in
-# authorized_keys + mitamae-runner) and node_exporter for fleet metrics.
-# Phase 2b will git rm -r cookbooks/auto-mitamae and the user disables
-# the legacy auto-mitamae.timer on this LXC.
+# Phase 2: receiver-side of the centralised auto-apply system. The Phase 1
+# per-host systemd timer (cookbooks/auto-mitamae) was deprecated in PR with
+# this commit; the monitoring LXC's orchestrator now SSH-pushes apply
+# requests against the forced-command in authorized_keys (auto-mitamae-target)
+# and node_exporter exposes fleet metrics for Grafana.
 include_cookbook "node-exporter"
 include_cookbook "auto-mitamae-target"

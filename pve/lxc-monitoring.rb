@@ -44,4 +44,4 @@ node.reverse_merge!(
 include_cookbook "lxc-monitoring"
 include_cookbook "node-exporter"
 include_cookbook "auto-mitamae-target"
-# include_cookbook "auto-mitamae-orchestrator"  # Phase 2b
+include_cookbook "auto-mitamae-orchestrator"
