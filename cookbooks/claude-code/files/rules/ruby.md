@@ -178,6 +178,74 @@ Any restart resource without an `only_if "test -f <env>"` is a candidate, especi
 
 This rule exists because the 2026-05-04 `linux.rb` LXC bootstrap session hit `hydra-migrate` failing to reach Aurora with empty credentials, traced back to the `docker compose restart hydra` execute firing despite the `.env` generator being skipped (no AWS auth on the LXC). Fixed by adding `.env`-existence guards to hydra / cognee / ai-memory / hydra-server restart resources in PR #103.
 
+## Cookbook skip-paths must log at WARN, not INFO
+
+When a cookbook exits early because a precondition is not met (hostname not in devices list, auth gate fails, SSM parameter absent, file not found), log at `MItamae.logger.warn(...)`, not `MItamae.logger.info(...)`. An `info`-level skip line is invisible at default log levels — the operator sees the cookbook "succeed" while observing zero effect, so the gap persists undetected until something downstream fails.
+
+```ruby
+# WRONG — silent skip, operator never notices
+unless devices.key?(current_hostname)
+  MItamae.logger.info("ssh-keys: #{current_hostname} not in devices.json, skipping")
+  return
+end
+
+# RIGHT — visible skip; operator can grep "WARN" in the run log
+unless devices.key?(current_hostname)
+  MItamae.logger.warn(
+    "ssh-keys: #{current_hostname} not in devices.json — no authorized_keys " \
+    "written. Add this host to files/devices.json (or set its `hostname` " \
+    "override field) if ssh-key distribution is intended."
+  )
+  return
+end
+```
+
+Include the **consequence** in the warn message ("no authorized_keys written"), not just the guard condition. This makes the skip distinguishable from a benign no-op (e.g., "package already installed") at a glance.
+
+The same WARN-vs-INFO discipline applies to any auth-gate fall-through, missing-config bypass, or `client_only`-style early return that an operator might want to know about. INFO is for "I did the thing successfully and here's a status note"; WARN is for "I did NOT do the thing and you might care."
+
+This rule exists because setup PR #142 (2026-05-06) was required to fix `air`'s missing pubkeys. The root cause was a devices.json hostname mismatch, but the ssh-keys cookbook's `info`-level skip (`hostname '<serial>' not in devices.json, skipping`) was invisible in the apply output. The operator believed mitamae had succeeded and the bug persisted across multiple sessions until a per-device verification pass forced the hostname mismatch to surface.
+
+## Rescue EPERM/EACCES on user-local override file reads
+
+Cookbooks that read optional user-local override files (`*.local.json`, `*.local.md`, `*.local.rb`, user-supplied YAML) MUST rescue `Errno::EPERM` and `Errno::EACCES` and treat them as "file absent". On macOS, users frequently symlink these files into iCloud Drive (`~/Library/Mobile Documents/`). When mitamae runs without a desktop session (launchd timer, SSH from another host, remote apply), the macOS sandbox denies the symlink traversal with `EPERM` — even though the file is "there" from the user's perspective.
+
+```ruby
+# WRONG — hard crash when the symlink target is iCloud-sandboxed
+local_overrides = JSON.parse(File.read("#{home}/.config/myapp/config.local.json"))
+
+# RIGHT — graceful fallback; warn so the operator knows the override was skipped
+local_overrides = begin
+  if File.exist?("#{home}/.config/myapp/config.local.json")
+    JSON.parse(File.read("#{home}/.config/myapp/config.local.json"))
+  else
+    {}
+  end
+rescue Errno::EPERM, Errno::EACCES => e
+  MItamae.logger.warn(
+    "myapp: cannot read local override (#{e.class}: #{e.message}) — " \
+    "file may be a sandboxed iCloud symlink or have restrictive permissions; " \
+    "using defaults."
+  )
+  {}
+rescue JSON::ParserError => e
+  MItamae.logger.warn("myapp: invalid JSON in local override (#{e.message}); using defaults.")
+  {}
+end
+```
+
+The same guard applies to any `File.read` that crosses a symlink the cookbook doesn't control — even `File.exist?` can raise `EPERM` on a sandboxed iCloud symlink in some macOS versions rather than returning `false`.
+
+**Detection** — when adding any optional-override file read to a cookbook:
+
+```
+git grep -nE 'File\.read.*\.local\.|JSON\.parse.*\.local\.' cookbooks/ roles/
+```
+
+Any hit without a `rescue Errno::EPERM` (or wrapping `begin`/`rescue` block) is a candidate.
+
+This rule exists because setup PR #147 (2026-05-06) was required after `roles/manage` on `air` raised `EPERM` on a `repositories.local.json` symlinked into iCloud Drive (`~/Library/Mobile Documents/.../securebu/repositories.local.json`). The unhandled exception halted the entire `darwin.rb` recipe chain — every cookbook downstream of `roles/manage` (managed-projects, mac-settings, edge-agent, macos-hub) silently never ran. The fix added `rescue Errno::EPERM, Errno::EACCES, JSON::ParserError` around the local-override read.
+
 ## remote_file idempotency guard — file-existence vs content-aware
 
 `not_if "test -f #{path}"` on a `remote_file` resource guards against re-downloading on every run, but it does NOT detect when the cookbook source has changed since the file was first placed. During migrations (endpoint changes, address rotations, URL rewrites) the deployed file persists indefinitely with the old value — cookbook updates never propagate to existing hosts and the migration silently fails on the consumer side.

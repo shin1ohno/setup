@@ -135,6 +135,52 @@ Do NOT attempt `terraform apply` from a feature branch — permission gates ofte
 
 This rule exists because the 2026-04-25 session attempted `terraform apply` from an unmerged feature branch in home-monitor; the permission layer correctly denied it, surfacing that the proper flow is merge-first-then-apply.
 
+## AWS SSM Parameter Path Constraints
+
+Before writing any `aws_ssm_parameter` Terraform resource or `aws ssm put-parameter` cookbook call, validate the planned path is not in a reserved namespace. AWS blocks any path starting with `/aws` or `/AWS` at the API level (`AccessDeniedException: No access to reserved parameter name: ...`) — the error fires at apply time, not at plan time, and Terraform does not surface it as a plan diff.
+
+**Pre-plan probe** (run in the target account before writing the resource):
+
+```bash
+# A PUT + immediate DELETE confirms the path is writable.
+# Cost: creates and destroys a dummy param.
+AWS_PROFILE=<profile> aws ssm put-parameter \
+  --name "/your-planned-prefix/probe" \
+  --value "probe" --type String \
+  --overwrite --region <region> 2>&1 && \
+AWS_PROFILE=<profile> aws ssm delete-parameter \
+  --name "/your-planned-prefix/probe" \
+  --region <region>
+```
+
+Reserved prefixes that fail at apply (not plan):
+
+- `/aws/`, `/aws-` (e.g. `/aws-keys/...` — looks reasonable but rejected)
+- `/AWS/`, `/AWS-`
+- `/ssm/` (also reserved)
+
+Prefer project-scoped prefixes (`/<project>/<purpose>/...`, e.g. `/home-monitor/iam/<user>/<key-name>`) to avoid the entire class.
+
+This rule exists because home-monitor PR #12 (2026-05-06) created `aws_ssm_parameter` resources at `/aws-keys/pve-bootstrap-ssm/{access-key-id,secret-access-key}` — `terraform plan` was clean (5 to add) and `terraform apply` succeeded for the IAM user / access key / policy resources but failed both `aws_ssm_parameter` puts with `AccessDeniedException: No access to reserved parameter name: aws-keys/pve-bootstrap-ssm/access-key-id`. Hotfix PR #14 renamed to `/home-monitor/iam/pve-bootstrap-ssm/...` and the same plan re-applied cleanly. The pre-plan probe takes 5 seconds and would have caught the rejection before the IAM user was created in a half-applied state.
+
+## Per-Device Identity Probe Before Cookbook Configuration
+
+Before writing any cookbook resource that keys off a host's identity — hostname match in a device registry (`devices.json`, `node_map`, YAML host dict), user-home path, SSH login user, or per-device SSM parameter name — run a one-shot probe on the actual target host to confirm the values your cookbook will use:
+
+```bash
+ssh <target> 'echo "hostname-s: $(hostname -s)"; echo "scutil HostName: $(scutil --get HostName 2>/dev/null)"; echo "user: $(whoami)"; echo "home: $HOME"'
+```
+
+Three values that diverge from cookbook assumptions most often:
+
+1. **`hostname -s`** — macOS factories set this to a hardware serial (e.g. `XMHTM6QVQX`) before the user gives the machine a friendly name in System Settings. `scutil --get ComputerName` returns the friendly name but mitamae's `hostname -s` runs the BSD utility and gets the unmodified short hostname.
+2. **`whoami`** — admin accounts on shared machines or work-issued Macs may differ from the personal username assumed in the cookbook (e.g., `sh1` vs `shin1ohno`).
+3. **`$HOME`** — on some LXC templates, `root` has `HOME=/` or `HOME=/root` depending on whether the template populated `/etc/passwd` for the UID.
+
+Never write a `node[:hostname]` match expression or `ssh_user` field from memory or earlier documentation — SSH-probe the host and use what it actually reports. If devices.json (or equivalent) needs to track a host whose conceptual name diverges from `hostname -s`, add an explicit override field (`hostname`, `aliases`, etc.) and document the divergence in the entry.
+
+This rule exists because setup PR #142 (2026-05-06) was required after `air`'s ssh-keys cookbook silently skipped its run (`hostname '<serial>' not in devices.json, skipping`). devices.json had `name: "air"` (= old conceptual name) + `ssh_user: "shin1ohno"` (= the user's other-machine convention), but the actual Mac reported `hostname -s = XMHTM6QVQX` (factory serial) + `whoami = sh1`. Both mismatches were invisible until per-device verification surfaced them. A 2-second probe at the start of Phase 2 per-device work would have caught both before any cookbook code was written.
+
 ## Incident First Response
 
 When a user reports any service or application misbehavior (slow, unavailable, failing):
