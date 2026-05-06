@@ -225,7 +225,16 @@ execute "ensure monitoring running" do
 end
 
 execute "restart monitoring" do
-  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d"
+  # --force-recreate forces re-creation even when image + compose spec are
+  # unchanged, picking up bind-mounted config edits (prometheus.yml,
+  # grafana provisioning yaml, dashboards/*.json) that bare `up -d`
+  # silently skips on already-running containers. Discovered when adding
+  # honor_labels to prometheus.yml in PR #154 — the notify fired but the
+  # bare `up -d` was a no-op, so the new label semantics never reached
+  # the running prometheus container until manual SIGHUP. Same fix shape
+  # as PR #158 for the other 6 cookbooks; lxc-monitoring was excluded
+  # there to avoid an apparent (but ultimately illusory) merge conflict.
+  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --force-recreate"
   user user
   action :nothing
   # Skip when .env was not generated (SSM auth absent / non-interactive
