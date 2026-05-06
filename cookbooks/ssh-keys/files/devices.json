@@ -18,10 +18,11 @@
     },
     {
       "name": "air",
+      "hostname": "XMHTM6QVQX",
       "ssm_prefix": "/ssh-keys/devices/air",
       "key_file": "air_ed25519",
       "ssh_host": "air",
-      "ssh_user": "shin1ohno"
+      "ssh_user": "sh1"
     },
     {
       "name": "neo",
