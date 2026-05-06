@@ -53,3 +53,9 @@ include_cookbook "pve-host"
 # without auth — run `aws configure --profile sh1admn` (or `aws login
 # --profile sh1admn`) and re-apply.
 include_cookbook "ssh-keys"
+
+# OS-level metrics for the PVE host. Scraped by CT 111 (monitoring LXC)
+# at 192.168.1.10:9100 — see cookbooks/lxc-monitoring/files/prometheus.yml
+# `node-pve` job. Same node_exporter cookbook used by lxc-monitoring +
+# lxc-weave; uniform install across the fleet.
+include_cookbook "node-exporter"
