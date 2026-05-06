@@ -1,0 +1,46 @@
+# Monitoring stack for the LAN fleet:
+#   - Prometheus (TSDB) scrapes node_exporter on each LXC + textfile metrics
+#     written by auto-mitamae-orchestrator (Phase 2b)
+#   - Grafana provisions the Prometheus datasource + bundled dashboards
+#     (Node Exporter Full ID 1860 + auto-mitamae fleet view)
+#
+# Bind addresses: prometheus binds to 127.0.0.1 (LAN access goes through
+# the LXC's public bind on grafana :3000 only). LAN-only — no public
+# exposure in Phase 2; Tailscale public access via mcp-proxy is Phase 2c.
+# 127.0.0.1 is sufficient because grafana queries prometheus over the
+# docker-compose private network (service name resolution).
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: monitoring-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - /data/monitoring/prometheus:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.6.14
+    container_name: monitoring-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Auth gate is the host firewall + LAN-only. Tailscale exposure (Phase
+      # 2c) will switch to OAuth2-Proxy upstream of grafana.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - /data/monitoring/grafana:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
