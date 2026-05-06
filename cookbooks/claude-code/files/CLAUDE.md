@@ -169,6 +169,7 @@ These are plan-mode entry triggers, not chat questions. Writing them in chat mea
 | Destructive operation not in the plan | AskUserQuestion |
 | Technically-necessary additive change discovered mid-implementation (shared schema needs an extra field/variant the plan didn't enumerate; no behavior change to scope) | Proceed without asking, but append a one-line note to the plan file in the same turn so the plan stays in sync with what shipped. Future readers must be able to reconstruct the decision from the plan alone |
 | Implementation complete | Create PR; immediately launch a background `gh pr checks --watch` loop. If any check fails, read the log, fix, push without prompting; repeat until CI is fully green. Do NOT declare the task complete or notify the user until every required check passes. `gh pr create` is not the terminal step — green CI is |
+| `gh pr checks --watch` exits non-zero with `HTTP 504` / `Bad Gateway` / `no checks reported on the '<branch>' branch` (early race) | Transient GitHub graphql / API error — re-launch the same `gh pr checks <n> --watch` once. Inspect `gh pr view <n> --json statusCheckRollup` only on second consecutive failure. Do NOT treat single exit-1 as a CI failure verdict |
 | Unit of work committed, more items remain | Proceed to next item immediately |
 | All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
 | Blocked waiting for manual user action (sudo, restart, deploy) | Launch background retro/Cognee/TODO agents immediately |

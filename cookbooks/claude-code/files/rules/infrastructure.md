@@ -379,3 +379,74 @@ If the cookbook omits explicit owners for subdirectories, the bind-mount target 
 **Detection signal**: docker container restarting on an unprivileged-LXC bind-mount with logs showing `Permission denied` / `mkdir: ... not writable` → host directory owner doesn't match the container runtime UID. Fix path: chown the bind-mount subdirectory inside the container (`pct exec <vmid> -- chown -R <runtime-uid>:<runtime-uid> /data/<service>/<subdir>`) then `docker compose restart`.
 
 This rule exists because the 2026-05-06 monitoring CT 111 first mitamae apply created `/data/monitoring/{prometheus,grafana}` as `root:root` inside the container; both Prometheus (UID 65534) and Grafana (UID 472) crash-looped on first write. Recovery: in-container chown to the correct runtime UIDs, then `docker compose restart`. Plan time should have included an explicit `directory` resource per service subdirectory with the runtime UID. Dry-run on the dev box hides this because the dev box is privileged Linux without UID mapping.
+
+## docker-compose Notify-Driven Restart Requires `--force-recreate`
+
+Cookbook `execute` resources that restart a docker-compose stack via `notifies :run` (action `:nothing`, fired when a `remote_file` content changes) MUST run `docker compose up -d --force-recreate`. Plain `up -d` is a **no-op** when the image digest and compose spec are unchanged — it does not detect bind-mount file content changes, so the cookbook's "config edited" notify silently leaves the running container serving the old config until a manual `docker restart`.
+
+```ruby
+# WRONG — config edits silently ignored on already-running containers
+execute "restart <service>" do
+  command "docker compose -f #{compose_path} up -d"
+  user user
+  action :nothing
+end
+
+# RIGHT — recreates the container so bind-mounted config edits take effect
+execute "restart <service>" do
+  command "docker compose -f #{compose_path} up -d --force-recreate"
+  user user
+  action :nothing
+end
+```
+
+**`ensure X running`** (initial-state) executes are intentionally NOT touched. Their `only_if` shell guards already short-circuit when the desired services are running, so re-creating them every mitamae run would regress idempotency. The notify-driven path is the correct boundary for `--force-recreate`: it fires exactly when a cookbook-managed config file changed.
+
+**Detection signal**: `mitamae apply` reports success after a `remote_file` config change, but `docker exec <container> cat /etc/<service>/config.yml` (or equivalent) still shows the old content. Or: the running daemon's `/api/v1/status/config` endpoint reports stale settings. Or: `docker ps --format '{{.Names}}: {{.RunningFor}}'` shows uptime older than the latest config edit.
+
+**Detection grep** when reviewing a docker-compose-deploying cookbook:
+
+```
+git grep -B3 'action :nothing' cookbooks/ | grep -A2 'execute "(docker compose )?restart' | grep 'docker compose .* up -d' | grep -v 'force-recreate'
+```
+
+Any hit is a candidate.
+
+This rule exists because the 2026-05-06 Phase 2b verify session shipped PR #154 (`prometheus.yml: honor_labels: true`), and the cookbook's `restart monitoring` notify fired correctly — but the bare `up -d` was a no-op, so the running prometheus container kept the pre-edit config until manual `docker kill --signal=SIGHUP`. Recovery swept 7 cookbooks (PRs #158 + #159) to add `--force-recreate` to the notify-driven paths: ai-memory, cognee, hydra, lxc-consent, lxc-monitoring, lxc-roon-mcp, lxc-weave.
+
+## Grafana Datasource Provisioning — Pin `uid` Explicitly
+
+Every Grafana datasource declared via provisioning YAML (`/etc/grafana/provisioning/datasources/*.yml`) MUST include an explicit `uid:` field. Without it, Grafana auto-generates a random uid (e.g. `PBFA97CFB590B2093`) at first container boot. Dashboard JSON checked into the cookbook references the datasource via `"uid": "<slug>"` — if those refs don't match the auto-generated uid, every panel renders **"No data"** despite the underlying Prometheus query returning valid results.
+
+```yaml
+# WRONG — Grafana auto-generates a random uid; dashboard JSON refs fail
+datasources:
+  - name: Prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+
+# RIGHT — pin a stable lowercase slug matching the dashboard JSON
+datasources:
+  - name: Prometheus
+    uid: prometheus       # ← matches "uid": "prometheus" in dashboards/*.json
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+```
+
+**The diagnostic path is expensive** because the visible symptoms point AWAY from the actual cause:
+
+- Prometheus `/api/v1/query` returns valid metrics ✓
+- Prometheus targets are UP ✓
+- Grafana healthcheck returns OK ✓
+- Dashboard JSON loads correctly (no parse error) ✓
+- Every panel shows "No data" ✗
+
+The only way to diagnose without this rule is to manually inspect `GET /api/datasources` for the actual uid, compare against the dashboard JSON's `"uid"` ref, and notice the mismatch. Worth ~15 minutes per incident.
+
+**Detection signal**: a dashboard with valid PromQL queries showing "No data" across all panels. Compare `curl -u admin:<pw> http://<grafana>/api/datasources | jq '.[].uid'` against `grep -hoE '"uid":[^,]+' /path/to/dashboards/*.json | sort -u`.
+
+After fixing the provisioning yaml, **`docker compose restart grafana`** is required (or full container recreate) — Grafana reloads provisioned datasources on container start, not on file watch.
+
+This rule exists because the 2026-05-06 Phase 2b verify session shipped a Grafana auto-mitamae-fleet dashboard with `"uid": "prometheus"` refs but the provisioning yaml omitted the explicit `uid:` field. Every panel showed "No data" until PR #156 pinned `uid: prometheus` in the provisioning yaml and a `docker restart monitoring-grafana` reloaded the datasource.
