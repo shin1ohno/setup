@@ -99,6 +99,14 @@ require_external_auth(check_command: "aws sts get-caller-identity", ...)  # pass
 
 This rule exists because the 2026-04-25 neo bootstrap session: ssh-keys cookbook gated on `aws sts get-caller-identity` (no `--profile`) but invoked SSM with `--profile sh1admn`. neo had only `default` configured → gate passed → every fetch_ssm silently failed → cascade through dot-tmux, managed-projects, speedtest-cli before the user noticed. Fixed in cc2f989 by switching to a profile-aware actual-SSM-read gate.
 
+**Detection — run before declaring a cookbook review done**:
+
+```
+git grep -nE 'check_command:' cookbooks/ | grep -v -- '--profile'
+```
+
+Any hit is a false-gate candidate unless the cookbook genuinely uses the default AWS profile exclusively (rare — most service LXCs run with `pve-bootstrap-ssm` profile). This grep takes under one second and catches the class of bugs that caused silent SSM fetch failures in cognee (#143 fixed) and lxc-monitoring (#148 shipped with the bug, surfaced during 2026-05-06 apply when CT 111 had `pve-bootstrap-ssm` profile but no `default` profile → cookbook's bare `aws ssm get-parameter` check failed → non-TTY skip → Grafana stack silently undeployed). Fix: include `--profile <name>` in the `check_command`, sourcing the profile name from `cookbooks/ssh-keys/files/devices.json` like `auto-mitamae-target` does.
+
 ## STDIN.tty? guard before any blocking STDIN read
 
 Any Ruby cookbook helper (or any mitamae recipe code) that reads from STDIN MUST check `STDIN.tty?` before entering a blocking read or loop. In non-TTY contexts (CI, agent-driven runs, dry-runs over ssh without `-t`), `STDIN.gets` returns `nil` immediately — and `nil` is not a useful loop-exit signal.

@@ -298,3 +298,84 @@ Pre-batch checklist:
 4. Prefer **IAM instance profiles** on LXCs (or workload-identity equivalents) over SCP'd temporary credentials — instance profiles auto-rotate via IMDS and never need re-SCP
 
 This rule exists because the 2026-05-04 PVE-migration session burned 4 separate refresh-and-re-SCP cycles when the token expired mid-batch. Each cycle required pausing apply, re-fetching, re-distributing, then resuming — a ~3-min loss per cycle that is fully preventable by pre-batch validation + instance profiles for steady-state.
+
+## PVE LXC — Bind Mounts and `terraform import`
+
+`mount_point` blocks with `volume = "/<host-path>"` (which PVE treats as `type = bind`) **cannot be created via the bpg/proxmox provider when authenticating with an API token**, regardless of the token's role (PVEAdmin included). PVE's source-level check is literal:
+
+```perl
+# from PVE/LXC/Config.pm
+if ($mp->{type} eq 'bind' && $authuser ne 'root@pam') {
+    die "mount point type bind is only allowed for root\@pam\n";
+}
+```
+
+The check uses string equality on `$authuser`, so `root@pam!terraform` (a token of root@pam) does NOT pass. This trap is invisible at plan time because existing bind-mounted LXCs (cognee/weave/memory) are in TF state — their `terraform plan` output is clean — but they entered state via `pct create` on the PVE host as root@pam followed by `terraform import`, NOT via TF-managed creation.
+
+**Workflow for a new LXC with bind mounts**:
+
+1. Build the `pct create` command from the TF spec (cores, memory, disk, network, mounts, features.nesting, unprivileged, startup, ssh-public-keys, password). Use `pct config <existing-similar>` as a reference template.
+2. Run on PVE host as root@pam: `pct create <vmid> <template> <flags...>`
+3. `pct set <vmid> --startup order=N,up=M,down=K` separately — the `--startup` flag during `pct create` silently doesn't take effect (bpg/proxmox quirk; verified by inspecting `pct config` post-create).
+4. `terraform import 'proxmox_virtual_environment_container.lxc["<name>"]' <node>/<vmid>` — the import address format for bpg/proxmox is **`<node>/<vmid>`** (e.g. `pro/111`), not bare `vmid`.
+5. Run `terraform plan`. The plan WILL show `forces replacement` on `initialization` (write-only `user_account.{keys,password}`) and `operating_system.template_file_id` (PVE doesn't expose the post-extract template path via API). This is permanent drift; the post-import LXC cannot be reconciled in-place.
+6. **Add `lifecycle { ignore_changes = [initialization, operating_system, mount_point] }`** to the for_each container resource (or to the specific resource if not in for_each). Document with a comment naming the three drift sources.
+7. Re-plan: should now show only the IAM/SSM/network adds + an in-place update for `start_on_boot` / `started`. No destroys.
+
+**State-archaeology check before designing**: if the new LXC needs a bind mount, run `terraform state show 'proxmox_virtual_environment_container.lxc["<existing-with-bind-mount>"]'` first. The presence of the bind mount in state with no plan diff confirms the manual-create + import convention is the established path. Do NOT default to "let TF create it" — the API token's permission ceiling makes this fail at apply time, costing one or more apply-retry cycles.
+
+This rule exists because the 2026-05-06 PR #15 (home-monitor monitoring LXC) terraform apply failed twice on `mount point type bind is only allowed for root@pam` before the API-token-vs-root@pam constraint was confirmed by reading PVE source. Recovery required a hotfix PR (#17) adding `lifecycle.ignore_changes`, plus manual `pct create 111` + `terraform import pro/111`. The full sequence cost ~45 min that would have collapsed to ~5 min if the state-archaeology check at plan time had surfaced the convention.
+
+## Unprivileged LXC Bind-Mount Host Ownership Mapping
+
+In an unprivileged PVE LXC, container UID/GID are mapped to a high host range (default offset **100000**, so container UID 0 = host UID 100000, container UID 1000 = host UID 101000, container UID 65534 = host UID 165534, etc.). Host directories used as bind-mount targets must be owned by the host UID that maps to the in-container UID the cookbook expects.
+
+**The trap**: a cookbook resource
+
+```ruby
+directory "/data/<service>" do
+  owner "root"
+  group "root"
+end
+```
+
+will fail at converge time with `chown: changing ownership of '/data/<service>': Operation not permitted` when:
+
+1. The container is unprivileged.
+2. `/data/<service>` is a bind mount of a host directory (e.g. `/mnt/data/<service>`).
+3. The host directory's owner does NOT map to UID 0 inside the container.
+
+The cookbook's `chown` runs inside the container as in-namespace root. In-namespace root has CAP_CHOWN over files owned by *mapped* UIDs (100000–165535 by default). It cannot chown files owned by host UIDs **outside** that range — including host root (UID 0), which maps to nobody (UID 65534) inside the container.
+
+**Pre-bootstrap step on the PVE host** (run once per new bind mount, as root@pam):
+
+```bash
+mkdir -p /mnt/data/<service>
+chown 100000:100000 /mnt/data/<service>   # container root
+chmod 755 /mnt/data/<service>
+```
+
+This makes the directory appear as `root:root` (UID 0) inside the container, so the cookbook's `directory ... owner "root"` resource is a no-op (no chown attempt).
+
+**Subdirectories for non-root container processes**: services like Prometheus (runtime UID 65534 / `nobody`) and Grafana (runtime UID 472 / `grafana`) need their data subdirectories owned by their respective container UIDs. The cookbook can create the subdirectory and chown to those UIDs inside the container (in-namespace root has CAP_CHOWN over UIDs in the mapped range, which covers 0–65535 inside ↔ 100000–165535 on host). Example:
+
+```ruby
+# Inside the container, these UIDs map cleanly to host UIDs 165534 and 100472.
+directory "/data/<service>/prometheus" do
+  owner "65534"   # nobody (Prometheus runtime user)
+  group "65534"
+  mode "755"
+end
+
+directory "/data/<service>/grafana" do
+  owner "472"     # grafana runtime user
+  group "472"
+  mode "755"
+end
+```
+
+If the cookbook omits explicit owners for subdirectories, the bind-mount target ends up `root:root` inside the container, and the docker container processes (running as non-root) crash-loop with `Permission denied` on first write — visible in `docker logs <container>` but invisible to mitamae which already declared the directory resource "successful".
+
+**Detection signal**: docker container restarting on an unprivileged-LXC bind-mount with logs showing `Permission denied` / `mkdir: ... not writable` → host directory owner doesn't match the container runtime UID. Fix path: chown the bind-mount subdirectory inside the container (`pct exec <vmid> -- chown -R <runtime-uid>:<runtime-uid> /data/<service>/<subdir>`) then `docker compose restart`.
+
+This rule exists because the 2026-05-06 monitoring CT 111 first mitamae apply created `/data/monitoring/{prometheus,grafana}` as `root:root` inside the container; both Prometheus (UID 65534) and Grafana (UID 472) crash-looped on first write. Recovery: in-container chown to the correct runtime UIDs, then `docker compose restart`. Plan time should have included an explicit `directory` resource per service subdirectory with the runtime UID. Dry-run on the dev box hides this because the dev box is privileged Linux without UID mapping.

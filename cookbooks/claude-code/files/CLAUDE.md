@@ -110,6 +110,7 @@ This rule exists because the 2026-05-04 git-remote-codecommit session answered "
 - Produce a PR as the reviewable artifact: branch, implement, test, commit, then `gh pr create`
 - The user reviews the PR, not the intermediate steps
 - **Auto mode does NOT override plan mode**: auto mode means executing an approved plan autonomously — it does not mean skipping plan creation. Non-trivial tasks require EnterPlanMode regardless of auto mode being active
+- **State archaeology for resource-type reuse**: before adding a new instance of a resource type already in TF state (new LXC, new IAM policy, new security group, new mitamae cookbook that mirrors an existing one), read how the existing ones are actually shaped — `terraform state show <existing-similar-resource>`, `aws iam get-user-policy --user-name <user> --policy-name <policy>`, `aws iam list-attached-user-policies`, `pct config <existing-vmid>`, or `cat cookbooks/<existing>/default.rb`. Operational constraints invisible in provider docs — PVE bind-mount API-token denial, AWS IAM 2048-byte inline-policy ceiling per user, PVE feature flags, cookbook auth-gate convention — are visible in the existing resources' configuration and source. This is a **plan-phase** step, not a post-apply diagnosis. The 2026-05-06 monitoring CT 111 session lost ~45 min to two structural blockers (bind-mount permission + IAM size) that a 2-minute archaeology check at plan time would have surfaced
 
 ### Plan File Structure for UX / IA / Frontend Tasks
 
