@@ -93,10 +93,22 @@ The check above covers the start of a task. It does not cover mid-task branch dr
 - a sub-agent (Explore / general-purpose / Plan) ran with write access to the repo, or executed Bash in it
 - the conversation paused waiting on a user-run `!` command (`! git push`, `! sudo …`, the user is likely at a shell and may switch branches)
 - the user sent a message that could plausibly include a `git checkout` on their side
+- **the previous Bash invocation ended with `Shell cwd was reset to ...`** — the Bash sandbox does not persist branch checkouts across CWD resets. Even if the Bash log line `Switched to a new branch 'fix/X'` is visible, the next Bash invocation may evaluate `git status` against a *different* branch (typically the session-default one, which can be a long-lived `feat/*` branch left over from another conversation). This is the most common failure mode for misplaced commits in long sessions.
 
 The branch you started the task on is not the branch you are necessarily on now. Committing on the wrong branch requires a cherry-pick + reset cleanup cycle that wastes a turn and leaves a confusing history.
 
-This rule exists because the 2026-04-22 session landed a `rtx-hnd: block DHCP ...` commit on `fix/hydra-upstream` instead of `main` — the user had switched branches while a long `terraform apply` was running in the background. Fixed afterward via FF-merge, but only after the user spotted it.
+**Required pattern** when committing to a fix/feat branch: always use `-C /absolute/path` and explicit branch verification in the SAME Bash call as the commit:
+
+```bash
+cd /home/shin1ohno/ManagedProjects/setup &&
+  test "$(git -C . branch --show-current)" = "fix/X" &&
+  git -C . add <files> &&
+  git -C . commit -m "..."
+```
+
+If the `branch --show-current` test fails the chain aborts before staging, surfacing the drift immediately rather than after the commit lands on the wrong branch. **Do NOT** split `git checkout -b` into a separate Bash invocation from the commit — branch context does not survive the CWD reset between calls.
+
+This rule exists because the 2026-04-22 session landed a `rtx-hnd: block DHCP ...` commit on `fix/hydra-upstream` instead of `main` — the user had switched branches while a long `terraform apply` was running in the background. Fixed afterward via FF-merge, but only after the user spotted it. Strengthened on 2026-05-06 after two consecutive misplaced-commit incidents in the Phase 2b auto-mitamae rollout (PRs #156 + #158): commits intended for `fix/grafana-datasource-uid` and `fix/docker-compose-force-recreate` both landed on the user's leftover `feat/grafana-pve-dashboard` branch because the `git checkout -b` ran in a separate Bash call from the eventual `git commit`. Both required cherry-pick recovery into the correct branch and `git branch -f feat/grafana-pve-dashboard origin/main` to clean up.
 
 ### Cherry-pick is a commit operation — branch check applies
 

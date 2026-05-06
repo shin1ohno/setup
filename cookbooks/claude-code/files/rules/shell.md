@@ -50,6 +50,38 @@ This does NOT apply to:
 
 This rule exists because the 2026-04-26 session presented `sudo dpkg-divert ... && sudo systemctl restart tailscaled && sleep 3 && tailscale status | head -3` as a single `!` block. The first sudo ran (visible), the second silently did not (chain terminated invisibly), and verification of `tailscaled` showed it had not been restarted in 4 days. One extra round-trip to ask the user to run the restart separately.
 
+## SSH inside `while-read` Loop Drains Parent Stdin
+
+`ssh` reads from stdin by default. When invoked inside a `while read VAR; do ...; done < <(jq ...)` (or any process-substitution-fed read loop), `ssh` consumes pending lines from the jq pipe **before the next iteration's `read` can see them** — the loop exits silently after the first iteration with no error message.
+
+**Diagnosis signal**: a host loop that should iterate N hosts processes only the first one, exits 0, and emits no parse error. `bash -x` trace shows iteration 2's `read VAR` returning EOF immediately followed by post-loop code.
+
+**Wrong** (consumes pipe — silently skips host #2 onward):
+
+```bash
+while IFS= read -r entry; do
+    host=$(jq -r '.host' <<<"$entry")
+    output=$(ssh -i key root@"$host" "$cmd")  # ← reads parent stdin, drains pipe
+    ...
+done < <(jq -c '.[]' "$HOSTS_JSON")
+```
+
+**Right** — pass `-n` (or `< /dev/null`) so ssh's stdin goes to /dev/null and the parent pipe stays intact:
+
+```bash
+while IFS= read -r entry; do
+    host=$(jq -r '.host' <<<"$entry")
+    output=$(ssh -n -i key root@"$host" "$cmd")
+    ...
+done < <(jq -c '.[]' "$HOSTS_JSON")
+```
+
+**Same trap applies to** any stdin-reading command in a process-substitution loop: `gpg`, `bash -s`, `read` itself, anything that defaults to reading stdin. When in doubt, redirect `< /dev/null` explicitly.
+
+**Plan-time review checklist**: if your orchestrator-style script has `while read X; do ...; done < <(...)` AND the loop body invokes `ssh`/`gpg`/`bash -s`, check `-n` / `< /dev/null` is present BEFORE shipping. The trap is invisible to `shellcheck` and `bash -n` — it surfaces only at runtime, exactly once per affected host loop, and looks like a successful run with missing data.
+
+This rule exists because PR #153 (2026-05-06 auto-mitamae orchestrator) shipped a `while ... done < <(jq -c '.[]' hosts.json)` loop with bare `ssh` inside; the orchestrator's first cycle reported only `host="monitoring"` results and silently dropped `host="weave"` entirely. `bash -x` trace showed iteration 2 returning EOF before the loop body ran. Fixed by adding `-n` to the ssh invocation; verified with a re-run that produced both host metrics correctly.
+
 ## Multi-hop Shell Injection (ssh → pct exec → bash)
 
 When running commands inside a PVE LXC via `ssh host 'pct exec <vmid> -- bash -c "..."'`, the command string traverses **three quoting layers** before reaching the inner bash:
