@@ -77,12 +77,40 @@ now=$(date +%s)
     echo "auto_mitamae_orchestrator_expected_sha_info{commit=\"${expected_sha}\"} 1"
 } > "${tmp_out}"
 
-# Iterate hosts.json. Each entry: {host, user, role, label}.
+# Iterate hosts.json. Each entry: {host, user, role, label, ct_id?}.
+# ct_id is present only for PVE LXCs (Phase B-2). Bare-metal hosts and
+# EC2 omit it (or set null), in which case the credential re-seed step
+# below is skipped.
 while IFS= read -r entry; do
     host=$(jq -r '.host'  <<<"${entry}")
     user=$(jq -r '.user'  <<<"${entry}")
     role=$(jq -r '.role'  <<<"${entry}")
     label=$(jq -r '.label' <<<"${entry}")
+    ct_id=$(jq -r '.ct_id // empty' <<<"${entry}")
+
+    # Phase B-2: lazy credential re-seed. For LXC hosts only, probe whether
+    # the pve-bootstrap-ssm profile inside the LXC is still usable. If the
+    # probe fails (creds missing / expired / revoked after B-1 IAM rotation),
+    # invoke bootstrap-lxc-creds from this PVE host to refresh them. Warn-
+    # and-continue on bootstrap failure — orchestrator does not abort the
+    # whole cycle on per-host re-seed errors. The mitamae push below will
+    # then fail with status=ssh_unreachable or mitamae_fail and Grafana
+    # surfaces the per-host result.
+    if [[ -n "${ct_id}" ]]; then
+        if ! ssh -n \
+                -i "${SSH_KEY}" \
+                -o BatchMode=yes \
+                -o ConnectTimeout=5 \
+                -o StrictHostKeyChecking=accept-new \
+                -o UserKnownHostsFile="${SSH_KNOWN_HOSTS}" \
+                "${user}@${host}" \
+                "timeout 5 aws sts get-caller-identity --profile pve-bootstrap-ssm" \
+                >/dev/null 2>&1; then
+            if ! /usr/local/bin/bootstrap-lxc-creds "${ct_id}" >/dev/null 2>&1; then
+                echo "orchestrator: warn — bootstrap-lxc-creds failed for ${label} (CT ${ct_id}), continuing" >&2
+            fi
+        fi
+    fi
 
     cmd_start=$(date +%s)
     # ssh -n is critical: without it, ssh inherits parent stdin (the

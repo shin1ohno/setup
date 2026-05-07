@@ -34,6 +34,7 @@ ORCHESTRATOR_SSM_PATH         = "/ssh-keys/orchestrator/private"
 HOSTS_JSON_TARGET             = "/etc/auto-mitamae/hosts.json"
 ORCHESTRATOR_BIN              = "/usr/local/bin/orchestrator.sh"
 DRIFT_CHECKER_BIN             = "/usr/local/bin/drift-checker.sh"
+BOOTSTRAP_LXC_CREDS_BIN       = "/usr/local/bin/bootstrap-lxc-creds"
 CRON_FILE                     = "/etc/cron.d/auto-mitamae-orchestrator"
 LOG_FILE                      = "/var/log/auto-mitamae-orchestrator.log"
 
@@ -89,6 +90,22 @@ execute "install drift-checker.sh to #{DRIFT_CHECKER_BIN}" do
   command "sudo install -m 0755 -o root -g root " \
           "#{node[:setup][:root]}/auto-mitamae-orchestrator/drift-checker.sh #{DRIFT_CHECKER_BIN}"
   not_if "diff -q #{node[:setup][:root]}/auto-mitamae-orchestrator/drift-checker.sh #{DRIFT_CHECKER_BIN} 2>/dev/null"
+end
+
+# Phase B-2: deploy bin/bootstrap-lxc-creds to /usr/local/bin/ on the
+# monitoring host (CT 111). orchestrator.sh's ensure_creds() step calls
+# this when an LXC's pve-bootstrap-ssm profile is invalid (e.g. after
+# B-1 IAM rotation). content is read from setup/bin/bootstrap-lxc-creds
+# (the canonical location for manual operator use) so a single source-
+# of-truth is maintained — the file resource embeds the script content
+# at compile time, eliminating any chance of drift between the manual
+# tool and the orchestrator-deployed copy.
+file BOOTSTRAP_LXC_CREDS_BIN do
+  action :create
+  owner "root"
+  group "root"
+  mode "0755"
+  content File.read(File.expand_path("../../../bin/bootstrap-lxc-creds", __FILE__))
 end
 
 # hosts.json — root:root 0644 so cron can read it.
