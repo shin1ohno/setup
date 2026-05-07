@@ -35,33 +35,33 @@ jobs:
     if: ${{ github.event.inputs.platform != 'linux-only' }}
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
         ruby-version: '3.1'
-    
+
     - name: Check bin scripts are executable
       run: |
         test -x bin/setup
         test -x bin/cookbook
-    
+
     - name: Download mitamae binary
       run: |
         mkdir -p $HOME/tmp
         ./bin/setup
-      
+
     - name: Verify mitamae installation
       run: |
         test -x bin/mitamae
         ./bin/mitamae version
-    
+
     - name: Test darwin.rb in dry-run mode
       run: |
-        # Create writable temp directory  
+        # Create writable temp directory
         sudo chmod 777 /tmp
         ./bin/mitamae local darwin.rb --dry-run
-        
+
     - name: Test core tools installation
       if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -75,16 +75,16 @@ jobs:
         include_cookbook "wget"
         EOF
         ./bin/mitamae local test_core_install.rb
-        
+
     - name: Verify core tools
       if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
         which git && git --version
-        which zsh && zsh --version  
+        which zsh && zsh --version
         which tree && tree --version
         which wget && wget --version
         which brew && brew --version
-        
+
     - name: Test essential cookbooks
       if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -100,7 +100,7 @@ jobs:
         include_cookbook "terraform"
         EOF
         ./bin/mitamae local test_essential.rb
-        
+
     - name: Verify essential tools
       if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -111,7 +111,7 @@ jobs:
         which tmux && tmux -V
         which nvim && nvim --version | head -1
         which terraform && terraform version
-        
+
     - name: Test language runtimes
       if: ${{ github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       timeout-minutes: 45
@@ -125,7 +125,7 @@ jobs:
         include_cookbook "rust"
         EOF
         ./bin/mitamae local test_languages.rb
-        
+
     - name: Verify language runtimes
       if: ${{ github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -133,41 +133,41 @@ jobs:
         which python3 && python3 --version || echo "Python not found"
         which go && go version || echo "Go not found"
         which cargo && cargo --version || echo "Rust/Cargo not found"
-        
+
     - name: Test all cookbooks (full installation)
       if: ${{ github.event.inputs.test_level == 'all-cookbooks' }}
       timeout-minutes: 120
       run: |
         sudo chmod 777 /tmp
         ./bin/mitamae local darwin.rb
-        
+
     - name: Verify full installation
       if: ${{ github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
         echo "=== macOS Installed Tools Verification ==="
         echo "Package managers:"
         which brew && brew --version || echo "❌ Homebrew not found"
-        
+
         echo -e "\nCore tools:"
         which git && git --version || echo "❌ Git not found"
         which zsh && zsh --version || echo "❌ Zsh not found"
         which tmux && tmux -V || echo "❌ Tmux not found"
-        
-        echo -e "\nDevelopment tools:"  
+
+        echo -e "\nDevelopment tools:"
         which nvim && nvim --version | head -1 || echo "❌ Neovim not found"
         which terraform && terraform version || echo "❌ Terraform not found"
-        
+
         echo -e "\nModern CLI tools:"
-        which fzf && fzf --version || echo "❌ fzf not found" 
+        which fzf && fzf --version || echo "❌ fzf not found"
         which bat && bat --version || echo "❌ bat not found"
         which rg && rg --version || echo "❌ ripgrep not found"
-        
+
         echo -e "\nLanguage runtimes:"
         which node && node --version || echo "❌ Node.js not found"
         which python3 && python3 --version || echo "❌ Python not found"
         which go && go version || echo "❌ Go not found"
         which cargo && cargo --version || echo "❌ Rust not found"
-        
+
     - name: Test sudo full installation (darwin.rb)
       if: ${{ github.event.inputs.test_level == 'sudo-full-install' }}
       timeout-minutes: 180
@@ -175,48 +175,48 @@ jobs:
         sudo chmod 777 /tmp
         echo "=== Starting sudo ./bin/mitamae local darwin.rb ==="
         sudo ./bin/mitamae local darwin.rb
-        
+
     - name: Verify sudo installation
       if: ${{ github.event.inputs.test_level == 'sudo-full-install' }}
       run: |
         echo "=== macOS Sudo Installation Verification ==="
         echo "System-wide installations:"
-        
+
         echo -e "\nPackage managers:"
         which brew && brew --version || echo "❌ Homebrew not found"
-        
+
         echo -e "\nCore system tools:"
         which git && git --version || echo "❌ Git not found"
         which zsh && zsh --version || echo "❌ Zsh not found"
         which tmux && tmux -V || echo "❌ Tmux not found"
-        
-        echo -e "\nDevelopment tools:"  
+
+        echo -e "\nDevelopment tools:"
         which nvim && nvim --version | head -1 || echo "❌ Neovim not found"
         which terraform && terraform version || echo "❌ Terraform not found"
-        
+
         echo -e "\nModern CLI tools:"
-        which fzf && fzf --version || echo "❌ fzf not found" 
+        which fzf && fzf --version || echo "❌ fzf not found"
         which bat && bat --version || echo "❌ bat not found"
         which rg && rg --version || echo "❌ ripgrep not found"
         which fd && fd --version || echo "❌ fd not found"
-        
+
         echo -e "\nLanguage runtimes:"
         which node && node --version || echo "❌ Node.js not found"
         which python3 && python3 --version || echo "❌ Python not found"
         which go && go version || echo "❌ Go not found"
         which cargo && cargo --version || echo "❌ Rust not found"
         which ruby && ruby --version || echo "❌ Ruby not found"
-        
+
         echo -e "\nLLM Tools:"
         which claude-code && claude-code --version || echo "❌ Claude Code not found"
         which ollama && ollama --version || echo "❌ Ollama not found"
-        
+
         echo -e "\nSetup directories:"
         ls -la ~/.setup_shin1ohno/ 2>/dev/null || echo "❌ Setup directory not found"
-        
+
         echo -e "\nProfile scripts:"
         ls -la ~/.setup_shin1ohno/profile.d/ 2>/dev/null | head -10 || echo "❌ Profile directory not found"
-      
+
     - name: Verify setup structure
       run: |
         echo "Checking project structure..."
@@ -234,32 +234,32 @@ jobs:
       options: --user root
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install dependencies
       run: |
         apt-get update
         apt-get install -y ruby curl sudo git build-essential
         # Create runner user for consistency with GitHub Actions
         useradd -m -s /bin/bash runner || true
-    
+
     - name: Check bin scripts are executable
       run: |
         test -x bin/setup
         test -x bin/cookbook
-    
+
     - name: Download mitamae binary
       run: ./bin/setup
-      
+
     - name: Verify mitamae installation
       run: |
         test -x bin/mitamae
         ./bin/mitamae version
-    
+
     - name: Test linux.rb in dry-run mode
       run: |
         export USER=runner
         ./bin/mitamae local linux.rb --dry-run
-        
+
     - name: Test core tools installation
       if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -273,7 +273,7 @@ jobs:
         include_cookbook "build-essential"
         EOF
         ./bin/mitamae local test_core_install.rb
-        
+
     - name: Verify core tools
       if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -282,7 +282,7 @@ jobs:
         which tree && tree --version
         which wget && wget --version
         which gcc && gcc --version | head -1
-        
+
     - name: Test essential cookbooks
       if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -299,7 +299,7 @@ jobs:
         include_cookbook "docker-engine"
         EOF
         ./bin/mitamae local test_essential.rb
-        
+
     - name: Verify essential tools
       if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -311,7 +311,7 @@ jobs:
         which nvim && nvim --version | head -1 || echo "neovim not found"
         which terraform && terraform version || echo "terraform not found"
         which docker && docker --version || echo "docker not found"
-        
+
     - name: Test language runtimes
       if: ${{ github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       timeout-minutes: 45
@@ -325,7 +325,7 @@ jobs:
         include_cookbook "rust"
         EOF
         ./bin/mitamae local test_languages.rb
-        
+
     - name: Verify language runtimes
       if: ${{ github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -333,42 +333,42 @@ jobs:
         which python3 && python3 --version || echo "Python not found"
         which go && go version || echo "Go not found"
         which cargo && cargo --version || echo "Rust/Cargo not found"
-        
+
     - name: Test all cookbooks (full installation)
       if: ${{ github.event.inputs.test_level == 'all-cookbooks' }}
       timeout-minutes: 120
       run: |
         export USER=runner
         ./bin/mitamae local linux.rb
-        
+
     - name: Verify full installation
       if: ${{ github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
         echo "=== Linux Installed Tools Verification ==="
         echo "Build tools:"
         which gcc && gcc --version | head -1 || echo "❌ GCC not found"
-        
+
         echo -e "\nCore tools:"
         which git && git --version || echo "❌ Git not found"
         which zsh && zsh --version || echo "❌ Zsh not found"
         which tmux && tmux -V || echo "❌ Tmux not found"
-        
-        echo -e "\nDevelopment tools:"  
+
+        echo -e "\nDevelopment tools:"
         which nvim && nvim --version | head -1 || echo "❌ Neovim not found"
         which terraform && terraform version || echo "❌ Terraform not found"
         which docker && docker --version || echo "❌ Docker not found"
-        
+
         echo -e "\nModern CLI tools:"
-        which fzf && fzf --version || echo "❌ fzf not found" 
+        which fzf && fzf --version || echo "❌ fzf not found"
         which bat && bat --version || echo "❌ bat not found"
         which rg && rg --version || echo "❌ ripgrep not found"
-        
+
         echo -e "\nLanguage runtimes:"
         which node && node --version || echo "❌ Node.js not found"
         which python3 && python3 --version || echo "❌ Python not found"
         which go && go version || echo "❌ Go not found"
         which cargo && cargo --version || echo "❌ Rust not found"
-        
+
     - name: Test sudo full installation (linux.rb)
       if: ${{ github.event.inputs.test_level == 'sudo-full-install' }}
       timeout-minutes: 180
@@ -376,97 +376,97 @@ jobs:
         export USER=runner
         echo "=== Starting sudo ./bin/mitamae local linux.rb ==="
         sudo -E ./bin/mitamae local linux.rb
-        
+
     - name: Verify sudo installation
       if: ${{ github.event.inputs.test_level == 'sudo-full-install' }}
       run: |
         echo "=== Linux Sudo Installation Verification ==="
         echo "System-wide installations:"
-        
+
         echo -e "\nBuild tools:"
         which gcc && gcc --version | head -1 || echo "❌ GCC not found"
         which make && make --version | head -1 || echo "❌ Make not found"
-        
+
         echo -e "\nCore system tools:"
         which git && git --version || echo "❌ Git not found"
         which zsh && zsh --version || echo "❌ Zsh not found"
         which tmux && tmux -V || echo "❌ Tmux not found"
-        
-        echo -e "\nDevelopment tools:"  
+
+        echo -e "\nDevelopment tools:"
         which nvim && nvim --version | head -1 || echo "❌ Neovim not found"
         which terraform && terraform version || echo "❌ Terraform not found"
         which docker && docker --version || echo "❌ Docker not found"
-        
+
         echo -e "\nModern CLI tools:"
-        which fzf && fzf --version || echo "❌ fzf not found" 
+        which fzf && fzf --version || echo "❌ fzf not found"
         which bat && bat --version || echo "❌ bat not found"
         which rg && rg --version || echo "❌ ripgrep not found"
         which fd && fd --version || echo "❌ fd not found"
-        
+
         echo -e "\nLanguage runtimes:"
         which node && node --version || echo "❌ Node.js not found"
         which python3 && python3 --version || echo "❌ Python not found"
         which go && go version || echo "❌ Go not found"
         which cargo && cargo --version || echo "❌ Rust not found"
         which ruby && ruby --version || echo "❌ Ruby not found"
-        
+
         echo -e "\nLLM Tools:"
         which ollama && ollama --version || echo "❌ Ollama not found"
-        
+
         echo -e "\nSetup directories:"
         ls -la /home/runner/.setup_shin1ohno/ 2>/dev/null || echo "❌ Setup directory not found"
-        
+
         echo -e "\nProfile scripts:"
         ls -la /home/runner/.setup_shin1ohno/profile.d/ 2>/dev/null | head -10 || echo "❌ Profile directory not found"
-        
+
         echo -e "\nSystem services:"
         systemctl is-active docker 2>/dev/null || echo "❌ Docker service not active"
-      
+
     - name: Verify setup structure
       run: |
         echo "Checking project structure..."
         ls -la roles/
         ls -la cookbooks/ | head -10
         echo "Main entry points exist:"
-        test -f darwin.rb && echo "✓ darwin.rb found" 
+        test -f darwin.rb && echo "✓ darwin.rb found"
         test -f linux.rb && echo "✓ linux.rb found"
 
   syntax-check:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
         ruby-version: '3.1'
-    
+
     - name: Check Ruby syntax
       run: |
         echo "Checking Ruby syntax for all .rb files..."
         find . -name "*.rb" -exec ruby -c {} \;
-        
+
     - name: Check for common issues
       run: |
         # Check for syntax errors in main files
         echo "Checking main entry points..."
         ruby -c darwin.rb
         ruby -c linux.rb
-        
+
         # Check for required files
         test -f bin/setup
         test -f bin/cookbook
         test -f bin/mitamae || echo "mitamae binary will be downloaded by setup"
-        
+
         # Check role files exist
         test -d roles/
         test -f roles/core/default.rb
         test -f roles/programming/default.rb
         test -f roles/llm/default.rb
-        
+
         # Check functions helper exists
         test -f cookbooks/functions/default.rb
-        
+
     - name: Validate JSON files
       run: |
         # Check if any JSON files exist and validate them
@@ -481,25 +481,140 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
         ruby-version: '3.1'
-    
+
     - name: Download mitamae binary
       run: |
         mkdir -p $HOME/tmp
         ./bin/setup
-      
+
     - name: Test basic mitamae functionality
       run: |
         sudo chmod 777 /tmp
         echo "Testing basic mitamae dry-run without recipes..."
         echo '' > empty_test.rb
         ./bin/mitamae local empty_test.rb --dry-run
-        
+
     - name: Check mitamae version compatibility
       run: |
         ./bin/mitamae version
         echo "Mitamae version check completed"
+
+  # =============================================================================
+  # SSM host registry validation
+  # =============================================================================
+  # Phase A round-table 2026-05-07 SSM switch: setup cookbooks consume the
+  # canonical host registry from /host-registry/devices in AWS SSM (managed by
+  # home-monitor terraform). This job verifies the registry is reachable from
+  # the CI runner via OIDC role assumption and passes structural sanity checks.
+  #
+  # OIDC trust + permission: arn:aws:iam::384858471975:role/system/setup-ci-ssm-reader
+  # Permission: ssm:GetParameter on /host-registry/devices ONLY
+  # Setup: GitHub Actions secret AWS_OIDC_ROLE_ARN (home-monitor terraform output)
+  ssm-validation:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure AWS credentials via OIDC
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+        aws-region: ap-northeast-1
+
+    - name: Fetch host registry from SSM
+      run: |
+        aws ssm get-parameter \
+          --name /host-registry/devices \
+          --query 'Parameter.Value' \
+          --output text > /tmp/devices.json
+        echo "Fetched $(wc -c < /tmp/devices.json) bytes from /host-registry/devices"
+
+    - name: Validate JSON syntax
+      run: jq empty /tmp/devices.json
+
+    - name: Validate top-level structure
+      run: |
+        # Required top-level fields
+        jq -e '.aws_profile == "pve-bootstrap-ssm"' /tmp/devices.json > /dev/null
+        jq -e '.aws_region | test("^[a-z]{2}-[a-z]+-[0-9]+$")' /tmp/devices.json > /dev/null
+        jq -e '.version | type == "number"' /tmp/devices.json > /dev/null
+        jq -e '.devices | type == "object"' /tmp/devices.json > /dev/null
+
+        count=$(jq '.devices | length' /tmp/devices.json)
+        echo "device count: $count"
+        test "$count" -gt 0
+
+    - name: Validate device entries
+      run: |
+        # All devices must have a `kind` from the schema enum
+        jq -e '
+          .devices | to_entries | all(
+            .value.kind | IN("linux-bare-metal","macos","ec2-tailscale","pve-host","lxc","ios-client")
+          )
+        ' /tmp/devices.json > /dev/null
+
+        # All devices must have a description
+        jq -e '.devices | to_entries | all(.value.description | type == "string" and length > 0)' /tmp/devices.json > /dev/null
+
+        # ssm_prefix (when present) must match the SSM path pattern
+        jq -e '
+          .devices | to_entries | all(
+            .value.ssh.ssm_prefix
+            | (. == null) or test("^/ssh-keys/devices/[a-z][a-z0-9-]*$")
+          )
+        ' /tmp/devices.json > /dev/null
+
+        # No reserved AWS namespace in ssm_prefix
+        jq -e '
+          .devices | to_entries | all(
+            .value.ssh.ssm_prefix
+            | (. == null) or (test("^/(aws|AWS|ssm)") | not)
+          )
+        ' /tmp/devices.json > /dev/null
+
+        # LXC devices must have a complete lxc.* sub-object
+        jq -e '
+          .devices | to_entries | map(select(.value.kind == "lxc")) | all(
+            .value.lxc as $lxc
+            | $lxc.ct_id | type == "number"
+              and ($lxc.cores | type == "number")
+              and ($lxc.memory | type == "number")
+              and ($lxc.bridge | IN("vmbr0", "vmbr1"))
+          )
+        ' /tmp/devices.json > /dev/null
+
+        # iOS clients must be flagged client_only: true
+        jq -e '
+          .devices | to_entries | map(select(.value.kind == "ios-client")) | all(
+            .value.client_only == true
+          )
+        ' /tmp/devices.json > /dev/null
+
+        echo "All sanity checks passed"
+
+    - name: Check aws-config.json matches SSM aws_profile/region
+      run: |
+        # The bootstrap aws-config.json must agree with the SSM payload's
+        # top-level aws_profile / aws_region (consistency check — drift
+        # between these two values would silently break the cookbook on
+        # fresh hosts that read aws-config.json before fetching SSM).
+        local_profile=$(jq -r '.aws_profile' cookbooks/ssh-keys/files/aws-config.json)
+        local_region=$(jq -r '.aws_region' cookbooks/ssh-keys/files/aws-config.json)
+        ssm_profile=$(jq -r '.aws_profile' /tmp/devices.json)
+        ssm_region=$(jq -r '.aws_region' /tmp/devices.json)
+
+        echo "aws-config.json: profile=$local_profile region=$local_region"
+        echo "SSM payload:     profile=$ssm_profile region=$ssm_region"
+
+        test "$local_profile" = "$ssm_profile"
+        test "$local_region" = "$ssm_region"
+
+        echo "✓ aws-config.json matches SSM payload"
