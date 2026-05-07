@@ -1,0 +1,10 @@
+# GeoIP database staging directory.
+#
+# The cookbook (cookbooks/lxc-monitoring/default.rb) downloads the
+# dbip-city-lite-YYYY-MM.mmdb (CC-BY 4.0, ~50 MB) from
+# https://download.db-ip.com/free/ at apply time and writes it to
+# this directory as `dbip-city-lite.mmdb`. The file is bind-mounted
+# into the promtail container at /etc/promtail/geoip/.
+#
+# The .mmdb is intentionally NOT committed: large binary, redistributable
+# but bulky; better to refresh monthly from upstream.

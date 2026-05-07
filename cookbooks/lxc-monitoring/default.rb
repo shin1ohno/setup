@@ -99,11 +99,18 @@ end
 # Prometheus 2.x → uid=65534(nobody). TSDB writes (chunks_head/, wal/,
 # lock, queries.active) all happen inside /prometheus.
 #
+# Loki 2.9.x → uid=10001(loki) per the upstream Dockerfile
+# (https://github.com/grafana/loki/blob/v2.9.10/cmd/loki/Dockerfile).
+# State path inside the container is /loki; without uid 10001 ownership
+# loki crash-loops with `error creating ingester: mkdir /loki/chunks:
+# permission denied`.
+#
 # Set per-service explicitly with String UIDs (Integer raises
 # InvalidTypeError per `ruby.md` "owner/group must be String").
 state_dir_owners = {
   "prometheus" => "65534", # nobody (prom/prometheus standard)
   "grafana"    => "472",   # grafana (grafana/grafana standard)
+  "loki"       => "10001", # loki (grafana/loki standard)
 }
 state_dir_owners.each do |sub, uid|
   directory "#{state_dir}/#{sub}" do
@@ -146,7 +153,7 @@ remote_file "#{deploy_dir}/grafana/provisioning/dashboards/dashboards.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
-%w[node-exporter-full.json auto-mitamae-fleet.json proxmox-via-prometheus.json mcp-fleet-health.json rtx-routers.json].each do |dash|
+%w[node-exporter-full.json auto-mitamae-fleet.json proxmox-via-prometheus.json mcp-fleet-health.json rtx-routers.json rtx-logs.json].each do |dash|
   remote_file "#{deploy_dir}/grafana/dashboards/#{dash}" do
     source "files/grafana/dashboards/#{dash}"
     owner user
@@ -197,6 +204,65 @@ remote_file "#{deploy_dir}/alerts/mcp.yml" do
   owner user
   group group
   mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
+# Loki + Promtail (Phase B: RTX syslog visualization).
+remote_file "#{deploy_dir}/loki-config.yaml" do
+  source "files/loki-config.yaml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
+remote_file "#{deploy_dir}/promtail-config.yaml" do
+  source "files/promtail-config.yaml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
+remote_file "#{deploy_dir}/grafana/provisioning/datasources/loki.yml" do
+  source "files/grafana/provisioning/datasources/loki.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
+# GeoIP staging directory on the host (bind-mounted into promtail at
+# /etc/promtail/geoip:ro). The .mmdb file lands here via the download
+# execute below; the upstream files/geoip/ in the cookbook only carries
+# a .gitkeep — the binary database is intentionally not committed.
+directory "#{deploy_dir}/geoip" do
+  owner user
+  group group
+  mode "755"
+end
+
+# Download dbip-city-lite (CC-BY 4.0, ~50 MB gz / ~125 MB unpacked) for
+# GeoIP enrichment in the promtail pipeline. URL pattern is
+# dbip-city-lite-YYYY-MM.mmdb.gz; verified 2026-05 active at the time of
+# cookbook authoring (HTTP 200, 62 MB gzipped). The not_if guard
+# re-downloads if the file is older than 25 days — db-ip publishes
+# monthly so this naturally keeps the database fresh-ish without a
+# separate cron.
+geoip_db_path = "#{deploy_dir}/geoip/dbip-city-lite.mmdb"
+geoip_url     = "https://download.db-ip.com/free/dbip-city-lite-2026-05.mmdb.gz"
+
+execute "download dbip-city-lite GeoIP DB" do
+  command <<~SH.strip
+    set -euo pipefail
+    curl -fsSL "#{geoip_url}" \\
+      | gunzip > #{geoip_db_path}.new
+    mv #{geoip_db_path}.new #{geoip_db_path}
+    chmod 644 #{geoip_db_path}
+  SH
+  user user
+  not_if "test -f #{geoip_db_path} && " \
+         "find #{geoip_db_path} -mtime -25 | grep -q ."
   notifies :run, "execute[restart monitoring]"
 end
 
