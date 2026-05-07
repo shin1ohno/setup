@@ -9,5 +9,7 @@
   {"host": "192.168.1.20", "user": "root", "role": "pve/lxc-roon.rb",       "label": "roon"},
   {"host": "192.168.1.62", "user": "root", "role": "pve/lxc-samba.rb",      "label": "samba"},
   {"host": "192.168.1.63", "user": "root", "role": "pve/lxc-housekeeping.rb", "label": "housekeeping"},
-  {"host": "192.168.1.64", "user": "root", "role": "pve/lxc-pro-dev.rb",    "label": "pro-dev"}
+  {"host": "192.168.1.64", "user": "root", "role": "pve/lxc-pro-dev.rb",    "label": "pro-dev"},
+  {"host": "192.168.1.60", "user": "root", "role": "pve/lxc-pro-router.rb", "label": "pro-router"},
+  {"host": "192.168.1.10", "user": "root", "role": "pve/pve-host.rb",       "label": "pve-host"}
 ]

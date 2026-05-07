@@ -28,3 +28,10 @@ node.reverse_merge!(
 )
 
 include_cookbook "lxc-pro-router"
+# Phase 3c: receiver-side of the centralised auto-apply system.
+# pro-router runs Tailscale subnet-router only — it is NOT the LAN
+# gateway, so a misconfigured apply only breaks the Tailscale advertise
+# path; LAN-internal connectivity to the monitoring LXC stays via
+# `pct exec` from the PVE host. Recovery path is intact.
+include_cookbook "node-exporter"
+include_cookbook "auto-mitamae-target"
