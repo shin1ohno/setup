@@ -131,6 +131,22 @@ scrape_configs:
         labels:
           host: pro-router
 
+  # nrt-subnet-router EC2 (AWS Tokyo, AL2023 arm64). Reached over
+  # pro-router's Tailscale subnet route to AWS VPC (10.33.128.0/18) — see
+  # tailscale-acl.tf:79-83 for the wildcard-port permit on
+  # home_network_cidr -> vpc_cidr. node_exporter installed via
+  # ~/ManagedProjects/home-monitor/scripts/tailscale-setup/04-node-exporter.sh
+  # (Stage 1 user_data phase script).
+  #
+  # File_sd target: VPC private IP fetched from SSM /monitoring/nrt-private-ip
+  # by files/generate_nrt_target.sh on every auto-mitamae cycle, so EC2
+  # recreation (which can rotate the private IP) self-heals within ≤30 min.
+  - job_name: node-nrt-router
+    honor_labels: true
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/file_sd/nrt.json
+
   # Bare-metal PVE host (`pro` = 192.168.1.10) OS-level metrics.
   # node_exporter installed via cookbooks/node-exporter, included from
   # pve/pve-host.rb. Same systemd unit + textfile collector pattern as

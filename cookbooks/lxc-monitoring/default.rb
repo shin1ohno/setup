@@ -62,7 +62,7 @@ directory deploy_dir do
   mode "755"
 end
 
-%w[grafana grafana/provisioning grafana/provisioning/datasources grafana/provisioning/dashboards grafana/dashboards].each do |sub|
+%w[grafana grafana/provisioning grafana/provisioning/datasources grafana/provisioning/dashboards grafana/dashboards file_sd].each do |sub|
   directory "#{deploy_dir}/#{sub}" do
     owner user
     group group
@@ -270,6 +270,43 @@ execute "restart monitoring" do
   # bootstrap). Restart with empty admin password would leave Grafana
   # unmanageable. Same guard as cookbooks/cognee.
   only_if "test -f #{env_output_path}"
+end
+
+# === Prometheus file_sd target: nrt-subnet-router EC2 ===
+#
+# /monitoring/nrt-private-ip is published by home-monitor's
+# pve-monitoring-lxc.tf as a String (not SecureString — VPC private IP
+# isn't sensitive). The cookbook renders the file_sd JSON from this
+# value on every converge; auto-mitamae's ≤30 min cycle absorbs any IP
+# rotation after EC2 recreation without operator intervention.
+#
+# No notifies on the JSON write — Prometheus's file_sd watcher reloads
+# scrape targets via mtime change inside the container, no compose
+# restart required. (--web.enable-lifecycle is unrelated to file_sd.)
+
+nrt_target_script_staging = "#{node[:setup][:root]}/lxc-monitoring/generate_nrt_target.sh"
+nrt_target_output = "#{deploy_dir}/file_sd/nrt.json"
+
+remote_file nrt_target_script_staging do
+  source "files/generate_nrt_target.sh"
+  owner user
+  group group
+  mode "0755"
+end
+
+require_external_auth(
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/nrt-private-ip",
+  check_command: "aws ssm get-parameter --name /monitoring/nrt-private-ip " \
+                 "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
+                "/monitoring/nrt-private-ip in #{aws_region}. " \
+                "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
+) do
+  execute "generate nrt-router file_sd target" do
+    command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+            "bash #{nrt_target_script_staging} #{nrt_target_output}"
+    user user
+  end
 end
 
 # === MCP Fleet Health Monitoring ===
