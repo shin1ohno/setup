@@ -136,8 +136,19 @@ services:
   # Promtail: syslog receiver + RTX-specific log parser + GeoIP enricher.
   # Listens UDP 1514 LAN-wide for RTX syslog forwarding. GeoIP database
   # is dbip-city-lite (CC-BY 4.0, monthly refresh by mitamae).
-  # Bound to 0.0.0.0:1514 — needs to receive packets from RTX routers
-  # outside the docker network. UDP only (RTX uses UDP syslog).
+  #
+  # network_mode: host — empirically required because docker-proxy under
+  # the default bridge network does NOT correctly forward UDP traffic to
+  # this container's IPv6 wildcard listener (Promtail 2.9 binds [::]:1514
+  # via Go's net package, expecting dual-stack IPv4 fallback; in CT 111's
+  # unprivileged-LXC + docker bridge stack, the IPv4 packets never reach
+  # the container). With host networking, Promtail binds the LXC's eth0
+  # directly and sees real RTX source IPs. Loki is reachable as
+  # 127.0.0.1:3100 (it binds 127.0.0.1 anyway).
+  #
+  # Side effects: `ports:` block is removed (incompatible with host net),
+  # service-name resolution `loki:3100` becomes `127.0.0.1:3100` (changed
+  # in promtail-config.yaml).
   promtail:
     image: grafana/promtail:2.9.10
     container_name: monitoring-promtail
@@ -145,8 +156,7 @@ services:
     command: -config.file=/etc/promtail/promtail-config.yaml
     depends_on:
       - loki
-    ports:
-      - "0.0.0.0:1514:1514/udp"
+    network_mode: host
     volumes:
       - ./promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
       - ./geoip:/etc/promtail/geoip:ro
