@@ -163,6 +163,26 @@ Present the union of A and B as a single candidate list, cross-reference each ag
 
 This rule exists because the 2026-04-24 weave session ran only `git branch --no-merged origin/main` in the first pass (detected 3 squash-merged branches) and missed 2 true-merge-commit branches (`docs/operational-assumptions`, `feat/connections-first-ui`). The user had to reply "消してください" a second time after the remaining candidates were surfaced post-deletion.
 
+## PR Review Comment Exhaustive Fetch
+
+When acting on PR review comments ("レビューコメント反映", "review した", "コメントしたから確認"), do NOT rely on `gh api repos/<owner>/<repo>/pulls/<n>/comments` alone. That endpoint returns inline comments but they fan out across multiple `review` submissions — a reviewer who submits review A with 2 comments, then submits review B with 1 more comment, produces 3 inline comments total but they live in 2 separate review threads. Treating the visible-on-screen list as complete after one fetch silently drops the comments from later submissions.
+
+**Required fetch + cross-reference**:
+
+```bash
+# Authoritative: review threads with resolution state
+gh pr view <n> --json reviewThreads --jq '.reviewThreads[] | select(.isResolved == false) | {path, line, body: .comments[0].body}'
+
+# Count unresolved threads — every one must be addressed before declaring done
+gh pr view <n> --json reviewThreads --jq '[.reviewThreads[] | select(.isResolved == false)] | length'
+```
+
+`reviewThreads` is the canonical structure: each thread groups all comments on a single line/conversation, carries `isResolved`, and survives across review-submission boundaries. Use it as the source of truth, not `pulls/<n>/comments`.
+
+**Verification gate before pushing the fix commit**: count unresolved threads, count comments you've addressed. If the numbers don't match, re-fetch — there is at least one comment from a review submission you didn't see.
+
+This rule exists because the 2026-05-07 PR #179 session fetched only 2 inline comments via `pulls/179/comments` and pushed a "review feedback addressed" commit. The reviewer had submitted a SECOND review (review id `PRR_kwDOJGwgDM787Pie`) adding a third comment at line 113 that was missed. User had to flag "一つ対応もれ" before I re-fetched and saw the gap. The `reviewThreads` approach would have surfaced all 3 from the start.
+
 ## Stacked PR Merge Guard — retarget downstream PRs before `--delete-branch`
 
 Before running `gh pr merge --squash --delete-branch <n>`, check whether any *open* PR uses this PR's head branch as its base. GitHub auto-closes a PR when its base branch is deleted, so merging a stacked PR with `--delete-branch` silently kills its downstreams — recovery requires cherry-picking each closed PR's commits onto a fresh main-rooted branch and re-opening, which is 2-3 round-trips per dependent.
