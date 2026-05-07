@@ -77,7 +77,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "yrfRevision_info{job=\"snmp-rtx\", router=~\"$router\"}",
+          "expr": "yrfRevision{job=\"snmp-rtx\", router=~\"$router\"}",
           "format": "table", "instant": true, "legendFormat": "{{router}}", "range": false, "refId": "A"
         }
       ],
@@ -109,7 +109,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "sysName_info{job=\"snmp-rtx\", router=~\"$router\"}",
+          "expr": "sysName{job=\"snmp-rtx\", router=~\"$router\"}",
           "format": "table", "instant": true, "legendFormat": "{{router}}", "range": false, "refId": "A"
         }
       ],
@@ -191,14 +191,14 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"lan1.*\"}[5m]) * 8",
-          "legendFormat": "{{router}}/{{ifName}} in", "refId": "A"
+          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN1.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifDescr}} in", "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"lan1.*\"}[5m]) * 8",
-          "legendFormat": "{{router}}/{{ifName}} out", "refId": "B"
+          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN1.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifDescr}} out", "refId": "B"
         }
       ],
       "title": "LAN1 bandwidth",
@@ -240,14 +240,14 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"lan2.*\"}[5m]) * 8",
-          "legendFormat": "{{router}}/{{ifName}} in", "refId": "A"
+          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN2.*|WAN1.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifDescr}} in", "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"lan2.*\"}[5m]) * 8",
-          "legendFormat": "{{router}}/{{ifName}} out", "refId": "B"
+          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN2.*|WAN1.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifDescr}} out", "refId": "B"
         }
       ],
       "title": "LAN2 bandwidth",
@@ -255,7 +255,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Site-to-site backhaul tunnel (tunnel1) — L2TPv3 between hnd and itm. When traffic is zero on both sides, the tunnel is idle (not necessarily down — see ifOperStatus on the tunnel iface).",
+      "description": "Site-to-site backhaul: BRIDGE1 traffic on hnd (RTX1210). bridge1 contains lan1 + tunnel1, so this is local LAN + L2TPv3-to-itm combined. RTX1210 IF-MIB does not expose the `tunnel1` interface separately; isolating tunnel-only traffic requires the YAMAHA-RT-IPSEC private MIB (TODO: add to snmp-generator).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -289,17 +289,17 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"tunnel1.*\"}[5m]) * 8",
-          "legendFormat": "{{router}}/{{ifName}} in", "refId": "A"
+          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"BRIDGE1.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifDescr}} in", "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"tunnel1.*\"}[5m]) * 8",
-          "legendFormat": "{{router}}/{{ifName}} out", "refId": "B"
+          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"BRIDGE1.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifDescr}} out", "refId": "B"
         }
       ],
-      "title": "VPN site-to-site (tunnel1) bandwidth",
+      "title": "VPN site-to-site (BRIDGE1: lan1+tunnel1 combined) bandwidth",
       "type": "timeseries"
     },
     {
@@ -338,8 +338,8 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifInErrors{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"$interface\"}[5m])",
-          "legendFormat": "{{router}}/{{ifName}}", "refId": "A"
+          "expr": "rate(ifInErrors{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"$interface\"}[5m])",
+          "legendFormat": "{{router}}/{{ifDescr}}", "refId": "A"
         }
       ],
       "title": "Interface input errors (rate)",
@@ -381,8 +381,8 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifOutErrors{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"$interface\"}[5m])",
-          "legendFormat": "{{router}}/{{ifName}}", "refId": "A"
+          "expr": "rate(ifOutErrors{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"$interface\"}[5m])",
+          "legendFormat": "{{router}}/{{ifDescr}}", "refId": "A"
         }
       ],
       "title": "Interface output errors (rate)",
@@ -537,7 +537,7 @@
       ],
       "title": "Interface table",
       "transformations": [
-        { "id": "joinByField", "options": { "byField": "ifName", "mode": "outer" } },
+        { "id": "joinByField", "options": { "byField": "ifDescr", "mode": "outer" } },
         { "id": "organize", "options": { "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true, "__name__ 1": true, "__name__ 2": true, "__name__ 3": true, "__name__ 4": true, "__name__ 5": true, "instance 1": true, "instance 2": true, "instance 3": true, "instance 4": true, "instance 5": true, "job 1": true, "job 2": true, "job 3": true, "job 4": true, "job 5": true, "ifIndex 1": true, "ifIndex 2": true, "ifIndex 3": true, "ifIndex 4": true, "ifIndex 5": true, "router 2": true, "router 3": true, "router 4": true, "router 5": true } } }
       ],
       "type": "table"
@@ -568,14 +568,14 @@
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
         "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "definition": "label_values(ifName{job=\"snmp-rtx\", router=~\"$router\"}, ifName)",
+        "definition": "label_values(ifDescr{job=\"snmp-rtx\", router=~\"$router\"}, ifDescr)",
         "hide": 0,
         "includeAll": true,
         "label": "Interface",
         "multi": true,
         "name": "interface",
         "options": [],
-        "query": { "query": "label_values(ifName{job=\"snmp-rtx\", router=~\"$router\"}, ifName)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "query": { "query": "label_values(ifDescr{job=\"snmp-rtx\", router=~\"$router\"}, ifDescr)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
         "refresh": 2,
         "regex": "",
         "skipUrlSync": false,
