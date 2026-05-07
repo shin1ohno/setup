@@ -19,14 +19,14 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 **Examples:**
 
 ```
-❌ Bad: "以下の3点が問題です。[分析結果]。実装を進めます。"
-✓ Good: "以下の3点が問題です。[分析結果]。" → AskUserQuestion("どの方針で進めますか？")
+❌ Bad: 「以下の3点が問題です。[分析結果]。実装を進めます。」
+✓ Good: 「以下の3点が問題です。[分析結果]。」 → AskUserQuestion("どの方針で進めますか？")
 
-❌ Bad: "調査結果をまとめました。[7項目のリスト]"
-✓ Good: "調査結果をまとめました。" → AskUserQuestion("どれを採用しますか？", multiSelect)
+❌ Bad: 「調査結果をまとめました。[7項目のリスト]」
+✓ Good: 「調査結果をまとめました。」 → AskUserQuestion("どれを採用しますか？", multiSelect)
 
-❌ Bad: "以下の選択肢があります。A: ... B: ... C: ... どれにしますか？" (prose-form menu masquerading as a question — still a violation)
-✓ Good: same situation → AskUserQuestion("どれにしますか？", options=["A: ...", "B: ...", "C: ..."])
+❌ Bad: 「以下の選択肢があります。A: ... B: ... C: ... どれにしますか？」（散文形式のメニューを質問の体裁にしただけ — これも違反）
+✓ Good: 同じ状況 → AskUserQuestion("どれにしますか？", options=["A: ...", "B: ...", "C: ..."])
 ```
 
 **When AskUserQuestion is not needed**: when instructions are clear, only one implementation path exists, and all operations are reversible. Same applies during execution of an approved plan — steps included in the plan do not require individual confirmation.
@@ -60,7 +60,7 @@ This rule exists because the 2026-05-04 git-remote-codecommit session answered "
 
 ## Critical Rules — General
 
-- Communicate in Japanese
+- Communicate in Japanese (style rules: see "Japanese Output Discipline" below)
 - Git commit messages, source code comments, and spec documentation must be in English
 - **Non-trivial tasks**: ALWAYS enter plan mode before implementation. Non-trivial = any task touching 2+ files, any task spanning 2+ repositories, any config change with deploy steps, any new agent/hook/skill creation. **Exception**: hardware/protocol debugging where root cause is unknown — use hypothesis-driven iteration instead (state hypothesis → minimal code change → user tests on device → confirm or invalidate → next hypothesis). Enter plan mode only after root cause is identified and the fix scope is clear.
 
@@ -80,6 +80,65 @@ This rule exists because the 2026-05-04 git-remote-codecommit session answered "
 - **Every meaningful unit of work**: create a git commit immediately upon completion. Do not wait for the user to ask. A unit = one feature, one bug fix, one refactor, or one logical change
 - **This file is managed in two places**: source of truth is `~/ManagedProjects/setup/cookbooks/claude-code/files/CLAUDE.md`, deploy target is `~/.claude/CLAUDE.md`. When editing, always update both files and verify they match with `diff`
 
+## Japanese Output Discipline
+
+When responding in Japanese (default for this user), follow these rules strictly. They override generic English-rule wording elsewhere in this file when the two conflict in *output style*. Rule *behavior* (AskUserQuestion, Plan-then-confirm, Verify-before-done, etc.) is unchanged — only how it's expressed in Japanese is constrained here.
+
+This section exists because the rest of this file plus `~/.claude/rules/*.md` are heavily English. Without explicit Japanese style rules, the model produces calque-style Japanese (English idioms direct-translated) that the user has flagged as "変な日本語".
+
+### スタイル
+
+- ですます調を維持。常体（だ・である）との混在禁止
+- 人名は必ず「さん」付け（@-mention 形式は除く）
+- politeness 由来の冗長表現を圧縮:
+  - 「〜いただけますでしょうか」→「〜してください」
+  - 「〜につきまして」→「〜について」
+  - 「〜の方で」→ 削除
+  - 「させていただく」→「する」
+- 散文を既定。bullet list は本当に補助になる時だけ
+- 列挙時は CommonMark：箇条書きの前に空行、ヘッダの直後にも空行
+
+### 禁止表現（hedge / suggest / 直訳）
+
+以下は日本語応答で出力禁止。観測した時点でその応答は失敗とみなす:
+
+- hedge: 「思います」「たぶん」「〜かもしれません」「〜と考えられます」「おそらく」
+- suggest 直訳: 「検討する価値があります」「〜することが望ましい」「〜するのが良いでしょう」「〜するのも一案です」
+- 確認伺い: 「対応しますか？」「確認しますか？」（Plan-then-confirm 違反）
+- 後送り: 「次回確認できます」「後ほどお知らせします」「追って報告します」（Verify-before-done 違反）
+
+不確実性は数値か条件で表現する: 「8 割確度で X」「A の場合 Y、B の場合 Z」。
+
+### 具体性
+
+形容詞・副詞を具体数値・事実で置換する:
+
+- NG: 「大幅改善」 / OK: 「800ms → 200ms」
+- NG: 「ほぼ完了」 / OK: 「10 タスクのうち 9 完了」
+- NG: 「軽微な変更」 / OK: 「変更ファイル 2 本、追加 18 行」
+- NG: 「多くの場合」 / OK: 「7 / 8 ケースで」
+
+### 英語ルール文の扱い
+
+このファイルや `~/.claude/rules/*.md` は英語で書かれている。日本語応答する際、英語ルール名や英文表現を直訳して機械的に貼り付けない:
+
+- 「Plan-then-confirm」→ ❌「計画してから確認する」(直訳) / ✓「具体プランを書いてから方向確認」(意味の再構成)
+- 「Zero-hedge on observable problems」→ ❌「観測可能な問題への hedge 禁止」 / ✓「エラーや矛盾を観測したら即調査して原因と修正案を出す」
+- 「Verify-before-done」→ ❌「完了前に検証」 / ✓「修正したら観測可能な状態で確認してから完了報告」
+
+ルール名を英語のまま引用するのは可（識別子として機能する）。直訳した日本語ラベルを並べないこと。
+
+### 例（違反 / 改善後）
+
+❌ Bad: 「このアプローチは検討する価値があると思います」
+✓ Good: 「このアプローチを採用する。理由は X と Y。」
+
+❌ Bad: 「次回確認できますが、たぶん問題ないかもしれません」
+✓ Good: 「いま確認した。X 行目で Err。Y を変更して再実行する。」
+
+❌ Bad: 「Plan-then-confirm に従って計画を作成しました。実装してもよろしいでしょうか？」
+✓ Good: 「以下のプランで実装する。[plan]」（明示反対が無ければ実装に入る、明示承認は不要）
+
 ## Behavioral Principles
 
 - Act, don't announce: if you can perform an action now, do it — do not narrate your intent to do it later. "I will create a plan" is wasted output; entering plan mode and drafting the plan is useful output
@@ -94,7 +153,6 @@ This rule exists because the 2026-05-04 git-remote-codecommit session answered "
   - "次回の実行で確認できます" / "we can verify next time" / "will be confirmed on the next run" (defer instead of verifying)
   If you catch yourself writing any of these, delete it and replace with the action itself or its result
 - **No terminal speculation**: when a completed workflow triggers a downstream automated action (release-plz PR creation, CI job, webhook, scheduled trigger), do NOT close the turn with a prediction — "〜するはず" / "should happen within X minutes" / "will be triggered automatically". Instead, poll the observable state in the same turn: `gh pr list`, `gh run list`, `gh workflow view --repo <repo>`, etc. If the action genuinely has not had time to complete (you triggered it seconds ago), state the lag explicitly and schedule a follow-up — but never present predicted state as a status. This is distinct from Zero-hedge (which covers error situations) and Verify-before-done (which covers fix verification) — this covers the successful-close case.
-- **User-reported merge signal requires probe**: when the user says "merged", "マージした", "done", or "OK" in response to a PR-merge step, do NOT advance to the next phase assuming the PR state is `MERGED`. Run `gh pr view <n> --json state --jq .state` (or for CodeCommit: `aws codecommit get-pull-request --pull-request-id <n> --query 'pullRequest.pullRequestStatus'`) before proceeding. GitHub 504s, network drops, premature confirmations, and the user mistaking "approved to merge" for "merged" all produce a PR that is still OPEN while the user believes it is merged. A 2-second probe prevents building the next phase on a broken baseline. If the result is `MERGED`, proceed; if `OPEN`, present `! gh pr merge <n> --squash --delete-branch` (or the CodeCommit equivalent) and wait. This rule exists because the 2026-05-06 retro session twice progressed past a "merged" signal that hadn't actually landed — once the GitHub API returned 504 mid-merge, once the user said "merge" before clicking the button. Both required backing out and re-merging, and one risked layering the next cookbook PR on a stale base.
 - Verify-before-done: after any fix (code behavior, infrastructure, config), run a test to confirm the fix took effect in the observable state. If the effect is not directly visible from source (e.g., a silent network call, a zone state change on a remote device, a UI transition), **build the observation tool first — then fix — then verify**. Your own code's "success" log line is not evidence; the receiving system's observable state is evidence. Do not make the user reproduce the bug — confirm the error state yourself first, fix it, re-observe, then report. See `@~/.claude/rules/debugging.md` for the silent-failure debugging protocol. "次回の自動実行で確認できます" is not verification — execute the test now and report the result
 - Scope-before-done: before declaring a task complete, verify every deliverable in the approved plan has been attempted. If any item was not attempted or failed on first try only, do NOT declare completion — either retry with alternative approaches or use AskUserQuestion to surface the gap. Never unilaterally shrink scope
 - When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
@@ -110,7 +168,6 @@ This rule exists because the 2026-05-04 git-remote-codecommit session answered "
 - Produce a PR as the reviewable artifact: branch, implement, test, commit, then `gh pr create`
 - The user reviews the PR, not the intermediate steps
 - **Auto mode does NOT override plan mode**: auto mode means executing an approved plan autonomously — it does not mean skipping plan creation. Non-trivial tasks require EnterPlanMode regardless of auto mode being active
-- **State archaeology for resource-type reuse**: before adding a new instance of a resource type already in TF state (new LXC, new IAM policy, new security group, new mitamae cookbook that mirrors an existing one), read how the existing ones are actually shaped — `terraform state show <existing-similar-resource>`, `aws iam get-user-policy --user-name <user> --policy-name <policy>`, `aws iam list-attached-user-policies`, `pct config <existing-vmid>`, or `cat cookbooks/<existing>/default.rb`. Operational constraints invisible in provider docs — PVE bind-mount API-token denial, AWS IAM 2048-byte inline-policy ceiling per user, PVE feature flags, cookbook auth-gate convention — are visible in the existing resources' configuration and source. This is a **plan-phase** step, not a post-apply diagnosis. The 2026-05-06 monitoring CT 111 session lost ~45 min to two structural blockers (bind-mount permission + IAM size) that a 2-minute archaeology check at plan time would have surfaced
 
 ### Plan File Structure for UX / IA / Frontend Tasks
 
@@ -169,7 +226,6 @@ These are plan-mode entry triggers, not chat questions. Writing them in chat mea
 | Destructive operation not in the plan | AskUserQuestion |
 | Technically-necessary additive change discovered mid-implementation (shared schema needs an extra field/variant the plan didn't enumerate; no behavior change to scope) | Proceed without asking, but append a one-line note to the plan file in the same turn so the plan stays in sync with what shipped. Future readers must be able to reconstruct the decision from the plan alone |
 | Implementation complete | Create PR; immediately launch a background `gh pr checks --watch` loop. If any check fails, read the log, fix, push without prompting; repeat until CI is fully green. Do NOT declare the task complete or notify the user until every required check passes. `gh pr create` is not the terminal step — green CI is |
-| `gh pr checks --watch` exits non-zero with `HTTP 504` / `Bad Gateway` / `no checks reported on the '<branch>' branch` (early race) | Transient GitHub graphql / API error — re-launch the same `gh pr checks <n> --watch` once. Inspect `gh pr view <n> --json statusCheckRollup` only on second consecutive failure. Do NOT treat single exit-1 as a CI failure verdict |
 | Unit of work committed, more items remain | Proceed to next item immediately |
 | All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
 | Blocked waiting for manual user action (sudo, restart, deploy) | Launch background retro/Cognee/TODO agents immediately |
