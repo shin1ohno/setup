@@ -191,13 +191,13 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN1.*\"}[5m]) * 8",
+          "expr": "rate(ifInOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN1.*\"}[5m]) * 8",
           "legendFormat": "{{router}}/{{ifDescr}} in", "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN1.*\"}[5m]) * 8",
+          "expr": "rate(ifOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN1.*\"}[5m]) * 8",
           "legendFormat": "{{router}}/{{ifDescr}} out", "refId": "B"
         }
       ],
@@ -240,13 +240,13 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN2.*|WAN1.*\"}[5m]) * 8",
+          "expr": "rate(ifInOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN2.*|WAN1.*\"}[5m]) * 8",
           "legendFormat": "{{router}}/{{ifDescr}} in", "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN2.*|WAN1.*\"}[5m]) * 8",
+          "expr": "rate(ifOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"LAN2.*|WAN1.*\"}[5m]) * 8",
           "legendFormat": "{{router}}/{{ifDescr}} out", "refId": "B"
         }
       ],
@@ -289,13 +289,13 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"BRIDGE1.*\"}[5m]) * 8",
+          "expr": "rate(ifInOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"BRIDGE1.*\"}[5m]) * 8",
           "legendFormat": "{{router}}/{{ifDescr}} in", "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"BRIDGE1.*\"}[5m]) * 8",
+          "expr": "rate(ifOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifDescr=~\"BRIDGE1.*\"}[5m]) * 8",
           "legendFormat": "{{router}}/{{ifDescr}} out", "refId": "B"
         }
       ],
@@ -525,13 +525,13 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\"}[5m]) * 8",
+          "expr": "rate(ifInOctets{job=\"snmp-rtx\", router=~\"$router\"}[5m]) * 8",
           "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "D"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\"}[5m]) * 8",
+          "expr": "rate(ifOutOctets{job=\"snmp-rtx\", router=~\"$router\"}[5m]) * 8",
           "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "E"
         }
       ],
