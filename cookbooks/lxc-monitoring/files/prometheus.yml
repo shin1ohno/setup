@@ -294,3 +294,37 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: blackbox:9115
+
+  # YAMAHA RTX SNMP — hnd (RTX1210, 192.168.1.253) and itm (RTX830,
+  # 192.168.1.254) via the sibling snmp-exporter container. Module
+  # `yamaha_rtx` walks IF-MIB (interface bandwidth/errors/status) +
+  # YAMAHA-RT-HARDWARE (yrhCpuUtil*, yrhMemoryUtil, yrhInboxTemperature) +
+  # YAMAHA-RT-FIRMWARE (yrfRevision, yrfUpTime). Authentication via the
+  # `rtx_v2c` auth defined in snmp.yml.tmpl (community substituted at
+  # deploy time from SSM /monitoring/rtx-snmp-community).
+  #
+  # Targets are static — both routers are LAN-reachable from CT 111
+  # (.253 directly, .254 via the hnd<->itm L2TPv3 backhaul tunnel).
+  # Standard blackbox-style relabel pattern: per-target `target` label
+  # exposed via __param_target, scrape rewritten to snmp-exporter:9116.
+  - job_name: snmp-rtx
+    metrics_path: /snmp
+    params:
+      module: [yamaha_rtx]
+      auth: [rtx_v2c]
+    static_configs:
+      - targets:
+          - 192.168.1.253
+        labels:
+          router: hnd
+      - targets:
+          - 192.168.1.254
+        labels:
+          router: itm
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116
