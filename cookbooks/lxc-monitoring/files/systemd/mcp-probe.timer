@@ -1,0 +1,16 @@
+[Unit]
+Description=Run MCP fleet health probe every minute
+Requires=mcp-probe.service
+
+[Timer]
+# OnCalendar = every minute on the minute. Aligned with prometheus
+# scrape_interval=15s — a 60s probe cadence under-samples by 4x but
+# the MCP protocol cost (4 round trips per server * 3 servers) makes
+# tighter intervals expensive. Edge HTTP probes (blackbox) cover the
+# 15s granularity for faster outage detection.
+OnCalendar=*:*:00
+Persistent=false
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

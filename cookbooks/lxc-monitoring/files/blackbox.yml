@@ -1,0 +1,43 @@
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200, 204]
+      method: GET
+      fail_if_body_not_matches_regexp: []
+
+  http_2xx_or_redirect:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200, 204, 301, 302, 303, 307, 308]
+      method: GET
+
+  http_oidc_discovery:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200]
+      method: GET
+      fail_if_body_not_matches_regexp:
+        - '"issuer"'
+        - '"token_endpoint"'
+
+  http_oauth_protected_resource:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200]
+      method: GET
+      fail_if_body_not_matches_regexp:
+        - '"resource"'
+        - '"authorization_servers"'
+
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
