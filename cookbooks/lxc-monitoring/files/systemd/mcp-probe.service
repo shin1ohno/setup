@@ -1,0 +1,17 @@
+[Unit]
+Description=MCP fleet health prober (oneshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/mcp-probe/probe.env
+ExecStart=/usr/local/bin/mcp-probe.py
+# Hardening directives intentionally omitted — see CLAUDE.md
+# `Privileged PVE LXC — systemd unit hardening directives fail with
+# status=226/NAMESPACE` for why ProtectSystem / PrivateTmp etc. are not
+# included. Cookbook fleet must support both privileged and unprivileged
+# LXCs without per-host conditional drop-ins.
+
+[Install]
+WantedBy=multi-user.target

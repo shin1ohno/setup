@@ -23,6 +23,7 @@ services:
       - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts:/etc/prometheus/alerts:ro
       - /data/monitoring/prometheus:/prometheus
 
   grafana:
@@ -71,3 +72,24 @@ services:
       PVE_VERIFY_SSL: "false"
     ports:
       - "127.0.0.1:9221:9221"
+
+  # blackbox_exporter probes external + internal HTTP endpoints. Used for
+  # MCP fleet edge health (mcp.ohno.be/cognee/health, /memory/health, etc.)
+  # and per-LXC backend reachability (192.168.1.x:port). Module config in
+  # blackbox.yml; scrape targets defined in prometheus.yml's
+  # `mcp-blackbox-{external,internal}` jobs via the standard target/relabel
+  # pattern.
+  #
+  # Bound to 127.0.0.1 — the only consumer is the sibling prometheus
+  # container, reached via service-name resolution `blackbox:9115` in
+  # the docker-compose default network. No need to expose on LAN.
+  blackbox:
+    image: prom/blackbox-exporter:v0.26.0
+    container_name: monitoring-blackbox
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/blackbox_exporter/blackbox.yml
+    volumes:
+      - ./blackbox.yml:/etc/blackbox_exporter/blackbox.yml:ro
+    ports:
+      - "127.0.0.1:9115:9115"

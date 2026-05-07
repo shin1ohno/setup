@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# bin/register-mcp-prober — one-time operator setup for the MCP fleet health
+# prober's OAuth2 client_credentials in Hydra.
+#
+# Why this lives in bin/ rather than the cookbook:
+#   The Hydra LXC's IAM principal (pve-bootstrap-ssm) intentionally does NOT
+#   have ssm:PutParameter — it cannot self-rotate or originate credentials.
+#   Per CLAUDE.md global rule "IAM principal that cannot self-rotate", the
+#   right pattern is: operator (with admin profile) generates the credential
+#   once, puts it to SSM, and the LXC reads it. This script is that one-time
+#   step, mirrored from `bin/bootstrap-lxc-creds`.
+#
+# Usage:
+#   bin/register-mcp-prober
+#
+# Environment overrides:
+#   PVE_HOST     default 192.168.1.10
+#   HYDRA_CTID   default 106
+#   AWS_PROFILE  default sh1admn
+#   AWS_REGION   default ap-northeast-1
+#
+# Idempotent:
+#   - If `monitoring-prober` is already registered in Hydra, the secret is NOT
+#     rotated (we have no way to recover it). The script exits 0 after
+#     verifying the SSM parameters exist.
+#   - If `monitoring-prober` is registered but SSM has no record, the script
+#     fails loudly — you must either delete-and-reregister via Hydra admin
+#     API or manually copy the secret into SSM.
+#
+# After running this, `mitamae local pve/lxc-monitoring.rb` on CT 111 will
+# pick up the credentials from SSM and start the mcp-probe.timer.
+
+set -euo pipefail
+
+PVE_HOST="${PVE_HOST:-192.168.1.10}"
+HYDRA_CTID="${HYDRA_CTID:-106}"
+AWS_PROFILE="${AWS_PROFILE:-sh1admn}"
+AWS_REGION="${AWS_REGION:-ap-northeast-1}"
+
+CLIENT_ID="monitoring-prober"
+SSM_ID_PARAM="/monitoring/mcp-prober-client-id"
+SSM_SECRET_PARAM="/monitoring/mcp-prober-client-secret"
+
+log() { printf '[register-mcp-prober] %s\n' "$*" >&2; }
+fail() { log "ERROR: $*"; exit 1; }
+
+# 1. Verify Hydra is reachable on CT_106.
+log "checking Hydra admin API on CT $HYDRA_CTID..."
+if ! ssh -n root@"$PVE_HOST" "pct exec $HYDRA_CTID -- curl -fsS http://127.0.0.1:4445/health/ready" >/dev/null 2>&1; then
+  fail "Hydra admin API at http://127.0.0.1:4445/health/ready (inside CT $HYDRA_CTID) is not ready. Apply cookbooks/hydra-server first and ensure systemd hydra.service is active."
+fi
+log "Hydra admin API ready."
+
+# 2. Check whether the client is already registered.
+if ssh -n root@"$PVE_HOST" "pct exec $HYDRA_CTID -- curl -fsS http://127.0.0.1:4445/admin/clients/$CLIENT_ID" 2>/dev/null | grep -q '"client_id"'; then
+  log "$CLIENT_ID already registered in Hydra."
+  ssm_id=$(aws ssm get-parameter --name "$SSM_ID_PARAM" --query Parameter.Value --output text \
+    --profile "$AWS_PROFILE" --region "$AWS_REGION" 2>/dev/null || true)
+  ssm_secret_present=$(aws ssm describe-parameters --parameter-filters "Key=Name,Values=$SSM_SECRET_PARAM" \
+    --query 'Parameters[].Name' --output text --profile "$AWS_PROFILE" --region "$AWS_REGION" 2>/dev/null || true)
+  if [[ "$ssm_id" == "$CLIENT_ID" && -n "$ssm_secret_present" ]]; then
+    log "SSM parameters already present. Nothing to do."
+    exit 0
+  fi
+  fail "Client registered in Hydra but SSM is missing $SSM_ID_PARAM / $SSM_SECRET_PARAM. The original client_secret is unrecoverable from Hydra. Manual recovery: ssh root@$PVE_HOST pct exec $HYDRA_CTID -- curl -fsS -X DELETE http://127.0.0.1:4445/admin/clients/$CLIENT_ID  then re-run this script."
+fi
+
+# 3. Generate a fresh secret (48 chars after stripping non-alphanum).
+SECRET=$(openssl rand -base64 64 | tr -d '/+=' | head -c 48)
+[[ ${#SECRET} -ge 32 ]] || fail "openssl produced a too-short secret: ${#SECRET} chars"
+
+# 4. Register the client via Hydra admin API.
+log "registering $CLIENT_ID with audience [cognee, memory, roon-mcp]..."
+register_payload=$(cat <<JSON
+{
+  "client_id": "$CLIENT_ID",
+  "client_name": "MCP Fleet Health Prober",
+  "client_secret": "$SECRET",
+  "grant_types": ["client_credentials"],
+  "response_types": [],
+  "scope": "mcp.read",
+  "audience": ["cognee", "memory", "roon-mcp"],
+  "token_endpoint_auth_method": "client_secret_basic"
+}
+JSON
+)
+
+# Pass payload via base64 to avoid shell-quoting trap when nesting JSON
+# inside `pct exec -- bash -c "..."`. CLAUDE.md shell.md "Multi-hop
+# Shell Injection" rule.
+b64=$(printf '%s' "$register_payload" | base64 -w0)
+ssh -n root@"$PVE_HOST" "pct exec $HYDRA_CTID -- bash -c 'echo $b64 | base64 -d | curl -fsS -X POST http://127.0.0.1:4445/admin/clients -H \"Content-Type: application/json\" -d @-'" >/dev/null
+
+# 5. Verify registration succeeded.
+if ! ssh -n root@"$PVE_HOST" "pct exec $HYDRA_CTID -- curl -fsS http://127.0.0.1:4445/admin/clients/$CLIENT_ID" 2>/dev/null | grep -q '"client_id"'; then
+  fail "Hydra admin API rejected the registration."
+fi
+log "Hydra registration OK."
+
+# 6. Save credentials to SSM.
+log "writing $SSM_ID_PARAM (String) and $SSM_SECRET_PARAM (SecureString) to SSM..."
+aws ssm put-parameter --name "$SSM_ID_PARAM" --type String \
+  --value "$CLIENT_ID" --overwrite \
+  --profile "$AWS_PROFILE" --region "$AWS_REGION" >/dev/null
+aws ssm put-parameter --name "$SSM_SECRET_PARAM" --type SecureString \
+  --value "$SECRET" --overwrite \
+  --profile "$AWS_PROFILE" --region "$AWS_REGION" >/dev/null
+
+log "done. Next step: run mitamae on CT 111 to pick up the new credentials:"
+log "  ssh root@$PVE_HOST 'pct exec 111 -- bash -lc \"cd /root/setup && ./bin/mitamae local pve/lxc-monitoring.rb\"'"

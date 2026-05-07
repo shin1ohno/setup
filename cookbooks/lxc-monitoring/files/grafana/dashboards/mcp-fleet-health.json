@@ -1,0 +1,334 @@
+{
+  "annotations": { "list": [] },
+  "description": "MCP fleet end-to-end health: OAuth + SSE + initialize + tools/list per MCP server, plus external HTTP edge + internal backend reachability. Captures the failure class that surfaced 2026-05-07 (Tailscale autoApprover CIDR mismatch silently dropped EC2 -> LAN traffic).",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Number of MCP servers where the most recent prober cycle completed all 4 phases successfully (auth -> sse_open -> initialize -> tools/list).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "green",  "value": 3 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum(mcp_probe_e2e_success == 1) or vector(0)",
+          "instant": true, "legendFormat": "usable", "range": false, "refId": "A"
+        }
+      ],
+      "title": "MCP servers usable (e2e)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "External edges (mcp.ohno.be paths) currently reachable via blackbox HTTP probe. Captures EC2 nginx + Tailscale subnet routing health from a home-LAN viewpoint.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "green",  "value": 4 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum(probe_success{job=~\"mcp-blackbox-(external|oidc|oauth-meta)\"} == 1) or vector(0)",
+          "instant": true, "legendFormat": "external", "range": false, "refId": "A"
+        }
+      ],
+      "title": "External edges OK",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "LAN-side TCP probes to each MCP backend. When this is green but External is red, the EC2 nginx or Tailscale subnet route is the broken hop.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "green",  "value": 5 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum(probe_success{job=\"mcp-blackbox-internal\"} == 1) or vector(0)",
+          "instant": true, "legendFormat": "internal", "range": false, "refId": "A"
+        }
+      ],
+      "title": "Internal backends OK",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Number of MCP-related Prometheus alerts currently firing (alerts/mcp.yml).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red",   "value": 1 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "count(ALERTS{alertname=~\"Mcp.*\", alertstate=\"firing\"}) or vector(0)",
+          "instant": true, "legendFormat": "firing", "range": false, "refId": "A"
+        }
+      ],
+      "title": "MCP alerts firing",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Per-server breakdown of the MCP-protocol prober's most recent cycle. 1 = phase ok, 0 = phase failed (later phases skipped).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "auto", "cellOptions": { "type": "color-background" }, "inspect": false },
+          "mappings": [
+            { "options": { "0": { "color": "red",   "index": 0, "text": "✗" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "index": 1, "text": "✓" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value #A" }, "properties": [ { "id": "displayName", "value": "auth" } ] },
+          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [ { "id": "displayName", "value": "sse_open" } ] },
+          { "matcher": { "id": "byName", "options": "Value #C" }, "properties": [ { "id": "displayName", "value": "initialize" } ] },
+          { "matcher": { "id": "byName", "options": "Value #D" }, "properties": [ { "id": "displayName", "value": "tools_list" } ] },
+          { "matcher": { "id": "byName", "options": "Value #E" }, "properties": [ { "id": "displayName", "value": "e2e" } ] }
+        ]
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 5 },
+      "id": 5,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_phase_success{phase=\"auth\"}",       "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_phase_success{phase=\"sse_open\"}",  "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_phase_success{phase=\"initialize\"}","format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "C" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_phase_success{phase=\"tools_list\"}","format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "D" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_e2e_success",                        "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "E" }
+      ],
+      "title": "MCP per-server protocol health",
+      "transformations": [
+        { "id": "joinByField", "options": { "byField": "server", "mode": "outer" } },
+        { "id": "organize", "options": { "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true, "phase 1": true, "phase 2": true, "phase 3": true, "phase 4": true, "__name__ 1": true, "__name__ 2": true, "__name__ 3": true, "__name__ 4": true, "__name__ 5": true, "instance 1": true, "instance 2": true, "instance 3": true, "instance 4": true, "instance 5": true, "job 1": true, "job 2": true, "job 3": true, "job 4": true, "job 5": true } } }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "HTTP edge probes (mcp.ohno.be) + LAN backends. Compare External row vs Internal row to localize a failure to the EC2/Tailscale path vs the backend.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "auto", "cellOptions": { "type": "color-background" }, "inspect": false },
+          "mappings": [
+            { "options": { "0": { "color": "red",   "index": 0, "text": "DOWN" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "index": 1, "text": "UP" } },   "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value #A" }, "properties": [ { "id": "displayName", "value": "Status" } ] },
+          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [ { "id": "displayName", "value": "HTTP code" }, { "id": "custom.cellOptions", "value": { "type": "auto" } } ] },
+          { "matcher": { "id": "byName", "options": "Value #C" }, "properties": [ { "id": "displayName", "value": "Duration (s)" }, { "id": "unit", "value": "s" }, { "id": "custom.cellOptions", "value": { "type": "auto" } } ] }
+        ]
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 5 },
+      "id": 6,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "probe_success{job=~\"mcp-blackbox-.*\"}",          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "probe_http_status_code{job=~\"mcp-blackbox-.*\"}", "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "probe_duration_seconds{job=~\"mcp-blackbox-.*\"}", "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "C" }
+      ],
+      "title": "Edge probes (external + internal)",
+      "transformations": [
+        { "id": "joinByField", "options": { "byField": "instance", "mode": "outer" } }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "MCP-protocol probe phase latency by server. Spikes indicate Hydra slow, MCP server slow, or network congestion. Persistent absence of a phase = that server failed earlier in the chain.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "",
+            "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear", "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 12 },
+      "id": 7,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "mcp_probe_phase_latency_seconds",
+          "legendFormat": "{{server}} / {{phase}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Probe latency by server x phase",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Currently firing MCP alerts with their labels. Empty rows = no alerts.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 21 },
+      "id": 8,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "ALERTS{alertname=~\"Mcp.*\"}",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "A"
+        }
+      ],
+      "title": "MCP alert state",
+      "type": "table"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["fleet", "mcp", "monitoring"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "MCP Fleet Health",
+  "uid": "mcp-fleet-health",
+  "version": 1,
+  "weekStart": ""
+}

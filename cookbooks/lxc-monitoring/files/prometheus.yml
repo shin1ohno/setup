@@ -19,6 +19,13 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Alert rules — loaded from a bind-mounted directory inside the prometheus
+# container (see docker-compose.yml `./alerts:/etc/prometheus/alerts:ro`).
+# Each file is a `groups: [...]` document. Currently:
+#   alerts/mcp.yml  — MCP fleet health (auth/initialize/e2e/edge unreachable)
+rule_files:
+  - /etc/prometheus/alerts/*.yml
+
 scrape_configs:
   - job_name: node-monitoring
     honor_labels: true
@@ -169,3 +176,95 @@ scrape_configs:
       # grafana service reaches "prometheus:9090".
       - target_label: __address__
         replacement: pve-exporter:9221
+
+  # MCP fleet health — external HTTP probes via blackbox_exporter.
+  # The targets are the user-facing mcp.ohno.be paths each MCP server
+  # exposes a healthcheck on. probe_success goes to 0 when the full
+  # path (DNS -> EC2 nginx -> Tailscale subnet route -> LXC backend)
+  # is broken — exactly the failure class that surfaced 2026-05-07
+  # when the autoApprovers CIDR mismatch silently dropped EC2->LAN
+  # traffic. The relabel pattern is the standard blackbox idiom:
+  # turn each `target` into a Prometheus `instance` label and
+  # rewrite the actual HTTP destination to the blackbox_exporter.
+  - job_name: mcp-blackbox-external
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://mcp.ohno.be/cognee/health
+          - https://mcp.ohno.be/memory/health
+        labels:
+          probe_class: edge
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  # Hydra OIDC discovery — separate job because the response body must
+  # contain the OIDC discovery JSON keys (`issuer`, `token_endpoint`).
+  # http_oidc_discovery module enforces the body regex.
+  - job_name: mcp-blackbox-oidc
+    metrics_path: /probe
+    params:
+      module: [http_oidc_discovery]
+    static_configs:
+      - targets:
+          - https://mcp.ohno.be/oauth2/.well-known/openid-configuration
+        labels:
+          probe_class: oidc
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  # Roon-MCP exposes /.well-known/oauth-protected-resource as the
+  # OAuth metadata endpoint. http_oauth_protected_resource module
+  # enforces the body regex.
+  - job_name: mcp-blackbox-oauth-meta
+    metrics_path: /probe
+    params:
+      module: [http_oauth_protected_resource]
+    static_configs:
+      - targets:
+          - https://mcp.ohno.be/roon/.well-known/oauth-protected-resource
+        labels:
+          probe_class: oauth-meta
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  # MCP fleet health — internal LAN probes. Catch backend-only outages
+  # (LXC docker-compose down) without involving the EC2 / Tailscale
+  # stack. When external is red and internal is green, the network
+  # path is broken; when both are red, the backend itself crashed.
+  - job_name: mcp-blackbox-internal
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets:
+          - 192.168.1.70:8767
+          - 192.168.1.72:8766
+          - 192.168.1.73:8080
+          - 192.168.1.74:8888
+          - 192.168.1.71:4444
+        labels:
+          probe_class: backend
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115

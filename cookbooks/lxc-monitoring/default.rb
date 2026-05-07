@@ -146,7 +146,7 @@ remote_file "#{deploy_dir}/grafana/provisioning/dashboards/dashboards.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
-%w[node-exporter-full.json auto-mitamae-fleet.json proxmox-via-prometheus.json].each do |dash|
+%w[node-exporter-full.json auto-mitamae-fleet.json proxmox-via-prometheus.json mcp-fleet-health.json].each do |dash|
   remote_file "#{deploy_dir}/grafana/dashboards/#{dash}" do
     source "files/grafana/dashboards/#{dash}"
     owner user
@@ -241,4 +241,178 @@ execute "restart monitoring" do
   # bootstrap). Restart with empty admin password would leave Grafana
   # unmanageable. Same guard as cookbooks/cognee.
   only_if "test -f #{env_output_path}"
+end
+
+# === MCP Fleet Health Monitoring ===
+#
+# Three layers of MCP observability stacked on the existing fleet stack:
+#
+#   1. blackbox_exporter (HTTP/TCP probes) — sibling docker-compose service
+#      defined in docker-compose.yml. Targets defined in prometheus.yml's
+#      `mcp-blackbox-{external,oidc,oauth-meta,internal}` jobs.
+#
+#   2. alerts/mcp.yml (Prometheus rules) — bind-mounted into the prometheus
+#      container at /etc/prometheus/alerts/. Loaded via rule_files in
+#      prometheus.yml.
+#
+#   3. mcp-probe.{service,timer} + /usr/local/bin/mcp-probe.py — system
+#      systemd timer that runs the MCP-protocol prober (OAuth ->
+#      initialize -> tools/list) once per minute. Output lands in the
+#      node_exporter textfile collector dir, picked up by the existing
+#      `node-monitoring` scrape job.
+#
+# All three are gated on the same SSM auth as the rest of the cookbook
+# (require_external_auth pattern). The MCP-protocol prober additionally
+# depends on the Hydra `monitoring-prober` client being registered first
+# (see cookbooks/hydra-server/default.rb); the env-fetch step skips
+# gracefully when SSM doesn't have the credentials yet, and the timer
+# enable step waits for /etc/mcp-probe/probe.env to exist.
+
+# Layer 1 + 2: bind-mounted configs.
+remote_file "#{deploy_dir}/blackbox.yml" do
+  source "files/blackbox.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
+directory "#{deploy_dir}/alerts" do
+  owner user
+  group group
+  mode "755"
+end
+
+remote_file "#{deploy_dir}/alerts/mcp.yml" do
+  source "files/alerts/mcp.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
+# Layer 3: MCP-protocol prober.
+
+mcp_probe_staging = "#{node[:setup][:root]}/lxc-monitoring/mcp-probe"
+directory mcp_probe_staging do
+  owner user
+  group group
+  mode "755"
+end
+
+remote_file "#{mcp_probe_staging}/probe.py" do
+  source "files/mcp-probe/probe.py"
+  owner user
+  group group
+  mode "0755"
+end
+
+remote_file "#{mcp_probe_staging}/fetch-secrets.sh" do
+  source "files/mcp-probe/fetch-secrets.sh"
+  owner user
+  group group
+  mode "0755"
+end
+
+%w[mcp-probe.service mcp-probe.timer].each do |unit|
+  remote_file "#{mcp_probe_staging}/#{unit}" do
+    source "files/systemd/#{unit}"
+    owner user
+    group group
+    mode "0644"
+  end
+end
+
+# Install the python script into a system PATH location.
+execute "install /usr/local/bin/mcp-probe.py" do
+  command "sudo install -m 755 -o root -g root " \
+          "#{mcp_probe_staging}/probe.py /usr/local/bin/mcp-probe.py"
+  not_if "diff -q #{mcp_probe_staging}/probe.py /usr/local/bin/mcp-probe.py 2>/dev/null"
+  notifies :run, "execute[restart mcp-probe.timer]"
+end
+
+# /etc/mcp-probe/ holds the EnvironmentFile consumed by mcp-probe.service.
+execute "ensure /etc/mcp-probe directory" do
+  command "sudo install -d -m 755 -o root -g root /etc/mcp-probe"
+  not_if "test -d /etc/mcp-probe"
+end
+
+# /var/lib/node_exporter/textfile_collector — node_exporter scrapes this.
+# The node-exporter cookbook already creates it on the monitoring LXC;
+# this is a defensive ensure-exists that's a no-op when present.
+execute "ensure node_exporter textfile collector directory" do
+  command "sudo install -d -m 755 -o root -g root " \
+          "/var/lib/node_exporter/textfile_collector"
+  not_if "test -d /var/lib/node_exporter/textfile_collector"
+end
+
+# Install systemd unit + timer.
+%w[mcp-probe.service mcp-probe.timer].each do |unit|
+  execute "install /etc/systemd/system/#{unit}" do
+    command "sudo install -m 644 -o root -g root " \
+            "#{mcp_probe_staging}/#{unit} /etc/systemd/system/#{unit}"
+    not_if "diff -q #{mcp_probe_staging}/#{unit} /etc/systemd/system/#{unit} 2>/dev/null"
+    notifies :run, "execute[mcp-probe systemctl daemon-reload]"
+  end
+end
+
+execute "mcp-probe systemctl daemon-reload" do
+  command "sudo systemctl daemon-reload"
+  action :nothing
+end
+
+# Generate /etc/mcp-probe/probe.env from SSM. Same compile-vs-converge
+# pattern as the .env block above (CLAUDE.md ruby.md "Mitamae evaluation
+# model — top-level Ruby is compile-time"): stage in setup_root/generated,
+# then install with `only_if test -f` so the converge-time presence check
+# matches the converge-time creation.
+probe_env_temp   = "#{generated_dir}/mcp-probe.env"
+probe_env_system = "/etc/mcp-probe/probe.env"
+probe_env_script = "#{mcp_probe_staging}/fetch-secrets.sh"
+
+require_external_auth(
+  tool_name: "AWS CLI for /monitoring/mcp-prober-{client-id,client-secret} SSM params",
+  check_command: "aws ssm get-parameter --name /monitoring/mcp-prober-client-id " \
+                 "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1",
+  instructions: "Run cookbooks/hydra-server first (on the Hydra LXC, CT 106) — " \
+                "it registers the monitoring-prober Hydra client and writes " \
+                "client-id/secret to SSM. Then this cookbook can fetch them.",
+  skip_if: -> { File.exist?(probe_env_system) },
+) do
+  execute "generate mcp-probe env" do
+    command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+            "bash #{probe_env_script} #{probe_env_temp}"
+    user user
+  end
+end
+
+# Install at converge time when the temp env was successfully generated.
+execute "install /etc/mcp-probe/probe.env" do
+  command "sudo install -m 600 -o root -g root #{probe_env_temp} #{probe_env_system}"
+  only_if "test -f #{probe_env_temp}"
+  notifies :run, "execute[restart mcp-probe.timer]"
+end
+
+execute "delete mcp-probe staging env" do
+  command "rm -f #{probe_env_temp}"
+  only_if "test -f #{probe_env_temp}"
+end
+
+# Enable the timer once the env file is in place. The unit's
+# EnvironmentFile= directive blocks startup if probe.env is absent,
+# so gating the enable on that file presence avoids start failures
+# on a fresh host where SSM auth hasn't been configured yet.
+execute "enable mcp-probe.timer" do
+  command "sudo systemctl enable --now mcp-probe.timer"
+  only_if "test -f #{probe_env_system}"
+  not_if "systemctl is-enabled --quiet mcp-probe.timer 2>/dev/null && " \
+         "systemctl is-active --quiet mcp-probe.timer 2>/dev/null"
+end
+
+execute "restart mcp-probe.timer" do
+  command "sudo systemctl restart mcp-probe.timer"
+  action :nothing
+  # Skip when systemd unit was not yet installed (e.g. fresh host where
+  # the install step is still pending or SSM-gated bootstrap is incomplete).
+  only_if "systemctl list-unit-files mcp-probe.timer 2>/dev/null | grep -q mcp-probe.timer"
 end
