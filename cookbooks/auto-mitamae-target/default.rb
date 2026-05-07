@@ -65,16 +65,23 @@ end
 # Sibling-of-node-exporter defensive directory: the orchestrator (Phase 2b)
 # writes textfile metrics here. Declared in both cookbooks so include order
 # (auto-mitamae-target before node-exporter, or vice-versa) doesn't matter.
-directory "/var/lib/node_exporter" do
-  owner "root"
-  group "root"
-  mode "0755"
+#
+# Use `execute "sudo install -d"` rather than `directory ... owner "root"`
+# because mitamae's mruby fork does NOT propagate the `:user` attribute
+# through `run_specinfra(:change_file_owner, ...)` to a `sudo -u <user>`
+# wrapping. On lxc-pro-dev mitamae runs as `shin1ohno`, so the bare
+# `chown root:root` issued by the directory resource fails with EPERM.
+# Mirrors the fix landed in cookbooks/node-exporter/default.rb (d1ac702).
+execute "create /var/lib/node_exporter as root" do
+  command "sudo install -d -m 0755 -o root -g root /var/lib/node_exporter"
+  not_if "test -d /var/lib/node_exporter && " \
+         "test \"$(stat -c '%U:%G:%a' /var/lib/node_exporter)\" = 'root:root:755'"
 end
 
-directory "/var/lib/node_exporter/textfile" do
-  owner "root"
-  group "root"
-  mode "0755"
+execute "create /var/lib/node_exporter/textfile as root" do
+  command "sudo install -d -m 0755 -o root -g root /var/lib/node_exporter/textfile"
+  not_if "test -d /var/lib/node_exporter/textfile && " \
+         "test \"$(stat -c '%U:%G:%a' /var/lib/node_exporter/textfile)\" = 'root:root:755'"
 end
 
 # AWS SSM access required to fetch orchestrator + break-glass pubkeys. Match
@@ -159,10 +166,14 @@ require_external_auth(
     root_ssh_dir = "/root/.ssh"
     authorized_keys_path = "#{root_ssh_dir}/authorized_keys"
 
-    directory root_ssh_dir do
-      owner "root"
-      group "root"
-      mode "0700"
+    # Use `execute "sudo install -d"` rather than `directory ... owner "root"`:
+    # mitamae's `:user` attribute does not propagate to a sudo wrapping for
+    # the implicit chown, so on workstation LXCs (lxc-pro-dev) where mitamae
+    # runs as a non-root user the directory resource fails with EPERM.
+    execute "create #{root_ssh_dir} as root" do
+      command "sudo install -d -m 0700 -o root -g root #{root_ssh_dir}"
+      not_if "test -d #{root_ssh_dir} && " \
+             "test \"$(stat -c '%U:%G:%a' #{root_ssh_dir})\" = 'root:root:700'"
     end
 
     # Idempotent append: grep -qF matches the FULL line (including the
@@ -170,28 +181,32 @@ require_external_auth(
     # entry to be re-appended. Stale entries are NOT pruned by this cookbook
     # — they need to be removed by hand, or via a future authorized_keys
     # full rewrite (e.g. integrated with cookbooks/ssh-keys, deferred).
+    #
+    # `sudo` is in the command rather than as a `user "root"` attribute: on
+    # mitamae's mruby fork the user attribute is not reliably wrapped with
+    # sudo for execute resources running on workstation (non-root) LXCs.
     execute "ensure root authorized_keys exists" do
-      command "touch #{authorized_keys_path} && chmod 0600 #{authorized_keys_path} && chown root:root #{authorized_keys_path}"
-      user "root"
+      command "sudo touch #{authorized_keys_path} && " \
+              "sudo chmod 0600 #{authorized_keys_path} && " \
+              "sudo chown root:root #{authorized_keys_path}"
       not_if "test -f #{authorized_keys_path}"
     end
 
     # Use shell-quoted heredoc to safely embed lines that contain quotes /
     # spaces. `printf '%s\n' "$line"` avoids any backslash interpretation.
+    # `sudo tee -a` rather than `>>` so the append happens as root.
     execute "append orchestrator forced-command authorized_keys entry" do
       command <<~SH.strip
         line=#{orchestrator_authkey_line.shellescape}
-        grep -qF "$line" #{authorized_keys_path} || printf '%s\n' "$line" >> #{authorized_keys_path}
+        sudo grep -qF "$line" #{authorized_keys_path} || printf '%s\n' "$line" | sudo tee -a #{authorized_keys_path} > /dev/null
       SH
-      user "root"
     end
 
     execute "append break-glass authorized_keys entry" do
       command <<~SH.strip
         line=#{break_glass_authkey_line.shellescape}
-        grep -qF "$line" #{authorized_keys_path} || printf '%s\n' "$line" >> #{authorized_keys_path}
+        sudo grep -qF "$line" #{authorized_keys_path} || printf '%s\n' "$line" | sudo tee -a #{authorized_keys_path} > /dev/null
       SH
-      user "root"
     end
   end
 end
