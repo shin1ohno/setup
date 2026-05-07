@@ -123,7 +123,7 @@ services:
   # (auth_enabled=false) — only the sibling Promtail and Grafana hit it
   # over the docker-compose default network.
   loki:
-    image: grafana/loki:2.9.10
+    image: grafana/loki:3.6.10
     container_name: monitoring-loki
     restart: unless-stopped
     command: -config.file=/etc/loki/loki-config.yaml
@@ -150,7 +150,7 @@ services:
   # service-name resolution `loki:3100` becomes `127.0.0.1:3100` (changed
   # in promtail-config.yaml).
   promtail:
-    image: grafana/promtail:2.9.10
+    image: grafana/promtail:3.6.10
     container_name: monitoring-promtail
     restart: unless-stopped
     command: -config.file=/etc/promtail/promtail-config.yaml
