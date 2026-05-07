@@ -81,13 +81,21 @@ end
 # other cookbooks running under root (auto-mitamae-orchestrator in Phase 2b,
 # auto-mitamae runner output in Phase 1 deprecation) can drop .prom files
 # without permission gymnastics.
+#
+# `user "root"` makes mitamae issue the underlying mkdir/chown via sudo, so
+# the cookbook works on workstation LXCs (e.g. lxc-pro-dev) where mitamae
+# runs as a non-root user. Without it, the implicit chown to root fails
+# with EPERM. Same pattern as cookbooks/lazygit (user attribute on
+# directory resource).
 directory "/var/lib/node_exporter" do
+  user "root"
   owner "root"
   group "root"
   mode "0755"
 end
 
 directory NODE_EXPORTER_TEXTFILE_DIR do
+  user "root"
   owner "root"
   group "root"
   mode "0755"
