@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# bin/bootstrap-lxc-creds — seed the pve-bootstrap-ssm AWS profile on a
+# fresh LXC by copying it from the PVE host's existing profile.
+#
+# Usage:
+#   bin/bootstrap-lxc-creds <CT_ID>
+#
+# Environment overrides:
+#   PVE_HOST     default 192.168.1.10
+#   AWS_PROFILE  default pve-bootstrap-ssm
+#   AWS_REGION   default ap-northeast-1
+#
+# Prerequisites:
+#   - SSH access to the PVE host as root
+#   - PVE host has the pve-bootstrap-ssm profile configured (~/.aws/credentials)
+#
+# Idempotent: re-running with the same CT_ID overwrites the file with the
+# same content, which is safe. Use this after provisioning a fresh LXC
+# (terraform / pct create) and before the first mitamae apply, so that
+# auto-mitamae-target's SSM-gated block can fetch the orchestrator and
+# break-glass public keys on the first run instead of the second.
+
+set -euo pipefail
+
+CT_ID="${1:?Usage: bootstrap-lxc-creds <CT_ID>}"
+PVE_HOST="${PVE_HOST:-192.168.1.10}"
+AWS_PROFILE="${AWS_PROFILE:-pve-bootstrap-ssm}"
+AWS_REGION="${AWS_REGION:-ap-northeast-1}"
+
+# Verify CT is running before any creds I/O
+status=$(ssh -n "root@${PVE_HOST}" "pct status ${CT_ID}" 2>&1)
+case "$status" in
+  *running*) ;;
+  *) echo "CT ${CT_ID} is not running on ${PVE_HOST}: ${status}" >&2; exit 1 ;;
+esac
+
+# Read source creds from PVE host's profile
+AKID=$(ssh -n "root@${PVE_HOST}" "aws configure get aws_access_key_id --profile ${AWS_PROFILE}")
+SAK=$(ssh -n "root@${PVE_HOST}" "aws configure get aws_secret_access_key --profile ${AWS_PROFILE}")
+if [[ -z "$AKID" || -z "$SAK" ]]; then
+  echo "PVE host ${PVE_HOST} is missing the ${AWS_PROFILE} profile" >&2
+  exit 1
+fi
+
+# Write the profile inside the target LXC (root home, 0600).
+# Using `pct exec` keeps the operation host-internal — no need to
+# distribute creds over SSH back to the LXC's own network address.
+ssh -n "root@${PVE_HOST}" "pct exec ${CT_ID} -- bash -lc \"
+  mkdir -p /root/.aws && chmod 700 /root/.aws
+  cat > /root/.aws/credentials <<EOF
+[${AWS_PROFILE}]
+aws_access_key_id = ${AKID}
+aws_secret_access_key = ${SAK}
+EOF
+  cat > /root/.aws/config <<EOF
+[profile ${AWS_PROFILE}]
+region = ${AWS_REGION}
+EOF
+  chmod 600 /root/.aws/credentials /root/.aws/config
+\""
+
+echo "OK: ${AWS_PROFILE} profile seeded on CT ${CT_ID}"
