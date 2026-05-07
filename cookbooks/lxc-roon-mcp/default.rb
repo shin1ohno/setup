@@ -36,7 +36,20 @@ ROON_MCP_CORE_PORT = 9330
 ROON_MCP_PUBLIC_HOST = "mcp.ohno.be"
 ROON_MCP_ISSUER = "https://mcp.ohno.be"
 ROON_MCP_AUDIENCE = "https://mcp.ohno.be/roon"
-ROON_MCP_JWKS_URL = "https://mcp.ohno.be/.well-known/jwks.json"
+
+# JWKS_URL points at the LOCAL Hydra public port (192.168.1.71:4444), not at
+# the public mcp.ohno.be hairpin. roon_mcp's JwksCache (auth.rs:24) refetches
+# every 300s, and reqwest going through the public path takes ~4.2s per fetch
+# — observed as a periodic 6-min-spaced 4.2s spike on the mcp_probe_phase_latency
+# `sse_open` metric, because the first bearer-validated request after TTL
+# expiry blocks on the JWKS fetch before serving the response. The hairpin
+# adds nothing (mcp.ohno.be/.well-known/jwks.json is just an nginx proxy_pass
+# to the same Hydra:4444 endpoint per scripts/mcp-proxy.conf.tftpl), so going
+# direct cuts the steady-state JWKS refetch cost from ~4.2s to <0.5s. Override
+# via node[:roon_mcp][:jwks_url] when running in a topology where Hydra isn't
+# reachable on the LAN at this address.
+ROON_MCP_JWKS_URL = node.dig(:roon_mcp, :jwks_url) ||
+                    "http://192.168.1.71:4444/.well-known/jwks.json"
 
 user = node[:setup][:user]
 home = node[:setup][:home]
