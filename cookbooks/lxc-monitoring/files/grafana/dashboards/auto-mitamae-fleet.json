@@ -1,6 +1,6 @@
 {
   "annotations": { "list": [] },
-  "description": "Phase 2b fleet dashboard: per-host apply status, drift commits, GitHub API health, commit pinning.",
+  "description": "Phase 2b fleet dashboard: per-host apply status, drift commits, GitHub API health, commit pinning. Bottom half is a card grid (one stat panel per host, repeated horizontally) — replaces the joinByField table.",
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -162,106 +162,151 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Per-host: last apply status + drift commits behind main + duration + last apply timestamp + applied SHA.",
+      "description": "One card per fleet host. Background colors by result (success=green / mitamae_fail=red / sha_mismatch=yellow / ssh_unreachable=purple / git_fail=orange). Within each card: result text, time since last apply, drift commits behind main, and pinned indicator (✓ if applied SHA == orchestrator's expected SHA, ✗ otherwise).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
-          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
           "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Value #A" },
+            "matcher": { "id": "byFrameRefID", "options": "A" },
             "properties": [
               { "id": "displayName", "value": "Status" },
-              { "id": "mappings", "value": [ { "options": { "1": { "color": "green", "index": 0, "text": "✓" } }, "type": "value" } ] },
-              { "id": "custom.cellOptions", "value": { "type": "color-text" } }
+              { "id": "mappings", "value": [
+                {
+                  "type": "value",
+                  "options": {
+                    "success":         { "color": "green",  "text": "✓ OK",        "index": 0 },
+                    "mitamae_fail":    { "color": "red",    "text": "❌ FAIL",     "index": 1 },
+                    "sha_mismatch":    { "color": "yellow", "text": "⚠ MISMATCH",  "index": 2 },
+                    "ssh_unreachable": { "color": "purple", "text": "⊘ UNREACH",   "index": 3 },
+                    "git_fail":        { "color": "orange", "text": "⊘ GIT FAIL",  "index": 4 }
+                  }
+                }
+              ]}
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Value #B" },
+            "matcher": { "id": "byFrameRefID", "options": "B" },
             "properties": [
-              { "id": "displayName", "value": "Drift (commits)" }
+              { "id": "displayName", "value": "Applied" },
+              { "id": "unit", "value": "s" },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                { "color": "green",  "value": null },
+                { "color": "yellow", "value": 7200 },
+                { "color": "red",    "value": 86400 }
+              ]}}
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Value #C" },
+            "matcher": { "id": "byFrameRefID", "options": "C" },
             "properties": [
-              { "id": "displayName", "value": "Duration (s)" },
-              { "id": "unit", "value": "s" }
+              { "id": "displayName", "value": "Drift" },
+              { "id": "unit", "value": "none" },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                { "color": "green",  "value": null },
+                { "color": "yellow", "value": 1 },
+                { "color": "red",    "value": 5 }
+              ]}}
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Value #D" },
+            "matcher": { "id": "byFrameRefID", "options": "D" },
             "properties": [
-              { "id": "displayName", "value": "Last apply (UTC)" },
-              { "id": "unit", "value": "dateTimeAsIso" },
-              { "id": "custom.cellOptions", "value": { "type": "auto" } },
-              { "id": "custom.transformValue", "value": "value*1000" }
+              { "id": "displayName", "value": "Pinned" },
+              { "id": "mappings", "value": [
+                {
+                  "type": "value",
+                  "options": {
+                    "1": { "color": "green", "text": "✓", "index": 0 },
+                    "0": { "color": "red",   "text": "✗", "index": 1 }
+                  }
+                }
+              ]}
             ]
           }
         ]
       },
-      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 5 },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 5 },
       "id": 5,
+      "maxPerRow": 4,
       "options": {
-        "cellHeight": "sm",
-        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
-        "showHeader": true
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "vertical",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
       },
       "pluginVersion": "11.6.14",
+      "repeat": "host",
+      "repeatDirection": "h",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "auto_mitamae_last_apply_status == 1",
-          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "A"
+          "expr": "auto_mitamae_last_apply_status{host=\"$host\"}",
+          "format": "table",
+          "instant": true, "legendFormat": "__auto", "range": false, "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "auto_mitamae_last_apply_drift_commits",
-          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "B"
+          "expr": "time() - auto_mitamae_last_apply_timestamp_seconds{host=\"$host\"}",
+          "instant": true, "legendFormat": "__auto", "range": false, "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "auto_mitamae_last_apply_duration_seconds",
-          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "C"
+          "expr": "auto_mitamae_last_apply_drift_commits{host=\"$host\"}",
+          "instant": true, "legendFormat": "__auto", "range": false, "refId": "C"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "auto_mitamae_last_apply_timestamp_seconds * 1000",
-          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "D"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "auto_mitamae_last_apply_sha_info",
-          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "E"
+          "expr": "clamp_max(sum by (host) (auto_mitamae_last_apply_sha_info{host=\"$host\"} * on(sha) group_left() label_replace(auto_mitamae_orchestrator_expected_sha_info, \"sha\", \"$1\", \"commit\", \"(.+)\")), 1) or on() (sum(auto_mitamae_last_apply_sha_info{host=\"$host\"}) * 0)",
+          "instant": true, "legendFormat": "__auto", "range": false, "refId": "D"
         }
       ],
-      "title": "Per-host fleet status",
-      "transformations": [
-        {
-          "id": "joinByField",
-          "options": { "byField": "host", "mode": "outer" }
-        }
-      ],
-      "type": "table"
+      "title": "${host}",
+      "type": "stat"
     }
   ],
   "refresh": "30s",
   "schemaVersion": 41,
   "tags": ["fleet", "auto-mitamae"],
-  "templating": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(auto_mitamae_last_apply_status, host)",
+        "hide": 2,
+        "includeAll": true,
+        "label": "Host",
+        "multi": true,
+        "name": "host",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "refId": "PrometheusVariableQueryEditor-VariableQuery",
+          "query": "label_values(auto_mitamae_last_apply_status, host)"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "",
   "title": "Auto-mitamae Fleet",
   "uid": "auto-mitamae-fleet",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
