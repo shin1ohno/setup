@@ -618,3 +618,52 @@ jobs:
         test "$local_region" = "$ssm_region"
 
         echo "✓ aws-config.json matches SSM payload"
+
+    # =============================================================================
+    # Phase B-4: /host-registry/outputs/* validation
+    # =============================================================================
+    # The outputs SSM tree is consumed by lxc-pro-router (PR #204) and
+    # lxc-dev-workstation (PR #205) cookbooks. Validate existence + JSON
+    # shape so a publish-side regression breaks CI here, not on first
+    # converge across the LXC fleet.
+    - name: Fetch /host-registry/outputs/* from SSM
+      run: |
+        for name in tailscale-tags ssm-paths iam-arns; do
+          aws ssm get-parameter \
+            --name "/host-registry/outputs/${name}" \
+            --query 'Parameter.Value' \
+            --output text > "/tmp/outputs-${name}.json"
+          echo "Fetched $(wc -c < /tmp/outputs-${name}.json) bytes from /host-registry/outputs/${name}"
+        done
+
+    - name: Validate /host-registry/outputs/* JSON shape
+      run: |
+        # JSON syntax for all three outputs.
+        for name in tailscale-tags ssm-paths iam-arns; do
+          jq empty "/tmp/outputs-${name}.json"
+        done
+
+        # tailscale-tags: object<device-key, array<string>>
+        # Empty object is valid (no per-device tags), but if a key exists
+        # its value must be a non-empty array of lowercase tag names.
+        jq -e 'type == "object"' /tmp/outputs-tailscale-tags.json > /dev/null
+        jq -e '
+          to_entries | all(
+            (.key | test("^[a-z][a-z0-9-]*$"))
+            and (.value | type == "array")
+            and (.value | length > 0)
+            and (.value | all(type == "string" and test("^[a-z][a-z0-9-]*$")))
+          )
+        ' /tmp/outputs-tailscale-tags.json > /dev/null
+        echo "✓ /host-registry/outputs/tailscale-tags shape OK"
+
+        # ssm-paths: object with at least tailscale_auth_key_template,
+        # which MUST contain the {hostname} placeholder (consumer
+        # cookbooks substitute it at converge time).
+        jq -e '.tailscale_auth_key_template | type == "string" and test("\\{hostname\\}")' /tmp/outputs-ssm-paths.json > /dev/null
+        jq -e '.tailscale_auth_key_template | startswith("/tailscale/")' /tmp/outputs-ssm-paths.json > /dev/null
+        echo "✓ /host-registry/outputs/ssm-paths shape OK"
+
+        # iam-arns: pve_bootstrap_ssm_user must be a valid IAM user ARN.
+        jq -e '.pve_bootstrap_ssm_user | type == "string" and test("^arn:aws:iam::[0-9]+:user/")' /tmp/outputs-iam-arns.json > /dev/null
+        echo "✓ /host-registry/outputs/iam-arns shape OK"
