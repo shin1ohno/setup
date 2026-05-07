@@ -450,3 +450,107 @@ The only way to diagnose without this rule is to manually inspect `GET /api/data
 After fixing the provisioning yaml, **`docker compose restart grafana`** is required (or full container recreate) — Grafana reloads provisioned datasources on container start, not on file watch.
 
 This rule exists because the 2026-05-06 Phase 2b verify session shipped a Grafana auto-mitamae-fleet dashboard with `"uid": "prometheus"` refs but the provisioning yaml omitted the explicit `uid:` field. Every panel showed "No data" until PR #156 pinned `uid: prometheus` in the provisioning yaml and a `docker restart monitoring-grafana` reloaded the datasource.
+
+## `pct exec` from `ssh root@<pve-host>` is non-TTY — `STDIN.tty?` returns false
+
+`ssh root@<pve-host> 'pct exec <vmid> -- bash -lc "..."'` does NOT propagate a TTY into the LXC. `STDIN.tty?` inside the inner bash returns `false`, even though the outer ssh session might have one. Plans that assume `pct exec` "is" TTY-equivalent (and therefore that `cookbooks/functions/default.rb` `require_external_auth` will use its TTY-prompted retry path) are wrong.
+
+Concrete impact on `require_external_auth`-gated cookbooks:
+- TTY context: `check_command` fails → 5-prompt retry loop → operator unblocks → block runs
+- Non-TTY context (which `pct exec` over ssh IS): `check_command` fails → log warn → **block silently skipped** → mitamae continues with the auth-gated work undone
+
+Symptom: cookbook reports apply success but follow-up verify shows the SSM-fetched resource (e.g. `/root/.ssh/authorized_keys` forced-command entry) is missing. Logs contain `[bootstrap] AWS SSM access (profile=<X>, region=<Y>) not configured AND STDIN is not a TTY — skipping auth-gated block.` — easily missed if you only tail the last 10 lines.
+
+**Fix shape — apply once with auth seeded externally**:
+
+For LXC-fleet cookbooks under the auto-mitamae pattern, seed the AWS profile (or whatever credential `require_external_auth` checks) BEFORE the first `mitamae local`. The two reliable channels:
+
+1. **Operator script**: `bin/bootstrap-lxc-creds <CT>` (setup repo, 2026-05-07 onwards) — copies the profile from the PVE host into the fresh LXC via `pct exec` writes
+2. **Env vars on first apply**: `AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... ./bin/mitamae local pve/lxc-X.rb`
+
+Then orchestrator-driven subsequent applies have the auth in place and the gated block runs every cycle.
+
+**Forcing TTY via `ssh -tt + pct exec` does NOT work** in our setup (tested 2026-05-06): `pct exec` strips the pty even when ssh allocates one. Don't try to engineer around the non-TTY status.
+
+**Detection**:
+
+```
+git grep -nE 'pct exec.*--.*bash -lc' cookbooks/ pve/ docs/  # plans that assume TTY
+```
+
+Any plan / doc that talks about `pct exec` as "TTY apply" is suspect — replace the assumption with the seed-auth-then-apply pattern above.
+
+This rule exists because the 2026-05-06 Phase 3a session walked into this assumption: 6 fleet hosts each needed a manual `aws configure set` step BEFORE mitamae apply, and the original plan's `pct exec` "TTY apply" framing didn't surface the prerequisite. Phase 3b/3c re-discovered it; Phase 3c started with an explicit AWS profile probe step (Stage 0) on every new host as a result.
+
+## Privileged PVE LXC — systemd unit hardening directives fail with `status=226/NAMESPACE`
+
+Inside a *privileged* PVE LXC (no `unprivileged: 1`), systemd's namespace-related unit directives fail at `ExecStart` with `Result: exit-code (status=226/NAMESPACE)`. Specifically these directives, all of which trigger systemd's mount-namespace setup:
+
+- `ProtectSystem=strict` (or `=full`)
+- `ProtectHome=yes`
+- `PrivateTmp=yes`
+- `NoNewPrivileges=yes`
+
+Result: `Active: activating (auto-restart) (Result: exit-code)` in a tight 5-sec restart loop, no `Listening on …` log line, the daemon's port never opens. Direct invocation of the same binary from a shell on the same LXC works fine — the failure is purely in systemd's namespace setup colliding with the LXC's cgroup/namespace boundary.
+
+**Drop-in overrides setting these to `=no` did NOT take effect** in our 2026-05-06 testing — `systemctl show` reported the new effective value, but the unit kept failing with the same `status=226/NAMESPACE`. The unit had to ship without the directives in the first place; `=no` overrides via drop-in were not sufficient.
+
+**Detection**:
+
+```
+systemctl status <unit> --no-pager | grep -E 'status=226|NAMESPACE|activating'
+pct config <vmid> | grep -E '^unprivileged:'   # absent → privileged LXC
+```
+
+If the LXC is privileged (no `unprivileged:` line) AND the unit status is `activating (auto-restart)` with `status=226/NAMESPACE`, the hardening is the cause.
+
+**Fix shape**: ship the unit without `ProtectSystem` / `ProtectHome` / `PrivateTmp` / `NoNewPrivileges`. The defense-in-depth value is small for a LAN-internal port, and the operational cost of supporting both privileged and unprivileged LXCs in the fleet outweighs it. See setup PR #164 (`cookbooks/node-exporter/files/node-exporter.service`) for the canonical example.
+
+**When designing new fleet cookbooks that ship systemd units**: assume any LXC in the fleet might be privileged (today only CT 100 roon is, but the rule is "support both"). Skip the namespace-related hardening directives in the cookbook-managed unit; if defense-in-depth is needed for a specific deployment, add a drop-in (which, as noted, may not actually take effect on privileged LXCs — accept the limitation).
+
+This rule exists because setup PR #164 (2026-05-06) was required after Phase 3b apply on CT 100 left node-exporter cycling in `activating` state. CT 100 (roon) is the only privileged LXC in the home fleet (it predates the unprivileged-default convention). The hardening directives shipped fine on every other LXC; only privileged tripped over them.
+
+## IAM principal that cannot self-rotate — design `bootstrap_profile` chain accordingly
+
+A common security posture for fleet-deployed IAM principals (e.g., `pve-bootstrap-ssm` in home-monitor) is **least-privilege at runtime + cannot read its own credential SSM parameters**. This intentional asymmetry blocks credential-leak escalation: even with the leaked key, the attacker cannot read future rotated keys from SSM.
+
+The asymmetry that misleads cookbook auth probes:
+- `aws sts get-caller-identity --profile <P>` returns the principal's ARN (works for any valid IAM user, no specific permission needed)
+- `aws ssm get-parameter --name <P's own credential path> --profile <P>` returns `AccessDeniedException`
+
+A cookbook that uses `<P>` as `bootstrap_profile` and probes auth via `aws sts get-caller-identity` will **falsely conclude the profile is valid**, then fail at execute time when actually reading SSM. mitamae aborts.
+
+**Design rule for any cookbook that distributes/rotates AWS credentials**:
+
+1. Identify the IAM principal the cookbook will run under at fleet steady state
+2. Check the home-monitor IAM policy: does that principal have `ssm:GetParameter` on the SSM paths the cookbook would read? Usually NO for the principal's own credential paths — deliberately
+3. If NO, the cookbook **cannot self-rotate** under this principal. The bootstrap channel must be EXTERNAL:
+   - Operator-supplied env vars (`AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY`) on first apply, OR
+   - Pre-seeding from a parent host via a `bin/bootstrap-*` script (e.g. `bin/bootstrap-lxc-creds`), OR
+   - A separate higher-privilege `bootstrap_profile` that IS allowed SSM read (admin profile, used out-of-band)
+4. The cookbook should NOT treat the runtime profile as also being its own rotation source
+
+**Auth probe must match the actual planned API call**:
+
+```ruby
+# WRONG: passes for any IAM user, doesn't reflect SSM access
+auth_probe_cmd = "aws sts get-caller-identity --profile #{bootstrap} > /dev/null 2>&1"
+
+# RIGHT: dry-run the actual SSM read on a representative path
+first_spec = profiles.values.first
+probe_path = first_spec[:access_key_id_ssm]
+auth_probe_cmd = "aws ssm get-parameter --name '#{probe_path}' --output text" \
+                 " --profile '#{bootstrap}' --region '#{region}' > /dev/null 2>&1"
+```
+
+This is the rule generalization of "Auth-check gate must match the cookbook's actual invocation profile" (see `cookbooks/ruby.md`) applied to `bootstrap_profile` probes specifically.
+
+**Detection grep** when reviewing fleet cookbooks:
+
+```
+git grep -nE 'bootstrap_profile.*pve-bootstrap-ssm|aws sts get-caller-identity.*profile' cookbooks/
+```
+
+Any fleet-host cookbook using its OWN runtime IAM identity as `bootstrap_profile` is a candidate to verify against the home-monitor IAM policy.
+
+This rule exists because setup PR #166 (2026-05-07, aws-credentials systematic-化) included `aws-credentials` in `auto-mitamae-target` with `bootstrap_profile=pve-bootstrap-ssm`. The cookbook's `aws sts get-caller-identity` probe passed; the actual `aws ssm get-parameter` then failed with `AccessDeniedException` on `/home-monitor/iam/pve-bootstrap-ssm/access-key-id`. Recovery required revert PR #167 + manual re-apply on CT 111. The IAM policy denial is intentional — `pve-bootstrap-ssm` cannot read its own credential paths to prevent self-rotation as a privilege-escalation surface. The cookbook now uses the external `bin/bootstrap-lxc-creds` script as the systematic-化 channel instead.
