@@ -33,7 +33,11 @@ server:
   log_level: info
 
 clients:
-  - url: http://loki:3100/loki/api/v1/push
+  # Loki host-side: 127.0.0.1:3100 because Promtail runs in network_mode:
+  # host (see docker-compose.yml `promtail:` comment) and Loki binds
+  # 127.0.0.1:3100. Docker service-name resolution (`loki:3100`) is
+  # unavailable from host net.
+  - url: http://127.0.0.1:3100/loki/api/v1/push
 
 positions:
   filename: /tmp/positions/promtail-positions.yaml
@@ -72,6 +76,14 @@ scrape_configs:
         regex: '192\.168\.1\.254'
         target_label: router
         replacement: 'itm'
+      # Fallback: derive router from RTX-supplied syslog hostname when the
+      # connection-IP relabel didn't match. Catches packets that arrive
+      # via a NAT'd path or have unexpected source IPs but carry a
+      # canonical RTX hostname (e.g. "hnd-rtx1210", "itm-rtx830").
+      - source_labels: ['__syslog_message_hostname']
+        regex: '(hnd|itm)-rtx\d+'
+        target_label: router
+        replacement: '${1}'
       - source_labels: ['router']
         regex: '^$'
         action: drop
