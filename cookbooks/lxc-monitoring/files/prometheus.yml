@@ -1,11 +1,11 @@
 # Prometheus config for the home-LAN monitoring fleet.
 #
-# Phase 3a scrape targets: monitoring (self) + weave + 5 service LXC
-# (hydra, consent, cognee, memory, roon-mcp) + bare-metal PVE host + PVE
-# API exporter. Phase 3b/3c will expand to roon, samba, housekeeping,
-# pro-dev, pro-router. Job names align with `host` label conventions used
-# by auto-mitamae-orchestrator (Phase 2b) textfile metrics so PromQL
-# queries can join across `host`.
+# Phase 3b scrape targets: monitoring (self) + weave + Phase 3a 5 service
+# LXC (hydra, consent, cognee, memory, roon-mcp) + Phase 3b 4 hosts
+# (roon, samba, housekeeping, pro-dev) + bare-metal PVE host + PVE API
+# exporter. Phase 3c will add pro-router. Job names align with `host`
+# label conventions used by auto-mitamae-orchestrator (Phase 2b) textfile
+# metrics so PromQL queries can join across `host`.
 #
 # honor_labels: true — preserve `host` (and any other) labels emitted by
 # the orchestrator/drift-checker textfile metrics instead of letting
@@ -78,6 +78,41 @@ scrape_configs:
           - "192.168.1.73:9100"
         labels:
           host: roon-mcp
+
+  # Phase 3b: Roon Server (CT 100), Samba (CT 101), housekeeping
+  # personal-sync timers (CT 103), and the pro-dev SSH workspace (CT 104).
+  # All apply-independent; no inter-host ordering at apply time.
+  - job_name: node-roon
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.20:9100"
+        labels:
+          host: roon
+
+  - job_name: node-samba
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.62:9100"
+        labels:
+          host: samba
+
+  - job_name: node-housekeeping
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.63:9100"
+        labels:
+          host: housekeeping
+
+  - job_name: node-pro-dev
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.64:9100"
+        labels:
+          host: pro-dev
 
   # Bare-metal PVE host (`pro` = 192.168.1.10) OS-level metrics.
   # node_exporter installed via cookbooks/node-exporter, included from
