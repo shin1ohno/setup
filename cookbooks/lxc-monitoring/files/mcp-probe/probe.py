@@ -32,16 +32,44 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+# Force IPv4 lookups. The PVE LXC's /etc/resolv.conf points at
+# 192.168.1.253 (RTX router) which doesn't answer AAAA queries — leaving
+# c-ares / glibc's parallel A+AAAA lookup hung for 8s+ before giving up.
+# The synchronous getaddrinfo path used by urllib never sees a timeout
+# and silently bricks the prober. Forcing AF_INET is the same workaround
+# `curl -4` applies and matches what node_exporter / blackbox_exporter do
+# at the Go level. The textfile collector path stays AF_UNSPEC fine
+# because that's pure local IO.
+_orig_getaddrinfo = socket.getaddrinfo
+
+def _ipv4_only_getaddrinfo(host, port, family=0, *args, **kwargs):
+    return _orig_getaddrinfo(host, port, socket.AF_INET, *args, **kwargs)
+
+socket.getaddrinfo = _ipv4_only_getaddrinfo
+
 # Servers to probe. Each tuple: (logical name, audience claim, sse path).
 # Audience is what the OAuth token's `aud` claim must include for the
 # server's JWT validator to accept it.
+#
+# SSE path notes (verified 2026-05-07):
+#   - cognee     → /cognee/sse (auth-proxy strips /cognee/ → backend /sse)
+#   - roon-mcp   → /roon/sse (auth-proxy strips /roon/ → backend /sse)
+#   - memory     → /memory/mcp/<client>/sse/<user> (openmemory upstream
+#                  uses path params for client+user identification;
+#                  auth-proxy preserves the path verbatim minus /memory/)
+# The actual messages URL is read out of the SSE `endpoint` event's data
+# line (NOT derived from sse_path) — each server emits the canonical
+# messages path it expects, including any auth-proxy prefix rewrite.
 SERVERS = [
-    ("cognee", "cognee", "/cognee/sse"),
-    ("memory", "memory", "/memory/sse"),
+    ("cognee",   "cognee",   "/cognee/sse"),
+    ("memory",   "memory",   "/memory/mcp/monitoring-prober/sse/monitoring"),
     ("roon-mcp", "roon-mcp", "/roon/sse"),
 ]
 
-TIMEOUT = float(os.environ.get("PROBE_TIMEOUT_S", "8"))
+# Default 15s — SSE endpoint event has been observed to arrive 4-12s
+# after connect on cognee + roon-mcp. The auth + JSON-RPC phases are
+# typically <500ms each.
+TIMEOUT = float(os.environ.get("PROBE_TIMEOUT_S", "15"))
 
 
 def now() -> float:
@@ -91,10 +119,15 @@ def get_token(token_url: str, client_id: str, client_secret: str, audience: str)
 
 
 def open_sse(base_url: str, sse_path: str, token: str):
-    """Open SSE stream, read until we see the session_id from the 'endpoint' event.
+    """Open SSE stream and read until we see the `endpoint` event.
 
-    Returns (session_id, sse_socket_file, latency_seconds, error).
-    Caller is responsible for closing the socket file when done with the SSE stream.
+    Returns (session_id, messages_path, sse_handle, latency_seconds, error).
+    `messages_path` is the path portion of the data URL — used directly by
+    the caller to POST JSON-RPC messages. Don't derive it from sse_path:
+    each server's auth-proxy emits its own canonical messages URL
+    (e.g. memory's auth-proxy preserves /memory/mcp/messages/ but cognee's
+    emits /cognee/messages/), and reverse-engineering this from sse_path
+    breaks for any non-standard server layout.
     """
     t0 = now()
     url = base_url.rstrip("/") + sse_path
@@ -103,63 +136,71 @@ def open_sse(base_url: str, sse_path: str, token: str):
     req.add_header("Accept", "text/event-stream")
     try:
         ctx = ssl.create_default_context() if url.startswith("https://") else None
-        # Use a longer timeout for the initial connect, but read() with our own timeout.
         resp = urllib.request.urlopen(req, timeout=TIMEOUT, context=ctx)
     except Exception as e:
-        return None, None, now() - t0, f"sse_open_exception: {e}"
+        return None, None, None, now() - t0, f"sse_open_exception: {e}"
     if resp.status != 200:
         body = resp.read()[:200]
-        return None, None, now() - t0, f"sse_http_{resp.status}: {body.decode(errors='replace')}"
+        return None, None, None, now() - t0, f"sse_http_{resp.status}: {body.decode(errors='replace')}"
 
-    # Read up to ~2KB or until we have parsed an `endpoint` event with session_id.
-    fp = resp.fp if hasattr(resp, "fp") else resp
-    buf = b""
+    # Read SSE line-by-line via readline() — terminates immediately when
+    # a newline arrives, instead of blocking until N bytes accumulate.
+    # The MCP `endpoint` event fits in the first ~80 bytes of the stream;
+    # without readline the read(256) blocked for the full socket timeout
+    # waiting for additional data that never came (servers send sparse
+    # SSE).
     deadline = now() + TIMEOUT
     session_id = None
-    while now() < deadline and len(buf) < 4096:
+    messages_path = None
+    head_buf: list[bytes] = []
+    fp = resp.fp if hasattr(resp, "fp") else resp
+    while now() < deadline:
         try:
-            chunk = resp.read(256)
+            line = fp.readline(512)
         except (TimeoutError, socket.timeout):
             break
-        if not chunk:
+        if not line:
             break
-        buf += chunk
-        # The MCP SSE convention: first event is `event: endpoint\ndata: <messages-url>?session_id=<sid>\n\n`
-        for line in buf.splitlines():
-            if line.startswith(b"data: ") and b"session_id=" in line:
-                payload = line[len(b"data: "):].decode(errors="replace")
-                qs = payload.split("?", 1)[-1]
-                for kv in qs.split("&"):
-                    if kv.startswith("session_id="):
-                        session_id = kv.split("=", 1)[1].strip()
-                        break
-                if session_id:
+        head_buf.append(line)
+        if line.startswith(b"data: ") and b"session_id=" in line:
+            payload = line[len(b"data: "):].decode(errors="replace").strip()
+            if "?" in payload:
+                path_part, qs = payload.split("?", 1)
+            else:
+                path_part, qs = payload, ""
+            messages_path = path_part
+            for kv in qs.split("&"):
+                if kv.startswith("session_id="):
+                    session_id = kv.split("=", 1)[1].strip()
                     break
-        if session_id:
-            break
+            if session_id:
+                break
 
     if not session_id:
         try:
             resp.close()
         except Exception:
             pass
-        return None, None, now() - t0, f"no_session_id: head={buf[:200].decode(errors='replace')}"
+        head = b"".join(head_buf)[:300]
+        return None, None, None, now() - t0, f"no_session_id: head={head.decode(errors='replace')}"
 
-    return session_id, resp, now() - t0, None
+    return session_id, messages_path, resp, now() - t0, None
 
 
-def post_jsonrpc(base_url: str, server_path: str, session_id: str, token: str, payload: dict):
-    """POST a JSON-RPC message to /<server>/messages/?session_id=<sid>.
+def post_jsonrpc(base_url: str, messages_path: str, session_id: str, token: str, payload: dict):
+    """POST a JSON-RPC message to the server's canonical messages URL.
 
-    Servers using the MCP SSE-streamable transport accept the request and
-    answer 202 Accepted; the actual response is delivered back through the
-    SSE channel. For a probe, 202 is success — we don't read the response
+    `messages_path` comes verbatim from the SSE `endpoint` event's data
+    line (path portion only; query is reconstructed here). Servers using
+    the MCP SSE-streamable transport accept the request and answer 202
+    Accepted; the actual response is delivered back through the SSE
+    channel. For a probe, 202 is success — we don't read the response
     payload for `initialize`/`tools/list` (would require concurrent SSE
     consumption).
     Returns (status_code, latency, error).
     """
     t0 = now()
-    url = f"{base_url.rstrip('/')}/{server_path.strip('/').rsplit('/', 1)[0]}/messages/?session_id={session_id}"
+    url = f"{base_url.rstrip('/')}{messages_path}?session_id={session_id}"
     body = json.dumps(payload).encode()
     headers = {
         "Authorization": f"Bearer {token}",
@@ -218,7 +259,7 @@ def probe_one(server: tuple[str, str, str], token_url: str, client_id: str, clie
         return metrics
 
     # Phase 2: SSE open + session
-    sid, sse_handle, lat_sse, err = open_sse(base_url, sse_path, token)
+    sid, messages_path, sse_handle, lat_sse, err = open_sse(base_url, sse_path, token)
     sse_ok = 1 if sid else 0
     metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "sse_open"}, sse_ok))
     metrics.append(m("mcp_probe_phase_latency_seconds", {"server": name, "phase": "sse_open"}, f"{lat_sse:.4f}"))
@@ -238,7 +279,7 @@ def probe_one(server: tuple[str, str, str], token_url: str, client_id: str, clie
                 "clientInfo": {"name": "mcp-fleet-prober", "version": "0.1"},
             },
         }
-        status, lat_init, err = post_jsonrpc(base_url, sse_path, sid, token, init_payload)
+        status, lat_init, err = post_jsonrpc(base_url, messages_path, sid, token, init_payload)
         init_ok = 1 if status in (200, 202) else 0
         metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "initialize"}, init_ok))
         metrics.append(m("mcp_probe_phase_latency_seconds", {"server": name, "phase": "initialize"}, f"{lat_init:.4f}"))
@@ -248,7 +289,7 @@ def probe_one(server: tuple[str, str, str], token_url: str, client_id: str, clie
 
         # Phase 4: tools/list
         tools_payload = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
-        status, lat_tools, err = post_jsonrpc(base_url, sse_path, sid, token, tools_payload)
+        status, lat_tools, err = post_jsonrpc(base_url, messages_path, sid, token, tools_payload)
         tools_ok = 1 if status in (200, 202) else 0
         metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "tools_list"}, tools_ok))
         metrics.append(m("mcp_probe_phase_latency_seconds", {"server": name, "phase": "tools_list"}, f"{lat_tools:.4f}"))
