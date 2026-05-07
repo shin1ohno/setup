@@ -1,0 +1,5 @@
+{
+  "_comment": "Minimal config for bootstrapping AWS SSM access. The canonical host registry (devices map) lives in SSM at /host-registry/devices, managed by home-monitor Terraform. This file holds only the bootstrap pair (profile + region) that the ssh-keys cookbook needs to make its first SSM call.",
+  "aws_profile": "pve-bootstrap-ssm",
+  "aws_region": "ap-northeast-1"
+}

@@ -17,7 +17,7 @@ include_cookbook "awscli"
 # actual invocation profile" — `aws sts get-caller-identity` is a false gate
 # that passes against any default profile and lets the cookbook proceed even
 # when the principal it actually invokes lacks /cognee/* SSM access.
-ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "devices.json")))
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
 aws_profile = ssh_keys_config["aws_profile"]
 aws_region  = ssh_keys_config["aws_region"]
 

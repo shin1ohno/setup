@@ -2,70 +2,52 @@
 
 # SSH Key Management
 #
-# Fetches device SSH keys from AWS SSM Parameter Store and configures:
-# - Private key for the current device
-# - authorized_keys with public keys from all devices
-# - SSH config entries for peer devices
+# Fetches the canonical host registry from AWS SSM Parameter Store
+# (/host-registry/devices, managed by home-monitor Terraform), then:
+# - Places the current device's private key from /ssh-keys/devices/<key>/private
+# - Builds authorized_keys with public keys from all devices
+# - Generates SSH config entries for peer devices
 #
 # Prerequisites:
-#   - AWS CLI configured (require_external_auth gates this below)
+#   - AWS CLI on disk (awscli cookbook handles this)
+#   - AWS profile 'pve-bootstrap-ssm' configured (require_external_auth gates)
 #   - SSH keys provisioned in SSM (via home-monitor Terraform)
-#   - Hostname matching a device name in devices.json
+#   - Hostname matching a device key (or hostname_override) in
+#     /host-registry/devices
 
 # Ensure aws CLI is on disk before we try to fetch SSM. awscli cookbook
 # is idempotent — no-op on hosts that already have it.
 include_cookbook "awscli"
 
-# Load device configuration
-config_file = File.join(File.dirname(__FILE__), "files", "devices.json")
-config = JSON.parse(File.read(config_file))
-devices = config["devices"]
-aws_profile = config["aws_profile"]
-aws_region = config["aws_region"]
+# Bootstrap config: only the AWS profile + region the cookbook uses to
+# make its first SSM call. The canonical host registry (devices map)
+# lives in SSM at /host-registry/devices, not in this repo, so this
+# file contains nothing else.
+aws_config_file = File.join(File.dirname(__FILE__), "files", "aws-config.json")
+aws_config = JSON.parse(File.read(aws_config_file))
+aws_profile = aws_config["aws_profile"]
+aws_region = aws_config["aws_region"]
 
-# Identify current device by hostname-s. devices.json entries can override
-# matching with an explicit `hostname` field when the device's OS-level
-# hostname differs from its conceptual name — e.g. a Mac whose factory
-# serial-format short hostname (`XMHTM6QVQX`) is unrelated to the human
-# label (`air`) used in SSH config / authorized_keys comments.
-current_device_name = run_command("hostname -s").stdout.strip.downcase
-current_device = devices.find { |d| (d["hostname"] || d["name"]).downcase == current_device_name }
-
-unless current_device
-  MItamae.logger.info("ssh-keys: hostname '#{current_device_name}' not in devices.json, skipping")
-  return
-end
-
-# Skip client-only devices (e.g. ios)
-if current_device["client_only"]
-  MItamae.logger.info("ssh-keys: device '#{current_device_name}' is client-only, skipping")
-  return
-end
-
-# AWS auth + SSM access required to fetch keys. Pause here on a fresh
-# machine until both are in place. The check actually attempts the SSM
-# read on the current device's own private key — this verifies (a) the
-# named profile exists, (b) credentials are valid, (c) the region is
-# right, and (d) the IAM principal has ssm:GetParameter on the path.
-# `aws sts get-caller-identity` alone catches only (a) and (b).
-device_ssm_check = "aws ssm get-parameter --name #{current_device['ssm_prefix']}/private " \
-                   "--with-decryption --query Parameter.Value --output text " \
-                   "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1"
+# AWS auth + SSM access required to fetch the host registry. Pause here
+# on a fresh machine until both are in place. The check actually attempts
+# the SSM read on /host-registry/devices — this verifies (a) the named
+# profile exists, (b) credentials are valid, (c) the region is right,
+# and (d) the IAM principal has ssm:GetParameter on the path.
+host_registry_check = "aws ssm get-parameter --name /host-registry/devices " \
+                      "--query Parameter.Value --output text " \
+                      "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1"
 require_external_auth(
   tool_name: "AWS SSM access (profile=#{aws_profile}, region=#{aws_region})",
-  check_command: device_ssm_check,
+  check_command: host_registry_check,
   instructions: "Configure the '#{aws_profile}' profile with credentials that have " \
-                "ssm:GetParameter on /ssh-keys/devices/* in #{aws_region}. " \
-                "On a fresh machine: `aws configure --profile #{aws_profile}` and ensure " \
-                "the IAM user/role has the required SSM permissions. Then press Enter.",
+                "ssm:GetParameter on /host-registry/devices and /ssh-keys/devices/* " \
+                "in #{aws_region}. On a fresh machine: " \
+                "`aws configure --profile #{aws_profile}` (or run bin/bootstrap-lxc-creds " \
+                "from the PVE host for LXCs). Then press Enter.",
 )
 
-user = node[:setup][:user]
-group = node[:setup][:group]
-home = node[:setup][:home]
-ssh_dir = "#{home}/.ssh"
-
-# Helper: fetch a parameter from SSM
+# Helper: fetch a parameter from SSM. Defined here (after auth gate) so
+# the gate failure path can short-circuit before any SSM call below.
 fetch_ssm = ->(path) {
   result = run_command(
     "aws ssm get-parameter" \
@@ -85,6 +67,54 @@ fetch_ssm = ->(path) {
   end
 }
 
+# Fetch the canonical host registry. This is the single source of truth
+# for cross-repo device metadata since Phase A round-table 2026-05-07.
+# Source: home-monitor/contracts/devices.json (git-managed) → SSM
+# (Terraform-managed) → here.
+host_registry_json = fetch_ssm.call("/host-registry/devices")
+unless host_registry_json
+  MItamae.logger.warn(
+    "ssh-keys: failed to fetch /host-registry/devices from SSM despite " \
+    "passing require_external_auth. This is unexpected — check whether " \
+    "home-monitor terraform apply created aws_ssm_parameter.host_registry_devices."
+  )
+  return
+end
+
+config = JSON.parse(host_registry_json)
+devices = config["devices"]                 # Hash<key, device>
+
+# Identify current device by hostname-s. Registry entries can override
+# matching with an explicit `hostname_override` field when the device's
+# OS-level hostname differs from its conceptual key — e.g. a Mac whose
+# factory serial-format short hostname (`XMHTM6QVQX`) is unrelated to
+# the human label (`air`) used in SSH config / authorized_keys comments.
+current_device_name = run_command("hostname -s").stdout.strip.downcase
+current_device_key, current_device = devices.find do |k, d|
+  (d["hostname_override"] || k).downcase == current_device_name
+end
+
+unless current_device
+  MItamae.logger.warn(
+    "ssh-keys: hostname '#{current_device_name}' not in /host-registry/devices — " \
+    "no authorized_keys / private key written. Add this host to " \
+    "home-monitor/contracts/devices.json (with hostname_override if needed) " \
+    "and apply terraform if ssh-key distribution is intended."
+  )
+  return
+end
+
+# Skip client-only devices (e.g. ios)
+if current_device["client_only"]
+  MItamae.logger.info("ssh-keys: device '#{current_device_name}' is client-only, skipping")
+  return
+end
+
+user = node[:setup][:user]
+group = node[:setup][:group]
+home = node[:setup][:home]
+ssh_dir = "#{home}/.ssh"
+
 # Ensure ~/.ssh exists
 directory ssh_dir do
   owner user
@@ -94,9 +124,9 @@ end
 
 # --- Step 1: Fetch and place own private key ---
 
-private_key = fetch_ssm.call("#{current_device["ssm_prefix"]}/private")
+private_key = fetch_ssm.call("#{current_device['ssh']['ssm_prefix']}/private")
 if private_key
-  key_path = "#{ssh_dir}/#{current_device["key_file"]}"
+  key_path = "#{ssh_dir}/#{current_device['ssh']['key_file']}"
   private_key_content = private_key.end_with?("\n") ? private_key : "#{private_key}\n"
 
   file key_path do
@@ -119,23 +149,26 @@ MANAGED_END = "# END ssh-keys-managed"
 managed_keys = []
 managed_key_data = [] # [key_type, key_data] pairs for dedup
 seen_keys = {} # "<key_type> <key_data>" => index in managed_keys
-devices.each do |dev|
-  pub = fetch_ssm.call("#{dev["ssm_prefix"]}/public")
+devices.each do |k, dev|
+  ssm_prefix = dev.dig("ssh", "ssm_prefix")
+  next unless ssm_prefix # skip entries lacking SSH data
+
+  pub = fetch_ssm.call("#{ssm_prefix}/public")
   next unless pub
 
   pub_line = pub.strip
-  # Append device name as comment if not already present
+  # Append device key as comment if not already present
   parts = pub_line.split(/\s+/)
-  pub_line = "#{pub_line} #{dev["name"]}" if parts.length < 3
+  pub_line = "#{pub_line} #{k}" if parts.length < 3
 
   key_id = "#{parts[0]} #{parts[1]}"
   if seen_keys.key?(key_id)
-    # Merge the new device's name into the existing line's comment
-    # field so both names are recorded (e.g. "ssh-ed25519 AAAA... pro,pro-dev").
+    # Merge the new device's key into the existing line's comment field
+    # so both names are recorded (e.g. "ssh-ed25519 AAAA... pro,pro-dev").
     idx = seen_keys[key_id]
     existing = managed_keys[idx].split(/\s+/, 3)
     existing_comment = existing[2] || ""
-    new_comment = (existing_comment.split(",") + [dev["name"]]).uniq.join(",")
+    new_comment = (existing_comment.split(",") + [k]).uniq.join(",")
     managed_keys[idx] = "#{existing[0]} #{existing[1]} #{new_comment}"
     next
   end
@@ -236,16 +269,17 @@ directory "#{ssh_dir}/config.d" do
 end
 
 config_entries = []
-devices.each do |dev|
-  next if dev["name"] == current_device_name
+devices.each do |k, dev|
+  next if k == current_device_key
   next if dev["client_only"]
+  next unless dev["ssh"] && dev["ssh"]["user"]  # need a login user to render Host stanza
 
   # Match `<device>.<anything>` — covers FQDN / mDNS / Tailscale MagicDNS
   # forms (neo.local, neo.tailnet.ts.net, etc.) without requiring a
   # HostName redirect.
-  config_entries << "Host #{dev["name"]}.*"
-  config_entries << "    User #{dev["ssh_user"]}"
-  config_entries << "    IdentityFile #{ssh_dir}/#{current_device["key_file"]}"
+  config_entries << "Host #{k}.*"
+  config_entries << "    User #{dev['ssh']['user']}"
+  config_entries << "    IdentityFile #{ssh_dir}/#{current_device['ssh']['key_file']}"
   config_entries << "    IdentitiesOnly yes"
   config_entries << ""
 end
@@ -258,7 +292,7 @@ end
 config_entries << "Host github.com"
 config_entries << "    HostName github.com"
 config_entries << "    User git"
-config_entries << "    IdentityFile #{ssh_dir}/#{current_device["key_file"]}"
+config_entries << "    IdentityFile #{ssh_dir}/#{current_device['ssh']['key_file']}"
 config_entries << "    IdentitiesOnly yes"
 config_entries << ""
 

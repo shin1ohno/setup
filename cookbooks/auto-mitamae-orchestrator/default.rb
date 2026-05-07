@@ -24,7 +24,7 @@ include_cookbook "awscli"
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys (per
 # CLAUDE.md "Auth-check gate must match the cookbook's actual invocation
 # profile" rule).
-ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "devices.json")))
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
 aws_profile = ssh_keys_config["aws_profile"]
 aws_region  = ssh_keys_config["aws_region"]
 
