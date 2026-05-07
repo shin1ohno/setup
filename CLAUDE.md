@@ -15,7 +15,7 @@ This repository configures:
 | Bare-metal Linux workstation | `pro` | `linux.rb` (refuses to apply inside any container — guarded by `systemd-detect-virt -c`; bypass with `MITAMAE_FORCE_BARE_METAL=1`) |
 | Proxmox VE host | the host that runs the LXCs | `pve/pve-host.rb` |
 | Developer workstation LXC | `pro-dev` (CT 104), future `*-dev` | `pve/lxc-pro-dev.rb` (delegates to the `lxc-dev-workstation` cookbook; future LXCs reuse the cookbook with their own `node[:lxc_dev][:*]` overrides) |
-| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router` | matching `pve/lxc-<service>.rb` (apply all in parallel via `bin/apply-pve-lxcs`) |
+| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-monitoring`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router` | matching `pve/lxc-<service>.rb` (apply all in parallel via `bin/apply-pve-lxcs`) |
 | macOS | `air`, `ohnos-macbook` | `darwin.rb` |
 
 `linux.rb` is bare-metal-only. MCP servers (cognee, ai-memory, hydra, hydra-consent) and Roon Server / MCP have migrated to dedicated LXCs and are NOT installed on bare-metal pro.
@@ -74,6 +74,15 @@ This repository does NOT configure:
 ./bin/mitamae local darwin.rb --dry-run
 ```
 
+**Fleet Operations (PVE LXCs):**
+
+```bash
+./bin/apply-pve-lxcs              # Apply all pve/lxc-*.rb recipes in parallel
+./bin/bootstrap-lxc-creds <CT>    # Seed AWS profile into a fresh LXC before first mitamae apply
+```
+
+Auto-mitamae: `cookbooks/auto-mitamae-target` installs a systemd timer on each LXC; `cookbooks/auto-mitamae-orchestrator` drives periodic apply across the fleet.
+
 ## Development Patterns
 
 **Adding New Tools:**
@@ -111,7 +120,7 @@ This repository does NOT configure:
 ## Important Notes
 
 - Always test cookbook changes with `--dry-run` first
-- The project hook `.claude/hooks/guard-mitamae-dry-run.rb` blocks `mitamae` without `--dry-run` for Claude. Apply runs are user-only — present them as `! ./bin/mitamae local <platform>.rb` for the user to run
+- Project hooks in `.claude/hooks/`: `guard-mitamae-dry-run.rb` blocks `mitamae` without `--dry-run` for Claude (apply runs are user-only — present them as `! ./bin/mitamae local <platform>.rb`); `remind-cookbook-dry-run.rb` reminds Claude to run dry-run after cookbook edits
 - Use `run_command("command", error: false)` for status code checking
 - Profile scripts are loaded from `~/.setup_shin1ohno/profile.d/` with priority ordering
 - Linux includes hardware-coupled cookbooks directly in `linux.rb` (bluez, broadcom-wifi, zeroconf, edge-agent). Roon Server / MCP and the rest of the MCP server stack run in dedicated LXCs and are no longer pulled into `linux.rb`
