@@ -1,0 +1,594 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "enable": true,
+        "expr": "up{job=\"snmp-rtx\", router=~\"$router\"} == 0",
+        "iconColor": "red",
+        "name": "Scrape failure",
+        "titleFormat": "snmp-rtx scrape failed",
+        "tagKeys": "router"
+      }
+    ]
+  },
+  "description": "YAMAHA RTX router metrics via snmp-exporter. Covers hnd (RTX1210, .253) and itm (RTX830, .254) — uptime, firmware, CPU, memory, temperature, interface bandwidth/errors, and the L2TPv3 backhaul tunnel state. Phase A — extend with Loki/Promtail syslog visualization in Phase B.",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "System uptime as reported by SNMPv2-MIB sysUpTime (per router).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sysUpTime{job=\"snmp-rtx\", router=~\"$router\"} / 100",
+          "instant": true, "legendFormat": "{{router}}", "range": false, "refId": "A"
+        }
+      ],
+      "title": "Uptime",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Firmware revision (yrfRevision) per router — appears as DisplayString label on the metric.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "yrfRevision", "values": false },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "yrfRevision_info{job=\"snmp-rtx\", router=~\"$router\"}",
+          "format": "table", "instant": true, "legendFormat": "{{router}}", "range": false, "refId": "A"
+        }
+      ],
+      "title": "Firmware",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "sysName (hostname) — should be the conceptual router name (hnd / itm) from RTX config.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "sysName", "values": false },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sysName_info{job=\"snmp-rtx\", router=~\"$router\"}",
+          "format": "table", "instant": true, "legendFormat": "{{router}}", "range": false, "refId": "A"
+        }
+      ],
+      "title": "Hostname",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Inbox temperature (°C) from yrhInboxTemperature. Yellow >50, red >70.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red",    "value": 70 }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": {
+        "colorMode": "value", "graphMode": "area", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "yrhInboxTemperature{job=\"snmp-rtx\", router=~\"$router\"}",
+          "instant": false, "legendFormat": "{{router}}", "refId": "A"
+        }
+      ],
+      "title": "Temperature",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "LAN1 (RTX1210 hnd: trunk to L2 switch / LAN1 port) — bps in/out.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "",
+            "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear", "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "bps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"lan1.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifName}} in", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"lan1.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifName}} out", "refId": "B"
+        }
+      ],
+      "title": "LAN1 bandwidth",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "LAN2 — bps in/out. On hnd this is the WAN-facing fiber uplink; on itm it's a secondary LAN port.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "",
+            "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear", "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "bps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"lan2.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifName}} in", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"lan2.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifName}} out", "refId": "B"
+        }
+      ],
+      "title": "LAN2 bandwidth",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Site-to-site backhaul tunnel (tunnel1) — L2TPv3 between hnd and itm. When traffic is zero on both sides, the tunnel is idle (not necessarily down — see ifOperStatus on the tunnel iface).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "",
+            "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear", "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "bps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
+      "id": 7,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"tunnel1.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifName}} in", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"tunnel1.*\"}[5m]) * 8",
+          "legendFormat": "{{router}}/{{ifName}} out", "refId": "B"
+        }
+      ],
+      "title": "VPN site-to-site (tunnel1) bandwidth",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "ifInErrors per interface — non-zero values indicate physical-layer trouble (cabling, NIC, optic).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "",
+            "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear", "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "errs"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "id": 8,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(ifInErrors{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"$interface\"}[5m])",
+          "legendFormat": "{{router}}/{{ifName}}", "refId": "A"
+        }
+      ],
+      "title": "Interface input errors (rate)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "ifOutErrors per interface — non-zero indicates congestion drops or transmitter trouble.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "",
+            "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear", "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "errs"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "id": 9,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(ifOutErrors{job=\"snmp-rtx\", router=~\"$router\", ifName=~\"$interface\"}[5m])",
+          "legendFormat": "{{router}}/{{ifName}}", "refId": "A"
+        }
+      ],
+      "title": "Interface output errors (rate)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "CPU utilization (yrhCpuUtil1min). Sustained >70% suggests an undersized router or routing-table thrash.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "",
+            "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear", "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "percent",
+          "max": 100, "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "id": 10,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "yrhCpuUtil1min{job=\"snmp-rtx\", router=~\"$router\"}",
+          "legendFormat": "{{router}} 1min", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "yrhCpuUtil5min{job=\"snmp-rtx\", router=~\"$router\"}",
+          "legendFormat": "{{router}} 5min", "refId": "B"
+        }
+      ],
+      "title": "CPU utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Memory utilization (%) from yrhMemoryUtil. Yellow >70, red >85.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 70 },
+              { "color": "red",    "value": 85 }
+            ]
+          },
+          "unit": "percent",
+          "max": 100, "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "id": 11,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdLabels": false, "showThresholdMarkers": true
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "yrhMemoryUtil{job=\"snmp-rtx\", router=~\"$router\"}",
+          "legendFormat": "{{router}}", "instant": false, "refId": "A"
+        }
+      ],
+      "title": "Memory utilization",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Per-interface state table: admin/oper status, link speed, current bandwidth utilization. Useful for spotting flapping interfaces or wrong-speed links.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value #A" }, "properties": [ { "id": "displayName", "value": "Admin" } ] },
+          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [ { "id": "displayName", "value": "Oper" } ] },
+          { "matcher": { "id": "byName", "options": "Value #C" }, "properties": [ { "id": "displayName", "value": "Speed (bps)" }, { "id": "unit", "value": "bps" } ] },
+          { "matcher": { "id": "byName", "options": "Value #D" }, "properties": [ { "id": "displayName", "value": "In (bps)" }, { "id": "unit", "value": "bps" } ] },
+          { "matcher": { "id": "byName", "options": "Value #E" }, "properties": [ { "id": "displayName", "value": "Out (bps)" }, { "id": "unit", "value": "bps" } ] }
+        ]
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 36 },
+      "id": 12,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "ifAdminStatus{job=\"snmp-rtx\", router=~\"$router\"}",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "ifOperStatus{job=\"snmp-rtx\", router=~\"$router\"}",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "ifHighSpeed{job=\"snmp-rtx\", router=~\"$router\"} * 1000000",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(ifHCInOctets{job=\"snmp-rtx\", router=~\"$router\"}[5m]) * 8",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "D"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "rate(ifHCOutOctets{job=\"snmp-rtx\", router=~\"$router\"}[5m]) * 8",
+          "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "E"
+        }
+      ],
+      "title": "Interface table",
+      "transformations": [
+        { "id": "joinByField", "options": { "byField": "ifName", "mode": "outer" } },
+        { "id": "organize", "options": { "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true, "__name__ 1": true, "__name__ 2": true, "__name__ 3": true, "__name__ 4": true, "__name__ 5": true, "instance 1": true, "instance 2": true, "instance 3": true, "instance 4": true, "instance 5": true, "job 1": true, "job 2": true, "job 3": true, "job 4": true, "job 5": true, "ifIndex 1": true, "ifIndex 2": true, "ifIndex 3": true, "ifIndex 4": true, "ifIndex 5": true, "router 2": true, "router 3": true, "router 4": true, "router 5": true } } }
+      ],
+      "type": "table"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["network", "rtx", "snmp"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(up{job=\"snmp-rtx\"}, router)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Router",
+        "multi": true,
+        "name": "router",
+        "options": [],
+        "query": { "query": "label_values(up{job=\"snmp-rtx\"}, router)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(ifName{job=\"snmp-rtx\", router=~\"$router\"}, ifName)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Interface",
+        "multi": true,
+        "name": "interface",
+        "options": [],
+        "query": { "query": "label_values(ifName{job=\"snmp-rtx\", router=~\"$router\"}, ifName)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "RTX Routers",
+  "uid": "rtx-routers",
+  "version": 1,
+  "weekStart": ""
+}
