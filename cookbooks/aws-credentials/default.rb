@@ -46,26 +46,47 @@ return if profiles.empty?
 
 profile_arg = bootstrap ? " --profile '#{bootstrap}'" : ""
 
-# Probe whether bootstrap auth is available BEFORE running the
-# `aws ssm get-parameter` resources. If the bootstrap_profile is not yet
-# configured (fresh LXC, profile direct-write deferred to operator), or
-# env vars are absent, OR IAM role unavailable — log a warn and return
-# rather than failing every execute resource downstream.
+# Probe whether bootstrap auth has the SPECIFIC permission this cookbook
+# needs (ssm:GetParameter on the configured paths) BEFORE running the
+# real execute resources. The probe is a dry-run of the actual API call
+# on the first profile's first SSM path — `aws sts get-caller-identity`
+# is insufficient because it passes for any valid IAM identity, while
+# a least-privilege identity (e.g. pve-bootstrap-ssm in home-monitor)
+# may have valid credentials but no ssm:GetParameter on the credential
+# paths it would otherwise rotate. See ~/.claude/rules/infrastructure.md
+# "IAM principal that cannot self-rotate" — this rule generalisation.
 #
-# This makes the cookbook safe to include unconditionally in a fleet
-# transitive chain (e.g. cookbooks/auto-mitamae-target). Hosts that have
-# the bootstrap profile (or env vars) get the idempotent SSM verify;
-# hosts without get a no-op + visible warn.
-auth_probe_cmd = "aws sts get-caller-identity#{profile_arg} > /dev/null 2>&1"
+# If the probe fails (no auth, no SSM permission, network gone, etc.)
+# log a warn and return rather than aborting mitamae downstream.
+first_spec = profiles.values.first
+probe_path = first_spec[:access_key_id_ssm] || first_spec["access_key_id_ssm"]
+probe_region = first_spec[:region] || first_spec["region"] || "ap-northeast-1"
+
+if probe_path.nil?
+  MItamae.logger.warn(
+    "aws-credentials: first profile spec is missing access_key_id_ssm — " \
+    "cannot probe SSM auth. Skipping profile sync."
+  )
+  return
+end
+
+auth_probe_cmd = "aws ssm get-parameter --name '#{probe_path}' " \
+                 "--query 'Parameter.Value' --output text" \
+                 "#{profile_arg} --region '#{probe_region}' > /dev/null 2>&1"
 auth_probe = run_command(auth_probe_cmd, error: false)
 if auth_probe.exit_status != 0
   MItamae.logger.warn(
-    "aws-credentials: bootstrap auth unavailable " \
-    "(bootstrap_profile=#{bootstrap || '<none>'}, " \
-    "AWS_ACCESS_KEY_ID=#{ENV['AWS_ACCESS_KEY_ID'] ? 'set' : 'unset'}). " \
-    "Skipping profile sync. Run bin/bootstrap-lxc-creds <CT> to seed " \
-    "the bootstrap profile, or pass admin creds via AWS_ACCESS_KEY_ID + " \
-    "AWS_SECRET_ACCESS_KEY env vars on the next mitamae apply."
+    "aws-credentials: SSM read with bootstrap_profile=#{bootstrap || '<none>'} " \
+    "failed for probe path #{probe_path}. " \
+    "(AWS_ACCESS_KEY_ID=#{ENV['AWS_ACCESS_KEY_ID'] ? 'set' : 'unset'}.) " \
+    "Skipping profile sync. Possible causes: bootstrap profile not yet " \
+    "configured, profile lacks ssm:GetParameter on the credential paths " \
+    "(common for least-privilege fleet identities — see " \
+    "~/.claude/rules/infrastructure.md 'IAM principal that cannot self-rotate'), " \
+    "or transient SSM unavailability. To bootstrap a fresh LXC, run " \
+    "bin/bootstrap-lxc-creds <CT>. To rotate creds via this cookbook, " \
+    "ensure bootstrap_profile has ssm:GetParameter on the configured " \
+    "paths (admin profile or dedicated rotation IAM user)."
   )
   return
 end
