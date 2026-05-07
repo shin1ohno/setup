@@ -131,9 +131,15 @@ end
 
 # Idempotent clone of /root/setup. Skip if already cloned (Phase 1 hosts
 # already have it; the orchestrator workflow assumes it exists).
+#
+# `sudo test` rather than bare `test`: /root is mode 700 root:root, so a
+# non-root mitamae context (lxc-pro-dev) cannot traverse into /root/setup
+# and the bare test silently returns false even when .git exists. The
+# execute then runs `git clone` which fails with "destination path
+# already exists".
 execute "clone setup repo to #{SETUP_REPO_DIR}" do
   command "sudo git clone #{SETUP_REPO_URL} #{SETUP_REPO_DIR}"
-  not_if "test -d #{SETUP_REPO_DIR}/.git"
+  not_if "sudo test -d #{SETUP_REPO_DIR}/.git"
 end
 
 # Authorized keys management — gated on SSM auth. Wrapped in
@@ -170,10 +176,13 @@ require_external_auth(
     # mitamae's `:user` attribute does not propagate to a sudo wrapping for
     # the implicit chown, so on workstation LXCs (lxc-pro-dev) where mitamae
     # runs as a non-root user the directory resource fails with EPERM.
+    # `sudo test` / `sudo stat` because /root is mode 700 — bare test under
+    # a non-root mitamae context (lxc-pro-dev) returns false on permission
+    # denied and the execute re-runs install -d every apply.
     execute "create #{root_ssh_dir} as root" do
       command "sudo install -d -m 0700 -o root -g root #{root_ssh_dir}"
-      not_if "test -d #{root_ssh_dir} && " \
-             "test \"$(stat -c '%U:%G:%a' #{root_ssh_dir})\" = 'root:root:700'"
+      not_if "sudo test -d #{root_ssh_dir} && " \
+             "test \"$(sudo stat -c '%U:%G:%a' #{root_ssh_dir})\" = 'root:root:700'"
     end
 
     # Idempotent append: grep -qF matches the FULL line (including the
@@ -189,7 +198,7 @@ require_external_auth(
       command "sudo touch #{authorized_keys_path} && " \
               "sudo chmod 0600 #{authorized_keys_path} && " \
               "sudo chown root:root #{authorized_keys_path}"
-      not_if "test -f #{authorized_keys_path}"
+      not_if "sudo test -f #{authorized_keys_path}"
     end
 
     # Use shell-quoted heredoc to safely embed lines that contain quotes /
