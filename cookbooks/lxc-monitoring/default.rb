@@ -156,6 +156,35 @@ end
   end
 end
 
+# blackbox_exporter config + Prometheus alerts dir. Placed BEFORE the
+# `ensure monitoring running` execute (declared further below) because
+# the docker-compose.yml staged above references both as bind mounts —
+# `up -d` aborts with a missing-source error if blackbox.yml or the
+# alerts/ dir don't exist when compose first parses the spec. Ordering
+# is converge-time meaningful here even though resources individually
+# converge top-to-bottom.
+remote_file "#{deploy_dir}/blackbox.yml" do
+  source "files/blackbox.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
+directory "#{deploy_dir}/alerts" do
+  owner user
+  group group
+  mode "755"
+end
+
+remote_file "#{deploy_dir}/alerts/mcp.yml" do
+  source "files/alerts/mcp.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # Generate .env from SSM (Grafana admin password). Mirror cognee pattern:
 # stage in setup_root/generated, then move to deploy_dir/.env. require_external_auth
 # pauses on a fresh host until AWS auth is configured (or skip in non-TTY).
@@ -268,28 +297,12 @@ end
 # gracefully when SSM doesn't have the credentials yet, and the timer
 # enable step waits for /etc/mcp-probe/probe.env to exist.
 
-# Layer 1 + 2: bind-mounted configs.
-remote_file "#{deploy_dir}/blackbox.yml" do
-  source "files/blackbox.yml"
-  owner user
-  group group
-  mode "0644"
-  notifies :run, "execute[restart monitoring]"
-end
-
-directory "#{deploy_dir}/alerts" do
-  owner user
-  group group
-  mode "755"
-end
-
-remote_file "#{deploy_dir}/alerts/mcp.yml" do
-  source "files/alerts/mcp.yml"
-  owner user
-  group group
-  mode "0644"
-  notifies :run, "execute[restart monitoring]"
-end
+# Layer 1 (blackbox.yml) + Layer 2 (alerts/mcp.yml) bind-mounted configs
+# are declared earlier in this file (right after the dashboards loop) so
+# they exist before `execute "ensure monitoring running"` runs `docker
+# compose up -d`. Mitamae converges resources top-to-bottom; the early
+# placement is converge-time meaningful even though every individual
+# remote_file is independent.
 
 # Layer 3: MCP-protocol prober.
 
