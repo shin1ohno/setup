@@ -11,6 +11,14 @@
 
 return if node[:platform] == "darwin"
 
+# Phase B-4: read AWS profile/region from the ssh-keys cookbook's
+# bootstrap config so this cookbook can fetch /host-registry/outputs/*
+# at converge time (see hint block below). Same convention as
+# auto-mitamae-orchestrator.
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
+aws_profile = ssh_keys_config["aws_profile"]
+aws_region  = ssh_keys_config["aws_region"]
+
 # Common LXC user provisioning (shin1ohno + sudo + ssh authorized_keys).
 include_cookbook "lxc-shared-user"
 
@@ -148,17 +156,40 @@ execute "reload + enable pro-router tailnet-routes" do
 end
 
 # Helper output: tell the operator the exact `tailscale up` command for
-# this LXC. Auth key fetched from SSM at install time.
+# this LXC. Tags and auth-key path template fetched from
+# /host-registry/outputs/* (Phase B-4) so cookbook is decoupled from
+# registry-shaped values. Falls back to historical hardcodes if the
+# SSM read fails (e.g. fresh LXC before host_registry IAM grant).
 local_ruby_block "log lxc-pro-router tailscale up hint" do
   block do
+    fetch_output = lambda do |name|
+      raw = `aws ssm get-parameter --name /host-registry/outputs/#{name} --query Parameter.Value --output text --profile #{aws_profile} --region #{aws_region} 2>/dev/null`.strip
+      raw.empty? ? nil : raw
+    end
+
+    advertise_tags = if (raw = fetch_output.call("tailscale-tags"))
+                       tags = JSON.parse(raw).fetch("pro-router", ["home-router"])
+                       tags.map { |t| "tag:#{t}" }.join(",")
+                     else
+                       MItamae.logger.warn("lxc-pro-router: /host-registry/outputs/tailscale-tags fetch failed; falling back to tag:home-router")
+                       "tag:home-router"
+                     end
+
+    auth_key_path = if (raw = fetch_output.call("ssm-paths"))
+                      tmpl = JSON.parse(raw)["tailscale_auth_key_template"]
+                      tmpl ? tmpl.sub("{hostname}", "pro-router") : "/tailscale/pro-router-auth-key"
+                    else
+                      "/tailscale/pro-router-auth-key"
+                    end
+
     state = `tailscale status --json 2>/dev/null`
     if state.empty? || state.include?('"BackendState":"NeedsLogin"')
       MItamae.logger.warn(<<~MSG)
         lxc-pro-router: tailscaled installed but not authenticated. Run:
           sudo tailscale up \\
-            --auth-key=$(aws ssm get-parameter --name /tailscale/pro-router-auth-key --with-decryption --query Parameter.Value --output text) \\
+            --auth-key=$(aws ssm get-parameter --name #{auth_key_path} --with-decryption --query Parameter.Value --output text) \\
             --advertise-routes=192.168.1.0/24 \\
-            --advertise-tags=tag:home-router \\
+            --advertise-tags=#{advertise_tags} \\
             --hostname=pro-router \\
             --accept-dns=false \\
             --ssh
