@@ -67,6 +67,14 @@ modules:
       - source_indexes: [ifIndex]
         lookup: ifName
         drop_source_indexes: false
+      # RTX firmware does NOT populate IF-MIB ifName (always empty string),
+      # only ifDescr. Add ifDescr as a separate lookup so PromQL/dashboards
+      # can filter by interface name (`ifDescr="LAN1"`). Both labels coexist
+      # — ifName stays as an empty placeholder for forward compat with
+      # devices that DO populate it.
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+        drop_source_indexes: false
 
     overrides:
       ifAdminStatus:

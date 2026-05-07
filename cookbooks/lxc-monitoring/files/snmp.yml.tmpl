@@ -1,11 +1,5 @@
 # WARNING: This file was auto-generated using snmp_exporter generator, manual changes will be lost.
 auths:
-  # NOTE: RTX1210 firmware Rev.14.01.42 (and likely RTX830) does not respond
-  # to SNMPv2c requests against the global community even with `snmpv2c host
-  # any` configured server-side; only SNMPv1 returns data. Empirically
-  # verified 2026-05-07 with snmpwalk -v 1 ✓ vs snmpwalk -v 2c → timeout.
-  # `snmpv2c host any <community>` syntax also rejects with パラメータの数が
-  # 不適当. Until root cause is found, scrape with v1.
   rtx_v1:
     community: "@@RTX_SNMP_COMMUNITY@@"
     security_level: noAuthNoPriv
@@ -80,6 +74,11 @@ modules:
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
         type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
     - name: ifInDiscards
       oid: 1.3.6.1.2.1.2.2.1.13
       type: counter
@@ -95,6 +94,11 @@ modules:
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
         type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
     - name: ifInErrors
       oid: 1.3.6.1.2.1.2.2.1.14
       type: counter
@@ -108,6 +112,11 @@ modules:
         - ifIndex
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
+        type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
         type: DisplayString
     - name: ifOutDiscards
       oid: 1.3.6.1.2.1.2.2.1.19
@@ -123,6 +132,11 @@ modules:
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
         type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
     - name: ifDescr
       oid: 1.3.6.1.2.1.2.2.1.2
       type: DisplayString
@@ -135,6 +149,11 @@ modules:
         - ifIndex
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
+        type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
         type: DisplayString
     - name: ifOutErrors
       oid: 1.3.6.1.2.1.2.2.1.20
@@ -150,6 +169,11 @@ modules:
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
         type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
     - name: ifType
       oid: 1.3.6.1.2.1.2.2.1.3
       type: gauge
@@ -163,6 +187,11 @@ modules:
         - ifIndex
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
+        type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
         type: DisplayString
       enum_values:
         1: other
@@ -211,6 +240,11 @@ modules:
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
         type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
     - name: ifSpeed
       oid: 1.3.6.1.2.1.2.2.1.5
       type: gauge
@@ -225,6 +259,11 @@ modules:
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
         type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
     - name: ifAdminStatus
       oid: 1.3.6.1.2.1.2.2.1.7
       type: EnumAsStateSet
@@ -237,6 +276,11 @@ modules:
         - ifIndex
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
+        type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
         type: DisplayString
       enum_values:
         1: up
@@ -255,6 +299,11 @@ modules:
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
         type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
       enum_values:
         1: up
         2: down
@@ -272,6 +321,11 @@ modules:
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
         type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
     - name: ifHCOutOctets
       oid: 1.3.6.1.2.1.31.1.1.1.10
       type: counter
@@ -285,6 +339,11 @@ modules:
         - ifIndex
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
+        type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
         type: DisplayString
     - name: ifHCOutUcastPkts
       oid: 1.3.6.1.2.1.31.1.1.1.11
@@ -301,6 +360,11 @@ modules:
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
         type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
     - name: ifHighSpeed
       oid: 1.3.6.1.2.1.31.1.1.1.15
       type: gauge
@@ -314,6 +378,11 @@ modules:
         - ifIndex
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
+        type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
         type: DisplayString
     - name: ifHCInOctets
       oid: 1.3.6.1.2.1.31.1.1.1.6
@@ -329,6 +398,11 @@ modules:
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
         type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
     - name: ifHCInUcastPkts
       oid: 1.3.6.1.2.1.31.1.1.1.7
       type: counter
@@ -343,6 +417,11 @@ modules:
         - ifIndex
         labelname: ifName
         oid: 1.3.6.1.2.1.31.1.1.1.1
+        type: DisplayString
+      - labels:
+        - ifIndex
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
         type: DisplayString
     - name: yrhInboxTemperature
       oid: 1.3.6.1.4.1.1182.2.1.15
