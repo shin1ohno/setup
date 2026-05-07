@@ -114,6 +114,16 @@ scrape_configs:
         labels:
           host: pro-dev
 
+  # Phase 3c: pro-router (CT 102) Tailscale subnet-router. Distinct from
+  # the bare-metal PVE host's `node-pve` job further below.
+  - job_name: node-pro-router
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.60:9100"
+        labels:
+          host: pro-router
+
   # Bare-metal PVE host (`pro` = 192.168.1.10) OS-level metrics.
   # node_exporter installed via cookbooks/node-exporter, included from
   # pve/pve-host.rb. Same systemd unit + textfile collector pattern as
