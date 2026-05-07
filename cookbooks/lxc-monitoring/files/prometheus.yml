@@ -308,6 +308,15 @@ scrape_configs:
   # Standard blackbox-style relabel pattern: per-target `target` label
   # exposed via __param_target, scrape rewritten to snmp-exporter:9116.
   - job_name: snmp-rtx
+    # Override per-job interval/timeout — global is 15s/10s but a full
+    # SNMP walk of hnd (RTX1210, 3 LAN + bridge1 + tunnel1-6) emits ~570
+    # metric lines and takes ~7s on a quiet LAN, frequently brushing the
+    # 10s default and producing context-deadline errors. Industry standard
+    # for snmp_exporter is 30s/25s. itm (RTX830, fewer interfaces) is
+    # comfortable at any setting; this just covers the worst case without
+    # special-casing per target.
+    scrape_interval: 30s
+    scrape_timeout: 25s
     metrics_path: /snmp
     params:
       module: [yamaha_rtx]
