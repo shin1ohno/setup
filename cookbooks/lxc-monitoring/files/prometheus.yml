@@ -138,14 +138,19 @@ scrape_configs:
   # ~/ManagedProjects/home-monitor/scripts/tailscale-setup/04-node-exporter.sh
   # (Stage 1 user_data phase script).
   #
-  # File_sd target: VPC private IP fetched from SSM /monitoring/nrt-private-ip
-  # by files/generate_nrt_target.sh on every auto-mitamae cycle, so EC2
-  # recreation (which can rotate the private IP) self-heals within ≤30 min.
+  # Target: nrt-router.home.local resolves via RTX1210 static record
+  # (rtx_dns_server.main hosts block in home-monitor/rtx-hnd.tf, derived from
+  # local.devices["nrt-router"].ip = aws_instance.tailscale.private_ip). EC2
+  # recreation rotates the IP through Terraform → Route53 + RTX in the same
+  # apply; DNS TTL refresh propagates to Prometheus's per-scrape resolver
+  # without any cookbook re-apply or SSM round-trip.
   - job_name: node-nrt-router
     honor_labels: true
-    file_sd_configs:
-      - files:
-          - /etc/prometheus/file_sd/nrt.json
+    static_configs:
+      - targets:
+          - "nrt-router.home.local:9100"
+        labels:
+          host: nrt-router
 
   # Bare-metal PVE host (`pro` = 192.168.1.10) OS-level metrics.
   # node_exporter installed via cookbooks/node-exporter, included from
