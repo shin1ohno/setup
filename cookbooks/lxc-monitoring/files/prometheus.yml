@@ -213,7 +213,12 @@ scrape_configs:
       module: [http_oidc_discovery]
     static_configs:
       - targets:
-          - https://mcp.ohno.be/oauth2/.well-known/openid-configuration
+          # Hydra's OIDC discovery endpoint is at /.well-known/...
+          # (NOT /oauth2/.well-known/...). The /oauth2/* nginx location
+          # proxies to Hydra's API endpoints (/oauth2/auth, /oauth2/token)
+          # but discovery sits one path-level up — see the issuer JSON
+          # itself for the canonical absolute URLs.
+          - https://mcp.ohno.be/.well-known/openid-configuration
         labels:
           probe_class: oidc
     relabel_configs:

@@ -350,13 +350,15 @@ execute "ensure /etc/mcp-probe directory" do
   not_if "test -d /etc/mcp-probe"
 end
 
-# /var/lib/node_exporter/textfile_collector — node_exporter scrapes this.
-# The node-exporter cookbook already creates it on the monitoring LXC;
-# this is a defensive ensure-exists that's a no-op when present.
-execute "ensure node_exporter textfile collector directory" do
+# /var/lib/node_exporter/textfile — node_exporter scrapes this dir
+# (matches `--collector.textfile.directory` in node-exporter cookbook's
+# unit file at cookbooks/node-exporter/files/node-exporter.service).
+# Defensive ensure-exists — a no-op when the node-exporter cookbook has
+# already converged on this host.
+execute "ensure node_exporter textfile directory" do
   command "sudo install -d -m 755 -o root -g root " \
-          "/var/lib/node_exporter/textfile_collector"
-  not_if "test -d /var/lib/node_exporter/textfile_collector"
+          "/var/lib/node_exporter/textfile"
+  not_if "test -d /var/lib/node_exporter/textfile"
 end
 
 # Install systemd unit + timer.

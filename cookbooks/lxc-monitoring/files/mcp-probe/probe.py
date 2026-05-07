@@ -17,7 +17,7 @@ Env vars (set by systemd service unit):
   PROBER_CLIENT_ID
   PROBER_CLIENT_SECRET
   MCP_BASE_URL         e.g. https://mcp.ohno.be
-  TEXTFILE_OUT         e.g. /var/lib/node_exporter/textfile_collector/mcp_probe.prom
+  TEXTFILE_OUT         e.g. /var/lib/node_exporter/textfile/mcp_probe.prom
   PROBE_TIMEOUT_S      default 8
 """
 
@@ -308,7 +308,7 @@ def probe_one(server: tuple[str, str, str], token_url: str, client_id: str, clie
 def main():
     token_url = os.environ.get("HYDRA_TOKEN_URL", "http://192.168.1.71:4444/oauth2/token")
     base_url = os.environ.get("MCP_BASE_URL", "https://mcp.ohno.be")
-    out_path = os.environ.get("TEXTFILE_OUT", "/var/lib/node_exporter/textfile_collector/mcp_probe.prom")
+    out_path = os.environ.get("TEXTFILE_OUT", "/var/lib/node_exporter/textfile/mcp_probe.prom")
     client_id = os.environ.get("PROBER_CLIENT_ID")
     client_secret = os.environ.get("PROBER_CLIENT_SECRET")
 
