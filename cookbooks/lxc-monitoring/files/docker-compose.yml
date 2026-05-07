@@ -19,6 +19,12 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=30d
       - --web.enable-lifecycle
+      # Admin API enables /api/v1/admin/tsdb/{delete_series,clean_tombstones}
+      # for surgically removing stale label sets (e.g. when a scrape target's
+      # `instance` label changes after a config migration and old series
+      # would otherwise persist for the full retention window). LAN-only
+      # bind on 127.0.0.1:9090 makes the operational surface acceptable.
+      - --web.enable-admin-api
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
