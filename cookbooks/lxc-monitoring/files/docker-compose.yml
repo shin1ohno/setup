@@ -99,3 +99,21 @@ services:
       - ./blackbox.yml:/etc/blackbox_exporter/blackbox.yml:ro
     ports:
       - "127.0.0.1:9115:9115"
+
+  # snmp-exporter scrapes YAMAHA RTX routers (hnd=192.168.1.253 RTX1210,
+  # itm=192.168.1.254 RTX830) using YAMAHA-RT private MIB + IF-MIB. The
+  # snmp.yml is generated at deploy time from snmp.yml.tmpl with the
+  # community string substituted from SSM /monitoring/rtx-snmp-community.
+  # Bound to 127.0.0.1 — the only consumer is the sibling prometheus
+  # container, reached via service-name resolution `snmp-exporter:9116`
+  # in the docker-compose default network.
+  snmp-exporter:
+    image: prom/snmp-exporter:v0.26.0
+    container_name: monitoring-snmp-exporter
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/snmp_exporter/snmp.yml
+    volumes:
+      - ./snmp.yml:/etc/snmp_exporter/snmp.yml:ro
+    ports:
+      - "127.0.0.1:9116:9116"

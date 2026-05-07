@@ -146,7 +146,7 @@ remote_file "#{deploy_dir}/grafana/provisioning/dashboards/dashboards.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
-%w[node-exporter-full.json auto-mitamae-fleet.json proxmox-via-prometheus.json mcp-fleet-health.json].each do |dash|
+%w[node-exporter-full.json auto-mitamae-fleet.json proxmox-via-prometheus.json mcp-fleet-health.json rtx-routers.json].each do |dash|
   remote_file "#{deploy_dir}/grafana/dashboards/#{dash}" do
     source "files/grafana/dashboards/#{dash}"
     owner user
@@ -154,6 +154,21 @@ end
     mode "0644"
     notifies :run, "execute[restart monitoring]"
   end
+end
+
+# snmp-exporter config template — committed with @@RTX_SNMP_COMMUNITY@@
+# placeholder; substituted at converge time after the .env is generated.
+# See cookbooks/lxc-monitoring/files/snmp-generator/ for the regeneration
+# workflow (Makefile + YAMAHA MIBs + prom/snmp-generator:v0.26.0).
+snmp_tmpl_path = "#{deploy_dir}/snmp.yml.tmpl"
+snmp_yml_path  = "#{deploy_dir}/snmp.yml"
+
+remote_file snmp_tmpl_path do
+  source "files/snmp.yml.tmpl"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[generate snmp.yml]"
 end
 
 # blackbox_exporter config + Prometheus alerts dir. Placed BEFORE the
@@ -224,12 +239,51 @@ remote_file env_output_path do
   group group
   mode "0600"
   notifies :run, "execute[restart monitoring]"
+  notifies :run, "execute[generate snmp.yml]"
   only_if "test -f #{env_temp_path}"
 end
 
 file env_temp_path do
   action :delete
   only_if "test -f #{env_temp_path}"
+end
+
+# Generate snmp.yml from snmp.yml.tmpl by substituting the community
+# placeholder with the value from the deployed .env. snmp_exporter does
+# NOT expand env vars in its YAML config, so the substitution happens
+# at deploy time. Triggered (a) directly by remote_file above (notifies
+# on tmpl change), and (b) on .env regeneration. Idempotent on stable
+# input via the only_if guard — re-runs only when the rendered file is
+# missing or stale relative to the template / .env.
+execute "generate snmp.yml" do
+  command <<~SH.strip
+    set -euo pipefail
+    . #{env_output_path}
+    sed "s|@@RTX_SNMP_COMMUNITY@@|${RTX_SNMP_COMMUNITY}|g" \\
+      #{snmp_tmpl_path} > #{snmp_yml_path}.new
+    mv #{snmp_yml_path}.new #{snmp_yml_path}
+    chmod 600 #{snmp_yml_path}
+  SH
+  user user
+  action :nothing
+  notifies :run, "execute[restart monitoring]"
+  only_if "test -f #{env_output_path} && test -f #{snmp_tmpl_path}"
+end
+
+# Initial render at converge time when both inputs exist but the rendered
+# file is absent (fresh host after first .env generation). Same idempotency
+# pattern as cookbooks/cognee's docker-compose restart guard.
+execute "ensure snmp.yml exists" do
+  command <<~SH.strip
+    set -euo pipefail
+    . #{env_output_path}
+    sed "s|@@RTX_SNMP_COMMUNITY@@|${RTX_SNMP_COMMUNITY}|g" \\
+      #{snmp_tmpl_path} > #{snmp_yml_path}.new
+    mv #{snmp_yml_path}.new #{snmp_yml_path}
+    chmod 600 #{snmp_yml_path}
+  SH
+  user user
+  only_if "test -f #{env_output_path} && test -f #{snmp_tmpl_path} && ! test -f #{snmp_yml_path}"
 end
 
 compose_path = "#{deploy_dir}/docker-compose.yml"
@@ -242,8 +296,15 @@ project_name = File.basename(deploy_dir)
 execute "ensure monitoring running" do
   command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d"
   user user
+  # Gate on BOTH .env (for grafana/pve-exporter env vars) AND snmp.yml
+  # (bind-mounted into snmp-exporter — Docker creates a directory if the
+  # source path is missing, leaving the container in a crash-loop with
+  # `open /etc/snmp_exporter/snmp.yml: is a directory`). Both files come
+  # from the SSM-gated bootstrap path so both must exist before compose
+  # is allowed to start the stack.
   only_if <<~SH.tr("\n", " ").strip
     test -f #{env_output_path} || exit 1;
+    test -f #{snmp_yml_path} || exit 1;
     expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
     [ -n "$expected" ] || exit 1;
     running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
@@ -266,10 +327,12 @@ execute "restart monitoring" do
   command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --force-recreate"
   user user
   action :nothing
-  # Skip when .env was not generated (SSM auth absent / non-interactive
-  # bootstrap). Restart with empty admin password would leave Grafana
-  # unmanageable. Same guard as cookbooks/cognee.
-  only_if "test -f #{env_output_path}"
+  # Skip when .env was not generated OR snmp.yml hasn't been rendered
+  # (SSM auth absent / non-interactive bootstrap). Restart with empty
+  # admin password would leave Grafana unmanageable; missing snmp.yml
+  # would leave snmp-exporter crash-looping. Same guard pattern as
+  # cookbooks/cognee.
+  only_if "test -f #{env_output_path} && test -f #{snmp_yml_path}"
 end
 
 # === MCP Fleet Health Monitoring ===

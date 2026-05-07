@@ -1,0 +1,83 @@
+# snmp_exporter generator config for YAMAHA RTX routers.
+# Combines IF-MIB (interface bandwidth/errors/status) + YAMAHA-RT private MIB
+# (CPU utilization, memory utilization, inbox temperature) + YAMAHA-RT-FIRMWARE
+# (firmware revision). Run `make snmp.yml` to regenerate.
+#
+# Symbol prefixes:
+#   yrh* — YAMAHA-RT-HARDWARE module (yrhCpuUtil*, yrhMemoryUtil, yrhInboxTemperature)
+#   yrf* — YAMAHA-RT-FIRMWARE module (yrfRevision, yrfFirmwareFile)
+# These are the actual names from the upstream MIB files (yamaha-rt-hardware.mib /
+# yamaha-rt-firmware.mib). The plan's `yrh*Cpu5sec` etc. were placeholders;
+# the canonical symbols are `yrhCpuUtil5sec` etc.
+#
+# `auths:` is at the top level (snmp_exporter v0.24+ schema). The community
+# string is a placeholder substituted at deploy time by the cookbook from
+# SSM /monitoring/rtx-snmp-community.
+#
+# Version 1 (not 2c): RTX1210 firmware Rev.14.01.42 does not respond to
+# SNMPv2c against the global community. v1 works. See snmp.yml.tmpl note.
+
+auths:
+  rtx_v1:
+    community: '@@RTX_SNMP_COMMUNITY@@'
+    version: 1
+
+modules:
+  yamaha_rtx:
+    walk:
+      # SNMPv2-MIB: sysUpTime, sysName, sysContact, sysLocation
+      - sysUpTime
+      - sysName
+      - sysContact
+      - sysLocation
+      # IF-MIB: interface table — bandwidth, errors, status
+      - ifIndex
+      - ifDescr
+      - ifType
+      - ifMtu
+      - ifSpeed
+      - ifAdminStatus
+      - ifOperStatus
+      - ifInDiscards
+      - ifInErrors
+      - ifOutDiscards
+      - ifOutErrors
+      # ifXTable (HC counters for 64-bit byte counts on >100Mbps interfaces)
+      - ifName
+      - ifHCInOctets
+      - ifHCOutOctets
+      - ifHCInUcastPkts
+      - ifHCOutUcastPkts
+      - ifHighSpeed
+      # YAMAHA-RT-HARDWARE: CPU utilization (5sec / 1min / 5min averages),
+      # memory utilization (%), inbox temperature.
+      - yrhCpuUtil5sec
+      - yrhCpuUtil1min
+      - yrhCpuUtil5min
+      - yrhMemoryUtil
+      - yrhMemorySize
+      - yrhMemorySizeMB
+      - yrhInboxTemperature
+      # YAMAHA-RT-FIRMWARE: firmware revision string + uptime.
+      - yrfRevision
+      - yrfFirmwareFile
+      - yrfUpTime
+
+    lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+        drop_source_indexes: false
+
+    overrides:
+      ifAdminStatus:
+        type: EnumAsStateSet
+      ifOperStatus:
+        type: EnumAsStateSet
+      ifName:
+        type: DisplayString
+      sysName:
+        type: DisplayString
+      yrfRevision:
+        type: DisplayString
+      yrfFirmwareFile:
+        type: DisplayString
