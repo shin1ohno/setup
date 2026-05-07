@@ -59,3 +59,11 @@ include_cookbook "ssh-keys"
 # `node-pve` job. Same node_exporter cookbook used by lxc-monitoring +
 # lxc-weave; uniform install across the fleet.
 include_cookbook "node-exporter"
+
+# Phase 3c: receiver-side of the centralised auto-apply system.
+# Bare-metal hypervisor — apply touches vmbr1 / arp-flux / ssh-keys /
+# node-exporter, none of which write under /etc/pve. Recovery path on
+# vmbr1 misconfigure is via console / IPMI; ZFS snapshot of
+# rpool/ROOT/pve-1 before the first apply is the operator's pre-flight
+# (zfs snapshot rpool/ROOT/pve-1@phase-3c-pre).
+include_cookbook "auto-mitamae-target"
