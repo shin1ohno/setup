@@ -11,6 +11,29 @@ globs: "*.rb"
 - Prefer symbols over strings for hash keys in DSL code
 - mitamae runs without sudo. Never use `owner node[:setup][:system_user]` on file/remote_file resources — it triggers an internal `sudo chown` that fails without a terminal. Instead, stage files in user space (`node[:setup][:root]`) and use `execute` with explicit `sudo cp` to place them in system directories
 
+## Grep for in-codebase resource pattern before writing custom `execute`
+
+Before writing an `execute` resource to perform a filesystem operation (`mkdir`, `chown`, `chmod`, `cp`, `install -d`, `install -m`, `ln -s`), grep the cookbook tree for an existing `directory` / `file` / `remote_file` resource that achieves the same effect. The DSL resource is preferable to a shell `execute` because it is idempotent by default, carries type checking, is visible to `mitamae --dry-run`, and survives audit greps for "what creates `/var/lib/foo`".
+
+**Probe before writing custom shell**:
+
+```bash
+# Existing user-attribute precedents on directory resources
+awk '/^[[:space:]]*directory /,/^end$/' cookbooks/*/default.rb | grep -B5 'user '
+
+# Existing sudo-execute precedents (when DSL resource genuinely insufficient)
+grep -rn 'sudo install\|sudo cp\|sudo mkdir' cookbooks/*/default.rb
+```
+
+**Resource attributes that solve common-execute cases**:
+
+- Need to create a root-owned directory from a non-root mitamae context → `directory "/path" do; user "root"; owner "root"; group "root"; mode "0755"; end`. The base resource (`itamae/resource/base.rb:92`) defines `:user` on every resource; `run_specinfra` propagates it as `sudo -u <user>` to the underlying `mkdir`/`chown`. See `cookbooks/lazygit/default.rb:17-22` for precedent.
+- Need to copy a file into a system path → `remote_file` for the staging copy + `execute "sudo install -m ..."` for the system move (the system-path part genuinely needs sudo — the DSL has no `user` shortcut equivalent for a `remote_file` writing into `/etc`, so split staging from install).
+
+Custom `execute` is the fallback when the DSL resource cannot express the operation, NOT the reflex.
+
+This rule exists because the 2026-05-07 node-exporter session reached for `execute "sudo install -d -m 0755 -o root -g root /var/lib/node_exporter"` mirroring the `lxc-pro-router` system-file pattern, when `cookbooks/lazygit/default.rb` already carried the simpler `directory ... user "root"` precedent that would have cost no `execute` at all. The user surfaced the cleaner approach with "directory の user 属性で実行ユーザーを指定できないですかね？" — a 10-second `awk` over the cookbook tree at design time would have found the precedent without the round-trip.
+
 ## Mitamae evaluation model — top-level Ruby is compile-time
 
 mitamae loads every recipe as Ruby (compile phase) before running any resource (converge phase). All top-level Ruby control flow (`if`, `unless`, `case`, plain method calls) executes at compile time, so any state check that depends on a side effect of a preceding `execute` / `remote_file` / `file` resource will see the **pre-converge** state.
