@@ -42,7 +42,20 @@ modules:
       - ifInErrors
       - ifOutDiscards
       - ifOutErrors
-      # ifXTable (HC counters for 64-bit byte counts on >100Mbps interfaces)
+      # ifTable octet/packet counters (32-bit, RFC 1213). Both RTX1210 and
+      # RTX830 expose these. RTX1210 firmware Rev.14.01.42 does NOT
+      # implement ifXTable (RFC 2863) so HC 64-bit counters return empty;
+      # we use the 32-bit ones uniformly to keep dashboards working on
+      # both routers. Wrap risk: 4 GB at 1 Gbps wraps in ~34s — fine for
+      # `rate()` queries with [5m] window provided traffic is averaged
+      # well under line rate (home LAN is typically <100 Mbps).
+      - ifInOctets
+      - ifOutOctets
+      - ifInUcastPkts
+      - ifOutUcastPkts
+      # ifXTable (HC 64-bit counters + ifName + ifHighSpeed). Walked
+      # opportunistically — itm RTX830 fills these, hnd RTX1210 leaves
+      # them empty. Dashboard prefers ifInOctets (always present).
       - ifName
       - ifHCInOctets
       - ifHCOutOctets
