@@ -74,6 +74,10 @@ now=$(date +%s)
     echo "# TYPE auto_mitamae_last_apply_sha_info gauge"
     echo "# HELP auto_mitamae_orchestrator_expected_sha_info SHA the orchestrator drove this cycle"
     echo "# TYPE auto_mitamae_orchestrator_expected_sha_info gauge"
+    echo "# HELP bootstrap_lxc_creds_last_result Per-host result of last credential probe (Phase B-3). result=valid|seeded|failed for LXCs, skipped for non-LXCs"
+    echo "# TYPE bootstrap_lxc_creds_last_result gauge"
+    echo "# HELP bootstrap_lxc_creds_last_attempt_timestamp_seconds Unix time of last creds probe (Phase B-3)"
+    echo "# TYPE bootstrap_lxc_creds_last_attempt_timestamp_seconds gauge"
     echo "auto_mitamae_orchestrator_expected_sha_info{commit=\"${expected_sha}\"} 1"
 } > "${tmp_out}"
 
@@ -96,8 +100,15 @@ while IFS= read -r entry; do
     # whole cycle on per-host re-seed errors. The mitamae push below will
     # then fail with status=ssh_unreachable or mitamae_fail and Grafana
     # surfaces the per-host result.
+    #
+    # Phase B-3: record creds_result for the per-host textfile metric below.
+    # valid  = sts probe succeeded, no re-seed needed
+    # seeded = sts probe failed and bootstrap-lxc-creds re-seeded successfully
+    # failed = sts probe failed AND bootstrap-lxc-creds also failed
+    # skipped = non-LXC host (no ct_id) — re-seed step does not apply
+    creds_result="skipped"
     if [[ -n "${ct_id}" ]]; then
-        if ! ssh -n \
+        if ssh -n \
                 -i "${SSH_KEY}" \
                 -o BatchMode=yes \
                 -o ConnectTimeout=5 \
@@ -106,7 +117,12 @@ while IFS= read -r entry; do
                 "${user}@${host}" \
                 "timeout 5 aws sts get-caller-identity --profile pve-bootstrap-ssm" \
                 >/dev/null 2>&1; then
-            if ! /usr/local/bin/bootstrap-lxc-creds "${ct_id}" >/dev/null 2>&1; then
+            creds_result="valid"
+        else
+            if /usr/local/bin/bootstrap-lxc-creds "${ct_id}" >/dev/null 2>&1; then
+                creds_result="seeded"
+            else
+                creds_result="failed"
                 echo "orchestrator: warn — bootstrap-lxc-creds failed for ${label} (CT ${ct_id}), continuing" >&2
             fi
         fi
@@ -155,6 +171,8 @@ while IFS= read -r entry; do
         if [[ -n "${sha}" ]]; then
             echo "auto_mitamae_last_apply_sha_info{host=\"${label}\",sha=\"${sha}\"} 1"
         fi
+        echo "bootstrap_lxc_creds_last_result{host=\"${label}\",result=\"${creds_result}\"} 1"
+        echo "bootstrap_lxc_creds_last_attempt_timestamp_seconds{host=\"${label}\"} ${now}"
     } >> "${tmp_out}"
 done < <(jq -c '.[]' "${HOSTS_JSON}")
 
