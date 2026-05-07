@@ -82,23 +82,24 @@ end
 # auto-mitamae runner output in Phase 1 deprecation) can drop .prom files
 # without permission gymnastics.
 #
-# `user "root"` makes mitamae issue the underlying mkdir/chown via sudo, so
-# the cookbook works on workstation LXCs (e.g. lxc-pro-dev) where mitamae
-# runs as a non-root user. Without it, the implicit chown to root fails
-# with EPERM. Same pattern as cookbooks/lazygit (user attribute on
-# directory resource).
-directory "/var/lib/node_exporter" do
-  user "root"
-  owner "root"
-  group "root"
-  mode "0755"
+# Use `execute "sudo install -d"` rather than mitamae's `directory` resource
+# because mitamae's mruby fork does NOT propagate the `:user` attribute
+# through `run_specinfra(:change_file_owner, ...)` to a `sudo -u <user>`
+# wrapping (PR #180 attempted this and reproduced the EPERM at apply time
+# despite passing dry-run). On lxc-pro-dev mitamae runs as `shin1ohno`,
+# so the bare `chown root:root` issued by the directory resource fails
+# with EPERM. The `sudo install -d` pattern mirrors lxc-pro-router's
+# system-file pattern (cookbooks/lxc-pro-router/default.rb:35).
+execute "create /var/lib/node_exporter as root" do
+  command "sudo install -d -m 0755 -o root -g root /var/lib/node_exporter"
+  not_if "test -d /var/lib/node_exporter && " \
+         "test \"$(stat -c '%U:%G:%a' /var/lib/node_exporter)\" = 'root:root:755'"
 end
 
-directory NODE_EXPORTER_TEXTFILE_DIR do
-  user "root"
-  owner "root"
-  group "root"
-  mode "0755"
+execute "create #{NODE_EXPORTER_TEXTFILE_DIR} as root" do
+  command "sudo install -d -m 0755 -o root -g root #{NODE_EXPORTER_TEXTFILE_DIR}"
+  not_if "test -d #{NODE_EXPORTER_TEXTFILE_DIR} && " \
+         "test \"$(stat -c '%U:%G:%a' #{NODE_EXPORTER_TEXTFILE_DIR})\" = 'root:root:755'"
 end
 
 # Stage + install the systemd unit. The pattern mirrors lxc-pro-router's unit
