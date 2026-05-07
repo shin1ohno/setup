@@ -1,11 +1,17 @@
 # WARNING: This file was auto-generated using snmp_exporter generator, manual changes will be lost.
 auths:
-  rtx_v2c:
+  # NOTE: RTX1210 firmware Rev.14.01.42 (and likely RTX830) does not respond
+  # to SNMPv2c requests against the global community even with `snmpv2c host
+  # any` configured server-side; only SNMPv1 returns data. Empirically
+  # verified 2026-05-07 with snmpwalk -v 1 ✓ vs snmpwalk -v 2c → timeout.
+  # `snmpv2c host any <community>` syntax also rejects with パラメータの数が
+  # 不適当. Until root cause is found, scrape with v1.
+  rtx_v1:
     community: "@@RTX_SNMP_COMMUNITY@@"
     security_level: noAuthNoPriv
     auth_protocol: MD5
     priv_protocol: DES
-    version: 2
+    version: 1
 modules:
   yamaha_rtx:
     walk:

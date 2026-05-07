@@ -13,11 +13,14 @@
 # `auths:` is at the top level (snmp_exporter v0.24+ schema). The community
 # string is a placeholder substituted at deploy time by the cookbook from
 # SSM /monitoring/rtx-snmp-community.
+#
+# Version 1 (not 2c): RTX1210 firmware Rev.14.01.42 does not respond to
+# SNMPv2c against the global community. v1 works. See snmp.yml.tmpl note.
 
 auths:
-  rtx_v2c:
+  rtx_v1:
     community: '@@RTX_SNMP_COMMUNITY@@'
-    version: 2
+    version: 1
 
 modules:
   yamaha_rtx:

@@ -300,7 +300,7 @@ scrape_configs:
   # `yamaha_rtx` walks IF-MIB (interface bandwidth/errors/status) +
   # YAMAHA-RT-HARDWARE (yrhCpuUtil*, yrhMemoryUtil, yrhInboxTemperature) +
   # YAMAHA-RT-FIRMWARE (yrfRevision, yrfUpTime). Authentication via the
-  # `rtx_v2c` auth defined in snmp.yml.tmpl (community substituted at
+  # `rtx_v1` auth defined in snmp.yml.tmpl (community substituted at
   # deploy time from SSM /monitoring/rtx-snmp-community).
   #
   # Targets are static — both routers are LAN-reachable from CT 111
@@ -311,7 +311,7 @@ scrape_configs:
     metrics_path: /snmp
     params:
       module: [yamaha_rtx]
-      auth: [rtx_v2c]
+      auth: [rtx_v1]
     static_configs:
       - targets:
           - 192.168.1.253
