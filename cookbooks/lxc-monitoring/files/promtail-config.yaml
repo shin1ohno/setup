@@ -1,0 +1,147 @@
+# Promtail config for the lxc-monitoring stack (Phase B).
+#
+# Receives RTX router syslog over UDP 1514 from hnd (192.168.1.253) and
+# itm (192.168.1.254), enriches with GeoIP city lookup on extracted source
+# IPs, and pushes to the sibling Loki container at loki:3100.
+#
+# Cardinality strategy (per ~/.claude/plans/lovely-coalescing-anchor.md
+# "Loki ラベル設計"):
+#
+#   Loki labels (low cardinality, used in stream selectors):
+#     router        — 2 values (hnd / itm)
+#     severity      — small set (notice / info / debug / err)
+#     facility      — small set
+#     action        — 2 values (PASS / REJECT) when filter log
+#     phase         — IKE / IKE2 when VPN log
+#     dhcp_event    — Extends / Assigns / Releases when DHCP log
+#     geoip_country_code — country ISO codes (~hundreds of values, capped)
+#
+#   Structured metadata (high cardinality, queryable in LogQL but NOT a label):
+#     src, dst, src_port, dst_port — addresses
+#     peer, local                  — IPsec peer addresses
+#     filter_no, protocol          — filter-log structured fields
+#     ike_event                    — free-form IKE event description
+#     lease_ip, mac                — DHCP lease structured fields
+#     repeat_count                 — `same message repeated N times`
+#
+# This requires Loki 2.9+ with `limits_config.allow_structured_metadata: true`
+# (set in cookbooks/lxc-monitoring/files/loki-config.yaml).
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+positions:
+  filename: /tmp/positions/promtail-positions.yaml
+
+scrape_configs:
+  - job_name: rtx-syslog
+    syslog:
+      listen_address: 0.0.0.0:1514
+      listen_protocol: udp
+      idle_timeout: 60s
+      label_structured_data: false
+      use_incoming_timestamp: false
+      labels:
+        job: rtx-syslog
+
+    relabel_configs:
+      # Promote the RFC5424 syslog header fields surfaced by the syslog
+      # receiver into Loki labels. Source-IP-based router mapping happens
+      # below; the rest are passthrough.
+      - source_labels: ['__syslog_message_severity']
+        target_label: severity
+      - source_labels: ['__syslog_message_facility']
+        target_label: facility
+      - source_labels: ['__syslog_message_hostname']
+        target_label: syslog_host
+
+      # Map syslog connection source IP → router label. RTX hnd is .253,
+      # itm is .254. Drop everything else defensively (random LAN devices
+      # mis-pointing syslog at this listener should not produce labelled
+      # streams).
+      - source_labels: ['__syslog_connection_ip_address']
+        regex: '192\.168\.1\.253'
+        target_label: router
+        replacement: 'hnd'
+      - source_labels: ['__syslog_connection_ip_address']
+        regex: '192\.168\.1\.254'
+        target_label: router
+        replacement: 'itm'
+      - source_labels: ['router']
+        regex: '^$'
+        action: drop
+
+    pipeline_stages:
+      # Stage 1: RTX filter log structure.
+      #   "[101] PASS TCP 192.168.1.50:54321 > 8.8.8.8:443"
+      # Extracted: filter_no, action, protocol, src, src_port, dst, dst_port.
+      - regex:
+          expression: '\[(?P<filter_no>\d+)\] (?P<action>PASS|REJECT) (?P<protocol>[A-Z]+) (?P<src>[\d.]+):(?P<src_port>\d+) > (?P<dst>[\d.]+):(?P<dst_port>\d+)'
+
+      # Stage 2: IKE / IPsec session events.
+      #   "[IKE] initiate IPsec phase to 119.231.58.172"
+      #   "[IKE2] SA:5/IKE established"
+      #   "[IKE] respond ISAKMP phase to 1.2.3.4 (local address 5.6.7.8)"
+      - regex:
+          expression: '\[(?P<phase>IKE2?)\] (?P<ike_event>.*?)(?: to (?P<peer>[\d.]+))?(?: \(local address (?P<local>[\d.]+)\))?$'
+
+      # Stage 3: DHCPD lease events.
+      #   "[DHCPD] Extends 192.168.1.28: 24:59:e5:54:5e:5a"
+      - regex:
+          expression: '\[DHCPD\] (?P<dhcp_event>Extends|Assigns|Releases) (?P<lease_ip>[\d.]+): (?P<mac>[0-9a-f:]+)'
+
+      # Stage 4: `same message repeated N times` collapse marker.
+      - regex:
+          expression: 'same message repeated (?P<repeat_count>\d+) times'
+
+      # Stage 5: GeoIP enrichment on the extracted filter-log src field.
+      # Uses dbip-city-lite (CC-BY 4.0, monthly refresh by mitamae); the
+      # cookbook downloads the .mmdb file into the bind-mounted geoip dir.
+      # Promtail's geoip stage emits geoip_country_code, geoip_city_name,
+      # geoip_continent_code, geoip_latitude, geoip_longitude, etc. as
+      # extracted fields — only country_code is promoted to a Loki label
+      # (low cardinality), the rest stay in structured metadata for the
+      # geomap panel.
+      - geoip:
+          db: /etc/promtail/geoip/dbip-city-lite.mmdb
+          source: src
+          db_type: city
+
+      # Stage 6: promote low-cardinality fields to Loki labels. Only fields
+      # with a small bounded value space go here — high-cardinality fields
+      # are kept as extracted-only and relayed via structured_metadata below.
+      # Empty values are filtered by promtail (label not set when capture
+      # group did not match).
+      - labels:
+          action:
+          phase:
+          dhcp_event:
+          geoip_country_code:
+
+      # Stage 7: high-cardinality fields → structured metadata (Loki 2.9+).
+      # Queryable via LogQL `| json` style filters but does not contribute
+      # to chunk index cardinality.
+      - structured_metadata:
+          src:
+          dst:
+          src_port:
+          dst_port:
+          peer:
+          local:
+          filter_no:
+          protocol:
+          ike_event:
+          lease_ip:
+          mac:
+          repeat_count:
+          geoip_city_name:
+          geoip_continent_code:
+          geoip_latitude:
+          geoip_longitude:
+          geoip_subdivision_code:
+          geoip_subdivision_name:

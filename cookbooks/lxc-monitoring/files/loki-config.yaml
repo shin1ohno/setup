@@ -1,0 +1,82 @@
+# Loki single-instance config for the lxc-monitoring stack (Phase B).
+#
+# Storage: filesystem (chunks + index) under /loki, bind-mounted from
+# /data/monitoring/loki on the host. Single replica, no clustering — only
+# the sibling Promtail pushes to it and only Grafana reads from it, both
+# over the docker-compose default network.
+#
+# Schema: tsdb (Loki 2.9+ default) backed by filesystem object_store.
+# 30d retention to match the Prometheus retention window. structured
+# metadata enabled (Loki 2.9+ feature) — required for the cardinality
+# split documented in cookbooks/lxc-monitoring/files/promtail-config.yaml
+# (low-cardinality fields → labels, high-cardinality → structured metadata).
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: info
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  instance_addr: 127.0.0.1
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+  filesystem:
+    directory: /loki/chunks
+
+limits_config:
+  # Required for the structured_metadata pipeline stage in Promtail. When
+  # this is false the Promtail push silently drops structured metadata
+  # fields, leaving only the labels.
+  allow_structured_metadata: true
+  # 30d retention, matches prometheus.yml's --storage.tsdb.retention.time.
+  retention_period: 720h
+  # Reasonable per-stream rate limits for a 2-router LAN syslog feed.
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+  delete_request_store: filesystem
+
+# Disable telemetry phone-home — LAN-only deployment, no need to call out.
+analytics:
+  reporting_enabled: false
+
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+  rule_path: /loki/rules-tmp
+  ring:
+    kvstore:
+      store: inmemory
+  enable_api: false

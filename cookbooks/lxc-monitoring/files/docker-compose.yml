@@ -117,3 +117,37 @@ services:
       - ./snmp.yml:/etc/snmp_exporter/snmp.yml:ro
     ports:
       - "127.0.0.1:9116:9116"
+
+  # Loki: log aggregation backend for RTX syslog (Phase B). Filesystem
+  # storage at /data/monitoring/loki, 30d retention. Single-instance mode
+  # (auth_enabled=false) — only the sibling Promtail and Grafana hit it
+  # over the docker-compose default network.
+  loki:
+    image: grafana/loki:2.9.10
+    container_name: monitoring-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yaml
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - /data/monitoring/loki:/loki
+
+  # Promtail: syslog receiver + RTX-specific log parser + GeoIP enricher.
+  # Listens UDP 1514 LAN-wide for RTX syslog forwarding. GeoIP database
+  # is dbip-city-lite (CC-BY 4.0, monthly refresh by mitamae).
+  # Bound to 0.0.0.0:1514 — needs to receive packets from RTX routers
+  # outside the docker network. UDP only (RTX uses UDP syslog).
+  promtail:
+    image: grafana/promtail:2.9.10
+    container_name: monitoring-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    depends_on:
+      - loki
+    ports:
+      - "0.0.0.0:1514:1514/udp"
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - ./geoip:/etc/promtail/geoip:ro
+      - /tmp/promtail-positions:/tmp/positions:rw
