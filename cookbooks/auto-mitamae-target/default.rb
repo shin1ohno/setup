@@ -31,6 +31,28 @@ ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "
 aws_profile = ssh_keys_config["aws_profile"]
 aws_region  = ssh_keys_config["aws_region"]
 
+# Phase 3 fleet learning: every fresh LXC needed pve-bootstrap-ssm
+# manually written before the SSM-gated block could run (Phase 3a/3b/3c
+# of the auto-mitamae rollout). Centralise the profile bootstrap by
+# including aws-credentials with the fleet-wide standard config — the
+# cookbook is auth-skip-safe, so on a fresh host with no auth it warns
+# and continues; once `bin/bootstrap-lxc-creds <CT>` has seeded the
+# profile, this idempotent SSM verify keeps it in sync if admin rotates
+# the credentials.
+node.reverse_merge!(
+  aws_credentials: {
+    bootstrap_profile: aws_profile,
+    profiles: {
+      aws_profile => {
+        access_key_id_ssm:     "/home-monitor/iam/pve-bootstrap-ssm/access-key-id",
+        secret_access_key_ssm: "/home-monitor/iam/pve-bootstrap-ssm/secret-access-key",
+        region:                aws_region,
+      },
+    },
+  }
+)
+include_cookbook "aws-credentials"
+
 ORCHESTRATOR_SSM_PATH = "/ssh-keys/orchestrator/public"
 BREAK_GLASS_SSM_PATH  = "/ssh-keys/break-glass/public"
 ORCHESTRATOR_FROM_IP  = "192.168.1.76"

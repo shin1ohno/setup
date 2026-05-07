@@ -46,6 +46,30 @@ return if profiles.empty?
 
 profile_arg = bootstrap ? " --profile '#{bootstrap}'" : ""
 
+# Probe whether bootstrap auth is available BEFORE running the
+# `aws ssm get-parameter` resources. If the bootstrap_profile is not yet
+# configured (fresh LXC, profile direct-write deferred to operator), or
+# env vars are absent, OR IAM role unavailable — log a warn and return
+# rather than failing every execute resource downstream.
+#
+# This makes the cookbook safe to include unconditionally in a fleet
+# transitive chain (e.g. cookbooks/auto-mitamae-target). Hosts that have
+# the bootstrap profile (or env vars) get the idempotent SSM verify;
+# hosts without get a no-op + visible warn.
+auth_probe_cmd = "aws sts get-caller-identity#{profile_arg} > /dev/null 2>&1"
+auth_probe = run_command(auth_probe_cmd, error: false)
+if auth_probe.exit_status != 0
+  MItamae.logger.warn(
+    "aws-credentials: bootstrap auth unavailable " \
+    "(bootstrap_profile=#{bootstrap || '<none>'}, " \
+    "AWS_ACCESS_KEY_ID=#{ENV['AWS_ACCESS_KEY_ID'] ? 'set' : 'unset'}). " \
+    "Skipping profile sync. Run bin/bootstrap-lxc-creds <CT> to seed " \
+    "the bootstrap profile, or pass admin creds via AWS_ACCESS_KEY_ID + " \
+    "AWS_SECRET_ACCESS_KEY env vars on the next mitamae apply."
+  )
+  return
+end
+
 profiles.each do |profile_name, spec|
   region   = spec[:region] || spec["region"] || "ap-northeast-1"
   akid_ssm = spec[:access_key_id_ssm]     || spec["access_key_id_ssm"]
