@@ -35,7 +35,25 @@ node.reverse_merge!(
 )
 lxc_hostname = node[:lxc_dev][:hostname]
 tailscale_tag = node[:lxc_dev][:tailscale_tag]
-tailscale_ssm_key = node[:lxc_dev][:tailscale_ssm_key] || "/tailscale/#{lxc_hostname}-auth-key"
+
+# Phase B-4: resolve tailscale_ssm_key from /host-registry/outputs/ssm-paths
+# instead of hardcoding the template here. Falls back to the historical
+# hardcoded template if the SSM read fails (fresh LXC, IAM grant pending).
+# Explicit override via node[:lxc_dev][:tailscale_ssm_key] still wins.
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
+aws_profile     = ssh_keys_config["aws_profile"]
+aws_region      = ssh_keys_config["aws_region"]
+
+tailscale_ssm_key = node[:lxc_dev][:tailscale_ssm_key] || begin
+  raw = `aws ssm get-parameter --name /host-registry/outputs/ssm-paths --query Parameter.Value --output text --profile #{aws_profile} --region #{aws_region} 2>/dev/null`.strip
+  tmpl = raw.empty? ? nil : JSON.parse(raw)["tailscale_auth_key_template"]
+  if tmpl
+    tmpl.sub("{hostname}", lxc_hostname)
+  else
+    MItamae.logger.warn("lxc-dev-workstation: /host-registry/outputs/ssm-paths fetch failed; falling back to /tailscale/#{lxc_hostname}-auth-key")
+    "/tailscale/#{lxc_hostname}-auth-key"
+  end
+end
 
 # Common LXC user provisioning (shin1ohno + sudo + ssh authorized_keys).
 include_cookbook "lxc-shared-user"
