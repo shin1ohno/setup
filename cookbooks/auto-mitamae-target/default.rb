@@ -31,27 +31,16 @@ ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "
 aws_profile = ssh_keys_config["aws_profile"]
 aws_region  = ssh_keys_config["aws_region"]
 
-# Phase 3 fleet learning: every fresh LXC needed pve-bootstrap-ssm
-# manually written before the SSM-gated block could run (Phase 3a/3b/3c
-# of the auto-mitamae rollout). Centralise the profile bootstrap by
-# including aws-credentials with the fleet-wide standard config — the
-# cookbook is auth-skip-safe, so on a fresh host with no auth it warns
-# and continues; once `bin/bootstrap-lxc-creds <CT>` has seeded the
-# profile, this idempotent SSM verify keeps it in sync if admin rotates
-# the credentials.
-node.reverse_merge!(
-  aws_credentials: {
-    bootstrap_profile: aws_profile,
-    profiles: {
-      aws_profile => {
-        access_key_id_ssm:     "/home-monitor/iam/pve-bootstrap-ssm/access-key-id",
-        secret_access_key_ssm: "/home-monitor/iam/pve-bootstrap-ssm/secret-access-key",
-        region:                aws_region,
-      },
-    },
-  }
-)
-include_cookbook "aws-credentials"
+# Note on profile bootstrap: the original Phase 3 systematic-化 plan
+# included aws-credentials here with bootstrap_profile=pve-bootstrap-ssm,
+# but pve-bootstrap-ssm IAM does NOT have ssm:GetParameter on its own
+# `/home-monitor/iam/pve-bootstrap-ssm/*` paths (intentional — preventing
+# self-rotation as a privilege-escalation surface). aws-credentials with
+# that bootstrap_profile fails with AccessDeniedException, so it is not
+# included on the fleet path. The `bin/bootstrap-lxc-creds <CT>` operator
+# script is the systematic-化 of the bootstrap step instead — it copies
+# the profile from the PVE host (which has the creds via initial admin
+# bootstrap) into a fresh LXC via `pct exec`, one-shot per host.
 
 ORCHESTRATOR_SSM_PATH = "/ssh-keys/orchestrator/public"
 BREAK_GLASS_SSM_PATH  = "/ssh-keys/break-glass/public"
