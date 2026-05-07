@@ -126,3 +126,19 @@ Auto-mitamae: `cookbooks/auto-mitamae-target` installs a systemd timer on each L
 - Linux includes hardware-coupled cookbooks directly in `linux.rb` (bluez, broadcom-wifi, zeroconf, edge-agent). Roon Server / MCP and the rest of the MCP server stack run in dedicated LXCs and are no longer pulled into `linux.rb`
 - macOS includes client-specific setup (mac-settings, mac-apps) directly in `darwin.rb`
 
+## Cross-repo Host Registry (Phase A round-table 2026-05-07)
+
+Host registry の canonical source は **AWS SSM Parameter `/host-registry/devices`**。実体は `~/ManagedProjects/home-monitor/contracts/devices.json` (git-managed、19 エントリ: 5 hosts + 12 LXCs + 2 iOS clients)、Terraform で SSM に push。setup cookbook と CI は SSM から fetch:
+
+| Component | Role |
+|---|---|
+| `cookbooks/ssh-keys/files/aws-config.json` | Bootstrap minimal config (`aws_profile` + `aws_region` のみ、SSM 接続用) |
+| `cookbooks/ssh-keys/default.rb` | `aws ssm get-parameter --name /host-registry/devices` で fetch、新ネスト型スキーマ (`d["ssh"]["ssm_prefix"]` 等) で参照 |
+| `.github/workflows/test-setup.yml` `ssm-validation` job | GitHub OIDC role (`AWS_OIDC_ROLE_ARN` secret) で SSM fetch + jq sanity check |
+
+4 cookbook (`auto-mitamae-orchestrator` / `auto-mitamae-target` / `cognee` / `lxc-monitoring`) は `aws-config.json` から `aws_profile` / `aws_region` のみ参照 (devices map に touch せず)。
+
+新ホストの追加: `home-monitor/contracts/devices.json` に entry を追加 + `terraform apply` (`kind: lxc` なら `pve/lxc-<name>.rb` も追加)。setup repo の cookbook 修正は不要。
+
+廃案 (Phase A round-table で却下): submodule 経由配送 (cross-VCS auth + protocol.codecommit.allow=always 運用負担)、第 3 リポ抽出 (privilege aggregation anti-pattern)、モノレポ化 (IAM 信頼境界破壊)。詳細: `docs/adr/0001-0004-*.md`。
+

@@ -128,7 +128,7 @@ This rule exists because the 2026-04-25 neo bootstrap session: ssh-keys cookbook
 git grep -nE 'check_command:' cookbooks/ | grep -v -- '--profile'
 ```
 
-Any hit is a false-gate candidate unless the cookbook genuinely uses the default AWS profile exclusively (rare — most service LXCs run with `pve-bootstrap-ssm` profile). This grep takes under one second and catches the class of bugs that caused silent SSM fetch failures in cognee (#143 fixed) and lxc-monitoring (#148 shipped with the bug, surfaced during 2026-05-06 apply when CT 111 had `pve-bootstrap-ssm` profile but no `default` profile → cookbook's bare `aws ssm get-parameter` check failed → non-TTY skip → Grafana stack silently undeployed). Fix: include `--profile <name>` in the `check_command`, sourcing the profile name from `cookbooks/ssh-keys/files/devices.json` like `auto-mitamae-target` does.
+Any hit is a false-gate candidate unless the cookbook genuinely uses the default AWS profile exclusively (rare — most service LXCs run with `pve-bootstrap-ssm` profile). This grep takes under one second and catches the class of bugs that caused silent SSM fetch failures in cognee (#143 fixed) and lxc-monitoring (#148 shipped with the bug, surfaced during 2026-05-06 apply when CT 111 had `pve-bootstrap-ssm` profile but no `default` profile → cookbook's bare `aws ssm get-parameter` check failed → non-TTY skip → Grafana stack silently undeployed). Fix: include `--profile <name>` in the `check_command`, sourcing the profile name from `cookbooks/ssh-keys/files/aws-config.json` (Phase A 2026-05-07 SSM 切替後; bootstrap config のみ in-repo、host registry 本体は SSM `/host-registry/devices`) like `auto-mitamae-target` does.
 
 ## STDIN.tty? guard before any blocking STDIN read
 
