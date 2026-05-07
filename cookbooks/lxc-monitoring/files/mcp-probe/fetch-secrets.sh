@@ -35,7 +35,7 @@ PROBER_CLIENT_SECRET=${CSEC}
 HYDRA_TOKEN_URL=http://192.168.1.71:4444/oauth2/token
 MCP_BASE_URL=https://mcp.ohno.be
 TEXTFILE_OUT=/var/lib/node_exporter/textfile_collector/mcp_probe.prom
-PROBE_TIMEOUT_S=8
+PROBE_TIMEOUT_S=15
 EOF
 
 chmod 600 "$out"
