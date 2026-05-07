@@ -13,11 +13,14 @@ ExecStart=/usr/local/bin/node_exporter \
   --web.listen-address=:9100
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/var/lib/node_exporter/textfile
-PrivateTmp=yes
+# Hardening directives (NoNewPrivileges, ProtectSystem, ProtectHome,
+# PrivateTmp) were removed because they cause systemd's namespace setup
+# to fail with status=226/NAMESPACE inside *privileged* PVE LXCs (e.g.
+# CT 100 roon). The exporter only listens on a LAN-internal port and is
+# scraped by the monitoring LXC inside the same LAN, so the
+# defense-in-depth value of these directives is small relative to the
+# operational cost of supporting both privileged and unprivileged LXC
+# in the fleet.
 
 [Install]
 WantedBy=multi-user.target
