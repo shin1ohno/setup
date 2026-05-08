@@ -1,8 +1,14 @@
 # Promtail config for the lxc-monitoring stack (Phase B).
 #
-# Receives RTX router syslog over UDP 1514 from hnd (192.168.1.253) and
-# itm (192.168.1.254), enriches with GeoIP city lookup on extracted source
-# IPs, and pushes to the sibling Loki container at loki:3100.
+# Receives RTX router syslog over UDP 514 (RTX firmware-fixed default
+# destination port; the `syslog host <ip> <port>` form is parsed by RTX
+# as a second host IP, not a port spec). Promtail binds 514 without
+# CAP_NET_BIND_SERVICE because the cookbook lowers
+# net.ipv4.ip_unprivileged_port_start to 514 in the LXC's net namespace
+# (see files/99-syslog-unprivileged-port.conf). Sources are hnd
+# (192.168.1.253) and itm (192.168.1.254); the pipeline enriches with
+# GeoIP city lookup on extracted source IPs and pushes to the sibling
+# Loki container at loki:3100.
 #
 # Cardinality strategy (per ~/.claude/plans/lovely-coalescing-anchor.md
 # "Loki ラベル設計"):
@@ -45,7 +51,7 @@ positions:
 scrape_configs:
   - job_name: rtx-syslog
     syslog:
-      listen_address: 0.0.0.0:1514
+      listen_address: 0.0.0.0:514
       listen_protocol: udp
       idle_timeout: 60s
       label_structured_data: false
