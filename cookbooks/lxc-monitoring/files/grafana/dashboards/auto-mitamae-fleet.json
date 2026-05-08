@@ -1,6 +1,6 @@
 {
   "annotations": { "list": [] },
-  "description": "Phase 2b fleet dashboard: per-host apply status, drift commits, GitHub API health, commit pinning. Bottom half is a card grid (one stat panel per host, repeated horizontally) — replaces the joinByField table.",
+  "description": "Auto-mitamae fleet dashboard. Top row classifies hosts into 4 severity tiers (succeeded / hard failing / transient / stale) plus drift-checker status + main HEAD. Bottom half is a per-host card grid. Severity: hard fail = mitamae_fail / ssh_unreachable / git_fail / git_fetch_fail / invalid_command (operator action). Transient = sha_mismatch / lock_held (self-heals next cycle). Stale = last apply timestamp older than 30 min (~2× cycle, orchestrator-side issue).",
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -10,7 +10,7 @@
   "panels": [
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Hosts whose last apply ended with status=success.",
+      "description": "Hosts with status=success and timestamp within last 30 min (~2× cycle).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -27,7 +27,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
       "id": 1,
       "options": {
         "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
@@ -40,7 +40,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "count(auto_mitamae_last_apply_status{result=\"success\"} == 1)",
+          "expr": "count((auto_mitamae_last_apply_status{result=\"success\"} == 1) and on(host) (time() - auto_mitamae_last_apply_timestamp_seconds <= 1800))",
           "instant": true, "legendFormat": "succeeded", "range": false, "refId": "A"
         }
       ],
@@ -49,7 +49,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Hosts whose last apply did NOT end success — covers mitamae_fail, sha_mismatch, ssh_unreachable, etc.",
+      "description": "Hard-failing hosts (operator action required): mitamae_fail / ssh_unreachable / git_fail / git_fetch_fail / invalid_command, AND timestamp within last 30 min. Transient (sha_mismatch / lock_held) and stale hosts are surfaced in adjacent panels.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -65,7 +65,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
       "id": 2,
       "options": {
         "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
@@ -78,11 +78,11 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "count(auto_mitamae_last_apply_status{result!=\"success\"} == 1) or vector(0)",
-          "instant": true, "legendFormat": "failing", "range": false, "refId": "A"
+          "expr": "count((auto_mitamae_last_apply_status{result=~\"mitamae_fail|ssh_unreachable|git_fail|git_fetch_fail|invalid_command\"} == 1) and on(host) (time() - auto_mitamae_last_apply_timestamp_seconds <= 1800)) or vector(0)",
+          "instant": true, "legendFormat": "hard failing", "range": false, "refId": "A"
         }
       ],
-      "title": "Hosts: last apply failing",
+      "title": "Hosts: hard failing",
       "type": "stat"
     },
     {
@@ -106,7 +106,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 0 },
       "id": 3,
       "options": {
         "colorMode": "background", "graphMode": "none", "justifyMode": "auto",
@@ -139,7 +139,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 0 },
       "id": 4,
       "options": {
         "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
@@ -162,7 +162,83 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "One card per fleet host. Background colors by result (success=green / mitamae_fail=red / sha_mismatch=yellow / ssh_unreachable=purple / git_fail=orange). Within each card: result text, time since last apply, drift commits behind main, and pinned indicator (✓ if applied SHA == orchestrator's expected SHA, ✗ otherwise).",
+      "description": "Transient hosts (self-heals next cycle, watch only): sha_mismatch (host's git fetch lagged) / lock_held (concurrent apply). Excludes stale entries.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 1 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 0 },
+      "id": 6,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "count((auto_mitamae_last_apply_status{result=~\"sha_mismatch|lock_held\"} == 1) and on(host) (time() - auto_mitamae_last_apply_timestamp_seconds <= 1800)) or vector(0)",
+          "instant": true, "legendFormat": "transient", "range": false, "refId": "A"
+        }
+      ],
+      "title": "Hosts: transient",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Stale hosts: orchestrator has not refreshed this host's metrics within the last 30 min (~2× cycle). Indicates an orchestrator-side issue (cron paused, lock stuck, host omitted from hosts.json).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "purple", "value": 1 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 0 },
+      "id": 7,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.6.14",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "count(time() - auto_mitamae_last_apply_timestamp_seconds > 1800) or vector(0)",
+          "instant": true, "legendFormat": "stale", "range": false, "refId": "A"
+        }
+      ],
+      "title": "Hosts: stale",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "One card per fleet host. Background colors by result severity (hard fail=red: mitamae_fail / ssh_unreachable / git_fail / git_fetch_fail / invalid_command. transient=yellow: sha_mismatch / lock_held. success=green). Within each card: result text, time since last apply, drift commits behind main, and pinned indicator (✓ if applied SHA == orchestrator's expected SHA, ✗ otherwise).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -181,8 +257,11 @@
                     "success":         { "color": "green",  "text": "✓ OK",        "index": 0 },
                     "mitamae_fail":    { "color": "red",    "text": "❌ FAIL",     "index": 1 },
                     "sha_mismatch":    { "color": "yellow", "text": "⚠ MISMATCH",  "index": 2 },
-                    "ssh_unreachable": { "color": "purple", "text": "⊘ UNREACH",   "index": 3 },
-                    "git_fail":        { "color": "orange", "text": "⊘ GIT FAIL",  "index": 4 }
+                    "ssh_unreachable": { "color": "red",    "text": "⊘ UNREACH",   "index": 3 },
+                    "git_fail":        { "color": "red",    "text": "⊘ GIT FAIL",  "index": 4 },
+                    "git_fetch_fail":  { "color": "red",    "text": "⊘ GIT FETCH", "index": 5 },
+                    "lock_held":       { "color": "yellow", "text": "⚠ LOCKED",    "index": 6 },
+                    "invalid_command": { "color": "red",    "text": "⚠ PROTOCOL",  "index": 7 }
                   }
                 }
               ]}
@@ -307,6 +386,6 @@
   "timezone": "",
   "title": "Auto-mitamae Fleet",
   "uid": "auto-mitamae-fleet",
-  "version": 3,
+  "version": 4,
   "weekStart": ""
 }
