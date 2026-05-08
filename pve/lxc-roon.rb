@@ -23,5 +23,5 @@ node.reverse_merge!(
   }
 )
 
-include_cookbook "lxc-roon"
+include_cookbook "roon-server"
 include_role "lxc-core"
