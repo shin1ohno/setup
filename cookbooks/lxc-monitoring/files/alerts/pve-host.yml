@@ -1,0 +1,261 @@
+groups:
+  - name: pve-host-capacity
+    interval: 30s
+    rules:
+      # ============================================================
+      # Allocation-budget alerts (alloc-sum vs host total)
+      # ============================================================
+      # `pve_memory_size_bytes{id=~"lxc/.+"}` is the configured upper
+      # limit per LXC, not the running usage. Once the alloc-sum
+      # approaches 100%, no new LXC can be provisioned without
+      # reducing existing alloc, even if real memory is mostly idle.
+      # This pair of alerts catches budget exhaustion before the next
+      # `terraform apply` errors out at PVE create time.
+
+      - alert: PveHostMemoryAllocHigh
+        expr: |
+          (
+            sum(pve_memory_size_bytes{id=~"lxc/.+"})
+            /
+            on() pve_memory_size_bytes{id="node/pro"}
+          ) > 0.80
+        for: 5m
+        labels:
+          severity: warning
+          component: pve-capacity
+        annotations:
+          summary: "PVE host LXC memory allocation > 80% of host total"
+          description: |
+            Sum of LXC `memory:` config = {{ $value | humanizePercentage }} of host
+            total RAM. New LXC provisioning will start to bump against the host
+            ceiling. Plan: review `pve_memory_size_bytes{id=~"lxc/.+"}` per LXC,
+            shrink alloc on idle LXCs (pro-dev, samba, etc), or add host RAM.
+            Runbook: ssh root@192.168.1.10 'pct list | head -20 ; for v in $(pct list | awk "NR>1{print \$1}"); do echo "ct=$v $(pct config $v | grep ^memory:)"; done'
+
+      - alert: PveHostMemoryAllocCritical
+        expr: |
+          (
+            sum(pve_memory_size_bytes{id=~"lxc/.+"})
+            /
+            on() pve_memory_size_bytes{id="node/pro"}
+          ) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          component: pve-capacity
+        annotations:
+          summary: "PVE host LXC memory allocation > 95% of host total"
+          description: |
+            Sum of LXC `memory:` config = {{ $value | humanizePercentage }} of host
+            total RAM. New LXC will fail to provision. Existing LXCs sharing the
+            kernel may be OOM-killed if they grow into their alloc concurrently.
+            Action: shrink LXC alloc OR add host RAM before the next deploy.
+
+      # ============================================================
+      # Real-usage alerts (independent of alloc-budget)
+      # ============================================================
+      # Real memory usage tracks what's actively consumed — independent
+      # of the alloc-sum. High real usage indicates concurrent memory
+      # demand from LXCs that's headed toward swap (ZFS ARC + LXC
+      # workloads competing for the same pool).
+
+      - alert: PveHostMemoryUsageHigh
+        expr: |
+          (
+            pve_memory_usage_bytes{id="node/pro"}
+            /
+            pve_memory_size_bytes{id="node/pro"}
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          component: pve-capacity
+        annotations:
+          summary: "PVE host real memory usage > 85% sustained 10m"
+          description: |
+            Host actual memory in use = {{ $value | humanizePercentage }}.
+            Concurrent LXC workloads have driven real demand close to host
+            capacity. Risk: ZFS ARC eviction → cache miss spikes, or LXC
+            OOM-kill if the trend continues.
+            Runbook: ssh root@192.168.1.10 'free -h ; arc_summary | head -20'
+
+      # ============================================================
+      # CPU overcommit warning
+      # ============================================================
+      # LXC vCPU is a soft limit — overcommit is normal for IO-bound
+      # workloads. Warn at 1.5x to flag the trend, not as an emergency.
+
+      - alert: PveHostCpuOvercommitHigh
+        expr: |
+          (
+            sum(pve_cpu_usage_limit{id=~"lxc/.+"})
+            /
+            on() pve_cpu_usage_limit{id="node/pro"}
+          ) > 1.5
+        for: 30m
+        labels:
+          severity: warning
+          component: pve-capacity
+        annotations:
+          summary: "PVE host vCPU overcommit > 1.5x"
+          description: |
+            Sum of LXC `cores:` config = {{ $value | humanizePercentage }} of host
+            physical cores. Tolerated if average host CPU stays low (LXC mostly
+            idle), but indicates the host is at the edge for sustained burst.
+            Runbook: check `avg_over_time(pve_cpu_usage_ratio{id="node/pro"}[1h])`.
+
+      # ============================================================
+      # Per-LXC memory pressure (which LXC needs a bump)
+      # ============================================================
+      # Pinpoints which individual LXC is running close to its alloc
+      # ceiling. Distinct from the host-level alerts: a single LXC at
+      # 95% with the rest idle won't trigger PveHostMemoryUsageHigh.
+
+      - alert: PveLxcMemoryPressure
+        expr: |
+          (
+            pve_memory_usage_bytes{id=~"lxc/.+"}
+            /
+            pve_memory_size_bytes{id=~"lxc/.+"}
+          ) > 0.90
+        for: 15m
+        labels:
+          severity: warning
+          component: pve-capacity
+        annotations:
+          summary: "LXC {{ $labels.id }} memory > 90% of allocation sustained 15m"
+          description: |
+            Container {{ $labels.id }} actual memory usage =
+            {{ $value | humanizePercentage }} of its config `memory:` ceiling.
+            Increase the alloc in `home-monitor:pve-lxcs.tf` (`memory = ...`),
+            terraform apply, then reboot the CT (alloc change requires restart).
+
+      # ============================================================
+      # Storage capacity alerts
+      # ============================================================
+      # Three locations matter:
+      #   1. rpool (PVE managed): exposed by pve-exporter as
+      #      pve_disk_*_bytes{id="storage/pro/local-zfs"}
+      #   2. /mnt/data (Crucial X8 USB): node_exporter from PVE host
+      #   3. /mnt/Media (Crucial X6 USB): same source
+      # ES storage will land on /mnt/data subdirs — that disk is the
+      # primary watch target for the rtx-logs Phase B rollout.
+
+      - alert: PveStorageRpoolHigh
+        expr: |
+          (
+            pve_disk_usage_bytes{id="storage/pro/local-zfs"}
+            /
+            pve_disk_size_bytes{id="storage/pro/local-zfs"}
+          ) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          component: pve-capacity
+        annotations:
+          summary: "PVE rpool (local-zfs) usage > 80%"
+          description: |
+            Boot/system pool {{ $value | humanizePercentage }} full. Affects
+            rootfs of every LXC backed by rpool. Check per-LXC subvol size
+            via `node_filesystem_size_bytes{mountpoint=~"/rpool/data/subvol-.+"}`
+            and shrink the heaviest, or relocate to /mnt/data.
+
+      - alert: PveStorageMntDataHigh
+        expr: |
+          (
+            (
+              node_filesystem_size_bytes{instance="192.168.1.10:9100",mountpoint="/mnt/data"}
+              -
+              node_filesystem_avail_bytes{instance="192.168.1.10:9100",mountpoint="/mnt/data"}
+            )
+            /
+            node_filesystem_size_bytes{instance="192.168.1.10:9100",mountpoint="/mnt/data"}
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          component: pve-capacity
+        annotations:
+          summary: "PVE /mnt/data (Crucial X8 USB) usage > 85%"
+          description: |
+            External SSD at /mnt/data is {{ $value | humanizePercentage }} full.
+            Hosts ES cluster (es-0/1/2) plus pve-migration-backup-* archives.
+            Action: review `du -sh /mnt/data/*`, expire old ES indices via
+            ILM (default 7d retention), or move migration backups to S3.
+
+      - alert: PveStorageMntDataCritical
+        expr: |
+          (
+            (
+              node_filesystem_size_bytes{instance="192.168.1.10:9100",mountpoint="/mnt/data"}
+              -
+              node_filesystem_avail_bytes{instance="192.168.1.10:9100",mountpoint="/mnt/data"}
+            )
+            /
+            node_filesystem_size_bytes{instance="192.168.1.10:9100",mountpoint="/mnt/data"}
+          ) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          component: pve-capacity
+        annotations:
+          summary: "PVE /mnt/data (Crucial X8 USB) usage > 95%"
+          description: |
+            Disk near full ({{ $value | humanizePercentage }}). ES indexing
+            will start rejecting writes (high-watermark flood-stage at 95%).
+            Free space immediately or ES cluster goes into read-only mode.
+
+      - alert: PveStorageMntMediaHigh
+        expr: |
+          (
+            (
+              node_filesystem_size_bytes{instance="192.168.1.10:9100",mountpoint="/mnt/Media"}
+              -
+              node_filesystem_avail_bytes{instance="192.168.1.10:9100",mountpoint="/mnt/Media"}
+            )
+            /
+            node_filesystem_size_bytes{instance="192.168.1.10:9100",mountpoint="/mnt/Media"}
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          component: pve-capacity
+        annotations:
+          summary: "PVE /mnt/Media (Crucial X6 USB) usage > 85%"
+          description: |
+            External SSD at /mnt/Media is {{ $value | humanizePercentage }} full.
+            Currently holds Media library (~1.7 TB). Not critical for
+            monitoring path, but limits future ES expansion if /mnt/data
+            fills first and we need to relocate.
+
+      # ============================================================
+      # PVE node-exporter / pve-exporter availability
+      # ============================================================
+      # If these go down we lose the visibility that drives every alert
+      # above. Worth alerting on directly so silent monitoring outages
+      # aren't masked.
+
+      - alert: PveExporterDown
+        expr: up{job="pve"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: pve-capacity
+        annotations:
+          summary: "pve-exporter down — PVE host metrics blind"
+          description: |
+            All pve_* metrics will go stale. Capacity alerts above will
+            stop firing even if the underlying condition is true.
+            Runbook: ssh root@192.168.1.10 'systemctl status prometheus-pve-exporter'
+
+      - alert: PveHostNodeExporterDown
+        expr: up{instance="192.168.1.10:9100"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: pve-capacity
+        annotations:
+          summary: "PVE host node_exporter down — filesystem visibility lost"
+          description: |
+            /mnt/data and /mnt/Media usage alerts depend on this scrape.
+            Runbook: ssh root@192.168.1.10 'ss -tlnp | grep :9100 ; ps aux | grep node_exporter'
