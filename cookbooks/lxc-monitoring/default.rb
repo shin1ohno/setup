@@ -99,18 +99,11 @@ end
 # Prometheus 2.x → uid=65534(nobody). TSDB writes (chunks_head/, wal/,
 # lock, queries.active) all happen inside /prometheus.
 #
-# Loki 2.9.x → uid=10001(loki) per the upstream Dockerfile
-# (https://github.com/grafana/loki/blob/v2.9.10/cmd/loki/Dockerfile).
-# State path inside the container is /loki; without uid 10001 ownership
-# loki crash-loops with `error creating ingester: mkdir /loki/chunks:
-# permission denied`.
-#
 # Set per-service explicitly with String UIDs (Integer raises
 # InvalidTypeError per `ruby.md` "owner/group must be String").
 state_dir_owners = {
   "prometheus" => "65534", # nobody (prom/prometheus standard)
   "grafana"    => "472",   # grafana (grafana/grafana standard)
-  "loki"       => "10001", # loki (grafana/loki standard)
 }
 state_dir_owners.each do |sub, uid|
   directory "#{state_dir}/#{sub}" do
@@ -118,6 +111,16 @@ state_dir_owners.each do |sub, uid|
     group uid
     mode "755"
   end
+end
+
+# Phase 6 (ADR 0005): Loki cutover — remove the on-disk state directory
+# from previously-deployed hosts. Mitamae's `directory ... action :delete`
+# only deletes empty dirs and doesn't accept `recursive`, so use a guarded
+# `execute rm -rf`. The `only_if` keeps it idempotent: skipped when the
+# directory is already gone.
+execute "remove obsolete loki state dir" do
+  command "sudo rm -rf #{state_dir}/loki"
+  only_if "test -d #{state_dir}/loki"
 end
 
 # Allow the Vector container (network_mode: host, non-root user inside
@@ -172,7 +175,7 @@ remote_file "#{deploy_dir}/grafana/provisioning/dashboards/dashboards.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
-%w[node-exporter-full.json auto-mitamae-fleet.json proxmox-via-prometheus.json mcp-fleet-health.json rtx-routers.json rtx-logs.json].each do |dash|
+%w[node-exporter-full.json auto-mitamae-fleet.json proxmox-via-prometheus.json mcp-fleet-health.json rtx-routers.json].each do |dash|
   remote_file "#{deploy_dir}/grafana/dashboards/#{dash}" do
     source "files/grafana/dashboards/#{dash}"
     owner user
@@ -180,6 +183,26 @@ end
     mode "0644"
     notifies :run, "execute[restart monitoring]"
   end
+end
+
+# Phase 6 (ADR 0005): rtx-logs.json was the Grafana/Loki RTX log dashboard;
+# replaced by Kibana saved objects (Phase 5). Remove the deployed copy on
+# previously-converged hosts so Grafana doesn't show a stale dashboard
+# pointing at a deleted Loki datasource.
+file "#{deploy_dir}/grafana/dashboards/rtx-logs.json" do
+  action :delete
+end
+
+# Phase 6 (ADR 0005): same cleanup for the Loki datasource provisioning
+# yaml that Grafana would otherwise reload on container start.
+file "#{deploy_dir}/grafana/provisioning/datasources/loki.yml" do
+  action :delete
+end
+
+# Phase 6 (ADR 0005): the loki-config.yaml previously bind-mounted into
+# the Loki container.
+file "#{deploy_dir}/loki-config.yaml" do
+  action :delete
 end
 
 # snmp-exporter config template — committed with @@RTX_SNMP_COMMUNITY@@
@@ -234,18 +257,11 @@ remote_file "#{deploy_dir}/alerts/pve-host.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
-# Loki + Vector (Phase B: RTX syslog visualization). Vector replaces the
-# previous Promtail syslog target after RTX1210/RTX830 firmware was found
-# to emit non-standard syslog (`<PRI>tag msg` with no TIMESTAMP/HOSTNAME)
-# that neither RFC5424 nor RFC3164 strict parsers accept.
-remote_file "#{deploy_dir}/loki-config.yaml" do
-  source "files/loki-config.yaml"
-  owner user
-  group group
-  mode "0644"
-  notifies :run, "execute[restart monitoring]"
-end
-
+# Vector (RTX syslog → Elasticsearch). Replaces the prior Promtail syslog
+# target: RTX1210/RTX830 firmware emits non-standard syslog (`<PRI>tag msg`
+# with no TIMESTAMP/HOSTNAME) that neither RFC5424 nor RFC3164 strict
+# parsers accept. Phase 6 (ADR 0005) removed the Loki sink + container;
+# Elasticsearch is now the sole sink and Kibana provides the analyst UI.
 remote_file "#{deploy_dir}/vector.toml" do
   source "files/vector.toml"
   owner user
@@ -262,14 +278,6 @@ end
 execute "remove obsolete promtail-config.yaml from deploy_dir" do
   command "rm -f #{deploy_dir}/promtail-config.yaml"
   only_if "test -f #{deploy_dir}/promtail-config.yaml"
-end
-
-remote_file "#{deploy_dir}/grafana/provisioning/datasources/loki.yml" do
-  source "files/grafana/provisioning/datasources/loki.yml"
-  owner user
-  group group
-  mode "0644"
-  notifies :run, "execute[restart monitoring]"
 end
 
 # GeoIP staging directory on the host (bind-mounted into vector at

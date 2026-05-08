@@ -1,4 +1,4 @@
-# Vector pipeline for RTX router syslog → Loki ingestion (replaces Promtail).
+# Vector pipeline for RTX router syslog → Elasticsearch ingestion.
 #
 # Why Vector and not Promtail's syslog target:
 #   RTX1210 Rev.14 / RTX830 Rev.15 firmware emit non-standard syslog —
@@ -11,28 +11,10 @@
 #   wall-clock at receive time used for the event timestamp (LAN-local,
 #   sub-ms latency relative to RTX-side event time).
 #
-# Cardinality strategy unchanged from the prior Promtail config:
-#
-#   Loki labels (low cardinality, used in stream selectors):
-#     router        — 2 values (hnd / itm) from source IP
-#     severity      — small set (notice / info / debug / err)
-#     facility      — small set (local0 only in current RTX config)
-#     action        — 2 values (PASS / REJECT) when filter log
-#     phase         — IKE / IKE2 when VPN log
-#     dhcp_event    — Extends / Assigns / Releases when DHCP log
-#     geoip_country_code — country ISO codes (~hundreds of values, capped)
-#
-#   Structured metadata (high cardinality, queryable in LogQL but NOT a label):
-#     src, dst, src_port, dst_port — addresses (per-flow)
-#     peer, local                  — IPsec peer addresses
-#     filter_no, protocol          — filter-log structured fields
-#     ike_event                    — free-form IKE event description
-#     lease_ip, mac                — DHCP lease structured fields
-#     repeat_count                 — `same message repeated N times`
-#     geoip_*                      — non-country GeoIP fields
-#
-# Requires Loki 2.9+ with `limits_config.allow_structured_metadata: true`
-# (set in cookbooks/lxc-monitoring/files/loki-config.yaml).
+# Phase 6 (ADR 0005): Loki sink + container removed. Elasticsearch is the
+# sole sink for parsed RTX events; Kibana provides the analyst UI. The
+# `parse` transform's structured fields (src/dst/severity/router/...)
+# carry over unchanged into the ES document mapping.
 
 # -----------------------------------------------------------------------------
 # Enrichment tables
@@ -172,8 +154,9 @@ source = '''
   # config (dbip-city-lite, CC-BY 4.0, monthly refresh by mitamae).
   # Vector's mmdb enrichment_table returns the raw MaxMind City-DB
   # nested structure (country.iso_code, city.names.en, location.latitude
-  # etc.) — flatten the relevant fields to top-level so the loki sink's
-  # template `{{ geoip_country_code }}` style references resolve.
+  # etc.) — flatten the relevant fields to top-level so the downstream
+  # Elasticsearch mapping resolves them as scalar fields (geo_point for
+  # location, keyword for codes/names).
   # Wrapped in fallible-block style: `parse_regex` and `to_string` for
   # private/invalid IPs return errors that propagate via the `?? null`
   # pattern, leaving the geoip_* fields unset for those events.
@@ -201,54 +184,14 @@ source = '''
 # Sinks
 # -----------------------------------------------------------------------------
 
-# Loki host-side: 127.0.0.1:3100 because Vector runs in network_mode: host
-# (see docker-compose.yml `vector:` service comment) and Loki binds
-# 127.0.0.1:3100. Docker service-name resolution (`loki:3100`) is
-# unavailable from host net.
-[sinks.loki]
-type = "loki"
-inputs = ["parse"]
-endpoint = "http://127.0.0.1:3100"
-encoding.codec = "text"
-out_of_order_action = "accept"
-
-[sinks.loki.labels]
-job = "rtx-syslog"
-router = "{{ router }}"
-severity = "{{ severity }}"
-facility = "{{ facility }}"
-action = "{{ action }}"
-phase = "{{ phase }}"
-dhcp_event = "{{ dhcp_event }}"
-geoip_country_code = "{{ geoip_country_code }}"
-
-[sinks.loki.structured_metadata]
-src = "{{ src }}"
-dst = "{{ dst }}"
-src_port = "{{ src_port }}"
-dst_port = "{{ dst_port }}"
-filter_no = "{{ filter_no }}"
-protocol = "{{ protocol }}"
-interface = "{{ interface }}"
-direction = "{{ direction }}"
-peer = "{{ peer }}"
-local = "{{ local }}"
-ike_event = "{{ ike_event }}"
-lease_ip = "{{ lease_ip }}"
-mac = "{{ mac }}"
-repeat_count = "{{ repeat_count }}"
-geoip_city_name = "{{ geoip_city_name }}"
-geoip_country_name = "{{ geoip_country_name }}"
-geoip_continent_code = "{{ geoip_continent_code }}"
-geoip_latitude = "{{ geoip_latitude }}"
-geoip_longitude = "{{ geoip_longitude }}"
-geoip_subdivision_code = "{{ geoip_subdivision_code }}"
-geoip_subdivision_name = "{{ geoip_subdivision_name }}"
+# Phase 6 (ADR 0005): Loki sink removed. Elasticsearch is the sole sink for
+# parsed RTX events; the `[sinks.elasticsearch]` block landed in Phase 4
+# along with the `[transforms.parsed_rtx_for_es]` transform that shapes
+# events for the `logs-rtx-default` data stream's strict mapping.
 
 # Prometheus scrape endpoint for Vector self-metrics. Replaces Promtail's
 # :9080. The lxc-monitoring stack's prometheus.yml job for the syslog
-# pipeline should target localhost:9598/metrics after this PR (config
-# update is in the prometheus.yml change of this same PR if applicable).
+# pipeline targets localhost:9598/metrics.
 [sinks.prometheus]
 type = "prometheus_exporter"
 inputs = ["vector_metrics"]
