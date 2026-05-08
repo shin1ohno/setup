@@ -170,13 +170,29 @@ source = '''
   # Stage 5: GeoIP enrichment on the extracted filter-log src field.
   # Uses the `dbip_city` enrichment_table declared at the top of this
   # config (dbip-city-lite, CC-BY 4.0, monthly refresh by mitamae).
-  # Returns a flat object: city_name, country_code, country_name,
-  # continent_code, region_code, region_name, latitude, longitude,
-  # timezone, postal_code, metro_code (any of which may be null).
+  # Vector's mmdb enrichment_table returns the raw MaxMind City-DB
+  # nested structure (country.iso_code, city.names.en, location.latitude
+  # etc.) — flatten the relevant fields to top-level so the loki sink's
+  # template `{{ geoip_country_code }}` style references resolve.
+  # Wrapped in fallible-block style: `parse_regex` and `to_string` for
+  # private/invalid IPs return errors that propagate via the `?? null`
+  # pattern, leaving the geoip_* fields unset for those events.
   if exists(.src) {
     geoip_data, geoip_err = get_enrichment_table_record("dbip_city", { "ip": to_string!(.src) })
-    if geoip_err == null {
-      .geoip = geoip_data
+    if geoip_err == null && is_object(geoip_data) {
+      .geoip_country_code = get(geoip_data, ["country", "iso_code"]) ?? null
+      .geoip_country_name = get(geoip_data, ["country", "names", "en"]) ?? null
+      .geoip_continent_code = get(geoip_data, ["continent", "code"]) ?? null
+      .geoip_city_name = get(geoip_data, ["city", "names", "en"]) ?? null
+      .geoip_latitude = get(geoip_data, ["location", "latitude"]) ?? null
+      .geoip_longitude = get(geoip_data, ["location", "longitude"]) ?? null
+      # subdivisions is an array; take the first entry (most-specific region).
+      subdivs = array(get(geoip_data, ["subdivisions"]) ?? []) ?? []
+      if length(subdivs) > 0 {
+        first_sub = object(subdivs[0]) ?? {}
+        .geoip_subdivision_code = get(first_sub, ["iso_code"]) ?? null
+        .geoip_subdivision_name = get(first_sub, ["names", "en"]) ?? null
+      }
     }
   }
 '''
@@ -204,7 +220,7 @@ facility = "{{ facility }}"
 action = "{{ action }}"
 phase = "{{ phase }}"
 dhcp_event = "{{ dhcp_event }}"
-geoip_country_code = "{{ geoip.country_code }}"
+geoip_country_code = "{{ geoip_country_code }}"
 
 [sinks.loki.structured_metadata]
 src = "{{ src }}"
@@ -213,18 +229,21 @@ src_port = "{{ src_port }}"
 dst_port = "{{ dst_port }}"
 filter_no = "{{ filter_no }}"
 protocol = "{{ protocol }}"
+interface = "{{ interface }}"
+direction = "{{ direction }}"
 peer = "{{ peer }}"
 local = "{{ local }}"
 ike_event = "{{ ike_event }}"
 lease_ip = "{{ lease_ip }}"
 mac = "{{ mac }}"
 repeat_count = "{{ repeat_count }}"
-geoip_city_name = "{{ geoip.city_name }}"
-geoip_continent_code = "{{ geoip.continent_code }}"
-geoip_latitude = "{{ geoip.latitude }}"
-geoip_longitude = "{{ geoip.longitude }}"
-geoip_subdivision_code = "{{ geoip.region_code }}"
-geoip_subdivision_name = "{{ geoip.region_name }}"
+geoip_city_name = "{{ geoip_city_name }}"
+geoip_country_name = "{{ geoip_country_name }}"
+geoip_continent_code = "{{ geoip_continent_code }}"
+geoip_latitude = "{{ geoip_latitude }}"
+geoip_longitude = "{{ geoip_longitude }}"
+geoip_subdivision_code = "{{ geoip_subdivision_code }}"
+geoip_subdivision_name = "{{ geoip_subdivision_name }}"
 
 # Prometheus scrape endpoint for Vector self-metrics. Replaces Promtail's
 # :9080. The lxc-monitoring stack's prometheus.yml job for the syslog
