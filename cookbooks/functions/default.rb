@@ -295,3 +295,90 @@ define :git_clone, uri: nil, cwd: nil, user: nil, not_if: nil do
     not_if params[:not_if] || "test -e #{params[:cwd]}/#{params[:name]}"
   end
 end
+
+# Docker Compose service orchestration. Emits the two-resource pair every
+# compose-using cookbook needs:
+#
+#   1. `execute "ensure <project> running"` — idempotency probe (docker
+#      compose config --services + docker ps with compose-project label)
+#      followed by `docker compose up -d`. Skip-or-run is decided by
+#      whether the running services match the expected services. When
+#      env_path is provided the probe gates on `test -f` first.
+#
+#   2. `execute "restart <project>"` — action :nothing, fires only via
+#      notifies. Always passes `--force-recreate` because bare `up -d` is
+#      a no-op when image + compose spec are unchanged, so bind-mounted
+#      config edits don't take effect on already-running containers.
+#      When env_path is provided, gated on `test -f` so the resource
+#      doesn't restart against an empty env (e.g. SSM auth absent on a
+#      fresh host before bootstrap).
+#
+# Retro knowledge baked in (see ~/.claude/rules/docker-compose.md):
+#   --force-recreate mandatory; not_if "test -f env" mandatory when env
+#   exists; DOCKER_BUILDKIT=0 prefix on privileged-LXC hosts whose
+#   namespace hardening trips up BuildKit; --build flag default-on except
+#   for cookbooks shipping pre-built images (ai-memory).
+#
+# Usage:
+#   compose_service "cognee" do
+#     compose_path "#{deploy_dir}/docker-compose.yml"
+#     deploy_dir deploy_dir
+#     env_path env_output_path           # optional; enables env-gate
+#     buildkit false                     # optional (default true)
+#     build_flag false                   # optional (default true; skip --build)
+#     wait true                          # optional (default false)
+#     wait_timeout 120                   # optional
+#     user some_user                     # optional (default node[:setup][:user])
+#     project_name "explicit"            # optional (default basename(deploy_dir))
+#   end
+#
+# After the DSL call, notify the emitted resources via:
+#   notifies :run, "execute[restart <project_name>]"
+define :compose_service,
+       compose_path: nil,
+       deploy_dir: nil,
+       project_name: nil,
+       env_path: nil,
+       user: nil,
+       buildkit: true,
+       build_flag: true,
+       wait: false,
+       wait_timeout: 120 do
+  cp = params[:compose_path]
+  pn = params[:project_name] || (params[:deploy_dir] && File.basename(params[:deploy_dir]))
+  ep = params[:env_path]
+  u  = params[:user] || node[:setup][:user]
+
+  raise "compose_service requires :compose_path" unless cp
+  raise "compose_service requires :deploy_dir or :project_name" unless pn
+
+  buildkit_prefix = params[:buildkit] ? "" : "DOCKER_BUILDKIT=0 "
+  build_arg = params[:build_flag] ? " --build" : ""
+  wait_args = params[:wait] ? " --wait --wait-timeout #{params[:wait_timeout]}" : ""
+
+  env_gate = ep ? "test -f #{ep} || exit 1; " : ""
+  probe_sh = <<~SH.tr("\n", " ").strip
+    #{env_gate}expected=$(docker compose -f #{cp} config --services 2>/dev/null | sort | tr '\\n' ' ');
+    [ -n "$expected" ] || exit 1;
+    running=$(docker ps --filter "label=com.docker.compose.project=#{pn}"
+                        --filter status=running --format '{{.Label "com.docker.compose.service"}}'
+              | sort | tr '\\n' ' ');
+    test "$running" = "$expected" && exit 1 || exit 0
+  SH
+
+  ensure_command = "#{buildkit_prefix}docker compose -f #{cp} up -d#{build_arg}#{wait_args}"
+  restart_command = "#{buildkit_prefix}docker compose -f #{cp} up -d#{build_arg} --force-recreate#{wait_args}"
+
+  execute "ensure #{pn} running" do
+    command ensure_command
+    user u
+    only_if probe_sh
+  end
+
+  execute "restart #{pn}" do
+    command restart_command
+    user u
+    action :nothing
+    only_if "test -f #{ep}" if ep
+  end
+end
