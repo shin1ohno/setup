@@ -1,0 +1,27 @@
+# Kibana 8.x — single instance, points at the 3-node ES cluster.
+#
+# Phase 3b ships ES with HTTP plain (transport-TLS only). Kibana
+# therefore connects via http://es-N.home.local:9200 in this phase;
+# Phase 7-tls switches the URLs to https://. The kibana.yml lives
+# under the cookbook's bind-mount and is rendered at deploy time.
+services:
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.16.0
+    container_name: kibana
+    restart: unless-stopped
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=1536"
+    env_file:
+      - .env
+    ports:
+      - "5601:5601"
+    volumes:
+      - ./kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+      - /data/kibana/certs:/usr/share/kibana/config/certs:ro
+      - /data/kibana/data:/usr/share/kibana/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s

@@ -1,0 +1,44 @@
+# Phase 3b: ES is HTTP plain (transport-TLS only). Kibana therefore
+# connects via http://. Phase 7-tls switches to https:// + CA cert
+# verification.
+server.host: 0.0.0.0
+server.port: 5601
+server.publicBaseUrl: "http://kibana.home.local:5601"
+
+elasticsearch.hosts:
+  - http://es-0.home.local:9200
+  - http://es-1.home.local:9200
+  - http://es-2.home.local:9200
+
+elasticsearch.username: kibana_system
+elasticsearch.password: "${KIBANA_PASSWORD}"
+
+# Allow up to 90s for ES quorum to form during the rolling restart of
+# the 3-node cluster. Default 30s is too tight when es-0 boots first
+# and waits for es-1/es-2 to register.
+elasticsearch.requestTimeout: 90000
+
+# Encryption keys (32-char hex from SSM, set in .env). Required to
+# survive Kibana restarts without re-encrypting saved objects on every
+# boot.
+xpack.encryptedSavedObjects.encryptionKey: "${KIBANA_ENC_SO_KEY}"
+xpack.reporting.encryptionKey:             "${KIBANA_ENC_REPORT_KEY}"
+xpack.security.encryptionKey:              "${KIBANA_ENC_SEC_KEY}"
+
+# Phase 7-tls anchor: when ES HTTP TLS is enabled, replace
+# elasticsearch.hosts with https:// URLs and uncomment:
+#
+# elasticsearch.ssl.certificateAuthorities:
+#   - /usr/share/kibana/config/certs/ca.crt
+# elasticsearch.ssl.verificationMode: certificate
+
+# Logging
+logging.appenders.default:
+  type: console
+  layout:
+    type: pattern
+    pattern: "[%date][%level][%logger] %message"
+logging.root.level: info
+
+# Telemetry off — LAN-only personal deployment.
+telemetry.enabled: false
