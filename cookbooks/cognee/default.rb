@@ -59,7 +59,7 @@ remote_file "#{deploy_dir}/docker-compose.yml" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
-  notifies :run, "execute[docker compose restart cognee]"
+  notifies :run, "execute[restart cognee]"
 end
 
 remote_file "#{deploy_dir}/entrypoint-override.sh" do
@@ -67,7 +67,7 @@ remote_file "#{deploy_dir}/entrypoint-override.sh" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
-  notifies :run, "execute[docker compose restart cognee]"
+  notifies :run, "execute[restart cognee]"
 end
 
 remote_file "#{deploy_dir}/cognee-gateway.conf" do
@@ -75,7 +75,7 @@ remote_file "#{deploy_dir}/cognee-gateway.conf" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
-  notifies :run, "execute[docker compose restart cognee]"
+  notifies :run, "execute[restart cognee]"
 end
 
 remote_file "#{deploy_dir}/.env.example" do
@@ -91,7 +91,7 @@ end
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
-    notifies :run, "execute[docker compose restart cognee]"
+    notifies :run, "execute[restart cognee]"
   end
 end
 
@@ -101,7 +101,7 @@ end
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
-    notifies :run, "execute[docker compose restart cognee]"
+    notifies :run, "execute[restart cognee]"
   end
 end
 
@@ -121,7 +121,7 @@ end
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
-    notifies :run, "execute[docker compose restart cognee]"
+    notifies :run, "execute[restart cognee]"
   end
 end
 
@@ -146,7 +146,7 @@ remote_file "#{deploy_dir}/vault-exporter/Dockerfile" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
-  notifies :run, "execute[docker compose restart cognee]"
+  notifies :run, "execute[restart cognee]"
 end
 
 # Generate .env with secrets from SSM Parameter Store
@@ -188,7 +188,7 @@ remote_file env_output_path do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "600"
-  notifies :run, "execute[docker compose restart cognee]"
+  notifies :run, "execute[restart cognee]"
   only_if "test -f #{env_temp_path}"
 end
 
@@ -197,41 +197,14 @@ file env_temp_path do
   only_if "test -f #{env_temp_path}"
 end
 
-# Bring containers up. Requires .env in place; the only_if shell guard runs
-# at converge time so this resource fires on the same run that generated
-# .env (a previous compile-time `if File.exist?(env_output_path)` wrapper
-# skipped declaration on clean runs).
-compose_path = "#{deploy_dir}/docker-compose.yml"
-project_name = File.basename(deploy_dir)
-execute "ensure cognee running" do
-  command "docker compose -f #{compose_path} up -d --build"
-  user node[:setup][:user]
-  only_if <<~SH.tr("\n", " ").strip
-    test -f #{env_output_path} || exit 1;
-    expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
-    [ -n "$expected" ] || exit 1;
-    running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
-                        --filter status=running --format '{{.Label "com.docker.compose.service"}}'
-              | sort | tr '\\n' ' ');
-    test "$running" = "$expected" && exit 1 || exit 0
-  SH
-end
-
-# Recreate containers when compose config or built image sources change.
-# Notified by remote_file resources above; no-op otherwise.
-# Defined unconditionally so notifies: resolve even before .env is generated.
-#
-# --force-recreate is critical: bare `up -d` is a no-op when the image is
-# unchanged and the compose spec is unchanged, so a bind-mounted config
-# file edit never takes effect until a manual `docker restart`. The
-# notify-driven path is exactly the case where we know the file changed
-# and want the running container to pick it up.
-execute "docker compose restart cognee" do
-  command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build --force-recreate"
-  user node[:setup][:user]
-  action :nothing
-  # Skip when .env was not generated (SSM auth absent / non-interactive
-  # bootstrap). Restart would otherwise start containers with empty
-  # credentials and fail at runtime.
-  only_if "test -f #{env_output_path}"
+# Compose orchestration via the compose_service DSL
+# (cookbooks/functions/default.rb). Emits `execute "ensure cognee running"`
+# (idempotency probe + up -d --build) and `execute "restart cognee"`
+# (action :nothing, --force-recreate, only_if env_path exists). All
+# retro-learned guards (--force-recreate, only_if env-gate) are baked
+# into the DSL so consumers inherit them by default.
+compose_service "cognee" do
+  compose_path "#{deploy_dir}/docker-compose.yml"
+  deploy_dir deploy_dir
+  env_path env_output_path
 end
