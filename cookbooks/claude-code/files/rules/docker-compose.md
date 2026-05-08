@@ -148,3 +148,51 @@ The only way to diagnose without this rule is to manually inspect `GET /api/data
 After fixing the provisioning yaml, **`docker compose restart grafana`** is required (or full container recreate) — Grafana reloads provisioned datasources on container start, not on file watch.
 
 This rule exists because the 2026-05-06 Phase 2b verify session shipped a Grafana auto-mitamae-fleet dashboard with `"uid": "prometheus"` refs but the provisioning yaml omitted the explicit `uid:` field. Every panel showed "No data" until PR #156 pinned `uid: prometheus` in the provisioning yaml and a `docker restart monitoring-grafana` reloaded the datasource.
+
+## UDP Listener Containers Require `network_mode: host`
+
+Docker's userland proxy (`docker-proxy`) does not reliably forward UDP packets — packets arrive at the host's published port, the container's UDP listener binds inside the container netns, but no packets surface inside the container. No errors logged. Symptom for syslog/SNMP-trap/StatsD/DNS receivers: the listener starts, the port appears bound (`ss -uln` shows `*:port` owned by docker-proxy), `/proc/net/udp{,6}` inside the container shows the listener — but Promtail-style `entries_total` counters stay at 0 even when packets flood in from the LAN.
+
+Empirically observed on PVE unprivileged LXC + bridge + nesting=true (2026-05-07 setup PR #199), but the issue isn't unique to that combination — `docker-proxy` UDP forwarding is broken across many docker installations. Don't wait to find out if your specific stack is affected.
+
+**Rule**: any container that receives UDP traffic — syslog collectors (Promtail, Fluentd, Logstash), SNMP trap receivers, StatsD, DNS servers — MUST use `network_mode: host`. TCP-only containers don't need this.
+
+```yaml
+promtail:
+  image: grafana/promtail:3.6.10
+  network_mode: host       # required: docker-proxy does not reliably forward UDP
+  command: -config.file=/etc/promtail/promtail-config.yaml
+  # NO `ports:` block — incompatible with host net, would log a warning
+  volumes:
+    - ./promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+```
+
+Side effects of `network_mode: host`:
+- `ports:` block is ignored (remove it to avoid "ports not exposed" warnings)
+- docker-compose service-name resolution (`http://loki:3100/...`) is unavailable — switch to `127.0.0.1:<port>` if the peer service binds 127.0.0.1, OR move both services to host net
+- Prometheus scrape targeting changes — `localhost:<port>` from the host now works; the bridge IP doesn't apply
+
+This rule exists because setup PR #199 was 100% a `network_mode: host` migration after PR #198 deployed Promtail with default bridge networking and zero UDP packets reached the syslog target despite the listener binding correctly. The OS-level UDP path was verified working with a Python listener on the same port — confirming it was a docker-proxy issue, not network.
+
+## Loki / Promtail Minimum Version: 3.x for Syslog UDP
+
+Promtail 2.9.x has an undocumented defect where the syslog UDP target silently discards all received messages. The listener starts, `promtail_syslog_target_entries_total` is exposed as a metric but never increments. `parsing_errors_total` and `empty_messages_total` also stay 0 — packets reach the OS socket but never surface to Promtail's read loop. Verified via Python UDP listener on the same port: OS layer fine, Promtail-internal issue.
+
+The 2.9.x series is Grafana's most-cited version in tutorials and Loki "stable" track. Defaulting to it produces a non-functional syslog receiver.
+
+**Rule**: when adding Loki + Promtail to a monitoring stack for UDP syslog ingestion, pin to **Promtail 3.6+ and Loki 3.6+** (matching versions, verified working as of 2026-05-07). Never use 2.9.x even if upstream marks it stable.
+
+```yaml
+services:
+  loki:
+    image: grafana/loki:3.6.10        # NOT 2.9.x — see syslog UDP comment
+    ...
+  promtail:
+    image: grafana/promtail:3.6.10    # NOT 2.9.x — UDP syslog target silently drops
+    network_mode: host                 # see "UDP Listener Containers" rule above
+    ...
+```
+
+Note: Grafana renamed Promtail to **Alloy** in the 3.x track; 3.6.x is the last `grafana/promtail` line maintained as a separate image. New deployments may eventually want to migrate to Alloy, but for existing Promtail-based pipelines 3.6.x continues to receive maintenance fixes.
+
+This rule exists because setup PRs #198 → #199 → #200 chain: PR #198 deployed 2.9.10 with bridge networking (broke for both reasons), PR #199 fixed networking (still no entries — same metrics 0), PR #200 bumped to 3.6.10 and the next test packet immediately incremented `syslog_target_entries_total`. The UDP issue is a Promtail 2.9 regression, not a config bug.
