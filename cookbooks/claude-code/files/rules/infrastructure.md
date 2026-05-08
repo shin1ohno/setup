@@ -104,6 +104,60 @@ When a user reports any service or application misbehavior (slow, unavailable, f
 2. Check `journalctl -u <service> -n 50 --no-pager` for the affected service
 3. Report findings **with a concrete fix plan** for review — never present findings alone without actionable next steps. The cause may be OS-level, not app-level
 
+## Physical Network Device Pre-Plan SNMP Probe (YAMAHA RTX et al)
+
+Before writing any terraform resource for a CLI-driven physical network device (YAMAHA RTX, Cisco, Juniper), the firmware imposes constraints invisible to the terraform provider's plan output. Surface them at plan phase via SSH probe, not after `terraform apply`. Each unprobed constraint typically costs one PR cycle.
+
+**Required probes** (run once per device family before plan, capture outputs in the plan file):
+
+```bash
+# 1. Firmware revision — identifies model-specific capability gaps
+ssh shin1ohno@<device> -i <key> "show environment 2>/dev/null | head -3"
+
+# 2. SNMP version reachability — RTX1210 Rev.14.01.42 silently drops v2c
+docker run --rm --network host alpine:3.20 sh -c \
+  "apk add --quiet net-snmp-tools && \
+   echo === v1 ===; snmpget -v 1 -c <community> -t 5 -r 1 <device-ip> sysName.0; \
+   echo === v2c ===; snmpget -v 2c -c <community> -t 5 -r 1 <device-ip> sysName.0"
+
+# 3. ifTable vs ifXTable — RTX1210 firmware lacks ifXTable (HC 64-bit counters)
+snmpwalk -v 1 -c <community> <device-ip> 1.3.6.1.2.1.31.1.1 2>&1 | wc -l
+# 0 lines → use 32-bit ifInOctets/ifOutOctets in generator.yml; never ifHC*
+
+# 4. SNMP walk duration — sets Prometheus scrape_timeout
+time snmpwalk -v 1 -c <community> <device-ip> 1.3.6.1.2.1.2.2.1 > /dev/null
+# scrape_timeout = 3 × walk_time, scrape_interval = 2 × scrape_timeout (per job)
+
+# 5. Existing SNMP config — surface community length / location syntax constraints
+ssh -i <key> shin1ohno@<device> -tt <<EOF
+administrator
+<admin-pw>
+show config | grep -i snmp
+exit
+EOF
+```
+
+**RTX1210 Rev.14.01.42 / RTX830 Rev.15.02.31 known constraints** (codified from 2026-05-07 deployment):
+
+| Constraint | Symptom | Fix |
+|---|---|---|
+| Community string ≤ 16 chars | `エラー: コミュニティ名称が認識できません` on apply | `random_password { length = 16 }` |
+| `snmp syslocation` single token only | `エラー: パラメータの数が不適当です` on apply | `location = "Ebisu"` (no spaces) |
+| `snmp host any` ACL not in `rtx_snmp_server` schema | SNMP daemon ignores all queries silently | SSH manual: `snmp host any` + `snmpv2c host any` + `save` |
+| RTX1210 firmware: SNMPv2c silent drop | snmpwalk -v2c times out; v1 works | snmp_exporter `auths.<name>.version: 1` |
+| RTX1210 firmware: no ifXTable | `ifHC*` counters return empty for hnd | generator.yml walk: `ifInOctets` / `ifOutOctets` (32-bit, RFC 1213) |
+| terraform-provider-rtx itm SSH session start fails | `failed to start shell: EOF` immediately after handshake | manage SNMP/syslog manually via SSH; no `provider "rtx" { alias = "itm" }` |
+
+**SNMP scrape_timeout sizing** (Prometheus job): default 10s is too low for SNMP walks on physical network devices. Measure once per device:
+
+```bash
+time snmpwalk -v 1 -c <community> <device-ip> 1.3.6.1.2.1.2.2.1 > /dev/null
+```
+
+Set `scrape_timeout: 3 × walk_time` and `scrape_interval: 2 × scrape_timeout`. For a 7s walk: `scrape_timeout: 25s`, `scrape_interval: 60s`. Adding scrape_timeout as a hotfix later costs a separate PR + Prometheus reload.
+
+This rule exists because the 2026-05-07 Phase A deployment hit each of these constraints sequentially, costing 5 separate PRs (#26 → #29 → #31 → #32 + setup #190/#197/#203). A 2-minute probe at plan time would have collapsed all five into a single PR.
+
 ## Blocked Command Boundary
 
 When a command is blocked by any permission restriction — `sudo` required, tool-permission denied, project hook guard (e.g., mitamae dry-run guard), or user-declined approval — immediately present the blocked command prefixed with `!` so the user can run it in-session:
