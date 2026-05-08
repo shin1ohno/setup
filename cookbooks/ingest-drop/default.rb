@@ -100,6 +100,17 @@ EOM
     not_if "launchctl list | grep com.#{node[:setup][:user]}.ingest-drop"
   end
 else
+  # rclone mount shells out to fusermount3 at runtime to set up the FUSE
+  # filesystem. Without the fuse3 package the systemd user unit
+  # restart-loops with `fusermount: exec: "fusermount3": executable file
+  # not found in $PATH`. Same package name on Debian / Ubuntu.
+  package "fuse3" do
+    user node[:setup][:system_user]
+    action :install
+    only_if "test -f /etc/debian_version"
+    not_if { run_command("dpkg-query -W -f='${Status}' fuse3 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
+  end
+
   # Enable linger so systemd user services survive logout
   execute "enable loginctl linger for #{node[:setup][:user]}" do
     command "sudo loginctl enable-linger #{node[:setup][:user]}"
