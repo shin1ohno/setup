@@ -23,5 +23,5 @@ node.reverse_merge!(
   }
 )
 
-include_cookbook "lxc-samba"
+include_cookbook "samba-server"
 include_role "lxc-core"
