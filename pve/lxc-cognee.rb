@@ -24,5 +24,6 @@ node.reverse_merge!(
   }
 )
 
-include_cookbook "lxc-cognee"
+include_cookbook "docker-engine"
+include_cookbook "cognee"
 include_role "lxc-core"

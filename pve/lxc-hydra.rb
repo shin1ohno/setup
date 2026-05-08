@@ -37,5 +37,5 @@ node.reverse_merge!(
   },
 )
 
-include_cookbook "lxc-hydra"
+include_cookbook "hydra-server"
 include_role "lxc-core"
