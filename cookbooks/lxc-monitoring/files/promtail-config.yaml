@@ -53,6 +53,15 @@ scrape_configs:
     syslog:
       listen_address: 0.0.0.0:514
       listen_protocol: udp
+      # RTX1210 Rev.14 / RTX830 Rev.15 emit BSD syslog (RFC3164) only —
+      # firmware has no format option. Default Promtail expects RFC5424
+      # and rejects RTX packets with "expecting a version value in the
+      # range 1-999 [col 5]" (the version field is absent in RFC3164).
+      # syslog_format: rfc3164 switches the parser; internal labels
+      # (__syslog_message_severity, __syslog_message_hostname,
+      # __syslog_connection_ip_address) are populated from priority
+      # decoding either way, so the relabel_configs below keep working.
+      syslog_format: rfc3164
       idle_timeout: 60s
       label_structured_data: false
       use_incoming_timestamp: false
