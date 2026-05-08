@@ -154,7 +154,7 @@ services:
   # files/99-syslog-unprivileged-port.conf — sysctl lowers
   # ip_unprivileged_port_start to 514 in the LXC kernel namespace.
   vector:
-    image: timberio/vector:0.39.0-alpine
+    image: timberio/vector:0.45.0-alpine
     container_name: monitoring-vector
     restart: unless-stopped
     command: ["--config", "/etc/vector/vector.toml"]
