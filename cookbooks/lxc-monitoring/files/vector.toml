@@ -35,6 +35,18 @@
 # (set in cookbooks/lxc-monitoring/files/loki-config.yaml).
 
 # -----------------------------------------------------------------------------
+# Global config
+# -----------------------------------------------------------------------------
+
+# Disk buffer root. Both [sinks.loki] and [sinks.elasticsearch] declare
+# buffer.type = "disk" — Vector requires data_dir for disk-buffer storage.
+# Bind-mounted from /data/monitoring/vector on the host (see
+# cookbooks/lxc-monitoring/files/docker-compose.yml). Per-sink buffer
+# subdirectories under data_dir/buffer/v2/<sink_id>/ are created by Vector
+# at startup; the cookbook ensures the parent dir exists.
+data_dir = "/var/lib/vector"
+
+# -----------------------------------------------------------------------------
 # Enrichment tables
 # -----------------------------------------------------------------------------
 
@@ -197,6 +209,47 @@ source = '''
   }
 '''
 
+# Elasticsearch-specific reshaping. Loki accepts everything as strings via
+# its label/structured-metadata templating. Elasticsearch's data stream
+# `logs-rtx-default` mapping (defined in lxc-elasticsearch cookbook, ADR
+# 0005 Phase 3) is `dynamic: "strict"` and types specific fields:
+#   *_port    -> integer (so range queries / sort-by-port work)
+#   geoip_location -> geo_point (so Kibana Maps / geo aggregations work)
+# This transform branches off `parse` so the Loki sink keeps its
+# string-shaped fields untouched (no risk of breaking the existing
+# rtx-logs.json Grafana dashboard during the dual-write window).
+[transforms.parsed_rtx_for_es]
+type = "remap"
+inputs = ["parse"]
+source = '''
+  # Convert port fields to integer. Each is best-effort: when the field
+  # is absent the to_int! call would error, so we gate on existence.
+  # Use ?? null to keep events flowing on conversion failure rather than
+  # aborting the whole event.
+  if exists(.src_port) {
+    .src_port = to_int(.src_port) ?? null
+  }
+  if exists(.dst_port) {
+    .dst_port = to_int(.dst_port) ?? null
+  }
+  if exists(.peer_port) {
+    .peer_port = to_int(.peer_port) ?? null
+  }
+
+  # Build geo_point object expected by ES `geo_point` mapping. The Loki
+  # sink's templating consumes geoip_latitude / geoip_longitude as
+  # separate string labels; ES wants {lat, lon} as a single object on
+  # `geoip_location`. Drop the location object entirely if either
+  # coordinate is absent (ES strict mapping rejects partial geo_point).
+  if exists(.geoip_latitude) && exists(.geoip_longitude) {
+    lat, lat_err = to_float(.geoip_latitude)
+    lon, lon_err = to_float(.geoip_longitude)
+    if lat_err == null && lon_err == null {
+      .geoip_location = { "lat": lat, "lon": lon }
+    }
+  }
+'''
+
 # -----------------------------------------------------------------------------
 # Sinks
 # -----------------------------------------------------------------------------
@@ -205,12 +258,20 @@ source = '''
 # (see docker-compose.yml `vector:` service comment) and Loki binds
 # 127.0.0.1:3100. Docker service-name resolution (`loki:3100`) is
 # unavailable from host net.
+#
+# buffer.type = "disk": preserve in-flight events across Vector container
+# restarts. With the default in-memory buffer, a `docker compose up -d
+# --force-recreate` (notify-driven config edit) drops every buffered
+# event. 500 MB cap is sized at ~30 min of typical RTX log volume
+# (~50 events/s * ~300 B avg) — when_full = "drop_newest" prefers to
+# preserve recent history during sustained backpressure.
 [sinks.loki]
 type = "loki"
 inputs = ["parse"]
 endpoint = "http://127.0.0.1:3100"
 encoding.codec = "text"
 out_of_order_action = "accept"
+buffer = { type = "disk", max_size = 524288000, when_full = "drop_newest" }
 
 [sinks.loki.labels]
 job = "rtx-syslog"
@@ -244,6 +305,46 @@ geoip_latitude = "{{ geoip_latitude }}"
 geoip_longitude = "{{ geoip_longitude }}"
 geoip_subdivision_code = "{{ geoip_subdivision_code }}"
 geoip_subdivision_name = "{{ geoip_subdivision_name }}"
+
+# Elasticsearch dual-write sink (ADR 0005 Phase 4). Active alongside
+# [sinks.loki] during the 2-week observation window; Phase 6 removes the
+# Loki sink after Kibana SLOs are confirmed. Both sinks consume from
+# different transforms (`parse` → Loki string-shaped, `parsed_rtx_for_es`
+# → ES typed) so failures in one path don't backpressure the other.
+#
+# Auth: basic-auth via auth.user / auth.password (NOT embedded in the
+# endpoint URL — see Adversarial #6). ELASTIC_VECTOR_PASSWORD is read
+# from the .env file (mode 0600, SSM-fetched at deploy time). The
+# vector_writer ES role grants `monitor` cluster privilege + `write` on
+# `logs-rtx-*` indices only.
+#
+# TLS: the ES cluster uses transport TLS with a Terraform-generated CA
+# (validity 2 years, see ADR 0005 §認証). The CA cert is bind-mounted
+# at /etc/vector/elastic-ca.crt; verify_hostname catches a node-cert
+# CN/SAN mismatch and verify_certificate the chain to that CA.
+#
+# Mode = "data_stream" routes to logs-rtx-default per ECS data-stream
+# naming (type-dataset-namespace). The ILM policy logs-rtx-7d
+# (defined in lxc-elasticsearch cookbook) handles rollover + 7-day
+# delete; Vector does NOT manage the index template or ILM policy.
+#
+# Buffer: 1 GB disk cap, drop_newest on overflow. Slightly larger than
+# Loki because the ES path has higher per-event overhead (TLS
+# handshake, JSON-typed payload) so transient ingest pauses can
+# accumulate more events before the buffer drains.
+[sinks.elasticsearch]
+type = "elasticsearch"
+inputs = ["parsed_rtx_for_es"]
+endpoints = [
+  "https://es-0.home.local:9200",
+  "https://es-1.home.local:9200",
+  "https://es-2.home.local:9200",
+]
+mode = "data_stream"
+data_stream = { type = "logs", dataset = "rtx", namespace = "default" }
+auth = { strategy = "basic", user = "vector_writer", password = "${ELASTIC_VECTOR_PASSWORD}" }
+tls = { ca_file = "/etc/vector/elastic-ca.crt", verify_certificate = true, verify_hostname = true }
+buffer = { type = "disk", max_size = 1073741824, when_full = "drop_newest" }
 
 # Prometheus scrape endpoint for Vector self-metrics. Replaces Promtail's
 # :9080. The lxc-monitoring stack's prometheus.yml job for the syslog
