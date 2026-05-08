@@ -120,6 +120,25 @@ state_dir_owners.each do |sub, uid|
   end
 end
 
+# Allow Promtail (network_mode: host, non-root user inside the container)
+# to bind UDP 514 — RTX firmware emits syslog only to the fixed default
+# destination port and does not honour `syslog host <ip> <port>` as a
+# port specifier. Lowering ip_unprivileged_port_start is per-LXC kernel
+# namespace and avoids granting CAP_NET_BIND_SERVICE.
+sysctl_src  = File.expand_path("../files/99-syslog-unprivileged-port.conf", __FILE__)
+sysctl_path = "/etc/sysctl.d/99-syslog-unprivileged-port.conf"
+
+execute "install syslog unprivileged port sysctl" do
+  command "sudo install -m 644 -o root -g root #{sysctl_src} #{sysctl_path}"
+  not_if "test -f #{sysctl_path} && diff -q #{sysctl_src} #{sysctl_path}"
+end
+
+execute "apply syslog unprivileged port sysctl" do
+  command "sudo sysctl -p #{sysctl_path}"
+  not_if "sysctl -n net.ipv4.ip_unprivileged_port_start | grep -qx '514'"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # Compose + scrape config + provisioning files.
 remote_file "#{deploy_dir}/docker-compose.yml" do
   source "files/docker-compose.yml"
