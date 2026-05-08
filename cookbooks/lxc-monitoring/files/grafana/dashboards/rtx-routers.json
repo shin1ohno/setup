@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "YAMAHA RTX router metrics via snmp-exporter. Covers hnd (RTX1210, .253) and itm (RTX830, .254) — uptime, firmware, CPU, memory, temperature, interface bandwidth/errors, and the L2TPv3 backhaul tunnel state. Phase A — extend with Loki/Promtail syslog visualization in Phase B.",
+  "description": "YAMAHA RTX router metrics via snmp-exporter. Covers hnd (RTX1210, .253) and itm (RTX830, .254) — uptime, firmware, CPU, memory, temperature, interface bandwidth/errors, and the L2TPv3 backhaul tunnel state. Phase A — extend with Loki/Vector syslog visualization in Phase B.",
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
