@@ -47,8 +47,8 @@ storage_config:
     directory: /loki/chunks
 
 limits_config:
-  # Required for the structured_metadata pipeline stage in Promtail. When
-  # this is false the Promtail push silently drops structured metadata
+  # Required for the structured_metadata pipeline used by Vector. When
+  # this is false the loki sink silently drops structured metadata
   # fields, leaving only the labels.
   allow_structured_metadata: true
   # 30d retention, matches prometheus.yml's --storage.tsdb.retention.time.
@@ -58,6 +58,14 @@ limits_config:
   ingestion_burst_size_mb: 16
   reject_old_samples: true
   reject_old_samples_max_age: 168h
+  # Default 500 hits the cap for `sum by(src)` / `sum by(dst_port)` over
+  # 1h+ windows (WAN inbound easily yields 1000+ unique source IPs/hour).
+  # The structured metadata aggregation is what produces the cardinality;
+  # 5000 lets the rtx-logs dashboard's heavy panels (Top 20 src IP,
+  # Top 20 dst port, source map) run for the default 15m and longer
+  # ranges without 500-series rejections. Memory cost: each in-flight
+  # series is small (~100 bytes), 5000 × small = sub-MB per query.
+  max_query_series: 5000
 
 compactor:
   working_directory: /loki/compactor
