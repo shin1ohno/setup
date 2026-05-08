@@ -38,9 +38,4 @@ node.reverse_merge!(
 )
 
 include_cookbook "lxc-hydra"
-# Phase 3a: receiver-side of the centralised auto-apply system. node_exporter
-# exposes node + textfile metrics scraped by the monitoring LXC; auto-mitamae
-# -target installs the forced-command authorized_keys entry that the
-# orchestrator on monitoring (192.168.1.76) uses to push mitamae apply runs.
-include_cookbook "node-exporter"
-include_cookbook "auto-mitamae-target"
+include_role "lxc-core"

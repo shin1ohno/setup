@@ -54,9 +54,4 @@ include_cookbook "lxc-dev-workstation"
 # Drop pro-router's 192.168.1.0/24 advertise from tailscale0 / table 52 so
 # inbound LAN ssh actually returns over eth0. See cookbooks/lxc-pro-dev.
 include_cookbook "lxc-pro-dev"
-# Phase 3b: receiver-side of the centralised auto-apply system. node_exporter
-# exposes node + textfile metrics scraped by the monitoring LXC; auto-mitamae
-# -target installs the forced-command authorized_keys entry that the
-# orchestrator on monitoring (192.168.1.76) uses to push mitamae apply runs.
-include_cookbook "node-exporter"
-include_cookbook "auto-mitamae-target"
+include_role "lxc-core"
