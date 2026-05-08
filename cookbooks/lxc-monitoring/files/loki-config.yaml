@@ -2,13 +2,13 @@
 #
 # Storage: filesystem (chunks + index) under /loki, bind-mounted from
 # /data/monitoring/loki on the host. Single replica, no clustering — only
-# the sibling Promtail pushes to it and only Grafana reads from it, both
+# the sibling Vector pushes to it and only Grafana reads from it, both
 # over the docker-compose default network.
 #
 # Schema: tsdb (Loki 2.9+ default) backed by filesystem object_store.
 # 30d retention to match the Prometheus retention window. structured
 # metadata enabled (Loki 2.9+ feature) — required for the cardinality
-# split documented in cookbooks/lxc-monitoring/files/promtail-config.yaml
+# split documented in cookbooks/lxc-monitoring/files/vector.toml
 # (low-cardinality fields → labels, high-cardinality → structured metadata).
 auth_enabled: false
 
