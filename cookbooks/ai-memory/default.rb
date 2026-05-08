@@ -22,7 +22,7 @@ remote_file "#{deploy_dir}/docker-compose.yml" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
-  notifies :run, "execute[docker compose restart ai-memory]"
+  notifies :run, "execute[restart ai-memory]"
 end
 
 # Auth proxy — validates sage OAuth tokens in front of openmemory-api
@@ -40,7 +40,7 @@ end
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
-    notifies :run, "execute[docker compose restart ai-memory]"
+    notifies :run, "execute[restart ai-memory]"
   end
 end
 
@@ -64,7 +64,7 @@ remote_file "#{patches_dir}/database.py" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
-  notifies :run, "execute[docker compose restart ai-memory]"
+  notifies :run, "execute[restart ai-memory]"
 end
 
 # Generate .env with secrets from SSM Parameter Store
@@ -100,7 +100,7 @@ remote_file env_output_path do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "600"
-  notifies :run, "execute[docker compose restart ai-memory]"
+  notifies :run, "execute[restart ai-memory]"
   only_if "test -f #{env_temp_path}"
 end
 
@@ -133,37 +133,17 @@ execute "enable pgvector extension on Aurora" do
   only_if "test -f #{env_output_path}"
 end
 
-compose_path = "#{deploy_dir}/docker-compose.yml"
-
-# Ensure containers are running. `docker compose ps --filter` is unusably
-# slow (>60s timeouts on this host); we resolve "running" state via
-# `docker ps` with the compose-project label instead.
-project_name = File.basename(deploy_dir)
-execute "ensure ai-memory running" do
-  command "docker compose -f #{compose_path} up -d --wait --wait-timeout 120"
-  user node[:setup][:user]
-  only_if <<~SH.tr("\n", " ").strip
-    test -f #{env_output_path} || exit 1;
-    expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
-    [ -n "$expected" ] || exit 1;
-    running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
-                        --filter status=running --format '{{.Label "com.docker.compose.service"}}'
-              | sort | tr '\\n' ' ');
-    test "$running" = "$expected" && exit 1 || exit 0
-  SH
-end
-
-# Recreate containers when compose config or built image sources change.
-# Notified by remote_file resources above; no-op otherwise.
-# --force-recreate is critical: bare `up -d` is a no-op when image +
-# compose spec are unchanged, so a bind-mounted config file edit never
-# takes effect on already-running containers.
-execute "docker compose restart ai-memory" do
-  command "docker compose -f #{compose_path} up -d --force-recreate --wait --wait-timeout 120"
-  user node[:setup][:user]
-  action :nothing
-  # Skip when .env was not generated (SSM auth absent / non-interactive
-  # bootstrap). Restart would otherwise start containers with empty
-  # credentials and fail at runtime.
-  only_if "test -f #{env_output_path}"
+# Compose orchestration via the compose_service DSL
+# (cookbooks/functions/default.rb). Emits `ensure ai-memory running` and
+# `restart ai-memory` resources. `build_flag: false` because the compose
+# spec uses ghcr.io/mem0ai/openmemory-mcp pre-built images for openmemory
+# itself (auth-proxy still builds lazily via `docker compose up`'s implicit
+# build-on-first-run behaviour), and `wait: true` because openmemory-api
+# pgvector connectivity setup outlasts `up -d`'s default return point.
+compose_service "ai-memory" do
+  compose_path "#{deploy_dir}/docker-compose.yml"
+  deploy_dir deploy_dir
+  env_path env_output_path
+  build_flag false
+  wait true
 end
