@@ -42,6 +42,5 @@ node.reverse_merge!(
 # pve/lxc-weave.rb / pve/lxc-hydra.rb convention). Operator direct SSH
 # uses the SSM-stored private key for /ssh-keys/devices/monitoring/private.
 include_cookbook "lxc-monitoring"
-include_cookbook "node-exporter"
-include_cookbook "auto-mitamae-target"
+include_role "lxc-core"
 include_cookbook "auto-mitamae-orchestrator"
