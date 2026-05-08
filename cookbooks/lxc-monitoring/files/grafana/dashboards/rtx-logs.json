@@ -160,7 +160,7 @@
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "description": "REJECT 送信元の世界マップ。Promtail の geoip stage が dbip-city-lite で経緯度を埋め、structured metadata として保存している。bubble size は count に比例。LAN 内 IP は GeoIP マッピングが無いので地図に出ない。",
+      "description": "送信元の世界マップ。Vector の enrichment_tables が dbip-city-lite で経緯度を埋め、structured metadata として保存している。bubble size は count に比例、PASS/REJECT は Filter action 変数で切替 (デフォルト All)。LAN 内 IP は GeoIP マッピングが無いので地図に出ない。",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -191,7 +191,7 @@
               }
             },
             "location": { "latitude": "geoip_latitude", "longitude": "geoip_longitude", "mode": "coords" },
-            "name": "REJECT sources",
+            "name": "Sources",
             "tooltip": true, "type": "markers"
           }
         ],
@@ -203,17 +203,17 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(50, sum by(src, geoip_country_code, geoip_latitude, geoip_longitude) (count_over_time({router=~\"$router\", action=\"REJECT\"}[$__range])))",
+          "expr": "topk(50, sum by(src, geoip_country_code, geoip_latitude, geoip_longitude, action) (count_over_time({router=~\"$router\", action=~\"$action\"}[$__range])))",
           "queryType": "instant",
           "refId": "A"
         }
       ],
-      "title": "REJECT 送信元マップ",
+      "title": "送信元マップ",
       "type": "geomap"
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "description": "REJECT 件数を国別に top 15 表示。GeoIP マッピングが無い (LAN 内 / 不明) ものは empty country_code として独立 bar になる。",
+      "description": "件数を国別 × Filter action (PASS/REJECT) で top 15 表示。GeoIP マッピングが無い (LAN 内 / 不明) ものは empty country_code として独立 bar になる。Filter action 変数で全体・PASS・REJECT を切替可能。",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -237,18 +237,18 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(15, sum by(geoip_country_code) (count_over_time({router=~\"$router\", action=\"REJECT\"}[$__range])))",
-          "legendFormat": "{{geoip_country_code}}",
+          "expr": "topk(15, sum by(geoip_country_code, action) (count_over_time({router=~\"$router\", action=~\"$action\"}[$__range])))",
+          "legendFormat": "{{geoip_country_code}} ({{action}})",
           "queryType": "instant",
           "refId": "A"
         }
       ],
-      "title": "REJECT 件数 (国別 Top 15)",
+      "title": "件数 (国別 Top 15、action 別)",
       "type": "bargauge"
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "description": "Top 20 送信元 IP (REJECT)。詳細を見たい IP があれば Live logs パネルでそのまま検索できる。",
+      "description": "Top 20 送信元 IP × Filter action (PASS/REJECT)。同じ src が PASS と REJECT 両方に登場する場合は別行として表示される。詳細を見たい IP があれば Live logs パネルでそのまま検索できる。Filter action 変数で全体・PASS・REJECT を切替可能。",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -270,17 +270,17 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(20, sum by(src) (count_over_time({router=~\"$router\", action=\"REJECT\"}[$__range])))",
+          "expr": "topk(20, sum by(src, action) (count_over_time({router=~\"$router\", action=~\"$action\"}[$__range])))",
           "queryType": "instant",
           "refId": "A"
         }
       ],
-      "title": "Top 20 送信元 IP (REJECT)",
+      "title": "Top 20 送信元 IP (action 別)",
       "type": "table"
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "description": "Top 20 宛先 port (REJECT)。一定パターン (22, 23, 3389, 445 etc.) が継続的に上位なら一般的な scan パターン。新しいポートが急浮上したら新規攻撃 vector の可能性。",
+      "description": "Top 20 宛先 port × Filter action (PASS/REJECT)。REJECT 側で 22, 23, 3389, 445 etc. が継続的に上位なら一般的な scan パターン。PASS 側は宛先サービスごとの正常通信の port 分布。新しい REJECT port が急浮上したら新規攻撃 vector の可能性。Filter action 変数で全体・PASS・REJECT を切替可能。",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -302,12 +302,12 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(20, sum by(dst_port) (count_over_time({router=~\"$router\", action=\"REJECT\"}[$__range])))",
+          "expr": "topk(20, sum by(dst_port, action) (count_over_time({router=~\"$router\", action=~\"$action\"}[$__range])))",
           "queryType": "instant",
           "refId": "A"
         }
       ],
-      "title": "Top 20 宛先 port (REJECT)",
+      "title": "Top 20 宛先 port (action 別)",
       "type": "table"
     },
     {
