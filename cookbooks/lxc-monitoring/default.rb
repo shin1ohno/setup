@@ -120,11 +120,11 @@ state_dir_owners.each do |sub, uid|
   end
 end
 
-# Allow Promtail (network_mode: host, non-root user inside the container)
-# to bind UDP 514 — RTX firmware emits syslog only to the fixed default
-# destination port and does not honour `syslog host <ip> <port>` as a
-# port specifier. Lowering ip_unprivileged_port_start is per-LXC kernel
-# namespace and avoids granting CAP_NET_BIND_SERVICE.
+# Allow the Vector container (network_mode: host, non-root user inside
+# the container) to bind UDP 514 — RTX firmware emits syslog only to the
+# fixed default destination port and does not honour `syslog host <ip>
+# <port>` as a port specifier. Lowering ip_unprivileged_port_start is
+# per-LXC kernel namespace and avoids granting CAP_NET_BIND_SERVICE.
 sysctl_src  = File.expand_path("../files/99-syslog-unprivileged-port.conf", __FILE__)
 sysctl_path = "/etc/sysctl.d/99-syslog-unprivileged-port.conf"
 
@@ -226,7 +226,10 @@ remote_file "#{deploy_dir}/alerts/mcp.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
-# Loki + Promtail (Phase B: RTX syslog visualization).
+# Loki + Vector (Phase B: RTX syslog visualization). Vector replaces the
+# previous Promtail syslog target after RTX1210/RTX830 firmware was found
+# to emit non-standard syslog (`<PRI>tag msg` with no TIMESTAMP/HOSTNAME)
+# that neither RFC5424 nor RFC3164 strict parsers accept.
 remote_file "#{deploy_dir}/loki-config.yaml" do
   source "files/loki-config.yaml"
   owner user
@@ -235,12 +238,22 @@ remote_file "#{deploy_dir}/loki-config.yaml" do
   notifies :run, "execute[restart monitoring]"
 end
 
-remote_file "#{deploy_dir}/promtail-config.yaml" do
-  source "files/promtail-config.yaml"
+remote_file "#{deploy_dir}/vector.toml" do
+  source "files/vector.toml"
   owner user
   group group
   mode "0644"
   notifies :run, "execute[restart monitoring]"
+end
+
+# Clean up the old Promtail config — the deploy_dir copy is no longer
+# referenced by docker-compose.yml. `not_if` makes this idempotent on
+# already-cleaned hosts. Promtail's positions cache directory was at
+# /tmp/promtail-positions and is intentionally NOT cleaned by the
+# cookbook (tmpfs on reboot or admin can rm -rf manually).
+execute "remove obsolete promtail-config.yaml from deploy_dir" do
+  command "rm -f #{deploy_dir}/promtail-config.yaml"
+  only_if "test -f #{deploy_dir}/promtail-config.yaml"
 end
 
 remote_file "#{deploy_dir}/grafana/provisioning/datasources/loki.yml" do
@@ -251,8 +264,8 @@ remote_file "#{deploy_dir}/grafana/provisioning/datasources/loki.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
-# GeoIP staging directory on the host (bind-mounted into promtail at
-# /etc/promtail/geoip:ro). The .mmdb file lands here via the download
+# GeoIP staging directory on the host (bind-mounted into vector at
+# /etc/vector/geoip:ro). The .mmdb file lands here via the download
 # execute below; the upstream files/geoip/ in the cookbook only carries
 # a .gitkeep — the binary database is intentionally not committed.
 directory "#{deploy_dir}/geoip" do
@@ -262,7 +275,7 @@ directory "#{deploy_dir}/geoip" do
 end
 
 # Download dbip-city-lite (CC-BY 4.0, ~50 MB gz / ~125 MB unpacked) for
-# GeoIP enrichment in the promtail pipeline. URL pattern is
+# GeoIP enrichment in the Vector pipeline. URL pattern is
 # dbip-city-lite-YYYY-MM.mmdb.gz; verified 2026-05 active at the time of
 # cookbook authoring (HTTP 200, 62 MB gzipped). The not_if guard
 # re-downloads if the file is older than 25 days — db-ip publishes

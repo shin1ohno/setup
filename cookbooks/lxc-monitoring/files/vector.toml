@@ -1,0 +1,212 @@
+# Vector pipeline for RTX router syslog → Loki ingestion (replaces Promtail).
+#
+# Why Vector and not Promtail's syslog target:
+#   RTX1210 Rev.14 / RTX830 Rev.15 firmware emit non-standard syslog —
+#   `<PRI>tag msg` with no TIMESTAMP and no HOSTNAME. Both RFC5424 and
+#   RFC3164 strict parsers (used by Promtail / Grafana Alloy via the same
+#   leodido/go-syslog library) reject these packets at the timestamp
+#   column, so Promtail records `parsing_errors_total` per packet and
+#   forwards nothing. Vector's `socket` source ingests the raw UDP payload
+#   and lets a VRL `remap` transform decode the format manually, with
+#   wall-clock at receive time used for the event timestamp (LAN-local,
+#   sub-ms latency relative to RTX-side event time).
+#
+# Cardinality strategy unchanged from the prior Promtail config:
+#
+#   Loki labels (low cardinality, used in stream selectors):
+#     router        — 2 values (hnd / itm) from source IP
+#     severity      — small set (notice / info / debug / err)
+#     facility      — small set (local0 only in current RTX config)
+#     action        — 2 values (PASS / REJECT) when filter log
+#     phase         — IKE / IKE2 when VPN log
+#     dhcp_event    — Extends / Assigns / Releases when DHCP log
+#     geoip_country_code — country ISO codes (~hundreds of values, capped)
+#
+#   Structured metadata (high cardinality, queryable in LogQL but NOT a label):
+#     src, dst, src_port, dst_port — addresses (per-flow)
+#     peer, local                  — IPsec peer addresses
+#     filter_no, protocol          — filter-log structured fields
+#     ike_event                    — free-form IKE event description
+#     lease_ip, mac                — DHCP lease structured fields
+#     repeat_count                 — `same message repeated N times`
+#     geoip_*                      — non-country GeoIP fields
+#
+# Requires Loki 2.9+ with `limits_config.allow_structured_metadata: true`
+# (set in cookbooks/lxc-monitoring/files/loki-config.yaml).
+
+# -----------------------------------------------------------------------------
+# Sources
+# -----------------------------------------------------------------------------
+
+[sources.rtx_udp]
+type = "socket"
+mode = "udp"
+address = "0.0.0.0:514"
+# .timestamp is auto-set to receive-time. .host is the sender IP. .message
+# carries the raw UDP payload (RTX `<PRI>tag msg` text).
+max_length = 4096
+
+# Vector self-metrics for Prometheus scrape (replaces Promtail's :9080).
+[sources.vector_metrics]
+type = "internal_metrics"
+
+# -----------------------------------------------------------------------------
+# Transforms
+# -----------------------------------------------------------------------------
+
+# Decode RTX's <PRI>tag msg payload into structured fields.
+[transforms.parse]
+type = "remap"
+inputs = ["rtx_udp"]
+source = '''
+  # Extract priority and remainder from RTX format: `<PRI>tag and message`.
+  # Drop packets that don't start with <NN> (defensive — random UDP noise).
+  m = parse_regex(.message, r'^<(?P<pri>\d+)>(?P<rest>.*)') ?? null
+  if is_null(m) {
+    abort
+  }
+  pri = to_int!(m.pri)
+  .severity_num = mod(pri, 8)
+  .facility_num = floor(pri / 8)
+
+  # RFC 5424 Table 2 severity names; index by severity_num (0..7).
+  sev_names = ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]
+  .severity = sev_names[.severity_num]
+
+  # RFC 5424 Table 1 facility names — only local0..local7 of practical
+  # interest for RTX (configured via `syslog facility local0`). Unknown
+  # facilities fall through to the numeric value as a string.
+  fac_names = {
+    "0": "kern", "1": "user", "2": "mail", "3": "daemon",
+    "4": "auth", "5": "syslog", "6": "lpr", "7": "news",
+    "16": "local0", "17": "local1", "18": "local2", "19": "local3",
+    "20": "local4", "21": "local5", "22": "local6", "23": "local7",
+  }
+  .facility = get(fac_names, [to_string!(.facility_num)]) ?? to_string!(.facility_num)
+
+  # Replace .message with the post-PRI remainder so downstream regex
+  # stages match against the RTX payload only.
+  .message = m.rest
+
+  # Map sender IP → router label. RTX hnd is .253, itm is .254. Drop
+  # everything else defensively (random LAN devices mis-pointing syslog
+  # at this listener should not produce labelled streams).
+  src_ip = .host
+  if src_ip == "192.168.1.253" {
+    .router = "hnd"
+  } else if src_ip == "192.168.1.254" {
+    .router = "itm"
+  } else {
+    abort
+  }
+
+  # Stage 1: RTX filter log structure.
+  #   "[101] PASS TCP 192.168.1.50:54321 > 8.8.8.8:443"
+  filter_re = r'\[(?P<filter_no>\d+)\] (?P<action>PASS|REJECT) (?P<protocol>[A-Z]+) (?P<src>[\d.]+):(?P<src_port>\d+) > (?P<dst>[\d.]+):(?P<dst_port>\d+)'
+  fr = parse_regex(.message, filter_re) ?? null
+  if !is_null(fr) {
+    .filter_no = fr.filter_no
+    .action = fr.action
+    .protocol = fr.protocol
+    .src = fr.src
+    .src_port = fr.src_port
+    .dst = fr.dst
+    .dst_port = fr.dst_port
+  }
+
+  # Stage 2: IKE / IPsec session events.
+  #   "[IKE] initiate IPsec phase to 119.231.58.172"
+  #   "[IKE2] SA:5/IKE established"
+  #   "[IKE] respond ISAKMP phase to 1.2.3.4 (local address 5.6.7.8)"
+  ike_re = r'\[(?P<phase>IKE2?)\] (?P<ike_event>.*?)(?: to (?P<peer>[\d.]+))?(?: \(local address (?P<local>[\d.]+)\))?$'
+  ir = parse_regex(.message, ike_re) ?? null
+  if !is_null(ir) {
+    .phase = ir.phase
+    .ike_event = ir.ike_event
+    if exists(ir.peer) { .peer = ir.peer }
+    if exists(ir.local) { .local = ir.local }
+  }
+
+  # Stage 3: DHCPD lease events.
+  #   "[DHCPD] Extends 192.168.1.28: 24:59:e5:54:5e:5a"
+  dhcp_re = r'\[DHCPD\] (?P<dhcp_event>Extends|Assigns|Releases) (?P<lease_ip>[\d.]+): (?P<mac>[0-9a-f:]+)'
+  dr = parse_regex(.message, dhcp_re) ?? null
+  if !is_null(dr) {
+    .dhcp_event = dr.dhcp_event
+    .lease_ip = dr.lease_ip
+    .mac = dr.mac
+  }
+
+  # Stage 4: `same message repeated N times` collapse marker.
+  rep_re = r'same message repeated (?P<repeat_count>\d+) times'
+  rr = parse_regex(.message, rep_re) ?? null
+  if !is_null(rr) {
+    .repeat_count = rr.repeat_count
+  }
+'''
+
+# Stage 5: GeoIP enrichment on the extracted filter-log src field.
+# Uses dbip-city-lite (CC-BY 4.0, monthly refresh by mitamae); the
+# cookbook downloads the .mmdb file into the bind-mounted geoip dir.
+# Vector's geoip transform emits a structured `.geoip` object with
+# country_code, city_name, continent_code, latitude, longitude, etc.
+[transforms.enrich_geoip]
+type = "geoip"
+inputs = ["parse"]
+database = "/etc/vector/geoip/dbip-city-lite.mmdb"
+source = "src"
+target = "geoip"
+
+# -----------------------------------------------------------------------------
+# Sinks
+# -----------------------------------------------------------------------------
+
+# Loki host-side: 127.0.0.1:3100 because Vector runs in network_mode: host
+# (see docker-compose.yml `vector:` service comment) and Loki binds
+# 127.0.0.1:3100. Docker service-name resolution (`loki:3100`) is
+# unavailable from host net.
+[sinks.loki]
+type = "loki"
+inputs = ["enrich_geoip"]
+endpoint = "http://127.0.0.1:3100"
+encoding.codec = "text"
+out_of_order_action = "accept"
+
+[sinks.loki.labels]
+job = "rtx-syslog"
+router = "{{ router }}"
+severity = "{{ severity }}"
+facility = "{{ facility }}"
+action = "{{ action }}"
+phase = "{{ phase }}"
+dhcp_event = "{{ dhcp_event }}"
+geoip_country_code = "{{ geoip.country_code }}"
+
+[sinks.loki.structured_metadata]
+src = "{{ src }}"
+dst = "{{ dst }}"
+src_port = "{{ src_port }}"
+dst_port = "{{ dst_port }}"
+filter_no = "{{ filter_no }}"
+protocol = "{{ protocol }}"
+peer = "{{ peer }}"
+local = "{{ local }}"
+ike_event = "{{ ike_event }}"
+lease_ip = "{{ lease_ip }}"
+mac = "{{ mac }}"
+repeat_count = "{{ repeat_count }}"
+geoip_city_name = "{{ geoip.city_name }}"
+geoip_continent_code = "{{ geoip.continent_code }}"
+geoip_latitude = "{{ geoip.latitude }}"
+geoip_longitude = "{{ geoip.longitude }}"
+geoip_subdivision_code = "{{ geoip.region_code }}"
+geoip_subdivision_name = "{{ geoip.region_name }}"
+
+# Prometheus scrape endpoint for Vector self-metrics. Replaces Promtail's
+# :9080. The lxc-monitoring stack's prometheus.yml job for the syslog
+# pipeline should target localhost:9598/metrics after this PR (config
+# update is in the prometheus.yml change of this same PR if applicable).
+[sinks.prometheus]
+type = "prometheus_exporter"
+inputs = ["vector_metrics"]
+address = "0.0.0.0:9598"
