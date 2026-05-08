@@ -35,6 +35,18 @@
 # (set in cookbooks/lxc-monitoring/files/loki-config.yaml).
 
 # -----------------------------------------------------------------------------
+# Enrichment tables
+# -----------------------------------------------------------------------------
+
+# GeoIP via MaxMind/db-ip mmdb. Loaded once, queried per event from the
+# `parse` VRL transform via get_enrichment_table_record.
+# Vector 0.42+ removed the standalone `transforms.geoip`; lookups now go
+# through the enrichment_tables API.
+[enrichment_tables.dbip_city]
+type = "mmdb"
+path = "/etc/vector/geoip/dbip-city-lite.mmdb"
+
+# -----------------------------------------------------------------------------
 # Sources
 # -----------------------------------------------------------------------------
 
@@ -66,12 +78,16 @@ source = '''
     abort
   }
   pri = to_int!(m.pri)
-  .severity_num = mod(pri, 8)
-  .facility_num = floor(pri / 8)
+  sev_num = mod(pri, 8)
+  fac_num = floor(pri / 8)
+  .severity_num = sev_num
+  .facility_num = fac_num
 
   # RFC 5424 Table 2 severity names; index by severity_num (0..7).
+  # VRL requires integer literal for `[...]` indexing; use the `get`
+  # function which accepts a runtime path.
   sev_names = ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]
-  .severity = sev_names[.severity_num]
+  .severity = get(sev_names, [sev_num]) ?? "unknown"
 
   # RFC 5424 Table 1 facility names — only local0..local7 of practical
   # interest for RTX (configured via `syslog facility local0`). Unknown
@@ -82,7 +98,7 @@ source = '''
     "16": "local0", "17": "local1", "18": "local2", "19": "local3",
     "20": "local4", "21": "local5", "22": "local6", "23": "local7",
   }
-  .facility = get(fac_names, [to_string!(.facility_num)]) ?? to_string!(.facility_num)
+  .facility = get(fac_names, [to_string(fac_num)]) ?? to_string(fac_num)
 
   # Replace .message with the post-PRI remainder so downstream regex
   # stages match against the RTX payload only.
@@ -143,19 +159,20 @@ source = '''
   if !is_null(rr) {
     .repeat_count = rr.repeat_count
   }
-'''
 
-# Stage 5: GeoIP enrichment on the extracted filter-log src field.
-# Uses dbip-city-lite (CC-BY 4.0, monthly refresh by mitamae); the
-# cookbook downloads the .mmdb file into the bind-mounted geoip dir.
-# Vector's geoip transform emits a structured `.geoip` object with
-# country_code, city_name, continent_code, latitude, longitude, etc.
-[transforms.enrich_geoip]
-type = "geoip"
-inputs = ["parse"]
-database = "/etc/vector/geoip/dbip-city-lite.mmdb"
-source = "src"
-target = "geoip"
+  # Stage 5: GeoIP enrichment on the extracted filter-log src field.
+  # Uses the `dbip_city` enrichment_table declared at the top of this
+  # config (dbip-city-lite, CC-BY 4.0, monthly refresh by mitamae).
+  # Returns a flat object: city_name, country_code, country_name,
+  # continent_code, region_code, region_name, latitude, longitude,
+  # timezone, postal_code, metro_code (any of which may be null).
+  if exists(.src) {
+    geoip_data, geoip_err = get_enrichment_table_record("dbip_city", { "ip": to_string!(.src) })
+    if geoip_err == null {
+      .geoip = geoip_data
+    }
+  }
+'''
 
 # -----------------------------------------------------------------------------
 # Sinks
@@ -167,7 +184,7 @@ target = "geoip"
 # unavailable from host net.
 [sinks.loki]
 type = "loki"
-inputs = ["enrich_geoip"]
+inputs = ["parse"]
 endpoint = "http://127.0.0.1:3100"
 encoding.codec = "text"
 out_of_order_action = "accept"
