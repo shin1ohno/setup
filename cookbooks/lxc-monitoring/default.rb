@@ -226,6 +226,14 @@ remote_file "#{deploy_dir}/alerts/mcp.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
+remote_file "#{deploy_dir}/alerts/pve-host.yml" do
+  source "files/alerts/pve-host.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # Loki + Vector (Phase B: RTX syslog visualization). Vector replaces the
 # previous Promtail syslog target after RTX1210/RTX830 firmware was found
 # to emit non-standard syslog (`<PRI>tag msg` with no TIMESTAMP/HOSTNAME)
