@@ -80,29 +80,43 @@ groups:
             Runbook: ssh root@192.168.1.10 'free -h ; arc_summary | head -20'
 
       # ============================================================
-      # CPU overcommit warning
+      # CPU pressure (real usage)
       # ============================================================
-      # LXC vCPU is a soft limit — overcommit is normal for IO-bound
-      # workloads. Warn at 1.5x to flag the trend, not as an emergency.
+      # vCPU alloc-sum overcommit alone is not a capacity signal —
+      # LXC vCPU is a soft limit and home-lab LXCs are idle-mostly,
+      # so 2-3x overcommit with avg host CPU ~10% is normal. The
+      # actual capacity question is whether host real CPU has run
+      # out, not whether alloc-sum exceeds physical cores.
 
-      - alert: PveHostCpuOvercommitHigh
+      - alert: PveHostCpuUsageHigh
         expr: |
-          (
-            sum(pve_cpu_usage_limit{id=~"lxc/.+"})
-            /
-            on() pve_cpu_usage_limit{id="node/pro"}
-          ) > 1.5
-        for: 30m
+          avg_over_time(pve_cpu_usage_ratio{id="node/pro"}[10m]) > 0.70
+        for: 10m
         labels:
           severity: warning
           component: pve-capacity
         annotations:
-          summary: "PVE host vCPU overcommit > 1.5x"
+          summary: "PVE host real CPU usage > 70% sustained 20m"
           description: |
-            Sum of LXC `cores:` config = {{ $value | humanizePercentage }} of host
-            physical cores. Tolerated if average host CPU stays low (LXC mostly
-            idle), but indicates the host is at the edge for sustained burst.
-            Runbook: check `avg_over_time(pve_cpu_usage_ratio{id="node/pro"}[1h])`.
+            10m average host CPU = {{ $value | humanizePercentage }}, sustained
+            10m. Concurrent LXC workloads have driven real CPU demand into the
+            danger zone. Check `topk(5, rate(pve_cpu_usage_ratio{id=~"lxc/.+"}[5m]))`
+            to find which LXC is busy.
+
+      - alert: PveHostCpuUsageCritical
+        expr: |
+          avg_over_time(pve_cpu_usage_ratio{id="node/pro"}[10m]) > 0.90
+        for: 5m
+        labels:
+          severity: critical
+          component: pve-capacity
+        annotations:
+          summary: "PVE host real CPU usage > 90% sustained 15m"
+          description: |
+            Host CPU at {{ $value | humanizePercentage }}. LXCs are sharing
+            saturated cores; latency-sensitive containers (Roon, monitoring,
+            ES query) will degrade. Action: identify the busy LXC and either
+            throttle its workload or rebalance.
 
       # ============================================================
       # Per-LXC memory pressure (which LXC needs a bump)
