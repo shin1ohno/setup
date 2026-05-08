@@ -59,14 +59,15 @@ end
   end
 end
 
-# Consent app source — read from cookbooks/hydra/files/consent-app/ to
-# keep one canonical implementation. Avoids byte-for-byte duplication
-# between cookbooks/hydra and this entry recipe. Phase 8 cleanup will
-# extract consent-app into its own cookbook so that cookbooks/hydra/
-# (legacy bare-metal pro) can be retired.
-hydra_consent_dir = File.expand_path("../cookbooks/hydra/files/consent-app", File.dirname(__FILE__))
+# Consent app source — read from cookbooks/consent-app/files/ (extracted
+# from cookbooks/hydra/files/consent-app/ during Phase 8 cleanup). The
+# cookbook is files-only (no resources of its own) — pve/lxc-consent.rb
+# reads the 3 files via File.read and embeds them as `file ... content`
+# resources. If the consent app outgrows this pattern, promote
+# cookbooks/consent-app/ to a real service primitive.
+consent_app_dir = File.expand_path("../cookbooks/consent-app/files", File.dirname(__FILE__))
 %w[Dockerfile requirements.txt app.py].each do |f|
-  src_content = File.read("#{hydra_consent_dir}/#{f}")
+  src_content = File.read("#{consent_app_dir}/#{f}")
   file "#{deploy_dir}/consent-app/#{f}" do
     owner user
     group group
