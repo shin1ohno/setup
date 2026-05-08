@@ -1,0 +1,37 @@
+{
+  "template": {
+    "mappings": {
+      "_source": {
+        "mode": "synthetic"
+      },
+      "dynamic": "strict",
+      "properties": {
+        "@timestamp":     { "type": "date" },
+        "host":           { "type": "keyword" },
+        "router":         { "type": "keyword" },
+        "filter_no":      { "type": "keyword" },
+        "rule":           { "type": "keyword" },
+        "action":         { "type": "keyword" },
+        "protocol":       { "type": "keyword" },
+        "src":            { "type": "ip" },
+        "src_port":       { "type": "integer" },
+        "dst":            { "type": "ip" },
+        "dst_port":       { "type": "integer" },
+        "peer":           { "type": "ip" },
+        "peer_port":      { "type": "integer" },
+        "local":          { "type": "ip" },
+        "local_port":     { "type": "integer" },
+        "lease_ip":       { "type": "ip" },
+        "tag":            { "type": "keyword" },
+        "interface":      { "type": "keyword" },
+        "direction":      { "type": "keyword" },
+        "ike_event":      { "type": "match_only_text" },
+        "message":        { "type": "match_only_text" },
+        "geoip_country":      { "type": "keyword" },
+        "geoip_country_code": { "type": "keyword" },
+        "geoip_city":         { "type": "keyword" },
+        "geoip_location":     { "type": "geo_point" }
+      }
+    }
+  }
+}

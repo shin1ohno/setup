@@ -1,0 +1,9 @@
+{
+  "index_patterns": ["logs-rtx-*"],
+  "data_stream": {},
+  "composed_of": ["logs-rtx-mappings", "logs-rtx-settings"],
+  "priority": 200,
+  "_meta": {
+    "description": "RTX1210 / RTX830 syslog data stream — managed by lxc-elasticsearch cookbook"
+  }
+}

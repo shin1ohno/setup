@@ -1,0 +1,53 @@
+# Rendered at deploy time by lxc-elasticsearch/default.rb — substitutes
+# @@NODE_NAME@@ and @@TRANSPORT_HOST@@ from the per-LXC node attributes.
+# Phase 3b ships transport-TLS only; xpack.security.http.ssl.enabled is
+# left disabled (set to true in Phase 7-tls).
+cluster.name: es-home-monitor
+node.name: @@NODE_NAME@@
+node.roles: [master, data, ingest]
+
+# HTTP listens on all interfaces (LAN reachable for Vector, Kibana,
+# Grafana, ad-hoc curl). 9200.
+network.host: 0.0.0.0
+http.port: 9200
+
+# Transport binds to the LXC's LAN IP so peer nodes can reach 9300
+# across LXC boundaries. The IP is filled in per-node from
+# node[:elasticsearch][:transport_host].
+transport.host: @@TRANSPORT_HOST@@
+transport.port: 9300
+
+# Static cluster discovery — three combined-role nodes.
+discovery.seed_hosts:
+  - 192.168.1.112:9300
+  - 192.168.1.113:9300
+  - 192.168.1.114:9300
+cluster.initial_master_nodes:
+  - es-0
+  - es-1
+  - es-2
+
+# Memory locking — requires LXC `lxc.cap.keep: ipc_lock` + container
+# IPC_LOCK + ulimits.memlock=-1 (set in docker-compose.yml).
+bootstrap.memory_lock: true
+
+# Synthetic _source mode is configured per-index via component templates
+# (see files/component-templates/logs-rtx-mappings.json).
+
+# === Security ===
+xpack.security.enabled: true
+xpack.security.autoconfiguration.enabled: false
+
+# Transport TLS — node-to-node communication. Cert + key are PEM files
+# fetched from SSM and bind-mounted into config/certs/ by the cookbook.
+xpack.security.transport.ssl.enabled: true
+xpack.security.transport.ssl.verification_mode: certificate
+xpack.security.transport.ssl.client_authentication: required
+xpack.security.transport.ssl.key: certs/@@NODE_NAME@@.key
+xpack.security.transport.ssl.certificate: certs/@@NODE_NAME@@.crt
+xpack.security.transport.ssl.certificate_authorities:
+  - certs/ca.crt
+
+# HTTP TLS — disabled in Phase 3b. Switch to true in Phase 7-tls and
+# point at the same node cert.
+xpack.security.http.ssl.enabled: false
