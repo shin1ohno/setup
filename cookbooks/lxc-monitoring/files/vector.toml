@@ -116,18 +116,25 @@ source = '''
     abort
   }
 
-  # Stage 1: RTX filter log structure.
-  #   "[101] PASS TCP 192.168.1.50:54321 > 8.8.8.8:443"
-  filter_re = r'\[(?P<filter_no>\d+)\] (?P<action>PASS|REJECT) (?P<protocol>[A-Z]+) (?P<src>[\d.]+):(?P<src_port>\d+) > (?P<dst>[\d.]+):(?P<dst_port>\d+)'
+  # Stage 1: RTX filter log structure (RTX1210 Rev.14 / RTX830 Rev.15).
+  # Actual format observed in 2026-05 packet captures:
+  #   "LAN2 Passed at IN(80) filter: TCP 35.79.199.237:443 > 192.168.1.76:49744"
+  #   "LAN2 Passed at IN(80) filter: UDP 1.1.1.1:53 > 192.168.1.253:10707 (DNS response)"
+  #   "PP[01] Rejected at OUT(200099) filter: ICMP 192.168.1.x > 192.168.1.y"
+  # action_word is "Passed" or "Rejected"; normalize to PASS / REJECT to keep
+  # the dashboard variable values stable.
+  filter_re = r'^(?P<interface>\S+) (?P<action_word>Passed|Rejected) at (?P<direction>IN|OUT)\((?P<filter_no>\d+)\) filter: (?P<protocol>\w+) (?P<src>[\d.]+)(?::(?P<src_port>\d+))? > (?P<dst>[\d.]+)(?::(?P<dst_port>\d+))?'
   fr = parse_regex(.message, filter_re) ?? null
   if !is_null(fr) {
+    .interface = fr.interface
+    .direction = fr.direction
     .filter_no = fr.filter_no
-    .action = fr.action
+    .action = if fr.action_word == "Passed" { "PASS" } else { "REJECT" }
     .protocol = fr.protocol
     .src = fr.src
-    .src_port = fr.src_port
+    if exists(fr.src_port) { .src_port = fr.src_port }
     .dst = fr.dst
-    .dst_port = fr.dst_port
+    if exists(fr.dst_port) { .dst_port = fr.dst_port }
   }
 
   # Stage 2: IKE / IPsec session events.
