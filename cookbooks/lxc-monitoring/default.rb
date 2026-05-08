@@ -422,7 +422,13 @@ execute "restart monitoring" do
   # the running prometheus container until manual SIGHUP. Same fix shape
   # as PR #158 for the other 6 cookbooks; lxc-monitoring was excluded
   # there to avoid an apparent (but ultimately illusory) merge conflict.
-  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --force-recreate"
+  #
+  # --remove-orphans drops containers that are no longer declared in
+  # docker-compose.yml. Required when retiring services (e.g. promtail
+  # was removed from the compose in the Vector migration; without
+  # --remove-orphans, the old promtail container kept running and
+  # holding UDP 514 so the new vector container couldn't bind).
+  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --force-recreate --remove-orphans"
   user user
   action :nothing
   # Skip when .env was not generated OR snmp.yml hasn't been rendered
