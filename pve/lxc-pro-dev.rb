@@ -69,10 +69,13 @@ include_cookbook "lxc-dev-workstation"
 # does NOT need the ip_forward sysctl, SNAT, or `tailscale set` re-apply
 # that pro-router has.
 #
-# Limitation: the systemd unit fires on boot only
-# (WantedBy=multi-user.target). After a tailscaled restart that re-injects
-# the route, run `sudo systemctl restart
-# lxc-pro-dev-tailnet-routes.service` manually.
+# Self-healing: a sibling `.timer` unit fires every 60s (OnBootSec=30s,
+# OnUnitActiveSec=60s) so any future re-injection by tailscaled — peer
+# route resync, daemon restart, magic-DNS bounce — is cleared within
+# ≤60s without human intervention. The script is idempotent
+# (`ip route del 2>/dev/null || true`) so the recurring fire is a no-op
+# whenever the route is already absent. The .service is NOT
+# `enable --now`'d directly; the timer drives it.
 
 # Defensive parent-dir guard per ~/.claude/rules/ruby.md "Defensive
 # `directory` resource for `node[:setup][:root]` and its subdirs".
@@ -123,7 +126,6 @@ file "#{node[:setup][:root]}/lxc-pro-dev-tailnet-routes.service" do
     [Service]
     Type=oneshot
     ExecStart=/usr/local/sbin/lxc-pro-dev-tailnet-routes.sh
-    RemainAfterExit=true
 
     [Install]
     WantedBy=multi-user.target
@@ -133,11 +135,35 @@ end
 execute "install pro-dev tailnet-routes systemd unit" do
   command "sudo install -m 644 -o root -g root #{node[:setup][:root]}/lxc-pro-dev-tailnet-routes.service /etc/systemd/system/lxc-pro-dev-tailnet-routes.service"
   not_if "diff -q #{node[:setup][:root]}/lxc-pro-dev-tailnet-routes.service /etc/systemd/system/lxc-pro-dev-tailnet-routes.service 2>/dev/null"
-  notifies :run, "execute[reload + enable pro-dev tailnet-routes]"
+  notifies :run, "execute[reload + enable pro-dev tailnet-routes timer]"
 end
 
-execute "reload + enable pro-dev tailnet-routes" do
-  command "sudo systemctl daemon-reload && sudo systemctl enable --now lxc-pro-dev-tailnet-routes.service"
+file "#{node[:setup][:root]}/lxc-pro-dev-tailnet-routes.timer" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  content <<~UNIT
+    [Unit]
+    Description=Periodically drop conflicting LAN supernet from tailscale0 (pro-dev)
+
+    [Timer]
+    OnBootSec=30s
+    OnUnitActiveSec=60s
+    Unit=lxc-pro-dev-tailnet-routes.service
+
+    [Install]
+    WantedBy=timers.target
+  UNIT
+end
+
+execute "install pro-dev tailnet-routes systemd timer" do
+  command "sudo install -m 644 -o root -g root #{node[:setup][:root]}/lxc-pro-dev-tailnet-routes.timer /etc/systemd/system/lxc-pro-dev-tailnet-routes.timer"
+  not_if "diff -q #{node[:setup][:root]}/lxc-pro-dev-tailnet-routes.timer /etc/systemd/system/lxc-pro-dev-tailnet-routes.timer 2>/dev/null"
+  notifies :run, "execute[reload + enable pro-dev tailnet-routes timer]"
+end
+
+execute "reload + enable pro-dev tailnet-routes timer" do
+  command "sudo systemctl daemon-reload && sudo systemctl enable --now lxc-pro-dev-tailnet-routes.timer"
   action :nothing
 end
 
