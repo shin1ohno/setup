@@ -434,3 +434,36 @@ Run before any apt repo addition, any zip extraction, or any package install tha
 
 This rule exists because PRs #108-#110 in setup were three sequential apply cycles to fix the same class of bug — each cookbook (docker-engine, rclone, awscli) was missing the bootstrap-deps guard and failing on a different downstream step of the same root cause. A single cookbook-side check at the beginning of the PVE-LXC entry recipes would have collapsed all three PRs into zero.
 
+## IP literal must come from contracts/devices.json (plan-phase probe)
+
+Before writing any IP literal into a cookbook (`execute` command, `template` substitution, Prometheus scrape target, `discovery.seed_hosts`, healthcheck URL), probe the source of truth and confirm the match:
+
+```bash
+jq -r '.devices | to_entries[] | select(.value.kind=="lxc") | "\(.key) ip=\(.value.lxc.ip // "?") ct_id=\(.value.lxc.ct_id // "?")"' \
+  ~/ManagedProjects/home-monitor/contracts/devices.json
+```
+
+This catches the **CT-ID-shaped IP confusion**: hardcoded `192.168.1.{112,113,114}` matches CT IDs visually but the real LXC IPs are `.77/.78/.79`. The two are visually similar but only the real values route — ARP `ip neigh show` reports `INCOMPLETE` for the wrong ones, ES discovery throws `connect_exception: No route to host` from Java/Netty, and `pct exec` ICMP ping confusingly succeeds (kernel kept the L2 path) so the bug looks like an ES configuration issue.
+
+Hardcoded IPs are a **plan-completeness failure**, not a post-apply diagnosis. The probe is a 2-second plan-phase step.
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 3b session lost ~3 hours debugging cluster discovery failures rooted in two cookbook files (`elasticsearch.yml.tmpl` seed_hosts + `pve/lxc-es-{0,1,2}.rb` `transport_host`) hardcoding CT-ID-shaped IPs. PRs #247 and #248 fixed both. `contracts/devices.json` had the correct `.77/.78/.79` values the entire session — never consulted at plan time.
+
+## Cookbook converge fail — diagnose all remaining resources before first fix PR
+
+When `mitamae apply` (or `docker compose up + bootstrap script`) fails on a target host, **DO NOT** open a fix PR for the first error. Instead:
+
+1. Let the apply complete (or kill it cleanly)
+2. Probe the full state:
+   ```
+   ssh root@<vmid> 'systemctl --failed; docker ps -a; docker logs <container> --tail 80 2>&1 | grep -iE "ERROR|FATAL|denied"; ls -la /data/<service>/ 2>&1'
+   ```
+3. Collect every fail signal (resource state mismatches, container exit codes, log error patterns, file permission issues)
+4. Open one fix PR addressing all of them
+
+Why batched: each fix-PR-CI-merge-redeploy cycle takes 5-10 min. Sequential fix PRs for diagnosable-in-one-pass bugs multiply waste.
+
+**Exception**: bug B is genuinely unobservable until bug A is fixed (e.g., container won't start until cert ownership fixed → can't probe ES auth until container running). Batching the related-bug-cluster is correct, but the dependency must be genuine — not "I noticed A first so let me ship A".
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 3b session shipped 6 sequential fix PRs (#242 → #243 → #244 → #245 → #247 → #248), ~30-60 min of avoidable cycle time. Bugs #5/#6 (the IP confusion above) were diagnosable from the first ES log line "No route to host" via `pct exec <vmid> -- ip neigh show` (would have shown `INCOMPLETE` immediately). Bugs #7/#8 (cert ownership + healthcheck quoting) surfaced later but were independent and could have been in the same batch as the network bugs.
+
