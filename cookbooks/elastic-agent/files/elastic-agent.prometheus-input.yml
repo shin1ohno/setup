@@ -1,0 +1,37 @@
+  # Prometheus federation scrape — only enabled on hosts where
+  # node[:elastic_agent][:enable_prometheus_integration] == true. Today
+  # that is CT 111 (lxc-monitoring) only, where Prometheus binds
+  # 127.0.0.1:9090. Streams U/V/W (Kibana dashboards: RTX Routers,
+  # Auto-mitamae Fleet, Proxmox via Prometheus) consume the resulting
+  # `metrics-prometheus.collector-default` data stream.
+  #
+  # match[] filter targets the metric classes the 3 dashboards need:
+  #   - node_*           Node Exporter (host CPU/mem/disk/net/load)
+  #   - pve_*            prometheus-pve-exporter (VM/CT/storage/cluster)
+  #   - if(?:HC)?(In|Out)Octets, ifSpeed   SNMP (RTX router throughput)
+  #   - auto_mitamae_*, bootstrap_lxc_creds_*  textfile collector
+  #   - up, scrape_*     scrape health visibility
+  #
+  # Excluded by design: prometheus_* self-metrics, blackbox_* (alerting only),
+  # go_* runtime metrics. Filtering at federation time keeps ES storage
+  # bounded — full federate would emit ~5x the volume.
+  #
+  # period: 30s — downstream copy, more conservative than Prometheus's
+  # 15s scrape (this is a secondary observability path, not source of truth).
+  - type: prometheus/metrics
+    id: prometheus-federation
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: prometheus.collector
+        metricsets: [collector]
+        hosts: ["127.0.0.1:9090"]
+        metrics_path: /federate
+        period: 30s
+        query:
+          'match[]':
+            - '{__name__=~"node_.*|pve_.*|if(?:HC)?(In|Out)Octets|ifSpeed|auto_mitamae_.*|bootstrap_lxc_creds_.*|up|scrape_.*"}'
+        # Federation /federate response strips TYPE comments — keep all
+        # metrics as untyped gauges to avoid type-inference errors.
+        use_types: false
