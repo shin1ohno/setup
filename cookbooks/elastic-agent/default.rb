@@ -364,9 +364,11 @@ require_external_auth(
 end
 
 execute "install elastic-agent.yml.env" do
-  command "install -m 0640 -o root -g root #{env_temp_path} #{env_output_path}"
+  # sudo prefix supports both root mitamae (service LXCs, no-op) and
+  # regular-user mitamae (dev-workstation LXCs like pro-dev / bare-metal).
+  command "sudo install -m 0640 -o root -g root #{env_temp_path} #{env_output_path}"
   only_if "test -f #{env_temp_path} && test -d /etc/elastic-agent"
-  not_if "test -f #{env_output_path} && diff -q #{env_temp_path} #{env_output_path} 2>/dev/null"
+  not_if "test -f #{env_output_path} && sudo diff -q #{env_temp_path} #{env_output_path} 2>/dev/null"
   notifies :run, "execute[restart elastic-agent]"
 end
 
@@ -386,14 +388,19 @@ prom_sed_clause = if enable_prom_input
                   end
 
 execute "render elastic-agent.yml" do
+  # Stage in user-writable /tmp then sudo install. mitamae on dev-workstation
+  # LXCs (e.g. pro-dev CT 104) runs as the regular user — direct write to
+  # /etc/elastic-agent/ fails with EACCES. Service LXCs run mitamae as root
+  # so sudo is a no-op there.
+  staging = "/tmp/elastic-agent.yml.render.$$"
   command <<~SH.strip
     set -euo pipefail
     sed -e "s|@@HOSTNAME@@|#{host_name}|g" \\
         -e 's|@@TAGS@@|#{tags_json}|g' \\
         #{prom_sed_clause} \\
-      #{config_tmpl} > #{config_path}.new
-    install -m 0640 -o root -g root #{config_path}.new #{config_path}
-    rm -f #{config_path}.new
+      #{config_tmpl} > #{staging}
+    sudo install -m 0640 -o root -g root #{staging} #{config_path}
+    rm -f #{staging}
   SH
   only_if "test -f #{config_tmpl} && test -d /etc/elastic-agent"
   not_if "test -f #{config_path} && " \
@@ -413,7 +420,7 @@ execute "create elastic-agent.service.d directory" do
 end
 
 execute "install elastic-agent systemd override" do
-  command "install -m 0644 -o root -g root #{override_src} #{override_path}"
+  command "sudo install -m 0644 -o root -g root #{override_src} #{override_path}"
   only_if "test -f #{override_src}"
   not_if "test -f #{override_path} && diff -q #{override_src} #{override_path} 2>/dev/null"
   notifies :run, "execute[elastic-agent daemon-reload]", :immediately
@@ -421,14 +428,14 @@ execute "install elastic-agent systemd override" do
 end
 
 execute "elastic-agent daemon-reload" do
-  command "systemctl daemon-reload"
+  command "sudo systemctl daemon-reload"
   action :nothing
 end
 
 # === Service activation ===
 
 execute "enable + start elastic-agent" do
-  command "systemctl enable --now elastic-agent.service"
+  command "sudo systemctl enable --now elastic-agent.service"
   only_if <<~SH.tr("\n", " ").strip
     test -f #{env_output_path} || exit 1;
     test -f #{config_path} || exit 1;
@@ -438,7 +445,7 @@ execute "enable + start elastic-agent" do
 end
 
 execute "restart elastic-agent" do
-  command "systemctl restart elastic-agent.service"
+  command "sudo systemctl restart elastic-agent.service"
   action :nothing
   only_if "test -f #{env_output_path} && test -f #{config_path}"
 end
