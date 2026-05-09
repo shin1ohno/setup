@@ -1,43 +1,54 @@
 # frozen_string_literal: true
 #
 # lxc-elasticsearch (CT 112 / 113 / 114): Elasticsearch 8.x master+data+ingest
-# node, one of a 3-node cluster. The same cookbook ships to all three CTs;
-# per-LXC divergence is parameterised through node attributes set in the
-# pve/lxc-es-{0,1,2}.rb entry recipes:
+# node, one of a 3-node cluster. Native apt + systemd install (Phase 3b
+# retro: docker-compose deployment was replaced because 4 of 8 cookbook
+# bugs were structural docker-isms — see ~/.claude/rules/pve-lxc.md
+# "Docker-in-LXC vs apt+systemd"). The same cookbook ships to all three
+# CTs; per-LXC divergence is parameterised through node attributes set
+# in the pve/lxc-es-{0,1,2}.rb entry recipes:
 #
 #   node[:elasticsearch][:node_name]      "es-0" | "es-1" | "es-2"
-#   node[:elasticsearch][:transport_host] "192.168.1.112" | ".113" | ".114"
+#   node[:elasticsearch][:transport_host] "192.168.1.77" | ".78" | ".79"
 #
 # Stack:
-#   - docker.elastic.co/elasticsearch/elasticsearch:8.16.0  :9200 (HTTP, LAN)
-#                                                            :9300 (transport)
+#   - Elasticsearch 8.16.0 DEB (apt-mark hold)  :9200 (HTTP, LAN)
+#                                                :9300 (transport TLS)
+#   - systemd unit elasticsearch.service (DEB-shipped)
+#   - /etc/systemd/system/elasticsearch.service.d/override.conf (cookbook-managed)
 #
 # State volume (host bind-mount): /data/elasticsearch/{data,logs,certs}
 #   — on PVE host /mnt/data/elasticsearch/<node>/ (USB X8 SSD, 200 GB).
 #   — Phase 3a manual op chowns the parent dir 100000:100000 so it
 #     surfaces as root:root inside the container; the cookbook chowns
-#     the data/ logs/ subdirs to UID 1000 (= host UID 101000) so the
-#     ES image's elasticsearch user can write to them.
+#     the data/ logs/ certs/ subdirs to the elasticsearch system user
+#     (UID assigned by the DEB package, typically 113-115 on Debian
+#     trixie templates).
 #
 # Phase 3b ships transport-TLS only. HTTP TLS comes in Phase 7-tls.
 #
 # Adversarial findings folded in:
-#   #2  bind-mount UID — parent root, subdirs UID 1000
-#   #6  .env mode 0600 root:root, no embedded URLs
+#   #2  bind-mount UID — parent root, subdirs owned by elasticsearch user
+#   #6  /etc/elasticsearch/elasticsearch-secrets.env mode 0640 root:elasticsearch
 #   #8  ILM bootstrap order: ILM → component → index template → data stream → roles → users
 #   #11 Rolling restart serialization — see notes in §restart section
 #   #12 Atomic kibana_system reset before Kibana cookbook reads SSM password
 #   #14 Drift detection — SSM password vs ES auth probe → reset on mismatch
+#
+# Migration from docker (UC2): operator must `docker compose down` BEFORE
+# the first native apply on each LXC. Data dir survives unchanged; ES
+# on-disk format is identical between container and native install. After
+# native apply succeeds, the operator may remove ~/deploy/elasticsearch/
+# from the LXC.
 
 return if node[:platform] == "darwin"
 
-include_cookbook "docker-engine"
 include_cookbook "awscli"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys so the
-# require_external_auth check_command and the .env / cert generators all
-# target the same IAM principal (per CLAUDE.md "Auth-check gate must match
-# the cookbook's actual invocation profile").
+# require_external_auth check_command and the secrets / cert generators
+# all target the same IAM principal (per CLAUDE.md "Auth-check gate must
+# match the cookbook's actual invocation profile").
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
 aws_profile = ssh_keys_config["aws_profile"]
 aws_region  = ssh_keys_config["aws_region"]
@@ -50,10 +61,9 @@ if node_name.nil? || transport_host.nil?
         "[:transport_host] must be set in the pve/lxc-es-*.rb entry recipe"
 end
 
-user       = node[:setup][:user]
-group      = node[:setup][:group]
-deploy_dir = "#{node[:setup][:home]}/deploy/elasticsearch"
-state_dir  = "/data/elasticsearch"
+user      = node[:setup][:user]
+group     = node[:setup][:group]
+state_dir = "/data/elasticsearch"
 
 # Defensive: ensure setup_root + per-cookbook subdir exist before any
 # remote_file write. Per CLAUDE.md "Defensive directory resource".
@@ -68,8 +78,7 @@ directory "#{node[:setup][:root]}/lxc-elasticsearch" do
 end
 
 # Cookbook-files staging dir — bootstrap-init.sh, ILM/template/role JSON
-# all live here at converge time so the bootstrap script can read them
-# without needing the deploy_dir layout.
+# all live here at converge time so the bootstrap script can read them.
 files_dir = "#{node[:setup][:root]}/lxc-elasticsearch/files"
 directory files_dir do
   owner user
@@ -83,20 +92,53 @@ directory "#{files_dir}/component-templates" do
   mode "755"
 end
 
-# Deploy directory (compose project root).
-directory deploy_dir do
-  owner user
-  group group
-  mode "755"
+# === Elastic apt repo registration ===
+
+execute "install elastic apt prerequisites" do
+  command "apt-get install -y ca-certificates curl gnupg apt-transport-https"
+  not_if {
+    %w(ca-certificates curl gnupg apt-transport-https).all? { |pkg|
+      run_command("dpkg-query -W -f='${Status}' #{pkg} 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0
+    }
+  }
 end
 
-# State volumes — bind-mount targets. Adversarial #2: in-container
-# subdirs MUST be owned by UID 1000 (the elasticsearch image user).
-# In-namespace root has CAP_CHOWN over UIDs in the mapped range
-# (0..65535 inside ↔ 100000..165535 host), so chown to "1000" inside
-# the container succeeds. The parent /data/elasticsearch directory
-# itself is created on the host by Phase 3a manual op (chown
-# 100000:100000); from inside the container it appears as root:root.
+execute "add elastic apt key" do
+  command <<~SH.strip
+    install -d -m 0755 /etc/apt/keyrings && \
+      curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | \
+      gpg --batch --yes --dearmor -o /etc/apt/keyrings/elastic.gpg && \
+      chmod a+r /etc/apt/keyrings/elastic.gpg
+  SH
+  not_if { File.exist?("/etc/apt/keyrings/elastic.gpg") }
+end
+
+execute "add elastic apt repo" do
+  command "echo 'deb [signed-by=/etc/apt/keyrings/elastic.gpg] " \
+          "https://artifacts.elastic.co/packages/8.x/apt stable main' " \
+          "> /etc/apt/sources.list.d/elastic-8.x.list"
+  not_if "test -f /etc/apt/sources.list.d/elastic-8.x.list && " \
+         "grep -q 'artifacts.elastic.co' /etc/apt/sources.list.d/elastic-8.x.list"
+  notifies :run, "execute[apt-get update for elastic]", :immediately
+end
+
+execute "apt-get update for elastic" do
+  command "apt-get update -qq"
+  action :nothing
+end
+
+# === Bind-mount state volume + per-subdir ownership ===
+#
+# The /data/elasticsearch parent is created by Phase 3a manual op
+# (chown 100000:100000 on the host) so it surfaces as root:root inside
+# the container. We chown the data/ logs/ certs/ subdirs to the
+# elasticsearch user AFTER the DEB install creates that user.
+#
+# Migration note: pre-Phase-3b the subdirs were owned by UID 1000 (the
+# docker.elastic.co/elasticsearch image's user). After native install
+# the subdirs need to be re-owned to the elasticsearch system user.
+# The DEB postinstall script does NOT chown bind-mount paths — only
+# the default /var/lib/elasticsearch — so we do it here.
 directory "/data" do
   owner "root"
   group "root"
@@ -109,31 +151,44 @@ directory state_dir do
   mode "755"
 end
 
+# Subdirs: created with mitamae's directory resource (no owner attempt
+# yet — the elasticsearch user doesn't exist before apt install). The
+# chown happens in the post-install execute resource below.
 %w[data logs certs].each do |sub|
   directory "#{state_dir}/#{sub}" do
-    # String UIDs — Integer raises InvalidTypeError per
-    # ~/.claude/rules/ruby.md "owner/group must be String".
-    owner "1000"
-    group "1000"
     mode "755"
   end
 end
 
-# === compose + config files ===
+# === Install Elasticsearch DEB ===
 
-remote_file "#{deploy_dir}/docker-compose.yml" do
-  source "files/docker-compose.yml"
-  owner user
-  group group
-  mode "0644"
-  notifies :run, "execute[restart elasticsearch]"
+execute "install elasticsearch 8.16.0" do
+  command "apt-get install -y elasticsearch=8.16.0"
+  not_if "dpkg-query -W -f='${Version}' elasticsearch 2>/dev/null | grep -q '^8.16.0$'"
 end
 
+execute "apt-mark hold elasticsearch" do
+  command "apt-mark hold elasticsearch"
+  not_if "apt-mark showhold | grep -q '^elasticsearch$'"
+end
+
+# Re-chown bind-mount subdirs to the elasticsearch user (created by the
+# DEB postinst). Idempotent: skipped when the chown already matches.
+%w[data logs certs].each do |sub|
+  execute "chown #{state_dir}/#{sub} to elasticsearch" do
+    command "chown -R elasticsearch:elasticsearch #{state_dir}/#{sub}"
+    only_if "id elasticsearch >/dev/null 2>&1"
+    not_if "test \"$(stat -c '%U:%G' #{state_dir}/#{sub})\" = 'elasticsearch:elasticsearch'"
+  end
+end
+
+# === elasticsearch.yml render ===
+#
 # elasticsearch.yml is rendered from a template by substituting NODE_NAME
-# and TRANSPORT_HOST. snmp_yml-pattern: a tmpl is shipped, a sed step
-# produces the final yaml.
-es_yml_tmpl = "#{deploy_dir}/elasticsearch.yml.tmpl"
-es_yml_path = "#{deploy_dir}/elasticsearch.yml"
+# and TRANSPORT_HOST. Same snmp_yml-pattern as before, but the destination
+# is /etc/elasticsearch/ (DEB default) instead of the deploy_dir.
+es_yml_tmpl = "#{files_dir}/elasticsearch.yml.tmpl"
+es_yml_path = "/etc/elasticsearch/elasticsearch.yml"
 
 remote_file es_yml_tmpl do
   source "files/elasticsearch.yml.tmpl"
@@ -149,10 +204,9 @@ execute "render elasticsearch.yml" do
     sed -e "s|@@NODE_NAME@@|#{node_name}|g" \\
         -e "s|@@TRANSPORT_HOST@@|#{transport_host}|g" \\
       #{es_yml_tmpl} > #{es_yml_path}.new
-    mv #{es_yml_path}.new #{es_yml_path}
-    chmod 644 #{es_yml_path}
+    install -m 0660 -o root -g elasticsearch #{es_yml_path}.new #{es_yml_path}
+    rm -f #{es_yml_path}.new
   SH
-  user user
   not_if "test -f #{es_yml_path} && " \
          "diff -q <(sed -e 's|@@NODE_NAME@@|#{node_name}|g' " \
          "-e 's|@@TRANSPORT_HOST@@|#{transport_host}|g' #{es_yml_tmpl}) " \
@@ -168,14 +222,67 @@ execute "ensure elasticsearch.yml exists" do
     sed -e "s|@@NODE_NAME@@|#{node_name}|g" \\
         -e "s|@@TRANSPORT_HOST@@|#{transport_host}|g" \\
       #{es_yml_tmpl} > #{es_yml_path}.new
-    mv #{es_yml_path}.new #{es_yml_path}
-    chmod 644 #{es_yml_path}
+    install -m 0660 -o root -g elasticsearch #{es_yml_path}.new #{es_yml_path}
+    rm -f #{es_yml_path}.new
   SH
-  user user
-  only_if "test -f #{es_yml_tmpl} && ! test -f #{es_yml_path}"
+  only_if "test -f #{es_yml_tmpl} && id elasticsearch >/dev/null 2>&1 && ! test -f #{es_yml_path}"
 end
 
-# Stage bootstrap files (used by bootstrap-init.sh, not the container).
+# === JVM heap options ===
+#
+# /etc/elasticsearch/jvm.options.d/heap.options — ES merges every
+# *.options file under jvm.options.d/ on top of the default jvm.options.
+heap_options_staging = "#{files_dir}/elasticsearch-heap.options"
+heap_options_path    = "/etc/elasticsearch/jvm.options.d/heap.options"
+
+remote_file heap_options_staging do
+  source "files/elasticsearch-heap.options"
+  owner user
+  group group
+  mode "0644"
+end
+
+execute "install jvm.options.d/heap.options" do
+  command "install -m 0660 -o root -g elasticsearch #{heap_options_staging} #{heap_options_path}"
+  only_if "id elasticsearch >/dev/null 2>&1"
+  not_if "test -f #{heap_options_path} && diff -q #{heap_options_staging} #{heap_options_path} 2>/dev/null"
+  notifies :run, "execute[restart elasticsearch]"
+end
+
+# === systemd override ===
+
+unit_override_staging = "#{files_dir}/elasticsearch.service.override.conf"
+unit_override_dir     = "/etc/systemd/system/elasticsearch.service.d"
+unit_override_path    = "#{unit_override_dir}/override.conf"
+
+remote_file unit_override_staging do
+  source "files/elasticsearch.service.override.conf"
+  owner user
+  group group
+  mode "0644"
+end
+
+execute "create elasticsearch.service.d directory" do
+  command "install -d -m 0755 -o root -g root #{unit_override_dir}"
+  not_if "test -d #{unit_override_dir}"
+end
+
+execute "install elasticsearch systemd override" do
+  command "install -m 0644 -o root -g root #{unit_override_staging} #{unit_override_path}"
+  not_if "test -f #{unit_override_path} && diff -q #{unit_override_staging} #{unit_override_path} 2>/dev/null"
+  notifies :run, "execute[elasticsearch daemon-reload]", :immediately
+  notifies :run, "execute[restart elasticsearch]"
+end
+
+execute "elasticsearch daemon-reload" do
+  command "systemctl daemon-reload"
+  action :nothing
+end
+
+# === Stage bootstrap files ===
+
+# bootstrap-init.sh + ILM/template/role JSON — used by bootstrap-init.sh
+# at converge time. Unchanged from the docker-era cookbook.
 %w[
   ilm-policy-rtx-7d.json
   index-template-rtx.json
@@ -215,7 +322,7 @@ directory generated_dir do
 end
 
 env_temp_path   = "#{generated_dir}/elasticsearch.env"
-env_output_path = "#{deploy_dir}/.env"
+env_output_path = "/etc/elasticsearch/elasticsearch-secrets.env"
 generate_env_script = File.join(File.dirname(__FILE__), "files", "generate_env.sh")
 fetch_certs_script  = File.join(File.dirname(__FILE__), "files", "fetch_certs.sh")
 certs_staging_dir   = "#{generated_dir}/elasticsearch-certs"
@@ -233,7 +340,7 @@ require_external_auth(
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
   skip_if: -> { File.exist?(env_output_path) },
 ) do
-  execute "generate elasticsearch .env" do
+  execute "generate elasticsearch secrets env" do
     command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
             "bash #{generate_env_script} #{env_temp_path} #{node_name} #{transport_host}"
     user user
@@ -246,39 +353,37 @@ require_external_auth(
   end
 end
 
-# Place .env at converge time. Mode 0600 (Adversarial #6) — passwords
-# are world-unreadable. Owned by host user (matches deploy_dir owner);
-# the elasticsearch container reads .env via compose's `env_file:` which
-# happens on the host before any process is spawned, so container UID
-# does not need to read the file directly.
-remote_file env_output_path do
-  source env_temp_path
-  owner user
-  group group
-  mode "0600"
+# Install elasticsearch-secrets.env — mode 0640 root:elasticsearch.
+# systemd's EnvironmentFile= reads bare KEY=VALUE pairs without shell
+# expansion, so metacharacter-bearing passwords (parens, brackets, &)
+# are passed through literally. This eliminates the docker-compose
+# env_file: + bash source collision that motivated this migration.
+execute "install elasticsearch-secrets.env" do
+  command "install -m 0640 -o root -g elasticsearch #{env_temp_path} #{env_output_path}"
+  only_if "test -f #{env_temp_path} && id elasticsearch >/dev/null 2>&1"
+  not_if "test -f #{env_output_path} && diff -q #{env_temp_path} #{env_output_path} 2>/dev/null"
   notifies :run, "execute[restart elasticsearch]"
   notifies :run, "execute[run elasticsearch bootstrap]"
-  only_if "test -f #{env_temp_path}"
 end
 
 file env_temp_path do
   action :delete
-  only_if "test -f #{env_temp_path}"
+  only_if "test -f #{env_temp_path} && test -f #{env_output_path}"
 end
 
-# Install certs into the bind-mounted /data/elasticsearch/certs/ — owned
-# by UID 1000 to match the in-container elasticsearch user. CA cert and
-# node cert are mode 0644 (public PEM), node key is mode 0600 (secret).
+# Install certs into /data/elasticsearch/certs/ — owned by elasticsearch
+# user. CA cert and node cert are mode 0640 (group-readable PEM), node
+# key is mode 0600 (secret).
 %w[ca crt key].each do |kind|
   case kind
   when "ca"
     src  = "#{certs_staging_dir}/ca.crt"
     dest = "#{state_dir}/certs/ca.crt"
-    mode = "0644"
+    mode = "0640"
   when "crt"
     src  = "#{certs_staging_dir}/#{node_name}.crt"
     dest = "#{state_dir}/certs/#{node_name}.crt"
-    mode = "0644"
+    mode = "0640"
   when "key"
     src  = "#{certs_staging_dir}/#{node_name}.key"
     dest = "#{state_dir}/certs/#{node_name}.key"
@@ -286,8 +391,8 @@ end
   end
 
   execute "install elasticsearch cert (#{kind})" do
-    command "sudo install -m #{mode} -o 1000 -g 1000 #{src} #{dest}"
-    only_if "test -f #{src}"
+    command "install -m #{mode} -o elasticsearch -g elasticsearch #{src} #{dest}"
+    only_if "test -f #{src} && id elasticsearch >/dev/null 2>&1"
     not_if "test -f #{dest} && diff -q #{src} #{dest} 2>/dev/null"
     notifies :run, "execute[restart elasticsearch]"
   end
@@ -302,13 +407,7 @@ execute "delete elasticsearch cert staging" do
           "test -f #{state_dir}/certs/#{node_name}.key"
 end
 
-# === docker compose orchestration ===
-#
-# We do NOT use the compose_service DSL here because the bootstrap step
-# (run-once-on-converge ES API initialization) needs to fire AFTER the
-# container is healthy, AFTER the compose `up -d`. Encoding that ordering
-# inline gives us the chance to gate on the env-file existence and the
-# cluster-readiness wait baked into bootstrap-init.sh.
+# === Service activation ===
 #
 # Adversarial #11 — rolling restart serialization: the auto-mitamae
 # orchestrator's per-host loop fires sequentially across LXCs (es-0 →
@@ -316,48 +415,39 @@ end
 # notify here re-creates a single node at a time; with replica=1 the
 # cluster stays yellow during one node's restart, returns to green when
 # it rejoins, then the orchestrator moves on to the next node. Bare
-# `up -d --force-recreate` does not pre-flush shards (no
+# `systemctl restart` does not pre-flush shards (no
 # `cluster.routing.allocation.enable: primaries` dance) — accepted for
 # Phase 3b given the small write rate; if write churn grows, fold the
 # allocation toggle into a wrapper script invoked here.
-compose_path = "#{deploy_dir}/docker-compose.yml"
-project_name = File.basename(deploy_dir)
 
-execute "ensure elasticsearch running" do
-  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d"
-  user user
-  # Gate on .env, certs, and elasticsearch.yml — all required before
-  # the container is allowed to start.
+execute "enable + start elasticsearch" do
+  command "systemctl enable --now elasticsearch.service"
+  # Gate on .env + certs + elasticsearch.yml — all required before
+  # the service can usefully start.
   only_if <<~SH.tr("\n", " ").strip
     test -f #{env_output_path} || exit 1;
     test -f #{state_dir}/certs/ca.crt || exit 1;
     test -f #{state_dir}/certs/#{node_name}.crt || exit 1;
     test -f #{state_dir}/certs/#{node_name}.key || exit 1;
     test -f #{es_yml_path} || exit 1;
-    expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
-    [ -n "$expected" ] || exit 1;
-    running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
-                        --filter status=running --format '{{.Label "com.docker.compose.service"}}'
-              | sort | tr '\\n' ' ');
-    test "$running" = "$expected" && exit 1 || exit 0
+    systemctl is-enabled elasticsearch.service > /dev/null 2>&1 &&
+    systemctl is-active elasticsearch.service > /dev/null 2>&1 && exit 1 || exit 0
   SH
   notifies :run, "execute[run elasticsearch bootstrap]"
 end
 
 execute "restart elasticsearch" do
-  # --force-recreate is mandatory per ~/.claude/rules/docker-compose.md —
-  # bind-mount edits to elasticsearch.yml / certs / .env are otherwise
-  # silently ignored on already-running containers.
-  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --force-recreate"
-  user user
+  command "systemctl restart elasticsearch.service"
   action :nothing
-  only_if "test -f #{env_output_path} && test -f #{es_yml_path}"
+  only_if "test -f #{env_output_path} && test -f #{es_yml_path} && id elasticsearch >/dev/null 2>&1"
   notifies :run, "execute[run elasticsearch bootstrap]"
 end
 
-# Bootstrap initialization — runs after the container is healthy. The
-# bootstrap-init.sh handles its own cluster-ready wait (up to 5 min).
-# Adversarial #8 / #12 / #14 are all encoded in the script.
+# === Bootstrap initialization ===
+#
+# Bootstrap fires after the service is healthy. The bootstrap-init.sh
+# handles its own cluster-ready wait (up to 5 min). Adversarial
+# #8 / #12 / #14 are encoded in the script.
 execute "run elasticsearch bootstrap" do
   command "ENV_FILE=#{env_output_path} bash #{files_dir}/bootstrap-init.sh #{files_dir}"
   user user
@@ -369,13 +459,16 @@ end
 # changed, run the bootstrap script to re-probe user passwords against
 # SSM. Cheap (a few hundred ms of curl probes when everything is in
 # sync) and self-heals after a Terraform-driven password rotate.
+#
+# Guard changed from `docker ps` to `systemctl is-active elasticsearch`
+# (native install — no docker daemon).
 execute "ensure elasticsearch bootstrap drift sweep" do
   command "ENV_FILE=#{env_output_path} bash #{files_dir}/bootstrap-init.sh #{files_dir}"
   user user
   # Skip when the env file is absent (SSM auth not configured yet) or
-  # when the container isn't running yet (initial bootstrap will be
+  # when the service isn't active yet (initial bootstrap will be
   # triggered by the notify chain instead).
   only_if "test -f #{env_output_path} && " \
           "test -f #{files_dir}/bootstrap-init.sh && " \
-          "docker ps --filter name=^elasticsearch$ --filter status=running --format '{{.Names}}' | grep -q '^elasticsearch$'"
+          "systemctl is-active elasticsearch.service >/dev/null 2>&1"
 end
