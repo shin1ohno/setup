@@ -92,19 +92,22 @@ end
 # (bind-mounted into /etc/vector/elastic-ca.crt).
 #
 # Vector container runs as root (network_mode: host, no user: directive).
-# In the unprivileged LXC, container UID 0 maps to host UID 100000, so
-# /data/monitoring/vector and its children are owned by host UID 100000
-# to allow Vector's in-container root to write buffer pages. Mode 755
-# is sufficient because no other container reads this directory.
+# In the unprivileged LXC, container UID 0 maps to host UID 100000.
+# The cookbook runs INSIDE the container, so address the in-container view:
+# `owner "0"` chowns to container root, which surfaces on the host as
+# UID 100000 via the namespace mapping. Writing `owner "100000"` would try
+# to set UID 100000 inside the container — outside the 0-65535 mapping
+# range — and fails with `chown: Invalid argument`. Mode 755 is sufficient
+# because no other container reads this directory.
 directory "#{state_dir}/vector" do
-  owner "100000"
-  group "100000"
+  owner "0"
+  group "0"
   mode "755"
 end
 
 directory "#{state_dir}/vector/buffer" do
-  owner "100000"
-  group "100000"
+  owner "0"
+  group "0"
   mode "755"
 end
 
