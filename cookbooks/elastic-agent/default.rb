@@ -36,6 +36,14 @@ host_name = (node[:elastic_agent] && node[:elastic_agent][:host_name]) ||
 tags = (node[:elastic_agent] && node[:elastic_agent][:tags]) || ["lxc"]
 tags_json = "[" + tags.map { |t| %("#{t}") }.join(", ") + "]"
 
+# Per-host opt-in for the Prometheus federation input (Streams U/V/W
+# enabler). Only enabled on CT 111 (lxc-monitoring) today, where
+# Prometheus binds 127.0.0.1:9090. Other hosts running Elastic Agent
+# render the template with an empty input block, leaving system metrics
+# + filestream inputs unchanged.
+enable_prom_input = node[:elastic_agent] &&
+                    node[:elastic_agent][:enable_prometheus_integration]
+
 # Defensive: ensure setup_root + per-cookbook subdir exist before any
 # remote_file write (per CLAUDE.md "Defensive directory resource").
 directory node[:setup][:root] do
@@ -110,6 +118,7 @@ end
 %w[
   elastic-agent.yml.tmpl
   elastic-agent.service.override.conf
+  elastic-agent.prometheus-input.yml
 ].each do |f|
   remote_file "#{files_dir}/#{f}" do
     source "files/#{f}"
@@ -176,12 +185,29 @@ file env_temp_path do
 end
 
 # === Render elastic-agent.yml from template ===
+#
+# @@PROMETHEUS_INPUT@@ substitution:
+#   - enable_prometheus_integration true  → sed `r FILE` reads the input
+#     snippet AFTER the placeholder line, then `d` deletes the placeholder
+#   - false (default)                     → sed `d` deletes the placeholder
+#     line entirely, leaving no trace
+#
+# The render command and its sister `not_if` diff command are kept in a
+# single Ruby `prom_sed_clause` so the same expression composes both.
+prom_input_path = "#{files_dir}/elastic-agent.prometheus-input.yml"
+prom_sed_clause = if enable_prom_input
+                    "-e '/@@PROMETHEUS_INPUT@@/r #{prom_input_path}' " \
+                    "-e '/@@PROMETHEUS_INPUT@@/d'"
+                  else
+                    "-e '/@@PROMETHEUS_INPUT@@/d'"
+                  end
 
 execute "render elastic-agent.yml" do
   command <<~SH.strip
     set -euo pipefail
     sed -e "s|@@HOSTNAME@@|#{host_name}|g" \\
         -e 's|@@TAGS@@|#{tags_json}|g' \\
+        #{prom_sed_clause} \\
       #{config_tmpl} > #{config_path}.new
     install -m 0640 -o root -g root #{config_path}.new #{config_path}
     rm -f #{config_path}.new
@@ -189,7 +215,9 @@ execute "render elastic-agent.yml" do
   only_if "test -f #{config_tmpl} && test -d /etc/elastic-agent"
   not_if "test -f #{config_path} && " \
          "diff -q <(sed -e 's|@@HOSTNAME@@|#{host_name}|g' " \
-         "-e 's|@@TAGS@@|#{tags_json}|g' #{config_tmpl}) " \
+         "-e 's|@@TAGS@@|#{tags_json}|g' " \
+         "#{prom_sed_clause} " \
+         "#{config_tmpl}) " \
          "#{config_path}"
   notifies :run, "execute[restart elastic-agent]"
 end
