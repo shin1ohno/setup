@@ -24,11 +24,6 @@ services:
       # and ES_JAVA_OPTS for heap tuning. Heap = -Xms5g -Xmx5g per ADR
       # §構成 (10 GB LXC alloc - 1 GB JVM overhead - 4 GB OS file cache).
       ES_JAVA_OPTS: "-Xms5g -Xmx5g"
-      # Disable the JVM-level CGroup memory check; ES 8.x in unprivileged
-      # LXC sometimes mis-detects available memory and fails the bootstrap.
-      # Heap is explicitly bounded by ES_JAVA_OPTS so the runtime impact
-      # is nil.
-      ES_TMPDIR: "/usr/share/elasticsearch/tmp"
     env_file:
       - .env
     ulimits:
