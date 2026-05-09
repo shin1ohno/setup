@@ -18,10 +18,14 @@ discovery.seed_hosts:
   - 192.168.1.77:9300   # es-0 (CT 112)
   - 192.168.1.78:9300   # es-1 (CT 113)
   - 192.168.1.79:9300   # es-2 (CT 114)
-cluster.initial_master_nodes:
-  - es-0
-  - es-1
-  - es-2
+# NOTE: cluster.initial_master_nodes is intentionally NOT set here. It is a
+# bootstrap-only setting that ES uses on the very first cluster formation
+# only; once the cluster has formed (and persisted its voting configuration
+# to disk under path.data), subsequent restarts must NOT reference it
+# — leaving it set produces a startup warning about data-loss risk if any
+# listed node is missing. For a fresh-host bootstrap, set it via env on the
+# first node only (e.g. ES_JAVA_OPTS or a one-shot override drop-in), or
+# rely on discovery.seed_hosts auto-discovery once 2+ nodes are reachable.
 
 # Memory locking — requires LXC `lxc.prlimit.memlock unlimited` (Phase 3a
 # manual op) + LimitMEMLOCK=infinity in the systemd override (Phase 3b
