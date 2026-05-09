@@ -27,7 +27,7 @@ node.reverse_merge!(
 node.reverse_merge!(
   elasticsearch: {
     node_name: "es-1",
-    transport_host: "192.168.1.113",
+    transport_host: "192.168.1.78",
   }
 )
 
