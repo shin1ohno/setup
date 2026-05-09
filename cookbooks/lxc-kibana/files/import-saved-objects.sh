@@ -183,9 +183,6 @@ ordered=(
     "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-overview.ndjson"
 
     # ---- Auto-mitamae fleet dashboard (Phase 5b, Stream V) ----
-    # Reads from metrics-prometheus.collector-* (Stream T deliverable, PR #281).
-    # Reuses Stream U's metrics-prometheus-collector data view (created above).
-    # 7 Lens visualizations (6 metric stats + 1 datatable per-host).
     "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-hosts-success.ndjson"
     "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-hosts-hard-fail.ndjson"
     "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-hosts-transient.ndjson"
@@ -193,8 +190,24 @@ ordered=(
     "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-max-duration.ndjson"
     "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-max-drift.ndjson"
     "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-per-host.ndjson"
-    # Dashboard last (references all 7 lens objects above)
     "${SAVED_OBJECTS_DIR}/auto-mitamae-overview.ndjson"
+
+    # ---- Grafana-ported Proxmox metrics dashboard ----
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-resource-table.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-cpu-history.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-cpu-current.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-cpu-limit.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-memory-history.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-memory-current.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-memory-bytes.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-guests-cpu.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-guests-memory.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-storage-usage.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-storage-allocation.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-lxc-disk.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-network-io.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-disk-io.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-overview.ndjson"
 )
 
 failures=0
