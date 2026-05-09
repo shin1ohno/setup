@@ -196,3 +196,73 @@ services:
 Note: Grafana renamed Promtail to **Alloy** in the 3.x track; 3.6.x is the last `grafana/promtail` line maintained as a separate image. New deployments may eventually want to migrate to Alloy, but for existing Promtail-based pipelines 3.6.x continues to receive maintenance fixes.
 
 This rule exists because setup PRs #198 → #199 → #200 chain: PR #198 deployed 2.9.10 with bridge networking (broke for both reasons), PR #199 fixed networking (still no entries — same metrics 0), PR #200 bumped to 3.6.10 and the next test packet immediately incremented `syslog_target_entries_total`. The UDP issue is a Promtail 2.9 regression, not a config bug.
+
+## `docker import` hang post image-creation + `removal in progress` recovery
+
+`docker export <CID> | docker import - <tag>` can hang indefinitely AFTER the new image already appears in `docker images`. The CLI is blocked waiting on the dockerd API socket; the image itself is committed and persistent. Symptom:
+
+- `docker images <tag>` shows the new image with correct size
+- `docker import` process is in state `S` (sleeping) on a socket fd
+- dockerd log shows `image created sha256:... tag=<tag>` followed by `failed to validate image signature` (cosmetic post-create check that doesn't block image use)
+- The CLI never returns
+
+Recovery — kill the client, then check for cascaded dockerd state damage:
+
+```bash
+# 1. Confirm the image exists before killing the CLI
+docker images <tag>
+# → tag should be listed with non-zero size
+
+# 2. Kill the import process (and any parent build script under set -e)
+pkill -f "docker import.*<tag>"
+
+# 3. The source container (`docker create` output) is often left in
+#    "removal in progress" state, blocking subsequent `docker rm -f`:
+#    Error: removal of container <id> is already in progress
+docker rm -f <CID>
+# → if blocked, the only reliable fix is restart dockerd:
+systemctl restart docker
+
+# 4. Verify the imported image survived the daemon restart
+docker images <tag>
+
+# 5. Tag the image with the desired final name and clean up the
+#    intermediate (build.sh would have done this if it hadn't been killed)
+docker rmi <tag>:tmp
+echo "<upstream-digest>" > <stamp-file>
+```
+
+Side effect of `systemctl restart docker`: every running container is restarted. Containers with `restart: unless-stopped` come back automatically (~30s); manual `docker compose up -d` may be needed for others.
+
+**Detection signal** during a flatten build: `docker import` etime > 10 minutes with the image already visible in `docker images`. The export side (`docker export`) typically completes within 2-3 minutes for a 10GB layer; if export PID is gone but import etime keeps growing, the import is stuck.
+
+This rule exists because the 2026-05-09 cognee-mcp:cpu flatten ran `docker export | docker import` and the image was created within minutes (visible in dockerd logs at `image created`), but the CLI hung for 10+ minutes waiting on the API socket. Manual kill resolved the build script, but dockerd was left with a container stuck in "removal in progress" — `systemctl restart docker` was the only path forward. The flattened image survived the daemon restart cleanly.
+
+## PyTorch 2.7+ — CUDA libs required even for CPU-only inference
+
+PyTorch ≥ 2.7 ships `libtorch_global_deps.so` which dynamically links against `libcublasLt.so` and other `nvidia-*-cu12` runtime libraries via `ctypes.CDLL` at module import time. The `__init__.py` calls `_preload_cuda_deps()` from an OSError handler when the global-deps shared object fails to load, and the recovery path searches `sys.path` for the bundled nvidia wheels. If they're absent, `import torch` fails before `torch.cuda.is_available()` can return False:
+
+```
+ValueError: libcublasLt.so.*[0-9] not found in the system path
+```
+
+This means `pip uninstall nvidia-cublas-cu12 nvidia-cudnn-cu12 ...` to slim a CPU-only inference image **breaks `import torch` entirely**, even when the workload never touches CUDA. There is no env var to skip the preload (`TORCH_DEVICE_BACKEND_AUTOLOAD` controls a different feature — extension auto-loading, not CUDA preload).
+
+The CPU-only `+cpu` wheels that historically had this preload code stripped at build time stop at torch 2.6.0 on the pytorch.org `whl/cpu/` index. For torch 2.7+ the only CPU-compatible install is the regular wheel WITH the nvidia deps kept on disk (where they sit unused at runtime).
+
+**Safe slim strategy for cognee-style ML containers**:
+
+- ✓ Uninstall `triton` (~640MB) — GPU kernel JIT compiler with no runtime path from `import torch` on CPU
+- ✗ Do NOT uninstall any `nvidia-*-cu12` packages (cublas, cudnn, cufft, curand, cusolver, cusparse, nccl, nvtx, etc.) — torch import depends on their `.so` files being on disk
+- ✓ For maximum size reduction, flatten via `docker export | docker import` to collapse Dockerfile layer history (e.g. eliminates `chown -R` copy-up duplicates) — this is where the real wins are, not from package removal
+
+**Build-time validation** to catch a regression before shipping the image:
+
+```dockerfile
+RUN /app/.venv/bin/uv pip uninstall --python /app/.venv/bin/python triton \
+ && python3 -c "import torch; print('torch', torch.__version__, 'cuda_avail:', torch.cuda.is_available())"
+```
+
+The `python3 -c "import torch"` step fails the build if the slim broke the import, before flatten or push.
+
+This rule exists because the 2026-05-09 cognee-mcp:cpu first build attempt uninstalled all 15 `nvidia-*-cu12` packages plus triton + torch, then attempted a clean torch reinstall via `--index-url whl/cpu/`. The reinstall failed (no torch 2.10.0 +cpu wheel exists), and even keeping the original torch failed at import because `_preload_cuda_deps` couldn't find the now-uninstalled nvidia libs. The working strategy was to keep nvidia libs in place, uninstall only triton, and rely on flatten for the actual size reduction (22.4GB → 4.59GB).
