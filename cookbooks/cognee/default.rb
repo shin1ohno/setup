@@ -149,6 +149,35 @@ remote_file "#{deploy_dir}/vault-exporter/Dockerfile" do
   notifies :run, "execute[restart cognee]"
 end
 
+# CPU-only override of cognee-mcp image. Removes ~5GB of dead nvidia/triton
+# libs (CT 105 has no GPU passthrough) via uninstall + flatten
+# (docker export | docker import). Plain layered uninstall would not shrink
+# the image because parent layers persist in the image graph.
+# See files/cognee-mcp-cpu/build.sh for idempotency stamp logic.
+directory "#{deploy_dir}/cognee-mcp-cpu" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w[Dockerfile build.sh].each do |f|
+  remote_file "#{deploy_dir}/cognee-mcp-cpu/#{f}" do
+    source "files/cognee-mcp-cpu/#{f}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode(f == "build.sh" ? "755" : "644")
+    notifies :run, "execute[build cognee-mcp:cpu]"
+  end
+end
+
+execute "build cognee-mcp:cpu" do
+  command "#{deploy_dir}/cognee-mcp-cpu/build.sh"
+  user node[:setup][:user]
+  action :nothing
+  notifies :run, "execute[restart cognee]"
+end
+
 # Generate .env with secrets from SSM Parameter Store
 generated_dir = "#{node[:setup][:root]}/generated"
 directory generated_dir do
