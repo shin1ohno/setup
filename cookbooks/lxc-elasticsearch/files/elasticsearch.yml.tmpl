@@ -18,9 +18,9 @@ transport.port: 9300
 
 # Static cluster discovery — three combined-role nodes.
 discovery.seed_hosts:
-  - 192.168.1.112:9300
-  - 192.168.1.113:9300
-  - 192.168.1.114:9300
+  - 192.168.1.77:9300   # es-0 (CT 112)
+  - 192.168.1.78:9300   # es-1 (CT 113)
+  - 192.168.1.79:9300   # es-2 (CT 114)
 cluster.initial_master_nodes:
   - es-0
   - es-1
