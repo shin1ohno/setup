@@ -318,10 +318,13 @@ geoip_subdivision_name = "{{ geoip_subdivision_name }}"
 # vector_writer ES role grants `monitor` cluster privilege + `write` on
 # `logs-rtx-*` indices only.
 #
-# TLS: the ES cluster uses transport TLS with a Terraform-generated CA
-# (validity 2 years, see ADR 0005 §認証). The CA cert is bind-mounted
-# at /etc/vector/elastic-ca.crt; verify_hostname catches a node-cert
-# CN/SAN mismatch and verify_certificate the chain to that CA.
+# TLS: ADR-0005 Phase 3b ships ES with transport-only TLS
+# (xpack.security.http.ssl.enabled = false). HTTP plain on :9200
+# until Phase 7-tls flips http.ssl on with the same CA. Vector therefore
+# uses http:// and no `tls = { ... }` block until then. When Phase 7-tls
+# ships, flip endpoints back to https:// and uncomment the tls block;
+# the bind-mount + cookbook fetch of /etc/vector/elastic-ca.crt is
+# already in place to make that change a 3-line revert.
 #
 # Mode = "data_stream" routes to logs-rtx-default per ECS data-stream
 # naming (type-dataset-namespace). The ILM policy logs-rtx-7d
@@ -329,21 +332,22 @@ geoip_subdivision_name = "{{ geoip_subdivision_name }}"
 # delete; Vector does NOT manage the index template or ILM policy.
 #
 # Buffer: 1 GB disk cap, drop_newest on overflow. Slightly larger than
-# Loki because the ES path has higher per-event overhead (TLS
-# handshake, JSON-typed payload) so transient ingest pauses can
-# accumulate more events before the buffer drains.
+# Loki because the ES path has higher per-event overhead (JSON-typed
+# payload) so transient ingest pauses can accumulate more events before
+# the buffer drains.
 [sinks.elasticsearch]
 type = "elasticsearch"
 inputs = ["parsed_rtx_for_es"]
 endpoints = [
-  "https://es-0.home.local:9200",
-  "https://es-1.home.local:9200",
-  "https://es-2.home.local:9200",
+  "http://es-0.home.local:9200",
+  "http://es-1.home.local:9200",
+  "http://es-2.home.local:9200",
 ]
 mode = "data_stream"
 data_stream = { type = "logs", dataset = "rtx", namespace = "default" }
 auth = { strategy = "basic", user = "vector_writer", password = "${ELASTIC_VECTOR_PASSWORD}" }
-tls = { ca_file = "/etc/vector/elastic-ca.crt", verify_certificate = true, verify_hostname = true }
+# tls block re-enabled by Phase 7-tls (HTTPS on :9200):
+# tls = { ca_file = "/etc/vector/elastic-ca.crt", verify_certificate = true, verify_hostname = true }
 buffer = { type = "disk", max_size = 1073741824, when_full = "drop_newest" }
 
 # Prometheus scrape endpoint for Vector self-metrics. Replaces Promtail's
