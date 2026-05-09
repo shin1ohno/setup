@@ -85,6 +85,40 @@ If the cookbook omits explicit owners for subdirectories, the bind-mount target 
 
 This rule exists because the 2026-05-06 monitoring CT 111 first mitamae apply created `/data/monitoring/{prometheus,grafana}` as `root:root` inside the container; both Prometheus (UID 65534) and Grafana (UID 472) crash-looped on first write. Recovery: in-container chown to the correct runtime UIDs, then `docker compose restart`. Plan time should have included an explicit `directory` resource per service subdirectory with the runtime UID. Dry-run on the dev box hides this because the dev box is privileged Linux without UID mapping.
 
+## `pct set -rootfs size=` does not propagate to ZFS refquota
+
+When resizing (shrink or grow) an LXC root disk on a ZFS-backed PVE host, `pct set <vmid> -rootfs <vol>,size=<N>G` updates the PVE config but does NOT update the ZFS dataset's `refquota`. The CT continues to see the old size via `df -h /` until the ZFS quota is set explicitly.
+
+Two-step is always required — `pct set` alone is insufficient:
+
+```bash
+# Confirm the dataset name from PVE config
+pct config <vmid> | grep ^rootfs
+# → e.g. rootfs: local-zfs:subvol-105-disk-0,size=8G
+
+# Apply the ZFS quota separately (replace <N> and <vmid>)
+zfs set refquota=<N>G rpool/data/subvol-<vmid>-disk-0
+
+# Verify both layers report the same value
+zfs get -H -o value refquota rpool/data/subvol-<vmid>-disk-0
+pct exec <vmid> -- df -h /
+```
+
+**Detection signal**: `pct config <vmid>` reports the new size, but `df -h /` inside the CT reports the old size. The mismatch persists across `pct stop` / `pct start` cycles because `df` reflects the ZFS quota, which `pct set` does not touch.
+
+**Order of operations for shrink** (must be before quota change so `used > target` doesn't briefly violate the quota):
+
+1. `pct exec <vmid> -- bash -c 'cd /path/to/compose && docker compose down'` (clean stop)
+2. `pct stop <vmid>`
+3. `pct set <vmid> -rootfs <vol>,size=<N>G` (PVE config)
+4. `zfs set refquota=<N>G rpool/data/subvol-<vmid>-disk-0` (ZFS quota)
+5. `pct start <vmid>`
+6. Verify `df -h /` reports the new size
+
+For grow, the order is the same but the quota change is online-safe (CT can be running). Recovery from a too-small shrink is one-liner: `zfs set refquota=<larger>G rpool/data/subvol-<vmid>-disk-0` + sync `pct set` config. ZFS refquota grow takes effect immediately.
+
+This rule exists because the 2026-05-09 cognee disk shrink (32G → 8G) had `pct set -rootfs ...,size=8G` succeed silently, but `df -h /` inside CT 105 still showed 32G. `zfs get refquota` confirmed PVE only updated its own config, not the underlying ZFS dataset. The fleet-config alignment that motivated the shrink was incomplete until `zfs set refquota` was applied as a second step.
+
 ## `pct exec` from `ssh root@<pve-host>` is non-TTY — `STDIN.tty?` returns false
 
 `ssh root@<pve-host> 'pct exec <vmid> -- bash -lc "..."'` does NOT propagate a TTY into the LXC. `STDIN.tty?` inside the inner bash returns `false`, even though the outer ssh session might have one. Plans that assume `pct exec` "is" TTY-equivalent (and therefore that `cookbooks/functions/default.rb` `require_external_auth` will use its TTY-prompted retry path) are wrong.
