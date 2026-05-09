@@ -7,16 +7,19 @@ objects in CT 115. Companion to Phase 5 (RTX log dashboard) and Phase 5a
 
 ## Status
 
-**BLOCKED** on Stream T (Prometheus-metrics-to-ES). No metrics index in
-ES yet; the only data-bearing index on the cluster is
-`logs-rtx-default`. The 9 Prometheus metrics this dashboard needs are
-exposed on `lxc-monitoring` (CT 111) Prometheus
-(`http://prometheus.home.local:9090`) but have **not been shipped to ES**.
+**SHIPPED** (2026-05-09). Stream T merged via PR #281
+(`elastic-agent: prometheus federation input for CT 111 (Streams U/V/W
+enabler)`). The Elastic Agent on CT 110 scrapes CT 111's Prometheus
+`/federate` endpoint with metric-name filter
+`auto_mitamae_.*|bootstrap_lxc_creds_.*` and ships docs to data stream
+`metrics-prometheus.collector-default` (320k+ docs at first verification).
 
-This document is the design artifact that turns into NDJSONs the moment
-Stream T lands. Field-path placeholders are flagged with
-`<TBD-stream-T>` and must be reconciled against the actual ES mapping
-Stream T produces before NDJSON generation begins.
+The 7 lens visualizations + dashboard are committed in this PR and
+verified end-to-end against ES with non-zero counts:
+12 succeeded / 5 hard-fail / 13 transient / 17 active / max drift 6.
+
+Dashboard URL:
+`http://kibana.home.local:5601/app/dashboards#/view/auto-mitamae-overview`
 
 ## Source Grafana dashboard
 
@@ -93,41 +96,32 @@ Use formula/last-value for panels 3, 4 (single label readback). Panel 5
 is the most complex (per-host composite); fold into either ES|QL with
 multiple aggregations or split into a row of 4 small Lens panels.
 
-### Field path TBD — depends on Stream T schema
+### Confirmed schema (post Stream T)
 
-The `<TBD-stream-T>` placeholder above resolves to one of these
-conventions, per the Elastic Agent / Metricbeat / OTLP path Stream T
-chooses:
-
-**Hypothesis A — Elastic Agent prometheus integration** (most likely
-given PR #277 base):
+Stream T (PR #281) chose **Hypothesis B-equivalent** — Elastic Agent
+prometheus collector metricset (not the Metricbeat module nor Vector):
 
 ```
-index:    metrics-prometheus.collector-default
-fields:   prometheus.metrics.<metric_name>.value (double)
-          prometheus.labels.host                  (keyword)
-          prometheus.labels.result                (keyword)
-          prometheus.labels.sha / .commit         (keyword)
+index:    metrics-prometheus.collector-default (data stream)
+fields:   prometheus.metrics.<metric_name>     (double, no .value suffix)
+          prometheus.labels.host               (keyword)
+          prometheus.labels.result             (keyword)
+          prometheus.labels.instance / .job    (keyword)
 ```
 
-**Hypothesis B — Metricbeat prometheus module**:
+Field-path probe via `_field_caps?fields=prometheus.metrics.*` confirms
+all 8 metrics (`auto_mitamae_*` x6, `bootstrap_lxc_creds_*` x2) present.
 
-```
-index:    metricbeat-*-default
-fields:   prometheus.metrics.<metric_name>      (double, scalar field)
-          prometheus.labels.host / .result      (keyword)
-```
+Note `setup_main_head_*` metrics are NOT in the federate filter (PR
+#281's regex covers `auto_mitamae_.*|bootstrap_lxc_creds_.*` only).
+Panel 3 (GitHub API status) and Panel 4 (setup main HEAD commit) from
+the original Grafana dashboard are therefore replaced by **Max apply
+duration** and **Max drift commits** stats — operationally more useful
+fleet aggregates that don't depend on the absent metrics.
 
-**Hypothesis C — Vector with prometheus_scrape source → ES sink**:
-
-```
-index:    prometheus-metrics-<dataset> (chosen by Vector sink config)
-fields:   metric.name (keyword), metric.value (double), tags.host etc.
-```
-
-Stream T's PR will declare the choice. Until then, NDJSONs cannot be
-generated — the index pattern, field paths, and Lens column references
-all bind to schema decisions the dashboard cannot make on its own.
+The data view `metrics-prometheus-collector` (title
+`metrics-prometheus.collector-*`) is created by Stream U PR #279 and
+reused by Stream V — no new index-pattern NDJSON in this PR.
 
 ## Layout — `auto-mitamae-overview` dashboard
 
