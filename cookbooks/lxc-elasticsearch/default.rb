@@ -276,12 +276,23 @@ unit_override_staging = "#{files_dir}/elasticsearch.service.override.conf"
 unit_override_dir     = "/etc/systemd/system/elasticsearch.service.d"
 unit_override_path    = "#{unit_override_dir}/override.conf"
 wait_script_staging   = "#{files_dir}/wait-cluster-ready.sh"
+wait_script_path      = "/usr/local/bin/es-wait-cluster-ready.sh"
 
+# Stage in user space (mode 0755) then install to /usr/local/bin so the
+# elasticsearch systemd unit's ExecStartPost (running as the
+# `elasticsearch` system user) can exec it. /root is mode 700 — non-root
+# users can't traverse it, so the staged path under node[:setup][:root]
+# is unreachable for ExecStartPost. /usr/local/bin is world-readable.
 remote_file wait_script_staging do
   source "files/wait-cluster-ready.sh"
   owner user
   group group
   mode "0755"
+end
+
+execute "install es-wait-cluster-ready.sh to /usr/local/bin" do
+  command "install -m 0755 -o root -g root #{wait_script_staging} #{wait_script_path}"
+  not_if "test -f #{wait_script_path} && diff -q #{wait_script_staging} #{wait_script_path} 2>/dev/null"
   notifies :run, "execute[restart elasticsearch]"
 end
 
