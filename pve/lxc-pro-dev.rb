@@ -69,13 +69,19 @@ include_cookbook "lxc-dev-workstation"
 # does NOT need the ip_forward sysctl, SNAT, or `tailscale set` re-apply
 # that pro-router has.
 #
-# Self-healing: a sibling `.timer` unit fires every 60s (OnBootSec=30s,
-# OnUnitInactiveSec=60s) so any future re-injection by tailscaled — peer
-# route resync, daemon restart, magic-DNS bounce — is cleared within
-# ≤60s without human intervention. OnUnitInactiveSec (not
-# OnUnitActiveSec) is mandatory for `Type=oneshot` without
-# `RemainAfterExit=true`: the service's "active" window is essentially
-# zero, so OnUnitActiveSec produces no future trigger (`Trigger: n/a`).
+# Self-healing: a sibling `.timer` unit fires every 60s
+# (OnBootSec=30s + OnActiveSec=30s + OnUnitInactiveSec=60s) so any future
+# re-injection by tailscaled — peer route resync, daemon restart,
+# magic-DNS bounce — is cleared within ≤60s without human intervention.
+# Three trigger directives are needed:
+#   - OnBootSec=30s: first fire 30s after boot
+#   - OnActiveSec=30s: first fire 30s after timer (re)start, needed
+#     because OnBootSec only counts boots — `systemctl restart timer`
+#     after a cookbook update would have no reference point otherwise
+#   - OnUnitInactiveSec=60s: recurring fire 60s after each service
+#     completion. NOT OnUnitActiveSec — `Type=oneshot` without
+#     `RemainAfterExit=true` spends ~0ms in the active state, so
+#     OnUnitActiveSec produces no future trigger (`Trigger: n/a`).
 # OnUnitInactiveSec measures from the moment the service finished, which
 # matches the oneshot lifecycle. The script is idempotent
 # (`ip route del 2>/dev/null || true`) so the recurring fire is a no-op
@@ -153,6 +159,7 @@ file "#{node[:setup][:root]}/lxc-pro-dev-tailnet-routes.timer" do
 
     [Timer]
     OnBootSec=30s
+    OnActiveSec=30s
     OnUnitInactiveSec=60s
     Unit=lxc-pro-dev-tailnet-routes.service
 
@@ -168,7 +175,17 @@ execute "install pro-dev tailnet-routes systemd timer" do
 end
 
 execute "reload + enable pro-dev tailnet-routes timer" do
-  command "sudo systemctl daemon-reload && sudo systemctl enable --now lxc-pro-dev-tailnet-routes.timer"
+  # daemon-reload picks up the new .timer / .service body. `enable` is
+  # idempotent. `restart timer` is required because `enable --now` on an
+  # already-active timer is a no-op — without restart, the running timer
+  # keeps the old in-memory config after a cookbook update. `start
+  # service` immediately afterwards seeds OnUnitInactiveSec's reference
+  # point (the bound service must have a "last deactivation" timestamp
+  # for the timer to compute its next fire).
+  command "sudo systemctl daemon-reload && " \
+          "sudo systemctl enable lxc-pro-dev-tailnet-routes.timer && " \
+          "sudo systemctl restart lxc-pro-dev-tailnet-routes.timer && " \
+          "sudo systemctl start lxc-pro-dev-tailnet-routes.service"
   action :nothing
 end
 
