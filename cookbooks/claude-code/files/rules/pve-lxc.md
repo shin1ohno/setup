@@ -4,6 +4,30 @@ description: "PVE LXC operational gotchas — bind mounts, terraform import, pct
 
 # PVE LXC Operational Gotchas
 
+## Design gate: Docker-in-LXC vs apt+systemd (NEW LXC service)
+
+Before writing a new `pve/lxc-<service>.rb` recipe with docker-compose, ask via AskUserQuestion: should this service run via docker-compose or directly via apt-get + systemd unit?
+
+Docker-in-LXC reliably produces this bug class:
+
+- **bind-mount UID mismatch**: container UID 1000 vs host LXC unprivileged UID mapping (100000 offset) vs cookbook chown — TLS cert / data dir ownership all need explicit cross-layer chown
+- **container netns vs host LXC netns**: container can't bind LXC IP, requires `network.bind_host: 0.0.0.0` + `network.publish_host: <LXC IP>` split
+- **docker-proxy port-forward silently drops some (port, transport) combinations** (UDP / 9300 between same-subnet LXCs in 2026-05-09 session — 9200 worked through the same DNAT shape, 9300 had pkt-count = 0)
+- **`.env` shell-interpretation collision**: docker-compose `env_file:` reads raw KEY=VALUE, but bash `source` interprets metacharacters in values — Terraform random_password values regularly contain `(` `)` `[` `&` etc.
+- **container restart lag in apply cycle**: `docker compose down + up` race conditions vs cookbook `notifies` chain
+- **healthcheck `${VAR}` substitution unsafe**: docker-compose substitutes raw value, then shell parses as command → metacharacters break
+
+Reserve docker-compose for genuinely multi-container stacks (e.g. monitoring with prometheus + grafana + vector + 3 exporters). For single-purpose service LXCs (1 service per CT), prefer apt-get + systemd unit:
+
+- env vars: systemd `EnvironmentFile=` (no shell source, metacharacter-safe)
+- log: journalctl-integrated
+- TLS cert install: standard `/etc/<service>/certs/`, systemd `User=<service>`
+- network: LXC interface direct bind, no port forward layer
+- memlock: LXC `lxc.prlimit.memlock unlimited` inherits naturally
+- no 1.4 GB image pull on every fresh CT
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 3b session lost ~5 hours debugging an ES + Kibana docker-compose deployment. 4 of 8 cookbook bugs were direct docker-isms (`.env` source collision, ES_TMPDIR image-internal path, network bind/publish split, docker-proxy 9300 drop). LXC native install would have made all 4 structurally impossible. The user surfaced the design question mid-session ("なんで Docker を使ってるんでしょう？") — it belonged at plan time.
+
 ## PVE LXC — Bind Mounts and `terraform import`
 
 `mount_point` blocks with `volume = "/<host-path>"` (which PVE treats as `type = bind`) **cannot be created via the bpg/proxmox provider when authenticating with an API token**, regardless of the token's role (PVEAdmin included). PVE's source-level check is literal:

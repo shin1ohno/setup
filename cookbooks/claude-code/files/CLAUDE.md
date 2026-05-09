@@ -159,6 +159,7 @@ This section exists because the rest of this file plus `~/.claude/rules/*.md` ar
 - When codifying a production hotfix into the repository, do not default to placing it in the same file that was edited on the server. Evaluate change frequency and resource recreation impact, then place the fix in the appropriate layer
 - **Blocked on manual action → immediate background launch**: when detecting ANY of these signals — user says "読んでいる", "確認する", "試してみる", "待って", or you present `! sudo`, ask user to restart, or deliver a spec/plan for review — fire a background Agent tool call **in the same response**. Do not explain first then launch; launch then report. Candidate tasks: retro, Cognee save, Mem0 update, TODO.md cleanup. This rule exists because knowing the rule and executing it at token-generation time are different capabilities — the action must be reflexive, not deliberative
 - **Stale wakeup guard**: a `ScheduleWakeup` prompt fires regardless of whether its target work was completed in the meantime. Before acting on a wakeup, verify the prompted task's actual current state — `git log --oneline -5`, the relevant `gh pr view <n>`, the background task's output file. If the work is already done, reply in a single line: "stale wakeup — `<task>` completed in `<commit/PR>`" and stop. Do NOT re-execute the prompted steps; that wastes a turn and confuses subsequent context. **When writing the wakeup prompt itself**, embed the state-check that the resumer should run first, e.g. "If `gh pr view 54 --json state` is `MERGED`, exit with 'stale'; otherwise tail `<output-file>` and proceed." This rule exists because the 2026-04-26 iOS session burned three turns on stale wakeups firing into already-completed `xcodebuild` / `gh pr checks --watch` work.
+- **Long-running background poll loops emit progress every 2-3 checks**: when a background `Bash` `until`-loop or `Monitor` watch waits >2 minutes for a state change (cluster green, CI watch, deploy completion), emit a progress line every 2-3 completed iterations: `echo "経過 $((A*10))s — waiting for <state> (last: <observed>)"`. Silent loops >5 min are indistinguishable from a hang to the user, AND trigger user-side ssh idle timeouts (the user's terminal session running the polling chain may close). Either build the loop with explicit progress emission, OR launch the loop with `run_in_background: true` so the parent conversation stays interactive and the user gets a single completion notification. Do NOT run silent watch loops in the foreground for more than ~2 min. This rule exists because the 2026-05-09 ADR-0005 Phase 3b session ran a 5-minute cluster-green wait silently in user-side bash, the user reported "シェルが閉じてしまいます" / "止まってませんか", and progress emission would have made the wait state legible. Subsequent retries used `run_in_background: true` with `until ... ; do sleep 10; done` — single completion notification when green detected.
 
 ## Planning and Execution Model
 
@@ -253,6 +254,35 @@ Prompt template for the review agent:
 > Number each concern and assign severity (blocker / risk / non-issue).
 
 This is distinct from the post-implementation `code-reviewer` plugin — it catches **design-level** problems while redesign costs minutes, not sessions. The 2026-04-28 roon-mcp OAuth session ran this review and surfaced 10 pre-implementation concerns (JWKS fetch loop, audience claim mismatch, IP gate vs dual-NIC reality, token mount rw + UID, etc.) that collectively would have cost 3-5 debugging sessions to discover post-implementation.
+
+### Pre-PR cookbook implementation checklist (post-code, before `gh pr create`)
+
+After writing cookbook code but before opening the PR, run this 4-check pass on the diff. Each check catches a recurring bug class observed in past sessions:
+
+1. **IP literal vs `contracts/devices.json`**: every IP literal in the diff must match a `contracts/devices.json` entry. Probe:
+   ```
+   git diff origin/main...HEAD | grep -oE '192\.168\.[0-9]+\.[0-9]+' | sort -u
+   jq -r '.devices | to_entries[] | "\(.value.lxc.ip // .value.tailscale.ip // "?")"' ~/ManagedProjects/home-monitor/contracts/devices.json | sort -u
+   ```
+   Any IP in the diff not in devices.json is a hardcoded fabrication — fix or document. See `~/.claude/rules/ruby.md` "IP literal must come from contracts/devices.json".
+
+2. **Healthcheck command unquoted shell variables**: every `healthcheck.test` in docker-compose.yml in the diff must single-quote any `${VAR}` substituted from `.env`. Probe:
+   ```
+   git diff origin/main...HEAD -- '*docker-compose*.yml' | grep -A2 'test:.*\${'
+   ```
+   Unquoted `${PASSWORD}` with metacharacters → `bash: syntax error near unexpected token (`, container marks `unhealthy` even when service is functional.
+
+3. **Bind-mount host UID matches cookbook owner**: every `directory ... owner` resource on a bind-mount path must match the host UID set in the host pre-bootstrap (typically `100000:100000` on PVE unprivileged LXC for in-container UID 0, or `runtime_uid + 100000` for in-container service UIDs). Cross-check with the PVE host's `chown` setup in `phase-3a-lxc-create.md` or equivalent. See `~/.claude/rules/pve-lxc.md` "Unprivileged LXC Bind-Mount Host Ownership Mapping".
+
+4. **UDP-receiving container has `network_mode: host`**: any docker-compose service that listens on UDP (syslog, statsd, DNS) MUST have `network_mode: host`. docker-proxy unreliably forwards UDP. Probe:
+   ```
+   git diff origin/main...HEAD -- '*docker-compose*.yml' | grep -B5 'udp\|syslog\|statsd' | grep -E 'network_mode|udp'
+   ```
+   See `~/.claude/rules/docker-compose.md` "UDP Listener Containers Require `network_mode: host`".
+
+This is implementation-level, distinct from the design-level Adversarial Plan Review above. Adversarial caught architecture bugs (TLS SAN, IAM size, JWKS fetch loop); these 4 checks catch implementation bugs that surface only at apply time.
+
+This checklist exists because the 2026-05-09 ADR-0005 Phase 3b session shipped 6 fix PRs sequentially for bugs all 4 of these checks would have caught at PR time, costing ~3 hours of fix-PR-CI-merge-redeploy cycles.
 
 ### Research-to-Plan Pipeline
 
