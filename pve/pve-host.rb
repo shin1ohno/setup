@@ -60,3 +60,9 @@ include_cookbook "ssh-keys"
 # rpool/ROOT/pve-1 before the first apply is the operator's pre-flight
 # (zfs snapshot rpool/ROOT/pve-1@phase-3c-pre).
 include_role "lxc-core"
+
+# Standalone Elastic Agent — ships PVE host syslog + system metrics to the
+# 3-node ES cluster. Tag with `pve-host` so Kibana queries can isolate the
+# hypervisor from the LXC fleet.
+node.reverse_merge!(elastic_agent: { tags: ["pve-host", "hypervisor"] })
+include_cookbook "elastic-agent"

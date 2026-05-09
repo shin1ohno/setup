@@ -27,3 +27,6 @@ node.reverse_merge!(
 include_cookbook "docker-engine"
 include_cookbook "cognee"
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "cognee"] })
+include_cookbook "elastic-agent"

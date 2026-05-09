@@ -214,3 +214,6 @@ compose_service "weave" do
 end
 
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "weave"] })
+include_cookbook "elastic-agent"

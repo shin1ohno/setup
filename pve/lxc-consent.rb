@@ -175,3 +175,6 @@ compose_service "consent" do
 end
 
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "consent"] })
+include_cookbook "elastic-agent"
