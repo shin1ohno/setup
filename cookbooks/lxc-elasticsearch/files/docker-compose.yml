@@ -35,12 +35,14 @@ services:
         hard: 65536
     cap_add:
       - IPC_LOCK
-    ports:
-      # 9200 (HTTP) is reachable LAN-wide; the basic-auth gate is the
-      # security boundary in Phase 3b. 9300 (transport) is also exposed
-      # so peer ES nodes can join the cluster across LXC boundaries.
-      - "9200:9200"
-      - "9300:9300"
+    # docker-proxy (bridge mode port-forward) silently drops port 9300
+    # traffic between same-subnet LXCs (CT 113 -> CT 112:9300 = "No route
+    # to host" while 9200 works through the same DNAT rule, and the 9300
+    # rule's pkt counter stays at 0). Switching to host networking gives
+    # ES direct access to the LXC's interface — peers reach 9200/9300
+    # via LXC IP without the docker-proxy hop. Matches Elastic's
+    # multi-node production guidance.
+    network_mode: host
     volumes:
       - /data/elasticsearch/data:/usr/share/elasticsearch/data
       - /data/elasticsearch/logs:/usr/share/elasticsearch/logs
