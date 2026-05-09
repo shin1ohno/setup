@@ -159,7 +159,7 @@ services:
         condition: service_healthy
 
   cognee-mcp:
-    image: cognee/cognee-mcp:latest
+    image: cognee/cognee-mcp:cpu
     restart: unless-stopped
     ports:
       - "127.0.0.1:8002:8000"
