@@ -121,6 +121,42 @@ scrape_configs:
         labels:
           host: pro-dev
 
+  # Phase 3b ADR-0005: Elasticsearch cluster (CT 112-114) + Kibana (CT 115).
+  # Node-exporter installed via roles/lxc-core, port 9100. ES native
+  # /_prometheus/metrics requires X-Pack monitoring license (paid); skipped
+  # for now. Cluster-level ES + Kibana app metrics deferred to a follow-up.
+  - job_name: node-es-0
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.77:9100"
+        labels:
+          host: es-0
+
+  - job_name: node-es-1
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.78:9100"
+        labels:
+          host: es-1
+
+  - job_name: node-es-2
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.79:9100"
+        labels:
+          host: es-2
+
+  - job_name: node-kibana
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.80:9100"
+        labels:
+          host: kibana
+
   # Phase 3c: pro-router (CT 102) Tailscale subnet-router. Distinct from
   # the bare-metal PVE host's `node-pve` job further below.
   - job_name: node-pro-router
