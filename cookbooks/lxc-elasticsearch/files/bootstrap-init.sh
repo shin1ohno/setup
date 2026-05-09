@@ -69,6 +69,45 @@ es_curl() {
   curl "${CURL_OPTS[@]}" "${CURL_AUTH[@]}" "$@"
 }
 
+# --- Step 0: ensure local elastic password matches SSM -------------------
+#
+# Native install case (Phase 3b retro): when a fresh ES node joins an
+# existing cluster (e.g. CT 112 native joining a docker-era cluster on
+# CT 113/114), the local node's reserved-realm cache may not match the
+# cluster security index immediately. The drift-detection loop below
+# handles non-built-in users via the ES API, but the `elastic` superuser
+# is required to authenticate that API in the first place.
+#
+# elasticsearch-reset-password uses local TLS bypass (operates directly
+# on the node's security index without needing API auth) — safe to run
+# unconditionally on cookbook-managed mitamae apply. If the password is
+# already in sync, the reset is a no-op; if not, this fixes the auth
+# loop before the API-based steps below try to use it.
+ensure_local_elastic_password() {
+  # Skip if API auth already works (steady-state re-apply).
+  local code
+  code=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' \
+    -u "elastic:${ELASTIC_PASSWORD}" \
+    "${ES_URL}/_security/_authenticate" 2>/dev/null || echo "000")
+  if [[ "${code}" == "200" ]]; then
+    echo "[bootstrap] local elastic password already in sync"
+    return 0
+  fi
+
+  # Reset via local TLS bypass — works even when API auth is broken.
+  local reset_bin="/usr/share/elasticsearch/bin/elasticsearch-reset-password"
+  if [[ ! -x "${reset_bin}" ]]; then
+    echo "[bootstrap] WARN: ${reset_bin} not present (not a native install?); skipping" >&2
+    return 0
+  fi
+
+  echo "[bootstrap] resetting local elastic password (API auth returned ${code})"
+  "${reset_bin}" -u elastic -i --batch <<EOF
+${ELASTIC_PASSWORD}
+${ELASTIC_PASSWORD}
+EOF
+}
+
 # --- Step 1: wait for cluster YELLOW (or better) -------------------------
 
 wait_cluster_ready() {
@@ -258,6 +297,11 @@ reset_kibana_system_password() {
 
 main() {
   wait_cluster_ready
+
+  # Reset local elastic password if API auth is broken (native install
+  # first-boot case where the local node's reserved-realm cache lags
+  # the cluster security index). Must run before any es_curl call.
+  ensure_local_elastic_password
 
   # Idempotent infrastructure setup. Order matters: ILM → component →
   # index template → data stream (Adversarial #8).
