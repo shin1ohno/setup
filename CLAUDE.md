@@ -121,6 +121,11 @@ Auto-mitamae: `cookbooks/auto-mitamae-target` installs a systemd timer on each L
 
 - Always test cookbook changes with `--dry-run` first
 - Project hooks in `.claude/hooks/`: `guard-mitamae-dry-run.rb` blocks `mitamae` without `--dry-run` for Claude (apply runs are user-only — present them as `! ./bin/mitamae local <platform>.rb`); `remind-cookbook-dry-run.rb` reminds Claude to run dry-run after cookbook edits
+- **sudo context by host type**: `cookbooks/` resources use `execute "sudo install …"` for system paths and `mitamae runs without sudo` per `~/.claude/rules/ruby.md` — but this rule applies to the OUTER mitamae invocation differently per host:
+  - **Bare-metal Linux + macOS** (`pro`, `air`, `ohnos-macbook`): run `./bin/mitamae local <platform>.rb` as the regular user. Do NOT prepend `sudo` — it changes `$HOME` to `/root` and breaks rbenv/mise/pyenv PATH resolution (recipes that compute paths from `ENV["HOME"]` end up with `/root/.rbenv` etc., then later resources try to write there as the regular user and fail)
+  - **Service LXCs** (`pve/lxc-*.rb`): the LXC's only user IS root. Run `./bin/mitamae local pve/lxc-<name>.rb` from inside the CT — no sudo prefix needed (already root)
+  - When presenting apply commands as `!` to the user, infer host type from the recipe path: `pve/lxc-*.rb` → no sudo, anything else → no sudo. The rare exception is `pve/pve-host.rb` which runs on the bare-metal PVE host as root anyway. The recipe path is the reliable signal — never default to `sudo` "to be safe"
+  - This rule exists because the 2026-05-09 retro session's `sudo ./bin/mitamae local pve/lxc-pro-dev.rb` invocation (added "to be safe") confused rbenv path resolution and required diagnosing the recipe failure before realising sudo was the cause
 - Use `run_command("command", error: false)` for status code checking
 - Profile scripts are loaded from `~/.setup_shin1ohno/profile.d/` with priority ordering
 - Linux includes hardware-coupled cookbooks directly in `linux.rb` (bluez, broadcom-wifi, zeroconf, edge-agent). Roon Server / MCP and the rest of the MCP server stack run in dedicated LXCs and are no longer pulled into `linux.rb`

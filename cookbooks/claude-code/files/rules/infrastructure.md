@@ -129,3 +129,74 @@ When a command is blocked by any permission restriction — `sudo` required, too
 3. After the user runs it, verify the result before moving on
 
 Applies equally to sudo, project-hook guards, and `deny`-listed Bash patterns.
+
+## systemd Timer Verification Gate
+
+After creating or modifying a systemd timer (cookbook deploy, manual install, drop-in override), the verification step is NOT `systemctl is-active <name>.timer`. It is:
+
+```
+systemctl show <name>.timer --property=Trigger
+```
+
+A future timestamp (`Trigger: Sat 2026-05-09 08:08:21 UTC`) = the timer will fire. `Trigger: n/a` = the timer's trigger condition cannot be evaluated; **the timer is enabled and active but will never fire**. `is-active` returns `active` either way.
+
+**Common causes of `Trigger: n/a` for `Type=oneshot` services**:
+
+- `OnUnitActiveSec=Ns` on `Type=oneshot` without `RemainAfterExit=true` — the unit's "active" window is essentially zero (transitions inactive → activating → deactivating → inactive in milliseconds), so "N seconds after last activation" produces no future timestamp. Fix: switch to `OnUnitInactiveSec=Ns` (measures from deactivation), OR add `RemainAfterExit=true` if the unit's idempotent contract allows it.
+- `OnUnitInactiveSec=Ns` where the bound service has never deactivated — no reference point exists. Fix: combine with `OnBootSec=30s` AND `OnActiveSec=30s` so the first run is bootstrapped from boot OR timer-(re)start time.
+
+**Recommended pattern** for "drop-in self-healing oneshot, ≤Ns latency":
+
+```
+[Timer]
+OnBootSec=30s
+OnActiveSec=30s
+OnUnitInactiveSec=60s
+Unit=<name>.service
+```
+
+`OnBootSec` covers cold boot. `OnActiveSec` covers `systemctl restart timer` after a cookbook update (where boot was hours ago). `OnUnitInactiveSec` is the recurring fire after the first run completes.
+
+**Cookbook execute for installing/updating a timer** must include all four steps:
+
+```
+sudo systemctl daemon-reload && \
+  sudo systemctl enable <name>.timer && \
+  sudo systemctl restart <name>.timer && \
+  sudo systemctl start <name>.service
+```
+
+`enable --now` is a no-op when the unit is already active — without `restart timer` the running timer keeps the old in-memory config after a cookbook update (the file on disk changes but nothing reloads it). `start service` immediately seeds the deactivation reference for `OnUnitInactiveSec`. Skipping either step works on first install but silently breaks every subsequent timer-body update.
+
+**Service-side note**: when changing a `Type=oneshot` unit's `RemainAfterExit` flag (e.g., `true` → `false` to allow timer-driven re-firing), `systemctl restart <name>.service` is also required — `daemon-reload` updates the file body but the running service keeps its old in-memory state. A service stuck in `active (exited)` from a `RemainAfterExit=true` era never deactivates, so `OnUnitInactiveSec` never gets a reference. `systemctl start` is a no-op when active; only `restart` forces the transition through inactive.
+
+This rule exists because the 2026-05-09 tailscale route-fix timer session shipped `OnUnitActiveSec=60s` on `Type=oneshot` (PR #253). The unit reported `active` but had `Trigger: n/a` — the "fix" never fired. Three sequential PRs (#253 / #257 / #259) were needed to fully close the failure class. A single `systemctl show --property=Trigger` probe after PR #253 would have caught it before merge.
+
+## "Known Limitation" Comments Are Incomplete Fixes
+
+When writing an inline comment in a cookbook, systemd unit, or config file that contains any of these phrases — or their semantic equivalents — STOP and treat the fix as incomplete:
+
+- "manual restart required"
+- "fires only at boot"
+- "does not catch runtime re-injection"
+- "requires operator intervention when X"
+- "only works on first boot"
+- "will not auto-recover"
+- "after Y happens, run Z manually"
+
+These phrases describe a **known failure class** that the current fix does not cover. Shipping the fix with such a comment is acceptable ONLY when both:
+
+1. The uncovered class is explicitly out of scope for the current PR (stated in the PR description, not just inferred)
+2. A `TODO.md` entry is created in the same commit naming the failure class, when it would trigger, and the concrete first step to close the gap
+
+If neither condition holds — not out of scope, no TODO entry — the comment is deferred design debt that will silently regress in production until someone re-investigates the same symptom.
+
+**Action gate** when you are about to write such a comment:
+
+1. State the failure class in one sentence: "This fix does not handle X."
+2. Is X out of scope for this PR?
+   - YES → write the TODO.md entry first, then the comment, then ship
+   - NO → fix X in this PR before merging
+3. Never let "we'll get to it later" be the unstated third option
+
+This rule exists because setup PR #174 (tailscale route-fixup oneshot, 2026-05-07) shipped a self-documented "manual restart required when tailscale re-injects routes at runtime" comment with no TODO entry. The comment was accurate. The fix regressed at 02:00 on 2026-05-09 when tailscale re-injected routes mid-session, and 3 new PRs (#253 / #257 / #259) were needed to convert the boot-only oneshot into a proper self-healing timer — work that PR #174's author had already identified as necessary at the moment of writing the comment.
