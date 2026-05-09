@@ -136,10 +136,31 @@ ordered=(
     "${SAVED_OBJECTS_DIR}/rtx-lens-line-unique-src-over-time.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-heatmap-hour-router.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-stacked-country-over-time.ndjson"
-    # Maps + dashboards last
+    # Maps + dashboards
     "${SAVED_OBJECTS_DIR}/rtx-maps-geo.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-overview.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-overview-v2.ndjson"
+
+    # ---- EC2 access log dashboard ----
+    # Index pattern covers logs-system.{auth,syslog,system}-* via Elastic Agent
+    "${SAVED_OBJECTS_DIR}/ec2-index-pattern.ndjson"
+    # Lens objects: metrics
+    "${SAVED_OBJECTS_DIR}/ec2-lens-metric-total-auth.ndjson"
+    "${SAVED_OBJECTS_DIR}/ec2-lens-metric-unique-src.ndjson"
+    "${SAVED_OBJECTS_DIR}/ec2-lens-metric-failed-logins.ndjson"
+    # Lens objects: donuts (categorical breakdowns)
+    "${SAVED_OBJECTS_DIR}/ec2-lens-donut-country.ndjson"
+    "${SAVED_OBJECTS_DIR}/ec2-lens-donut-event-action.ndjson"
+    "${SAVED_OBJECTS_DIR}/ec2-lens-donut-process.ndjson"
+    "${SAVED_OBJECTS_DIR}/ec2-lens-donut-top-src.ndjson"
+    # Lens objects: time series + heatmap + stacked bar
+    "${SAVED_OBJECTS_DIR}/ec2-lens-timeseries-auth.ndjson"
+    "${SAVED_OBJECTS_DIR}/ec2-lens-timeseries-sudo.ndjson"
+    "${SAVED_OBJECTS_DIR}/ec2-lens-heatmap-hour-event.ndjson"
+    "${SAVED_OBJECTS_DIR}/ec2-lens-stacked-username.ndjson"
+    # Maps + dashboard
+    "${SAVED_OBJECTS_DIR}/ec2-maps-geo.ndjson"
+    "${SAVED_OBJECTS_DIR}/ec2-access-overview.ndjson"
 )
 
 failures=0
