@@ -181,6 +181,27 @@ ordered=(
     "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-interface-table.ndjson"
     # Dashboard last (references all 12 lens objects above)
     "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-overview.ndjson"
+
+    # ---- Grafana-ported Proxmox metrics dashboard ----
+    # Reads from metrics-prometheus.collector-* (Stream T deliverable, PR #281).
+    # Reuses Stream U's metrics-prometheus-collector data view.
+    # Lens visualizations (14 panels): table first, then per-section
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-resource-table.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-cpu-history.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-cpu-current.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-cpu-limit.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-memory-history.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-memory-current.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-memory-bytes.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-guests-cpu.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-guests-memory.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-storage-usage.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-storage-allocation.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-lxc-disk.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-network-io.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-disk-io.ndjson"
+    # Dashboard last (references all 14 lens objects above)
+    "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-overview.ndjson"
 )
 
 failures=0
