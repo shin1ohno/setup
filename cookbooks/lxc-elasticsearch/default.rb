@@ -266,10 +266,24 @@ execute "install jvm.options.d/heap.options" do
 end
 
 # === systemd override ===
-
+#
+# wait-cluster-ready.sh is shipped to #{files_dir} and referenced
+# directly from override.conf as ExecStartPost=. Path is hard-coded in
+# override.conf (#{files_dir} expands to /root/.setup_shin1ohno/lxc-elasticsearch/files/);
+# if node[:setup][:root] ever diverges from /root/.setup_shin1ohno on
+# LXC entry recipes, update both files in lockstep.
 unit_override_staging = "#{files_dir}/elasticsearch.service.override.conf"
 unit_override_dir     = "/etc/systemd/system/elasticsearch.service.d"
 unit_override_path    = "#{unit_override_dir}/override.conf"
+wait_script_staging   = "#{files_dir}/wait-cluster-ready.sh"
+
+remote_file wait_script_staging do
+  source "files/wait-cluster-ready.sh"
+  owner user
+  group group
+  mode "0755"
+  notifies :run, "execute[restart elasticsearch]"
+end
 
 remote_file unit_override_staging do
   source "files/elasticsearch.service.override.conf"
