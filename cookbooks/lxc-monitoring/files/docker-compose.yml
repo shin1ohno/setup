@@ -161,6 +161,20 @@ services:
     depends_on:
       - loki
     network_mode: host
+    # ELASTIC_VECTOR_PASSWORD: SSM-fetched basic-auth password for the
+    # vector_writer ES role. Substituted into [sinks.elasticsearch].auth
+    # at startup. The .env file is mode 0600 (Adversarial #6) so the
+    # password is not world-readable on the host bind-mount.
+    environment:
+      ELASTIC_VECTOR_PASSWORD: ${ELASTIC_VECTOR_PASSWORD}
     volumes:
       - ./vector.toml:/etc/vector/vector.toml:ro
       - ./geoip:/etc/vector/geoip:ro
+      # Disk-buffer storage for [sinks.loki] (500 MB) + [sinks.elasticsearch]
+      # (1 GB). Single mount point — Vector creates per-sink subdirectories
+      # under /var/lib/vector/buffer/v2/<sink_id>/ at startup. Bind-mount
+      # is read-write because Vector writes buffer pages.
+      - /data/monitoring/vector:/var/lib/vector:rw
+      # Elasticsearch CA certificate (Terraform-generated, distributed via
+      # SSM /monitoring/elastic/ca/cert). Read-only inside the container.
+      - /data/monitoring/vector/elastic-ca.crt:/etc/vector/elastic-ca.crt:ro

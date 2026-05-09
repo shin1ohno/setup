@@ -86,6 +86,28 @@ directory state_dir do
   mode "755"
 end
 
+# Vector state directory (ADR 0005 Phase 4). Holds disk-buffer storage
+# for the loki + elasticsearch sinks (vector.toml `data_dir =
+# "/var/lib/vector"`) and the SSM-distributed Elasticsearch CA cert
+# (bind-mounted into /etc/vector/elastic-ca.crt).
+#
+# Vector container runs as root (network_mode: host, no user: directive).
+# In the unprivileged LXC, container UID 0 maps to host UID 100000, so
+# /data/monitoring/vector and its children are owned by host UID 100000
+# to allow Vector's in-container root to write buffer pages. Mode 755
+# is sufficient because no other container reads this directory.
+directory "#{state_dir}/vector" do
+  owner "100000"
+  group "100000"
+  mode "755"
+end
+
+directory "#{state_dir}/vector/buffer" do
+  owner "100000"
+  group "100000"
+  mode "755"
+end
+
 # Per-service state subdirs. Each container runs as its own non-root UID
 # and writes sqlite WAL / lock / journal files INTO the parent dir (not
 # just inside subdirs the container creates) — so the dir itself must be
@@ -321,12 +343,14 @@ env_temp_path = "#{generated_dir}/monitoring.env"
 env_output_path = "#{deploy_dir}/.env"
 
 require_external_auth(
-  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/grafana-admin-password",
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for monitoring SSM secrets",
   check_command: "aws ssm get-parameter --name /monitoring/grafana-admin-password " \
                  "--with-decryption --profile #{aws_profile} --region #{aws_region} " \
                  "> /dev/null 2>&1",
-  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
-                "/monitoring/grafana-admin-password in #{aws_region}. " \
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on /monitoring/* in " \
+                "#{aws_region}. generate_env.sh fetches: grafana-admin-password, " \
+                "pve-exporter-token, rtx-snmp-community, elastic/vector-password " \
+                "(ADR 0005 Phase 4 — write-only role for [sinks.elasticsearch]). " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
   skip_if: -> { File.exist?(env_output_path) },
 ) do
@@ -352,6 +376,59 @@ end
 file env_temp_path do
   action :delete
   only_if "test -f #{env_temp_path}"
+end
+
+# Elasticsearch CA cert (ADR 0005 Phase 4). Stored as a plain PEM string
+# in SSM /monitoring/elastic/ca/cert (Terraform-generated CA, validity
+# 2 years per ADR 0005 §認証). Distributed to /data/monitoring/vector/
+# elastic-ca.crt because docker-compose.yml bind-mounts that path
+# read-only into vector at /etc/vector/elastic-ca.crt — the path Vector's
+# [sinks.elasticsearch].tls.ca_file references.
+#
+# Mode 0644 root:root: the cert is public material (no key), readable by
+# any process. Owner is host root (NOT 100000) because container Vector
+# only needs RO access via the bind-mount; the file does not need to be
+# owned by container-root.
+#
+# Fetched into a staging file then `install`-ed atomically so a partial
+# fetch doesn't leave a half-written cert that breaks Vector startup.
+elastic_ca_temp   = "#{generated_dir}/elastic-ca.crt"
+elastic_ca_target = "#{state_dir}/vector/elastic-ca.crt"
+
+require_external_auth(
+  tool_name: "AWS CLI for /monitoring/elastic/ca/cert SSM param",
+  check_command: "aws ssm get-parameter --name /monitoring/elastic/ca/cert " \
+                 "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1",
+  instructions: "ES cluster (Phase 1b/3) must be provisioned first — Terraform " \
+                "writes the CA cert to /monitoring/elastic/ca/cert. Then this " \
+                "cookbook can fetch it.",
+  skip_if: -> { File.exist?(elastic_ca_target) },
+) do
+  execute "fetch elastic CA cert from SSM" do
+    command <<~SH.strip
+      set -euo pipefail
+      aws ssm get-parameter \\
+        --name /monitoring/elastic/ca/cert \\
+        --query "Parameter.Value" \\
+        --output text \\
+        --profile #{aws_profile} \\
+        --region #{aws_region} > #{elastic_ca_temp}.new
+      mv #{elastic_ca_temp}.new #{elastic_ca_temp}
+      chmod 644 #{elastic_ca_temp}
+    SH
+    user user
+  end
+end
+
+execute "install elastic CA cert" do
+  command "sudo install -m 644 -o root -g root #{elastic_ca_temp} #{elastic_ca_target}"
+  only_if "test -f #{elastic_ca_temp}"
+  notifies :run, "execute[restart monitoring]"
+end
+
+execute "delete elastic CA cert staging file" do
+  command "rm -f #{elastic_ca_temp}"
+  only_if "test -f #{elastic_ca_temp}"
 end
 
 # Generate snmp.yml from snmp.yml.tmpl by substituting the community
@@ -402,15 +479,18 @@ project_name = File.basename(deploy_dir)
 execute "ensure monitoring running" do
   command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d"
   user user
-  # Gate on BOTH .env (for grafana/pve-exporter env vars) AND snmp.yml
+  # Gate on .env (grafana/pve-exporter/elastic env vars), snmp.yml
   # (bind-mounted into snmp-exporter — Docker creates a directory if the
   # source path is missing, leaving the container in a crash-loop with
-  # `open /etc/snmp_exporter/snmp.yml: is a directory`). Both files come
-  # from the SSM-gated bootstrap path so both must exist before compose
-  # is allowed to start the stack.
+  # `open /etc/snmp_exporter/snmp.yml: is a directory`), AND elastic-ca.crt
+  # (bind-mounted into vector — same Docker auto-mkdir trap; absence
+  # would crash Vector at startup because [sinks.elasticsearch].tls.ca_file
+  # would point at a directory). All three come from SSM-gated bootstrap
+  # paths so all must exist before compose is allowed to start the stack.
   only_if <<~SH.tr("\n", " ").strip
     test -f #{env_output_path} || exit 1;
     test -f #{snmp_yml_path} || exit 1;
+    test -f #{elastic_ca_target} || exit 1;
     expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
     [ -n "$expected" ] || exit 1;
     running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
@@ -439,12 +519,14 @@ execute "restart monitoring" do
   command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --force-recreate --remove-orphans"
   user user
   action :nothing
-  # Skip when .env was not generated OR snmp.yml hasn't been rendered
-  # (SSM auth absent / non-interactive bootstrap). Restart with empty
-  # admin password would leave Grafana unmanageable; missing snmp.yml
-  # would leave snmp-exporter crash-looping. Same guard pattern as
-  # cookbooks/cognee.
-  only_if "test -f #{env_output_path} && test -f #{snmp_yml_path}"
+  # Skip when .env was not generated, snmp.yml hasn't been rendered, or
+  # elastic-ca.crt hasn't been fetched (SSM auth absent / non-interactive
+  # bootstrap, OR ES cluster not yet provisioned in Phase 1b/3). Restart
+  # with empty admin password would leave Grafana unmanageable; missing
+  # snmp.yml would leave snmp-exporter crash-looping; missing
+  # elastic-ca.crt would leave Vector crash-looping with tls.ca_file
+  # pointing at a directory. Same guard pattern as cookbooks/cognee.
+  only_if "test -f #{env_output_path} && test -f #{snmp_yml_path} && test -f #{elastic_ca_target}"
 end
 
 # MCP fleet health monitoring — extracted to its own cookbook in Phase 7
