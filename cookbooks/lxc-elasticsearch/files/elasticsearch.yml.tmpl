@@ -6,13 +6,10 @@ cluster.name: es-home-monitor
 node.name: @@NODE_NAME@@
 node.roles: [master, data, ingest]
 
-# Network bind/publish split for docker bridge networking. The container
-# can't bind to the LXC host IP (`192.168.1.11N`) because that address
-# isn't visible inside the container netns; bind to 0.0.0.0 and publish
-# the LXC IP so peer ES nodes still discover each other at the LAN
-# address (port-forwarded by docker via `ports: 9300:9300`).
-network.bind_host: 0.0.0.0
-network.publish_host: @@TRANSPORT_HOST@@
+# Native systemd install — ES binds directly to the LXC's interface IP.
+# No docker-bridge netns split required (the bind/publish workaround was
+# a docker-ism). network.host covers both HTTP (9200) and transport (9300).
+network.host: @@TRANSPORT_HOST@@
 http.port: 9200
 transport.port: 9300
 
@@ -26,8 +23,10 @@ cluster.initial_master_nodes:
   - es-1
   - es-2
 
-# Memory locking — requires LXC `lxc.cap.keep: ipc_lock` + container
-# IPC_LOCK + ulimits.memlock=-1 (set in docker-compose.yml).
+# Memory locking — requires LXC `lxc.prlimit.memlock unlimited` (Phase 3a
+# manual op) + LimitMEMLOCK=infinity in the systemd override (Phase 3b
+# native). The DEB unit defaults LimitMEMLOCK to infinity, but the
+# override re-states it for cookbook-source-of-truth clarity.
 bootstrap.memory_lock: true
 
 # Synthetic _source mode is configured per-index via component templates
@@ -38,15 +37,25 @@ xpack.security.enabled: true
 xpack.security.autoconfiguration.enabled: false
 
 # Transport TLS — node-to-node communication. Cert + key are PEM files
-# fetched from SSM and bind-mounted into config/certs/ by the cookbook.
+# fetched from SSM and installed at /data/elasticsearch/certs/ by the
+# cookbook. Absolute paths because the native ES install reads them at
+# bootstrap; relative paths (resolved against ES_PATH_CONF=/etc/elasticsearch
+# for native) would not point at the bind-mount destination.
 xpack.security.transport.ssl.enabled: true
 xpack.security.transport.ssl.verification_mode: certificate
 xpack.security.transport.ssl.client_authentication: required
-xpack.security.transport.ssl.key: certs/@@NODE_NAME@@.key
-xpack.security.transport.ssl.certificate: certs/@@NODE_NAME@@.crt
+xpack.security.transport.ssl.key: /data/elasticsearch/certs/@@NODE_NAME@@.key
+xpack.security.transport.ssl.certificate: /data/elasticsearch/certs/@@NODE_NAME@@.crt
 xpack.security.transport.ssl.certificate_authorities:
-  - certs/ca.crt
+  - /data/elasticsearch/certs/ca.crt
 
 # HTTP TLS — disabled in Phase 3b. Switch to true in Phase 7-tls and
 # point at the same node cert.
 xpack.security.http.ssl.enabled: false
+
+# Native install: ES reads /etc/elasticsearch/elasticsearch.yml. The
+# data, logs, and certs directories live under /data/elasticsearch/ via
+# the path.* directives below (DEB default would be /var/lib/elasticsearch
+# and /var/log/elasticsearch).
+path.data: /data/elasticsearch/data
+path.logs: /data/elasticsearch/logs
