@@ -1,29 +1,239 @@
 # frozen_string_literal: true
 #
-# elastic-agent: standalone Elastic Agent 8.16 on every Linux host in the
-# fleet (bare-metal pro + PVE host + 13 service LXCs). Each agent ships
-# system metrics + syslog/auth filestreams to the 3-node ES cluster
-# (es-{0,1,2}.home.local) using a dedicated ES user `elastic_agent_writer`
-# with SSM-managed password.
+# elastic-agent: standalone Elastic Agent 8.16 across the fleet.
+#
+# Two install paths, branched on node[:platform]:
+#
+#   * Linux (bare-metal pro + PVE host + 13 service LXCs + 3 ES nodes + Kibana):
+#     APT package install + systemd service. Config rendered from
+#     elastic-agent.linux.yml.tmpl, password injected via EnvironmentFile=
+#     populated by generate_env.sh (SSM fetch). Includes optional
+#     prometheus federation input on hosts that opt in via
+#     node[:elastic_agent][:enable_prometheus_integration] (today: CT 111
+#     lxc-monitoring only).
+#
+#   * macOS (air, ohnos-macbook): tarball + `elastic-agent install`
+#     subcommand (drops launchd plist). Config rendered by generate_config.sh
+#     (sed-style substitution including the SSM-fetched password — launchd
+#     has no EnvironmentFile equivalent and standalone-mode agents do not
+#     support secret refs in the output password).
+#
+# Both paths target the 3-node ES cluster (es-{0,1,2}.home.local) using the
+# `elastic_agent_writer` ES user with SSM-managed password at
+# /monitoring/elastic/elastic-agent-password.
 #
 # Stream-O Fleet Server pivot (2026-05-09): Fleet Server was abandoned as
 # overkill for a ~16-host home fleet. Standalone mode requires no enrollment
 # token — each host ships a static elastic-agent.yml plus an SSM-fetched
-# password env file.
+# password.
 #
 # Per-host attributes (set in entry recipe before include):
-#   node[:elastic_agent][:host_name]  short hostname (default: `hostname -s`)
-#   node[:elastic_agent][:tags]       array of tags (default: ["lxc"])
+#   node[:elastic_agent][:host_name]                       short hostname
+#   node[:elastic_agent][:tags]                            array of tags
+#   node[:elastic_agent][:enable_prometheus_integration]   Linux only
+#   node[:elastic_agent][:version]                         macOS only (default 8.16.0)
 #
-# Skipped on macOS — see Stream Q for the macOS Elastic Agent install path.
+# Operator apply (macOS):
+#   ./bin/mitamae local darwin.rb
+# Operator apply (Linux LXC, from inside CT):
+#   ./bin/mitamae local pve/lxc-<name>.rb
 
-return if node[:platform] == "darwin"
+if node[:platform] == "darwin"
+  # ============================================================================
+  # macOS path: tarball install + launchd
+  # ============================================================================
+
+  HOSTNAME_TO_VARIANT = {
+    "xmhtm6qvqx"    => "air",  # MacBook Air (factory hostname)
+    "neo"           => "neo",  # ohnos-macbook (devices.json conceptual name)
+    "ohnos-macbook" => "neo",
+  }.freeze
+
+  current_host = run_command("hostname -s").stdout.strip.downcase
+  variant = HOSTNAME_TO_VARIANT[current_host]
+
+  if variant.nil?
+    MItamae.logger.warn(
+      "elastic-agent: hostname '#{current_host}' not in HOSTNAME_TO_VARIANT — " \
+      "no Elastic Agent installed on this host. Add an entry to " \
+      "HOSTNAME_TO_VARIANT in cookbooks/elastic-agent/default.rb to enable."
+    )
+    return
+  end
+
+  include_cookbook "awscli"
+
+  user       = node[:setup][:user]
+  group      = node[:setup][:group]
+  setup_root = node[:setup][:root]
+
+  ea_version  = node.dig(:elastic_agent, :version) || "8.16.0"
+  aws_profile = node.dig(:elastic_agent, :aws_profile) || "sh1admn"
+  aws_region  = node.dig(:elastic_agent, :aws_region)  || "ap-northeast-1"
+  es_password_ssm = node.dig(:elastic_agent, :es_password_ssm) ||
+                    "/monitoring/elastic/elastic-agent-password"
+  es_username = node.dig(:elastic_agent, :es_username) || "elastic_agent_writer"
+  es_hosts = node.dig(:elastic_agent, :es_hosts) || %w[
+    http://es-0.home.local:9200
+    http://es-1.home.local:9200
+    http://es-2.home.local:9200
+  ]
+
+  arch = run_command("uname -m").stdout.strip
+  ea_arch = case arch
+            when "arm64"  then "aarch64"
+            when "x86_64" then "x86_64"
+            else
+              raise "elastic-agent: unsupported macOS arch '#{arch}'"
+            end
+
+  tarball_name = "elastic-agent-#{ea_version}-darwin-#{ea_arch}.tar.gz"
+  tarball_url  = "https://artifacts.elastic.co/downloads/beats/elastic-agent/#{tarball_name}"
+  sha512_url   = "#{tarball_url}.sha512"
+
+  # === Defensive directory bootstrap ===
+  directory setup_root do
+    owner user
+    group group
+    mode "755"
+  end
+
+  cookbook_stage = "#{setup_root}/elastic-agent"
+  directory cookbook_stage do
+    owner user
+    group group
+    mode "755"
+  end
+
+  tarball_path = "#{cookbook_stage}/#{tarball_name}"
+  sha512_path  = "#{cookbook_stage}/#{tarball_name}.sha512"
+  extract_dir  = "#{cookbook_stage}/elastic-agent-#{ea_version}-darwin-#{ea_arch}"
+
+  # === Tarball download + SHA-512 verification ===
+  ea_installed_path = "/Library/Elastic/Agent/elastic-agent"
+
+  execute "download elastic-agent #{ea_version} tarball" do
+    command "curl -fsSL -o #{tarball_path} #{tarball_url}"
+    user user
+    not_if "test -f #{tarball_path}"
+  end
+
+  execute "download elastic-agent #{ea_version} sha512" do
+    command "curl -fsSL -o #{sha512_path} #{sha512_url}"
+    user user
+    not_if "test -f #{sha512_path}"
+  end
+
+  execute "verify elastic-agent tarball sha512" do
+    command "cd #{cookbook_stage} && shasum -a 512 -c #{tarball_name}.sha512"
+    user user
+    only_if "test -f #{tarball_path} && test -f #{sha512_path}"
+    not_if "test -d #{extract_dir}"
+  end
+
+  execute "extract elastic-agent tarball" do
+    command "tar -xzf #{tarball_path} -C #{cookbook_stage}"
+    user user
+    only_if "test -f #{tarball_path}"
+    not_if "test -d #{extract_dir}"
+  end
+
+  # === sudo install (Elastic Agent installer) ===
+  ea_check_version = "test -x #{ea_installed_path} && " \
+                     "sudo #{ea_installed_path} version 2>/dev/null | " \
+                     "grep -q 'elastic-agent[[:space:]]\\+#{ea_version}'"
+  ea_check_loaded  = "sudo launchctl list co.elastic.elastic-agent >/dev/null 2>&1"
+
+  execute "sudo install elastic-agent #{ea_version}" do
+    command "cd #{extract_dir} && " \
+            "sudo ./elastic-agent install --non-interactive --force"
+    user user
+    only_if "test -x #{extract_dir}/elastic-agent"
+    not_if "#{ea_check_version} && #{ea_check_loaded}"
+  end
+
+  # === SSM-gated config render ===
+  config_template = "#{cookbook_stage}/elastic-agent.darwin.yml.tmpl"
+  config_staging  = "#{cookbook_stage}/elastic-agent.yml.rendered"
+  config_target   = "/Library/Elastic/Agent/elastic-agent.yml"
+
+  remote_file config_template do
+    source "files/elastic-agent.darwin.yml.tmpl"
+    owner user
+    group group
+    mode "0644"
+  end
+
+  generate_config_script = "#{cookbook_stage}/generate_config.sh"
+  remote_file generate_config_script do
+    source "files/generate_config.sh"
+    owner user
+    group group
+    mode "0755"
+  end
+
+  es_hosts_yaml = es_hosts.map { |h| "    - #{h}" }.join("\n")
+
+  require_external_auth(
+    tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for #{es_password_ssm}",
+    check_command: "aws ssm get-parameter --name '#{es_password_ssm}' " \
+                   "--with-decryption --profile '#{aws_profile}' " \
+                   "--region '#{aws_region}' > /dev/null 2>&1",
+    instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
+                  "'#{es_password_ssm}' in #{aws_region}. " \
+                  "On a fresh Mac: aws configure --profile #{aws_profile}. " \
+                  "Then press Enter.",
+    skip_if: -> {
+      File.exist?(config_target) &&
+        run_command(
+          "sudo grep -q 'username: #{es_username}' #{config_target} 2>/dev/null",
+          error: false,
+        ).exit_status == 0
+    },
+  ) do
+    execute "render elastic-agent.yml from SSM" do
+      command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+              "ES_PASSWORD_SSM='#{es_password_ssm}' " \
+              "ES_USERNAME='#{es_username}' " \
+              "VARIANT='#{variant}' " \
+              "TEMPLATE='#{config_template}' " \
+              "OUTPUT='#{config_staging}' " \
+              "ES_HOSTS_YAML=\"#{es_hosts_yaml}\" " \
+              "bash #{generate_config_script}"
+      user user
+    end
+  end
+
+  execute "install elastic-agent.yml" do
+    command "sudo install -m 0600 -o root -g wheel #{config_staging} #{config_target}"
+    user user
+    only_if "test -f #{config_staging}"
+    not_if "sudo test -f #{config_target} && " \
+           "sudo cmp -s #{config_staging} #{config_target}"
+    notifies :run, "execute[restart elastic-agent launchd]"
+  end
+
+  execute "delete elastic-agent.yml staging" do
+    command "rm -f #{config_staging}"
+    user user
+    only_if "test -f #{config_staging} && sudo test -f #{config_target}"
+  end
+
+  execute "restart elastic-agent launchd" do
+    command "sudo launchctl kickstart -k system/co.elastic.elastic-agent"
+    user user
+    action :nothing
+  end
+
+  return
+end
+
+# ============================================================================
+# Linux path: APT install + systemd service
+# ============================================================================
 
 include_cookbook "awscli"
 
-# Reuse the AWS profile / region convention from cookbooks/ssh-keys so the
-# require_external_auth check_command and the SSM fetch script all target
-# the same IAM principal.
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
 aws_profile = ssh_keys_config["aws_profile"]
 aws_region  = ssh_keys_config["aws_region"]
@@ -36,16 +246,10 @@ host_name = (node[:elastic_agent] && node[:elastic_agent][:host_name]) ||
 tags = (node[:elastic_agent] && node[:elastic_agent][:tags]) || ["lxc"]
 tags_json = "[" + tags.map { |t| %("#{t}") }.join(", ") + "]"
 
-# Per-host opt-in for the Prometheus federation input (Streams U/V/W
-# enabler). Only enabled on CT 111 (lxc-monitoring) today, where
-# Prometheus binds 127.0.0.1:9090. Other hosts running Elastic Agent
-# render the template with an empty input block, leaving system metrics
-# + filestream inputs unchanged.
 enable_prom_input = node[:elastic_agent] &&
                     node[:elastic_agent][:enable_prometheus_integration]
 
-# Defensive: ensure setup_root + per-cookbook subdir exist before any
-# remote_file write (per CLAUDE.md "Defensive directory resource").
+# Defensive directory bootstrap
 directory node[:setup][:root] do
   mode "755"
 end
@@ -64,9 +268,6 @@ directory files_dir do
 end
 
 # === Elastic apt repo registration ===
-#
-# Same shape as cookbooks/lxc-elasticsearch — keyring at /etc/apt/keyrings,
-# signed-by repo entry. Idempotent: each step gates on observable target state.
 
 execute "install elastic apt prerequisites (elastic-agent)" do
   command "apt-get install -y ca-certificates curl gnupg apt-transport-https"
@@ -116,7 +317,7 @@ end
 # === Stage cookbook files (config template + env generator + systemd override) ===
 
 %w[
-  elastic-agent.yml.tmpl
+  elastic-agent.linux.yml.tmpl
   elastic-agent.service.override.conf
   elastic-agent.prometheus-input.yml
 ].each do |f|
@@ -136,22 +337,15 @@ remote_file "#{files_dir}/generate_env.sh" do
 end
 
 # === SSM-gated env file generation ===
-#
-# elastic_agent_writer password lives at /monitoring/elastic/elastic-agent-password
-# (SecureString, KMS-encrypted). pve-bootstrap-ssm IAM has Decrypt scope via
-# /monitoring/elastic/* wildcard — no IAM change needed.
 
 env_temp_path   = "#{node[:setup][:root]}/elastic-agent/elastic-agent.yml.env"
 env_output_path = "/etc/elastic-agent/elastic-agent.yml.env"
-config_tmpl     = "#{files_dir}/elastic-agent.yml.tmpl"
+config_tmpl     = "#{files_dir}/elastic-agent.linux.yml.tmpl"
 config_path     = "/etc/elastic-agent/elastic-agent.yml"
 override_dir    = "/etc/systemd/system/elastic-agent.service.d"
 override_path   = "#{override_dir}/override.conf"
 override_src    = "#{files_dir}/elastic-agent.service.override.conf"
 
-# require_external_auth: probe the actual SSM read the cookbook will perform.
-# Per CLAUDE.md "Auth-check gate must match the cookbook's actual invocation
-# profile" — gated to the named profile, not bare `sts get-caller-identity`.
 require_external_auth(
   tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/elastic/elastic-agent-password",
   check_command: "aws ssm get-parameter --name /monitoring/elastic/elastic-agent-password " \
@@ -169,9 +363,6 @@ require_external_auth(
   end
 end
 
-# /etc/elastic-agent is created by the DEB postinst (mode 0750 root:root).
-# Install the env file with mode 0640 root:root — DEB runs the agent as root
-# so root:root is correct (no `elastic-agent` user is created by the DEB).
 execute "install elastic-agent.yml.env" do
   command "install -m 0640 -o root -g root #{env_temp_path} #{env_output_path}"
   only_if "test -f #{env_temp_path} && test -d /etc/elastic-agent"
@@ -185,15 +376,7 @@ file env_temp_path do
 end
 
 # === Render elastic-agent.yml from template ===
-#
-# @@PROMETHEUS_INPUT@@ substitution:
-#   - enable_prometheus_integration true  → sed `r FILE` reads the input
-#     snippet AFTER the placeholder line, then `d` deletes the placeholder
-#   - false (default)                     → sed `d` deletes the placeholder
-#     line entirely, leaving no trace
-#
-# The render command and its sister `not_if` diff command are kept in a
-# single Ruby `prom_sed_clause` so the same expression composes both.
+
 prom_input_path = "#{files_dir}/elastic-agent.prometheus-input.yml"
 prom_sed_clause = if enable_prom_input
                     "-e '/@@PROMETHEUS_INPUT@@/r #{prom_input_path}' " \
@@ -243,10 +426,6 @@ execute "elastic-agent daemon-reload" do
 end
 
 # === Service activation ===
-#
-# Gate on env file + config file + override — all three required for the unit
-# to usefully start. The DEB enables but does not start the service by default;
-# we enable+start in one step.
 
 execute "enable + start elastic-agent" do
   command "systemctl enable --now elastic-agent.service"
