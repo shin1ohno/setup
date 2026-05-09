@@ -70,9 +70,14 @@ include_cookbook "lxc-dev-workstation"
 # that pro-router has.
 #
 # Self-healing: a sibling `.timer` unit fires every 60s (OnBootSec=30s,
-# OnUnitActiveSec=60s) so any future re-injection by tailscaled — peer
+# OnUnitInactiveSec=60s) so any future re-injection by tailscaled — peer
 # route resync, daemon restart, magic-DNS bounce — is cleared within
-# ≤60s without human intervention. The script is idempotent
+# ≤60s without human intervention. OnUnitInactiveSec (not
+# OnUnitActiveSec) is mandatory for `Type=oneshot` without
+# `RemainAfterExit=true`: the service's "active" window is essentially
+# zero, so OnUnitActiveSec produces no future trigger (`Trigger: n/a`).
+# OnUnitInactiveSec measures from the moment the service finished, which
+# matches the oneshot lifecycle. The script is idempotent
 # (`ip route del 2>/dev/null || true`) so the recurring fire is a no-op
 # whenever the route is already absent. The .service is NOT
 # `enable --now`'d directly; the timer drives it.
@@ -148,7 +153,7 @@ file "#{node[:setup][:root]}/lxc-pro-dev-tailnet-routes.timer" do
 
     [Timer]
     OnBootSec=30s
-    OnUnitActiveSec=60s
+    OnUnitInactiveSec=60s
     Unit=lxc-pro-dev-tailnet-routes.service
 
     [Install]
