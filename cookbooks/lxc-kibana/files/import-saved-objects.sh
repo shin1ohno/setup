@@ -76,11 +76,12 @@ done
 # Phase 2: import each NDJSON. Order matters — index-pattern (data view)
 # and visualization references must exist before the dashboard, which
 # references them. Import in dependency order:
-#   1. rtx-discover.ndjson      — declares index-pattern + saved search
-#   2. rtx-lens-top-src.ndjson
-#   3. rtx-lens-top-dst-port.ndjson
-#   4. rtx-maps-geo.ndjson
-#   5. rtx-overview.ndjson      — references all of the above + inline lens
+#   1. rtx-discover.ndjson           — declares index-pattern + saved search
+#   2. rtx-lens-*.ndjson             — Lens visualizations + Maps source layer
+#   3. rtx-maps-geo.ndjson           — Map (uses index-pattern)
+#   4. rtx-overview.ndjson           — Original 5-panel scaffold dashboard
+#   5. rtx-overview-v2.ndjson        — Comprehensive 17-panel dashboard
+#                                      (references all rtx-lens-* + map)
 # ---------------------------------------------------------------------------
 
 import_file() {
@@ -111,13 +112,34 @@ import_file() {
     echo "  ${file_basename}: imported ${count} object(s)."
 }
 
-# Explicit ordering — dashboard last so its references resolve.
+# Explicit ordering — dashboards last so their references resolve.
 ordered=(
     "${SAVED_OBJECTS_DIR}/rtx-discover.ndjson"
+    # Original 5-panel scaffold lenses (Phase 5, PR #238)
     "${SAVED_OBJECTS_DIR}/rtx-lens-top-src.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-top-dst-port.ndjson"
+    # v2 Lens objects: metrics
+    "${SAVED_OBJECTS_DIR}/rtx-lens-metric-total-events.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-metric-unique-src.ndjson"
+    # v2 Lens objects: donuts (categorical breakdowns)
+    "${SAVED_OBJECTS_DIR}/rtx-lens-donut-severity.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-donut-facility.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-donut-action.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-donut-protocol.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-donut-interface.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-donut-direction.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-donut-phase.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-donut-router.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-donut-country.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-donut-top-src.ndjson"
+    # v2 Lens objects: time series + heatmap + stacked bar
+    "${SAVED_OBJECTS_DIR}/rtx-lens-line-unique-src-over-time.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-heatmap-hour-router.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-stacked-country-over-time.ndjson"
+    # Maps + dashboards last
     "${SAVED_OBJECTS_DIR}/rtx-maps-geo.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-overview.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-overview-v2.ndjson"
 )
 
 failures=0
