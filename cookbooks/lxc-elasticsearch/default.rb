@@ -154,7 +154,14 @@ end
 # Subdirs: created with mitamae's directory resource (no owner attempt
 # yet — the elasticsearch user doesn't exist before apt install). The
 # chown happens in the post-install execute resource below.
-%w[data logs certs].each do |sub|
+#
+# Note: certs/ is intentionally NOT created under /data/elasticsearch
+# because native ES enforces a Java SecurityManager constraint that
+# blocks reading SSL files outside /etc/elasticsearch (error:
+# "SSL resources should be placed in the [/etc/elasticsearch] directory").
+# Certs are installed at /etc/elasticsearch/certs/ instead — see cert
+# install resources below.
+%w[data logs].each do |sub|
   directory "#{state_dir}/#{sub}" do
     mode "755"
   end
@@ -174,12 +181,21 @@ end
 
 # Re-chown bind-mount subdirs to the elasticsearch user (created by the
 # DEB postinst). Idempotent: skipped when the chown already matches.
-%w[data logs certs].each do |sub|
+%w[data logs].each do |sub|
   execute "chown #{state_dir}/#{sub} to elasticsearch" do
     command "chown -R elasticsearch:elasticsearch #{state_dir}/#{sub}"
     only_if "id elasticsearch >/dev/null 2>&1"
     not_if "test \"$(stat -c '%U:%G' #{state_dir}/#{sub})\" = 'elasticsearch:elasticsearch'"
   end
+end
+
+# Cert directory under /etc/elasticsearch (Java SecurityManager constraint
+# — SSL resources must live under ES_PATH_CONF=/etc/elasticsearch).
+execute "create /etc/elasticsearch/certs directory" do
+  command "install -d -m 0750 -o root -g elasticsearch /etc/elasticsearch/certs"
+  only_if "id elasticsearch >/dev/null 2>&1"
+  not_if "test -d /etc/elasticsearch/certs && " \
+         "test \"$(stat -c '%U:%G:%a' /etc/elasticsearch/certs)\" = 'root:elasticsearch:750'"
 end
 
 # === elasticsearch.yml render ===
@@ -338,7 +354,17 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "/monitoring/elastic/* in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  skip_if: -> { File.exist?(env_output_path) },
+  # Skip when env file AND all 3 certs already exist at the new
+  # /etc/elasticsearch/certs/ location. Previously skipped only on env
+  # presence, but the cert path migration (PR #257 fix) required
+  # re-fetching certs from SSM into the staging dir even when the env
+  # file was already in place from the partial PR #256 apply.
+  skip_if: -> {
+    File.exist?(env_output_path) &&
+      File.exist?("/etc/elasticsearch/certs/ca.crt") &&
+      File.exist?("/etc/elasticsearch/certs/#{node_name}.crt") &&
+      File.exist?("/etc/elasticsearch/certs/#{node_name}.key")
+  },
 ) do
   execute "generate elasticsearch secrets env" do
     command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
@@ -371,27 +397,30 @@ file env_temp_path do
   only_if "test -f #{env_temp_path} && test -f #{env_output_path}"
 end
 
-# Install certs into /data/elasticsearch/certs/ — owned by elasticsearch
-# user. CA cert and node cert are mode 0640 (group-readable PEM), node
-# key is mode 0600 (secret).
+# Install certs into /etc/elasticsearch/certs/ — owned by root:elasticsearch.
+# CA cert and node cert are mode 0640 (group-readable PEM), node key is
+# mode 0600 (root-only). Native ES requires SSL resources under
+# /etc/elasticsearch (Java SecurityManager FilePermission constraint).
+certs_dir = "/etc/elasticsearch/certs"
+
 %w[ca crt key].each do |kind|
   case kind
   when "ca"
     src  = "#{certs_staging_dir}/ca.crt"
-    dest = "#{state_dir}/certs/ca.crt"
+    dest = "#{certs_dir}/ca.crt"
     mode = "0640"
   when "crt"
     src  = "#{certs_staging_dir}/#{node_name}.crt"
-    dest = "#{state_dir}/certs/#{node_name}.crt"
+    dest = "#{certs_dir}/#{node_name}.crt"
     mode = "0640"
   when "key"
     src  = "#{certs_staging_dir}/#{node_name}.key"
-    dest = "#{state_dir}/certs/#{node_name}.key"
-    mode = "0600"
+    dest = "#{certs_dir}/#{node_name}.key"
+    mode = "0640"
   end
 
   execute "install elasticsearch cert (#{kind})" do
-    command "install -m #{mode} -o elasticsearch -g elasticsearch #{src} #{dest}"
+    command "install -m #{mode} -o root -g elasticsearch #{src} #{dest}"
     only_if "test -f #{src} && id elasticsearch >/dev/null 2>&1"
     not_if "test -f #{dest} && diff -q #{src} #{dest} 2>/dev/null"
     notifies :run, "execute[restart elasticsearch]"
@@ -402,9 +431,9 @@ end
 execute "delete elasticsearch cert staging" do
   command "rm -rf #{certs_staging_dir}"
   only_if "test -d #{certs_staging_dir} && " \
-          "test -f #{state_dir}/certs/ca.crt && " \
-          "test -f #{state_dir}/certs/#{node_name}.crt && " \
-          "test -f #{state_dir}/certs/#{node_name}.key"
+          "test -f #{certs_dir}/ca.crt && " \
+          "test -f #{certs_dir}/#{node_name}.crt && " \
+          "test -f #{certs_dir}/#{node_name}.key"
 end
 
 # === Service activation ===
@@ -426,9 +455,9 @@ execute "enable + start elasticsearch" do
   # the service can usefully start.
   only_if <<~SH.tr("\n", " ").strip
     test -f #{env_output_path} || exit 1;
-    test -f #{state_dir}/certs/ca.crt || exit 1;
-    test -f #{state_dir}/certs/#{node_name}.crt || exit 1;
-    test -f #{state_dir}/certs/#{node_name}.key || exit 1;
+    test -f #{certs_dir}/ca.crt || exit 1;
+    test -f #{certs_dir}/#{node_name}.crt || exit 1;
+    test -f #{certs_dir}/#{node_name}.key || exit 1;
     test -f #{es_yml_path} || exit 1;
     systemctl is-enabled elasticsearch.service > /dev/null 2>&1 &&
     systemctl is-active elasticsearch.service > /dev/null 2>&1 && exit 1 || exit 0

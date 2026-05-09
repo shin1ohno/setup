@@ -37,17 +37,22 @@ xpack.security.enabled: true
 xpack.security.autoconfiguration.enabled: false
 
 # Transport TLS — node-to-node communication. Cert + key are PEM files
-# fetched from SSM and installed at /data/elasticsearch/certs/ by the
-# cookbook. Absolute paths because the native ES install reads them at
-# bootstrap; relative paths (resolved against ES_PATH_CONF=/etc/elasticsearch
-# for native) would not point at the bind-mount destination.
+# fetched from SSM and installed at /etc/elasticsearch/certs/ by the
+# cookbook. Native ES enforces a Java SecurityManager FilePermission
+# constraint: SSL resources MUST live under /etc/elasticsearch — paths
+# anywhere else (e.g. /data/elasticsearch/certs/) are denied at startup
+# with `SslConfigException: cannot read configured PEM certificate_authorities
+# ... access to read the file is blocked; SSL resources should be placed
+# in the [/etc/elasticsearch] directory`. Relative paths resolve against
+# ES_PATH_CONF=/etc/elasticsearch, so `certs/...` would also work; we use
+# absolute /etc/elasticsearch/certs/ for clarity.
 xpack.security.transport.ssl.enabled: true
 xpack.security.transport.ssl.verification_mode: certificate
 xpack.security.transport.ssl.client_authentication: required
-xpack.security.transport.ssl.key: /data/elasticsearch/certs/@@NODE_NAME@@.key
-xpack.security.transport.ssl.certificate: /data/elasticsearch/certs/@@NODE_NAME@@.crt
+xpack.security.transport.ssl.key: /etc/elasticsearch/certs/@@NODE_NAME@@.key
+xpack.security.transport.ssl.certificate: /etc/elasticsearch/certs/@@NODE_NAME@@.crt
 xpack.security.transport.ssl.certificate_authorities:
-  - /data/elasticsearch/certs/ca.crt
+  - /etc/elasticsearch/certs/ca.crt
 
 # HTTP TLS — disabled in Phase 3b. Switch to true in Phase 7-tls and
 # point at the same node cert.
