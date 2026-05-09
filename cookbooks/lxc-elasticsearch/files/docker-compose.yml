@@ -54,7 +54,7 @@ services:
       # cluster and at least primary shards are allocated. `green`
       # requires replicas (= peer nodes joined) and would block on
       # bootstrap before es-1/es-2 are up.
-      test: ["CMD-SHELL", "curl -sf -u elastic:${ELASTIC_PASSWORD} http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
+      test: ["CMD-SHELL", "curl -sf -u 'elastic:${ELASTIC_PASSWORD}' 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 10
