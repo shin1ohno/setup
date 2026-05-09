@@ -7,6 +7,13 @@
       "dynamic": "strict",
       "properties": {
         "@timestamp":     { "type": "date" },
+        "data_stream": {
+          "properties": {
+            "type":      { "type": "constant_keyword" },
+            "dataset":   { "type": "constant_keyword" },
+            "namespace": { "type": "constant_keyword" }
+          }
+        },
         "host":           { "type": "keyword" },
         "router":         { "type": "keyword" },
         "filter_no":      { "type": "keyword" },
