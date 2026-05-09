@@ -161,6 +161,26 @@ ordered=(
     # Maps + dashboard
     "${SAVED_OBJECTS_DIR}/ec2-maps-geo.ndjson"
     "${SAVED_OBJECTS_DIR}/ec2-access-overview.ndjson"
+
+    # ---- Grafana-ported RTX routers metrics dashboard ----
+    # Reads from metrics-prometheus.collector-* (Stream T deliverable).
+    # Panels show "no data" until Prometheus metrics flow into ES.
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-data-view.ndjson"
+    # Lens visualizations (12 panels): stats first, then timeseries, table
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-uptime.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-firmware.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-hostname.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-temperature.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-lan1-bandwidth.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-lan2-bandwidth.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-bridge1-bandwidth.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-input-errors.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-output-errors.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-cpu.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-memory.ndjson"
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-interface-table.ndjson"
+    # Dashboard last (references all 12 lens objects above)
+    "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-overview.ndjson"
 )
 
 failures=0
