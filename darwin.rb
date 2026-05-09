@@ -42,5 +42,6 @@ include_cookbook "macism"
 include_cookbook "altserver"
 include_cookbook "gpg-backup"
 include_cookbook "edge-agent"
+include_cookbook "elastic-agent"
 include_cookbook "macos-hub"
 

@@ -1,0 +1,103 @@
+# Elastic Agent standalone config (macOS) — managed by cookbooks/elastic-agent
+# DO NOT EDIT BY HAND — re-render via `./bin/mitamae local darwin.rb`.
+#
+# Substitution markers (replaced by generate_config.sh):
+#   @@ES_USERNAME@@      e.g. elastic_agent_writer
+#   @@ES_PASSWORD@@      fetched from SSM /monitoring/elastic/elastic-agent-password
+#   @@VARIANT@@          air | neo (used as agent.id discriminator)
+#   @@HOSTNAME@@         host short name (substituted at render time)
+#   @@ES_HOSTS_YAML@@    multi-line YAML array of ES URLs
+
+agent:
+  id: "${@@VARIANT@@}-macos"
+  monitoring:
+    enabled: true
+    use_output: default
+    logs: true
+    metrics: true
+
+outputs:
+  default:
+    type: elasticsearch
+    hosts:
+@@ES_HOSTS_YAML@@
+    username: "@@ES_USERNAME@@"
+    password: "@@ES_PASSWORD@@"
+    # Phase 3b ships HTTP. Phase 7-tls cuts over to HTTPS + the SSM-distributed
+    # CA at /monitoring/elastic/ca/cert. Re-render this file (cookbook bump)
+    # when the cluster cuts over.
+    # ssl.certificate_authorities: ["/Library/Elastic/Agent/ca.crt"]
+
+inputs:
+  # ---------- system metrics (host-level cpu / memory / disk / network) ----------
+  - type: system/metrics
+    id: system-metrics-@@HOSTNAME@@
+    use_output: default
+    data_stream:
+      namespace: macos
+    streams:
+      - data_stream.dataset: system.cpu
+        metricsets: [cpu]
+        period: 30s
+      - data_stream.dataset: system.memory
+        metricsets: [memory]
+        period: 30s
+      - data_stream.dataset: system.network
+        metricsets: [network]
+        period: 30s
+        interfaces: [en0, en1]
+      - data_stream.dataset: system.filesystem
+        metricsets: [filesystem]
+        period: 5m
+      - data_stream.dataset: system.load
+        metricsets: [load]
+        period: 1m
+      - data_stream.dataset: system.process.summary
+        metricsets: [process_summary]
+        period: 1m
+      - data_stream.dataset: system.uptime
+        metricsets: [uptime]
+        period: 5m
+
+  # ---------- system.log filestream (auth, sshd, kernel events) ----------
+  - type: filestream
+    id: system-log-@@HOSTNAME@@
+    use_output: default
+    data_stream:
+      namespace: macos
+      dataset: system.syslog
+    paths:
+      - /var/log/system.log
+      - /var/log/system.log.*
+    parsers:
+      - syslog:
+          format: rfc3164
+
+  # ---------- install.log (macOS package install events) ----------
+  - type: filestream
+    id: install-log-@@HOSTNAME@@
+    use_output: default
+    data_stream:
+      namespace: macos
+      dataset: macos.install
+    paths:
+      - /var/log/install.log
+      - /var/log/install.log.*
+    parsers:
+      - syslog:
+          format: rfc3164
+
+  # ---------- user log dir (~/Library/Logs) ----------
+  # Picks up app crash reports, third-party tool logs. Bound to whatever
+  # process the agent runs as (root via launchd) — root can traverse user
+  # home dirs without TCC prompts on this path.
+  - type: filestream
+    id: user-logs-@@HOSTNAME@@
+    use_output: default
+    data_stream:
+      namespace: macos
+      dataset: macos.userlogs
+    paths:
+      - /Users/*/Library/Logs/**/*.log
+    prospector.scanner.exclude_files:
+      - '\.gz$'
