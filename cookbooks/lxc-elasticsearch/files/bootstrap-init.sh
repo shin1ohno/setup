@@ -37,11 +37,22 @@ set -euo pipefail
 FILES_DIR="${1:?usage: $0 <files_dir>}"
 ES_URL="${ES_URL:-http://localhost:9200}"
 
-# .env source — required vars: ELASTIC_PASSWORD, KIBANA_PASSWORD,
+# .env load — required vars: ELASTIC_PASSWORD, KIBANA_PASSWORD,
 # VECTOR_PASSWORD, GRAFANA_PASSWORD, ANALYST_PASSWORD, MONITOR_PASSWORD.
+# Parsed with explicit while-read + eval rather than `source` so that
+# raw passwords with shell metacharacters (parens, brackets, ampersand,
+# etc) survive intact. `.env` format matches docker-compose's env_file:
+# KEY=VALUE with no quoting, allowing the same file to be consumed by
+# both bootstrap-init.sh (here) and `docker compose`.
 if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
-  # shellcheck disable=SC1090
-  source "${ENV_FILE}"
+  while IFS='=' read -r __k __v; do
+    [[ "${__k}" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${__k// }" ]] && continue
+    # eval "key=\$__v" literal-assigns __v's content to <key> without
+    # re-parsing metacharacters in __v.
+    eval "${__k}=\$__v"
+    export "${__k}"
+  done < "${ENV_FILE}"
 fi
 
 : "${ELASTIC_PASSWORD:?ELASTIC_PASSWORD must be set}"
