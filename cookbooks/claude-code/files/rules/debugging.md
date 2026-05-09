@@ -1,5 +1,7 @@
 # Code Behavior Debugging Protocol
 
+This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/rules/debugging-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
+
 ## Silent Failure Detection
 
 A silent failure is when an operation returns success but the intended state change did not occur. Observable signals: API returns 200/Ok, function returns without error, but the expected effect (playback starts, file appears, record saved, remote device reacts) is absent.
@@ -14,87 +16,45 @@ When you cannot directly observe the effect of a fix from the source code alone:
 
 ## Noisy Non-Failure Pattern
 
-The inverse of a silent failure: a warning, error string, or health-check entry is visibly present, but the system is functioning correctly. Treating the noise as a defect to fix can cause more harm than the noise itself, especially if the "fix" disables a fallback path the system is depending on.
+The inverse of silent failure: a warning, error string, or health-check entry is visibly present, but the system is functioning correctly. Treating the noise as a defect can disable a fallback path the system depends on.
 
-When the user reports something that looks like a problem (a warning, a red entry in `status` output, a recurring log line, a health-check failure):
+Protocol:
 
-1. **Test the function the warning is about, end-to-end, before believing the warning** — if `tailscale status` complains about DNS, run `getent hosts <peer>` and `tailscale ping <peer>` first. If `systemctl --failed` lists a service, query whatever the service provides before treating it as broken
-2. **Classify the noise as cosmetic, partial, or load-bearing**:
-   - **Cosmetic** — warning emitted by a path the system already abandoned (failed and fell through to a working fallback). Fix is optional; suppressing it is fine, but verify the fix doesn't disable the working path
-   - **Partial** — degraded mode is in effect; the system works for the tested operations but a class of operations is broken (typically slow paths, edge cases, or specific peers)
-   - **Load-bearing** — the warning describes the actual broken behavior the user noticed
-3. **Only Cosmetic noise is safe to silence by removal/diversion**. For Partial/Load-bearing, fix the real problem
-4. **State the classification to the user before proposing a fix** — "DNS works (verified with `getent`); the resolvconf warning is from a failed shim path that tailscaled abandoned. Cosmetic. Proposed fix: divert the shim so the path isn't tried at all"
+1. **Test the function the warning is about, end-to-end, before believing the warning** — `tailscale status` complains about DNS → run `getent hosts <peer>` and `tailscale ping <peer>` first
+2. **Classify the noise**: Cosmetic (failed path the system already abandoned, safe to silence), Partial (degraded mode in effect, fix the real problem), Load-bearing (warning describes the actual broken behavior)
+3. **Only Cosmetic noise is safe to silence** — verify the silence doesn't disable the working path
+4. **State the classification to the user before proposing a fix**
 
-The trap: warning-driven debugging starts from "this looks broken, fix it" and skips the function test. The fix often disables the OS feature that was holding things together. Function-test first, classify the noise, then act.
-
-This rule exists because the 2026-04-26 session correctly applied this protocol on a tailscale resolvconf warning — DNS was verified working before the divert was proposed. Codifying the approach so it generalizes.
+Detail (trap explanation + origin): see `~/.claude/rules/debugging-detail.md#noisy-non-failure-pattern`.
 
 ## Do Not Report Success Without State Evidence
 
-The following are NOT evidence that a fix worked:
+NOT evidence: code compiled/ran without errors; function returned `Ok(())`; "success" message printed by *your* code; previous run looked correct; test suite passes (unit/integration tests exercise isolated paths, not end-to-end effects).
 
-- The code compiled and ran without errors
-- The function returned `Ok(())` / resolved a Promise / exited 0
-- A "success" or "Playing: X" message was printed by *your* code
-- A previous run's output looked correct
-- The test suite passes (unit/integration tests exercise isolated paths, not end-to-end effects)
-
-The following ARE acceptable evidence:
-
-- Observable system state on the receiving end (zone status, file exists, database record present, queue length changed)
-- Test output that exercises the changed code path against real inputs
-- Log output from the *receiving* system (not the sending side)
-- A status-query command that returns the expected state after the fix
+ARE evidence: observable system state on the receiving end (zone status, file exists, DB record present, queue length changed); test output exercising the changed path against real inputs; log output from the *receiving* system; status-query command returning the expected state after the fix.
 
 ## When to Add Observation Tooling Proactively
 
 Add a status/observe command *as part of the feature*, not as a follow-up, when:
 
-- The operation crosses a network or IPC boundary (you send a command; a remote system executes it — MQTT, HTTP, WebSocket RPC, IPC)
+- The operation crosses a network or IPC boundary (MQTT, HTTP, WebSocket RPC, IPC)
 - The operation is asynchronous (command sent now, effect occurs later)
 - Previous fix attempts reported success but user confirmed the effect was absent
-- The feature controls external hardware or services (audio systems, IoT devices, CI pipelines)
+- The feature controls external hardware or services (audio, IoT, CI pipelines)
 
-If no observation tool exists in the codebase yet, build a minimal one (`status` subcommand, `--verbose` flag, status query script) during the same unit of work.
+If no observation tool exists in the codebase yet, build a minimal one (`status` subcommand, `--verbose` flag, query script) during the same unit of work.
 
 ## Auth-boundary error visibility — log Err variant on every reject
 
-Authentication and authorization gates (JWT validators, OAuth bearer verifiers, `auth_request` handlers, API key checks, session cookie validators, mTLS peer cert checks) MUST log the rejection variant at WARN or ERROR level **unconditionally** — never gated behind `#[cfg(debug_assertions)]`, `RUST_LOG=trace`, `DEBUG=1`, or any compile/runtime flag that defaults off in production.
+Authentication and authorization gates (JWT validators, OAuth bearer verifiers, `auth_request` handlers, API key checks, session cookie validators, mTLS peer cert checks) MUST log the rejection variant at WARN or ERROR level **unconditionally** — never gated behind `#[cfg(debug_assertions)]`, `RUST_LOG=trace`, `DEBUG=1`, or any flag that defaults off in production.
 
-The pattern that triggers this rule: a `verify_*` or `authenticate_*` function returns `Result<Claims, AuthError>` (or equivalent) where `AuthError` is a rich enum (`WrongIssuer`, `WrongAudience`, `Expired`, `InvalidSignature`, `Other(String)`, etc.), and the call site discards the variant — emitting a flat HTTP 401 / 403 with no log line that names which variant fired.
+Trigger pattern: `verify_*` returns `Result<Claims, AuthError>` (rich enum); call site discards the variant via `Err(_) => return 401`. Fix: log `error_variant = ?e` + relevant config (`expected_iss`) before the response, OR move the log into the verify function itself at the final reject site.
 
-```rust
-// WRONG — silent: every rejection looks identical to the operator
-match verify_bearer(header, &cache, &cfg).await {
-    Ok(claims) => /* ... */,
-    Err(_) => return unauthorized_response(),
-}
+**Don't** log the full token. **Do** log: variant, kid from JWT header, expected issuer/audience/scope, 16-char token prefix.
 
-// RIGHT — variant + relevant claim values logged before the response
-match verify_bearer(header, &cache, &cfg).await {
-    Ok(claims) => /* ... */,
-    Err(e) => {
-        tracing::warn!(
-            error_variant = ?e,
-            error = %e,
-            expected_iss = %cfg.issuer,
-            "auth rejected"
-        );
-        return unauthorized_response();
-    }
-}
-```
+Server-side counterpart of "FFI Boundary Error Visibility" in `~/.claude/rules/ios-build.md`.
 
-Or place the `tracing::warn!` inside the verify function itself at the final reject site, so every caller benefits without coordinated changes.
-
-The cost of a silent auth gate: every wrong-token / wrong-issuer / expired-token / kid-not-in-jwks failure looks identical to the operator (a 401 with the same body). Diagnosing requires a debug build with added logging, deploy, retry, decode logs — typically 30+ minutes per session. With unconditional logging the diagnosis is one `docker logs ... | grep "auth rejected"` away.
-
-**Don't** log the full token (logs end up in centralized aggregation; tokens are credentials). DO log: the variant, the kid extracted from the JWT header, the expected issuer/audience/scope from server config, a 16-char token prefix to disambiguate concurrent requests. Never the full Authorization header value.
-
-This rule is the server-side counterpart to the iOS rule "FFI Boundary Error Visibility" (`~/.claude/rules/ios-build.md`) — both codify that the boundary between trusted-caller and untrusted-input must surface its rejection variant, not just its rejection.
-
-This rule exists because roon-mcp's `verify_bearer` (in `crates/roon-mcp/src/auth.rs`) returned `Result<Claims, AuthError>` with rich variants but the call site at /sse just emitted HTTP 401 invalid_token — every reject looked identical. The 2026-05-05 session debug arc spanned PR #128 (RUST_LOG=info,roon_mcp::auth=debug, no effect because the Err arm had no debug! either), through the present session's debug branch with added `tracing::warn!` at line 240, before the actual variant (`AuthError::WrongAudience`) was visible. With unconditional logging the diagnosis would have been minutes, not the 3-session arc it became.
+Detail (Rust example + origin): see `~/.claude/rules/debugging-detail.md#auth-boundary-error-visibility`.
 
 ## Do Not Push Error Reproduction to the User
 
@@ -112,146 +72,73 @@ Asking the user to reproduce an error they already reported is asking them to do
 
 When the same observable symptom persists after 3 hypothesis-test cycles on the same code path, stop the fix loop. Do not start a 4th local fix.
 
-Instead:
 1. Synthesize the failed hypotheses: "3 approaches failed (A, B, C). The shared assumption is X."
-2. Challenge X at the design level with AskUserQuestion: "これ以上の局所修正では解決しない可能性があります。設計上の前提 X を見直す必要があるかもしれません。どの方針で進めますか？"
+2. Challenge X at the design level with AskUserQuestion: "局所修正では解決しない可能性がある。設計上の前提 X を見直す必要があるか？"
 
-**Signal**: same symptom after 3 cycles = wrong design assumption, not wrong implementation detail. Continuing to iterate on implementation is sunk-cost behavior.
+**Signal**: same symptom after 3 cycles = wrong design assumption, not wrong implementation detail.
 
-**Batch fixes within a rebuild cycle**: when a debugging loop involves an expensive rebuild (`docker compose up --build`, `cargo build --release`, `xcodebuild`, `terraform apply` — anything that takes more than ~60s end to end), collect ALL hypothesized format / config fixes for the *current* observable failure before triggering the rebuild. Do not submit one change, wait for the build, observe the same-class failure, then submit a second change.
+**Batch fixes within a rebuild cycle**: when a debugging loop involves an expensive rebuild (`docker compose up --build`, `cargo build --release`, `xcodebuild`, `terraform apply` — anything >60s), collect ALL hypothesized fixes for the *current* observable failure before triggering the rebuild. Sequential evaluation of N hypotheses costs N × build time; batched evaluation costs one build.
 
-If 3 hypotheses each have 50/50 odds and the rebuild costs 5 min, sequential evaluation costs ~15 min plus mental context switching; batched evaluation costs ~5 min and forces you to enumerate the candidate space up front. Exception: when the second fix genuinely depends on observing the first fix's partial effect (e.g. you cannot guess header B's value without seeing the connection survive header A's wrong value first). When in doubt, batch.
-
-This rule exists because the 2026-04-28 roon-mcp / SSE session ran ~7 docker rebuild cycles back-to-back — each cycle added one of {snake_case session_id, trailing slash on `/messages/`, `X-Accel-Buffering: no` header, `charset=utf-8` on content-type, default `sse_path = "/sse"`} — every one of which was diagnosable from the same `curl --hex-dump` against the cognee reference server before the first rebuild. ~35 minutes of build wall-clock recoverable by batching.
+Detail (worked example + origin): see `~/.claude/rules/debugging-detail.md#fix-loop-escalation-threshold`.
 
 ## Wire-Protocol Reverse Engineering — Capture Reference Bytes First
 
-When implementing a transport, webhook receiver, or protocol endpoint to satisfy an external client whose format expectations are undocumented (Anthropic Claude.ai MCP connector, Slack RTM/Socket Mode, an MCP client SDK, a vendor's webhook-validation handshake), capture the *raw bytes* from a known-working reference server BEFORE writing any implementation code.
+When implementing a transport, webhook receiver, or protocol endpoint to satisfy an external client whose format expectations are undocumented (Anthropic Claude.ai MCP connector, Slack RTM/Socket Mode, MCP client SDK, vendor webhook handshake), capture the *raw bytes* from a known-working reference server BEFORE writing any implementation code.
 
-**Sequence**:
+Sequence:
 
-1. Identify the nearest working reference deployment. Same vendor on a sibling endpoint (`https://mcp.ohno.be/cognee/sse` next to your new `/roon/sse`), an open-source server with public docs, an in-tree example. There is almost always one.
+1. Identify the nearest working reference deployment (sibling vendor endpoint, open-source server, in-tree example — there is almost always one)
 2. Capture the wire bytes:
    ```
    curl -sN -H "Accept: text/event-stream" '<reference-url>' | head -c 400 | xxd
    curl -sIL '<reference-url>'   # response headers
    ```
-3. Write the implementation.
+3. Write the implementation
 4. Diff your output against the reference at the same hex-dump granularity:
    ```
    diff <(curl -sN '<reference>' | head -c 400 | xxd) \
         <(curl -sN '<new>'       | head -c 400 | xxd)
    ```
-5. Fix every divergence in **one** batch (per the Fix-Loop Escalation rule above). Do not submit one fix per rebuild cycle.
-
-**Anti-pattern**: iterating on format hypotheses one-at-a-time across expensive rebuilds without ground truth. Common divergences hex-dump catches in one pass:
-
-- LF vs CRLF line endings
-- `event:` named events vs unnamed `data:`-only frames
-- Path conventions (`/messages` vs `/messages/`, `sessionId=` vs `session_id=`)
-- Required intermediary-control headers (`X-Accel-Buffering: no`, `Cache-Control: no-store`, charset)
-- URL shape in payload (relative vs absolute, with or without proxy prefix)
+5. Fix every divergence in **one** batch (per Fix-Loop Escalation rule above)
 
 **Trigger**: "the client says NG but my server returns 200 OK". The client has format expectations your code does not satisfy yet. Stop hypothesizing; start observing.
 
-This rule exists because the 2026-04-28 roon-mcp SSE session burned ~35 min iterating on SSE format hypotheses before running a single hex-diff against the cognee reference server. The diff revealed all five divergences in one pass.
+Detail (common divergence list + origin): see `~/.claude/rules/debugging-detail.md#wire-protocol-reverse-engineering`.
 
 ## Read the Source Before Researching Patterns
 
-When the failure is an observable error string from a third-party Rust / Go / Python SDK (e.g., `BLE error: Device not found`, `connection refused`, `unauthorized`), **grep the SDK source for the exact error string before launching a web-research sub-agent**.
+When the failure is an observable error string from a third-party Rust / Go / Python SDK (e.g., `BLE error: Device not found`, `connection refused`, `unauthorized`), **grep the SDK source for the exact error string before launching a web-research sub-agent**. Source-first finds the line that emits the error and its guard condition in 1-2 minutes.
 
-Research-first agents surface authoritative-looking docs about the surrounding abstraction layer (OS permissions, network stack, wire protocol) that can mis-frame the problem. Source-first finds the line that emits the error and its guard condition in 1-2 minutes.
+Sequence:
 
-**Sequence**:
+1. `find` / `Glob` the SDK repo on disk (`~/ManagedProjects/<sdk>/`). If absent, `cargo fetch` + inspect `~/.cargo/registry/src/`
+2. `Grep` for the error string — typically reveals a single emit site
+3. Read 30-50 lines around the emit site, trace guard back to API surface
+4. Form a hypothesis grounded in source, **then** research if needed
 
-1. `find` / `Glob` the SDK repo on disk (`~/ManagedProjects/<sdk>/`). If absent, `cargo fetch` + inspect `~/.cargo/registry/src/` for the published version.
-2. `Grep` for the error string — typically reveals a single emit site with a narrow failure condition.
-3. Read the 30-50 lines around the emit site, trace the guard condition back to the API surface.
-4. Form a hypothesis grounded in that source, **then** research if needed.
+Sub-rules (Detail file): custom Terraform providers — apply-time command-string errors; tool-manager migration design — verify backend claims (cross-link to `~/.claude/rules/mise-migration.md`); CLI tool JSON output — probe schema before writing jq.
 
-**Anti-signal**: if a research agent comes back with suggestions that rely on entire-layer replacements (e.g., ".app bundle + codesign + Info.plist entitlements" for a BLE error), and the SDK source hasn't been read, assume the framing is wrong. Read the source before acting on that research.
-
-This rule exists because Thread 3 of the 2026-04-20 retro session burned ~30 minutes on macOS TCC / .app-bundle research for a `BLE error: Device not found`, when the actual bug was a 2-line sibling-central mismatch inside `nuimo-rs/crates/nuimo/src/backend/macos.rs` — visible on first read of the file.
-
-### Custom terraform providers — apply-time command-string errors
-
-This applies identically to custom Terraform providers. When `terraform apply` fails with a device-side syntax error (YAMAHA RTX `コマンド名を確認してください`, Cisco `% Invalid input`, a CLI-style "unrecognized command" from any provider), **grep the provider's command builders — `Build*Command`, `ToCommands`, `Render*`, the service layer that calls `executor.Run` — before trusting an Explore agent's summary or the provider's own `docs/`**.
-
-The provider's internal schema and docs describe what the resource accepts; they do not always reflect what the code emits. The emitted string is what the device actually sees. A 2-minute grep for the exact command fragment in the error (e.g., `"ip tunnel"` for `ip tunnel1 secure filter ...`) usually points directly at the builder that needs fixing.
-
-This rule exists because the 2026-04-22 session lost ~30 minutes after an Explore agent reported that `terraform-provider-rtx` supported tunnel-interface filter apply. The provider did expose the resource, but its `BuildInterfaceSecureFilterCommand` emitted `ip tunnel1 secure filter ...` which RTX rejects — the correct form requires a `tunnel select N` context switch first. Visible on first read of `internal/rtx/parsers/ip_filter.go`.
-
-### Tool-manager migration design — verify backend claims before writing
-
-The "read the source before researching" principle applies at design time too, not just during debugging. When designing a migration to a tool manager (mise / asdf / nix / homebrew) or writing any external-download recipe (`ubi:`, `aqua:`, `github:`, `go:`, `cargo:` backends; manual `curl` + `shasum` installs), treat plan-agent or web-search output as **unverified hypotheses, not facts**.
-
-The authoritative sources are:
-
-- `mise registry <name>` — confirms whether bare `mise use <name>` works and which backend the registry uses
-- `gh api repos/<owner>/<repo>/releases/latest --jq '.tag_name, (.assets[] | .name)'` — confirms tag format and downloadable assets
-- `curl -fsI <url>` — confirms the URL serves the expected file (always `-f`, never bare `-L`)
-- `gh api repos/<owner>/<repo> --jq '.language'` — confirms the repo's primary language matches the planned backend (`go:` requires Go; `cargo:` requires Rust; `npm:` requires JS/TS)
-
-Run each one before writing the cookbook line. Web summaries cannot detect:
-
-- `ubi:` prepends `v` to the version, but upstream tag is bare `1.6.2` → 404
-- `.sha256` file contains a bare hash; `shasum -c` expects `<hash>  <filename>` → error
-- S3-hosted `-arm64`/`-x86_64` URLs return 403; only `-universal` is public
-- GitHub Releases exists but has zero downloadable assets (tarball-only release)
-- Tool is not in mise core registry; needs `aqua:<org>/<repo>` prefix
-- Repo is Swift/Zig/not-Go; `go:` backend silently fetches wrong binary or fails
-
-These all look identical from a plan-agent's web summary. They diverge only when you query the actual API or URL.
-
-This rule exists because PR #32 (2026-04-25 brew→mise migration in `~/ManagedProjects/setup`) shipped 8 of these failure modes in a single PR, producing 6 cleanup PRs (#33, #34, #36, #37, #38, #41) over the same session. The full pre-migration checklist is in `~/.claude/rules/mise-migration.md`; the executable batch is the `/verify-mise-backend` skill.
-
-### CLI tool JSON output — probe schema before writing jq
-
-When a CLI tool offers a JSON-output flag (`--json-output`, `--json`, `-o json`, `--format json`), NEVER write a jq selector against guessed key paths. Probe the actual shape first.
-
-**Sequence**:
-
-1. Run the command once with the JSON flag and pipe through `python3 -m json.tool | head -50` (or `jq '.' | head -50` if jq is available). Inspect the actual nesting and key names.
-2. Read off the exact path you need.
-3. Only then write the jq selector.
-
-**Anti-pattern (from 2026-04-28 weave session)**:
-- Guessed `xcrun devicectl list devices --json-output -` would expose `.result.devices[].hardwareProperties.platform` matching `"iPadOS"`.
-- Actual JSON nested differently; selector returned empty.
-- Next step became "please copy-paste the UDID" — pushing onto the user what a 2-second probe would have answered.
-
-**Faster alternative — skip JSON entirely**: if the default tabular output already contains what you need, parse columns with awk:
-
-```sh
-xcrun devicectl list devices | awk '/iPad/ {print $3}'   # Identifier column for any device matching iPad
-gh pr list --state open | awk -F'\t' '{print $1}'        # PR number column
-```
-
-For tools whose tabular output has stable column counts (most do), awk is shorter, more obvious, and impossible to break with a wrong jq selector.
-
-**Same principle covers**: `gh api`, `aws ... --output json`, `kubectl get ... -o json`, `terraform show -json`, `cargo metadata --format-version 1`. Probe shape, then query.
+Detail (sub-rules + anti-signal + origins): see `~/.claude/rules/debugging-detail.md#read-the-source-before-researching`.
 
 ## Frame the Failure Class Before Writing the Fix
 
-When fixing a bug, the first design question is **"what shape is this failure class?"**, not "what minimal change makes this error stop?". Silencing the specific error often leaves the underlying fragility in place — correct only until the next instance.
+When fixing a bug, the first design question is **"what shape is this failure class?"**, not "what minimal change makes this error stop?". Silencing the specific error often leaves the underlying fragility in place.
 
-**Triggers** — when the error involves any of these, the failure is almost certainly structural and deserves a failure-class framing pass before implementing:
+**Triggers** — when the error involves any of these, the failure is structural and deserves a failure-class framing pass:
 
 - Hard-coded addresses (IPs, hostnames, ports) that the environment can rotate — DHCP leases, floating cloud IPs, mDNS-announced services
-- Stored auth tokens or keys against a mutable endpoint — the credential is stable but the endpoint it points to is not
-- Hard-coded filesystem paths that reference structure a sibling process / deploy step manages — `configs/*.toml` dropped by a repo refactor, state directories moved by an XDG migration, symlinks rewritten by deploys
-- Timestamps, versions, or hashes embedded in persisted state that outlive their intended scope
+- Stored auth tokens or keys against a mutable endpoint — credential stable but endpoint not
+- Hard-coded filesystem paths referencing structure a sibling process / deploy step manages
+- Timestamps, versions, or hashes embedded in persisted state outliving their intended scope
 
-**Protocol**:
+Protocol:
 
-1. Before implementing, name the failure class: "what set of similar failures will this same design reproduce?" Write it down in one sentence.
-2. If the class is structural (multiple foreseeable triggers, not a one-off), propose the class-wide fix via AskUserQuestion — typically includes discovery / caching / fallback, not just silencing
-3. If the class is transient (network blip, race, rare external outage), non-fatal retry is sufficient — proceed without the full framing round
-4. Non-fatal + retry is a necessary piece of the structural fix, **never the complete fix**. A dead service retried against stale config will stay dead forever
+1. Before implementing, name the failure class in one sentence: "what set of similar failures will this same design reproduce?"
+2. If structural (multiple foreseeable triggers), propose the class-wide fix via AskUserQuestion — typically discovery / caching / fallback, not just silencing
+3. If transient (network blip, race, rare external outage), non-fatal retry suffices
+4. Non-fatal + retry is a necessary piece of the structural fix, **never the complete fix** — a dead service retried against stale config stays dead
 
-**Anti-pattern**: seeing "Connection refused on 192.168.1.23" and immediately making the init non-fatal, without asking "why 192.168.1.23? is it stable? what happens when it changes?". The non-fatal change satisfies "error stops crashing the process" but leaves the service silently dead until a human re-pairs.
-
-This rule exists because in the 2026-04-22 session, three cascaded "hard-coded stale value" failures — systemd ExecStart pointing at a deleted `configs/` path, stale release binary predating the config migration, and Hue token IP pinned to a rotated DHCP lease — would each have been caught by asking "is this value persistently hard-coded against a thing that rotates?" before starting implementation. Instead, each was discovered sequentially, wasting restart cycles.
+Detail (anti-pattern + origin): see `~/.claude/rules/debugging-detail.md#frame-the-failure-class`.
 
 ## Chain verify command with the fix in the same `!` block
 
@@ -264,17 +151,6 @@ When presenting a credential or configuration fix to the user that must succeed 
   echo OK
 ```
 
-Versus the anti-pattern of presenting fix and verify as separate steps the user is expected to chain mentally:
+When verify cannot be composed (e.g. interactive `aws configure`): explicitly mark verify as **required before retrying the main task**, not a suggestion. "and confirm with" or "before retrying, run". Not "you can also check".
 
-```
-! aws configure --profile sh1admn
-
-# (then run, separately:)
-! aws ssm get-parameter --name /ssh-keys/devices/neo/private ...
-```
-
-Users skip "separately" verifies, especially under time pressure or when the fix command "looks like" it succeeded. They go straight back to retrying the main task, which fails at a deeper layer with a different-looking error — burning 2-3 round-trips to re-diagnose what the verify would have caught instantly.
-
-**When verify cannot be composed** (e.g. the fix is `aws configure` interactive, which can't be piped): explicitly mark the verify command as **required before retrying the main task** — not as a suggestion. Words like "and confirm with" or "before retrying, run". Not "you can also check".
-
-This rule exists because the 2026-04-25 neo bootstrap session presented `aws configure --profile sh1admn` and the SSM-read verify as separate steps. The user configured the profile, skipped the verify, and re-ran mitamae — which then failed deeper (UnrecognizedClientException because the credentials had been clobbered by an earlier `aws configure set` with empty values). 4-5 round-trips of diagnostic followed.
+Detail (anti-pattern + origin): see `~/.claude/rules/debugging-detail.md#chain-verify-with-fix`.
