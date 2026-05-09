@@ -182,10 +182,17 @@ ordered=(
     # Dashboard last (references all 12 lens objects above)
     "${SAVED_OBJECTS_DIR}/grafana-port-rtx-routers-overview.ndjson"
 
+    # ---- Auto-mitamae fleet dashboard (Phase 5b, Stream V) ----
+    "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-hosts-success.ndjson"
+    "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-hosts-hard-fail.ndjson"
+    "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-hosts-transient.ndjson"
+    "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-hosts-active.ndjson"
+    "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-max-duration.ndjson"
+    "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-max-drift.ndjson"
+    "${SAVED_OBJECTS_DIR}/auto-mitamae-lens-per-host.ndjson"
+    "${SAVED_OBJECTS_DIR}/auto-mitamae-overview.ndjson"
+
     # ---- Grafana-ported Proxmox metrics dashboard ----
-    # Reads from metrics-prometheus.collector-* (Stream T deliverable, PR #281).
-    # Reuses Stream U's metrics-prometheus-collector data view.
-    # Lens visualizations (14 panels): table first, then per-section
     "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-resource-table.ndjson"
     "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-cpu-history.ndjson"
     "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-node-cpu-current.ndjson"
@@ -200,7 +207,6 @@ ordered=(
     "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-lxc-disk.ndjson"
     "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-network-io.ndjson"
     "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-disk-io.ndjson"
-    # Dashboard last (references all 14 lens objects above)
     "${SAVED_OBJECTS_DIR}/grafana-port-proxmox-overview.ndjson"
 )
 
