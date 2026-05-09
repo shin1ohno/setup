@@ -32,5 +32,14 @@
         "resources": ["space:default"]
       }
     ]
+  },
+  "elastic_agent_writer": {
+    "cluster": ["monitor"],
+    "indices": [
+      {
+        "names": ["logs-*", "metrics-*", ".monitoring-*"],
+        "privileges": ["create_index", "create_doc", "write", "auto_configure", "view_index_metadata"]
+      }
+    ]
   }
 }

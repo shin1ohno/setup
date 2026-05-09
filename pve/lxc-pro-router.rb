@@ -227,3 +227,6 @@ local_ruby_block "log lxc-pro-router tailscale up hint" do
 end
 
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "pro-router", "tailscale"] })
+include_cookbook "elastic-agent"

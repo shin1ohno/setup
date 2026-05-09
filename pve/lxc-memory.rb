@@ -36,3 +36,6 @@ node.reverse_merge!(
 include_cookbook "docker-engine"
 include_cookbook "ai-memory"
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "memory"] })
+include_cookbook "elastic-agent"

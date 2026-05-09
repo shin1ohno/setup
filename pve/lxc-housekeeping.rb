@@ -34,3 +34,6 @@ node.reverse_merge!(
 include_cookbook "s3-backup"
 include_cookbook "obsidian_file_sync"
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "housekeeping"] })
+include_cookbook "elastic-agent"

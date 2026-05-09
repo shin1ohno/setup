@@ -39,3 +39,6 @@ node.reverse_merge!(
 
 include_cookbook "hydra-server"
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "hydra"] })
+include_cookbook "elastic-agent"

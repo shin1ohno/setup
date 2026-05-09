@@ -55,3 +55,8 @@ include_cookbook "edge-agent"
 # samba / smartmontools / obsidian_file_sync / s3-backup / gpg-backup
 # now live in roles/server/default.rb
 
+# Standalone Elastic Agent — ships system metrics + syslog/auth log to the
+# 3-node ES cluster. Per-host tags = ["bare-metal"].
+node.reverse_merge!(elastic_agent: { tags: ["bare-metal", "linux"] })
+include_cookbook "elastic-agent"
+
