@@ -478,7 +478,7 @@ end
 # handles its own cluster-ready wait (up to 5 min). Adversarial
 # #8 / #12 / #14 are encoded in the script.
 execute "run elasticsearch bootstrap" do
-  command "ENV_FILE=#{env_output_path} bash #{files_dir}/bootstrap-init.sh #{files_dir}"
+  command "ES_URL=http://#{transport_host}:9200 ENV_FILE=#{env_output_path} bash #{files_dir}/bootstrap-init.sh #{files_dir}"
   user user
   action :nothing
   only_if "test -f #{env_output_path} && test -f #{files_dir}/bootstrap-init.sh"
@@ -492,7 +492,7 @@ end
 # Guard changed from `docker ps` to `systemctl is-active elasticsearch`
 # (native install — no docker daemon).
 execute "ensure elasticsearch bootstrap drift sweep" do
-  command "ENV_FILE=#{env_output_path} bash #{files_dir}/bootstrap-init.sh #{files_dir}"
+  command "ES_URL=http://#{transport_host}:9200 ENV_FILE=#{env_output_path} bash #{files_dir}/bootstrap-init.sh #{files_dir}"
   user user
   # Skip when the env file is absent (SSM auth not configured yet) or
   # when the service isn't active yet (initial bootstrap will be
