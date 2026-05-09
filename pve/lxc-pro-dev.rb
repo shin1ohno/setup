@@ -190,3 +190,6 @@ execute "reload + enable pro-dev tailnet-routes timer" do
 end
 
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "pro-dev", "dev-workstation"] })
+include_cookbook "elastic-agent"

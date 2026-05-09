@@ -26,3 +26,6 @@ node.reverse_merge!(
 
 include_cookbook "roon-mcp-server"
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "roon-mcp"] })
+include_cookbook "elastic-agent"

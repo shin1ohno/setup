@@ -33,3 +33,6 @@ node.reverse_merge!(
 
 include_cookbook "lxc-elasticsearch"
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "elasticsearch", "es-2"] })
+include_cookbook "elastic-agent"

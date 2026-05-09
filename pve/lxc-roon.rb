@@ -25,3 +25,6 @@ node.reverse_merge!(
 
 include_cookbook "roon-server"
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "roon", "privileged"] })
+include_cookbook "elastic-agent"

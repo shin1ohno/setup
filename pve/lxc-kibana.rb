@@ -31,3 +31,6 @@ node.reverse_merge!(
 
 include_cookbook "lxc-kibana"
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "kibana"] })
+include_cookbook "elastic-agent"
