@@ -36,8 +36,23 @@
         "message":        { "type": "match_only_text" },
         "geoip_country":      { "type": "keyword" },
         "geoip_country_code": { "type": "keyword" },
+        "geoip_country_name": { "type": "keyword" },
         "geoip_city":         { "type": "keyword" },
-        "geoip_location":     { "type": "geo_point" }
+        "geoip_city_name":         { "type": "keyword" },
+        "geoip_continent_code":    { "type": "keyword" },
+        "geoip_subdivision_code":  { "type": "keyword" },
+        "geoip_subdivision_name":  { "type": "keyword" },
+        "geoip_latitude":          { "type": "float" },
+        "geoip_longitude":         { "type": "float" },
+        "geoip_location":     { "type": "geo_point" },
+        "severity":           { "type": "keyword" },
+        "severity_num":       { "type": "integer" },
+        "facility":           { "type": "keyword" },
+        "facility_num":       { "type": "integer" },
+        "phase":              { "type": "keyword" },
+        "dhcp_event":         { "type": "keyword" },
+        "mac":                { "type": "keyword" },
+        "repeat_count":       { "type": "integer" }
       }
     }
   }
