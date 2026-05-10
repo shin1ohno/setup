@@ -526,3 +526,85 @@ execute "ensure elasticsearch bootstrap drift sweep" do
           "test -f #{files_dir}/bootstrap-init.sh && " \
           "systemctl is-active elasticsearch.service >/dev/null 2>&1"
 end
+
+# === Phase 7-s3 — S3 snapshot repository + SLM daily policy ===
+#
+# Closes ADR 0005 §否定面 #4 (disk SPOF — 3 ES nodes share one USB SSD).
+# Adapted from docs/adr/0005-impl/phase-7-s3-cookbook.patch (which targeted
+# the docker-based install) for the native systemd ES install Phase 3b
+# actually shipped. Companion: home-monitor PR #43 creates the S3 bucket
+# + IAM user + SSM creds.
+#
+# Idempotency:
+#   - keystore-add: gated by sha256 sentinel /var/lib/elasticsearch/.s3-keystore-hash
+#   - reload-secure-settings: notify-driven from keystore-add
+#   - repo / SLM register: gated by GET _snapshot|_slm returning 200
+
+s3_snapshot_script = "/usr/local/bin/elasticsearch-snapshot-bootstrap"
+
+execute "stage snapshot-bootstrap.sh" do
+  command "install -m 0700 -o root -g root #{files_dir}/snapshot-bootstrap.sh #{s3_snapshot_script}"
+  only_if "test -f #{files_dir}/snapshot-bootstrap.sh"
+  not_if "test -f #{s3_snapshot_script} && diff -q #{files_dir}/snapshot-bootstrap.sh #{s3_snapshot_script} 2>/dev/null"
+end
+
+require_external_auth(
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/elastic/s3-snapshot/*",
+  check_command: "aws ssm get-parameter --name /monitoring/elastic/s3-snapshot/access-key-id " \
+                 "--with-decryption --profile #{aws_profile} --region #{aws_region} " \
+                 "> /dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
+                "/monitoring/elastic/s3-snapshot/* in #{aws_region}. " \
+                "home-monitor PR #43 creates these SSM parameters; ensure " \
+                "that branch is merged + applied before this cookbook runs.",
+  skip_if: -> { !File.exist?(s3_snapshot_script) },
+) do
+  execute "elasticsearch-snapshot: fetch + keystore add" do
+    command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+            "#{s3_snapshot_script} keystore-add"
+    user "root"
+    notifies :run, "execute[elasticsearch-snapshot: reload secure settings]"
+  end
+end
+
+# Reload secure settings on the local node after keystore add. ES masters
+# coordinate the cluster-wide reload automatically.
+execute "elasticsearch-snapshot: reload secure settings" do
+  command "#{s3_snapshot_script} reload-secure-settings"
+  user "root"
+  action :nothing
+  if node[:elasticsearch] && node[:elasticsearch][:node_name] == "es-0"
+    notifies :run, "execute[elasticsearch-snapshot: register repository]"
+    notifies :run, "execute[elasticsearch-snapshot: register SLM policy]"
+  end
+end
+
+execute "elasticsearch-snapshot: register repository" do
+  command "#{s3_snapshot_script} register-repo"
+  user "root"
+  action :nothing
+  only_if { node[:elasticsearch] && node[:elasticsearch][:node_name] == "es-0" }
+end
+
+# Initial-converge entry: if keystore reload happened in a prior run but
+# repo never registered, this ensures it lands. Idempotent at the script.
+execute "elasticsearch-snapshot: ensure repository registered" do
+  command "#{s3_snapshot_script} register-repo"
+  user "root"
+  only_if { node[:elasticsearch] && node[:elasticsearch][:node_name] == "es-0" }
+  not_if  "#{s3_snapshot_script} repo-exists"
+end
+
+execute "elasticsearch-snapshot: register SLM policy" do
+  command "#{s3_snapshot_script} register-slm"
+  user "root"
+  action :nothing
+  only_if { node[:elasticsearch] && node[:elasticsearch][:node_name] == "es-0" }
+end
+
+execute "elasticsearch-snapshot: ensure SLM policy registered" do
+  command "#{s3_snapshot_script} register-slm"
+  user "root"
+  only_if { node[:elasticsearch] && node[:elasticsearch][:node_name] == "es-0" }
+  not_if  "#{s3_snapshot_script} slm-exists"
+end
