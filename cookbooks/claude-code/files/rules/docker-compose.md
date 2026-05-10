@@ -266,3 +266,20 @@ RUN /app/.venv/bin/uv pip uninstall --python /app/.venv/bin/python triton \
 The `python3 -c "import torch"` step fails the build if the slim broke the import, before flatten or push.
 
 This rule exists because the 2026-05-09 cognee-mcp:cpu first build attempt uninstalled all 15 `nvidia-*-cu12` packages plus triton + torch, then attempted a clean torch reinstall via `--index-url whl/cpu/`. The reinstall failed (no torch 2.10.0 +cpu wheel exists), and even keeping the original torch failed at import because `_preload_cuda_deps` couldn't find the now-uninstalled nvidia libs. The working strategy was to keep nvidia libs in place, uninstall only triton, and rely on flatten for the actual size reduction (22.4GB → 4.59GB).
+
+## `docker compose up -d` Exit-1 with `No such container: <id>` — inspect `ps -a` before retrying
+
+When `docker compose up -d` (with or without `--force-recreate` / `--build`) exits non-zero with `Error response from daemon: No such container: <hex-id>`, do NOT retry the `up` command and do NOT treat it as a deploy failure. This error originates from compose's post-create cleanup pass attempting to remove the previous container by ID — but dockerd has already purged that container as part of the recreate, so the cleanup hits a stale reference. The new containers were created BEFORE the cleanup error fired.
+
+Probe `docker compose ps -a` first:
+
+```
+cd <compose-dir> && docker compose ps -a
+```
+
+- All desired services show `Up` or `healthy` → deploy succeeded; the exit-1 is cosmetic. Move on to verification.
+- Any service shows `Exit <n>` or is absent → genuine failure; investigate `docker logs <name>` and only then consider retry.
+
+The misclassification cost is real: a reflex "retry on exit-1" can recreate already-running containers (interrupting in-flight requests) or, worse, trigger a `down → up` cycle when the actual deploy is fine.
+
+This rule exists because the 2026-05-10 cognee leak fix's mitamae apply ended with `Error response from daemon: No such container: d8c8f128f3ae...` and exit 1, but `docker compose ps -a` showed all 9 cognee containers freshly recreated, healthy, and serving — the auth-proxy patch was already live. The error was compose cleaning up a stale ID from the prior `down`. Treating the exit-1 as a failure and re-running mitamae would have re-recreated everything for nothing.
