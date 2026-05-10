@@ -248,6 +248,8 @@ tags_json = "[" + tags.map { |t| %("#{t}") }.join(", ") + "]"
 
 enable_prom_input = node[:elastic_agent] &&
                     node[:elastic_agent][:enable_prometheus_integration]
+enable_synth_input = node[:elastic_agent] &&
+                     node[:elastic_agent][:enable_synthetics_integration]
 
 # Defensive directory bootstrap
 directory node[:setup][:root] do
@@ -320,6 +322,7 @@ end
   elastic-agent.linux.yml.tmpl
   elastic-agent.service.override.conf
   elastic-agent.prometheus-input.yml
+  elastic-agent.synthetics-input.yml
 ].each do |f|
   remote_file "#{files_dir}/#{f}" do
     source "files/#{f}"
@@ -387,6 +390,14 @@ prom_sed_clause = if enable_prom_input
                     "-e '/@@PROMETHEUS_INPUT@@/d'"
                   end
 
+synth_input_path = "#{files_dir}/elastic-agent.synthetics-input.yml"
+synth_sed_clause = if enable_synth_input
+                     "-e '/@@SYNTHETICS_INPUT@@/r #{synth_input_path}' " \
+                     "-e '/@@SYNTHETICS_INPUT@@/d'"
+                   else
+                     "-e '/@@SYNTHETICS_INPUT@@/d'"
+                   end
+
 execute "render elastic-agent.yml" do
   # Stage in user-writable /tmp then sudo install. mitamae on dev-workstation
   # LXCs (e.g. pro-dev CT 104) runs as the regular user — direct write to
@@ -398,6 +409,7 @@ execute "render elastic-agent.yml" do
     sed -e "s|@@HOSTNAME@@|#{host_name}|g" \\
         -e 's|@@TAGS@@|#{tags_json}|g' \\
         #{prom_sed_clause} \\
+        #{synth_sed_clause} \\
       #{config_tmpl} > #{staging}
     sudo install -m 0640 -o root -g root #{staging} #{config_path}
     rm -f #{staging}
@@ -407,6 +419,7 @@ execute "render elastic-agent.yml" do
          "diff -q <(sed -e 's|@@HOSTNAME@@|#{host_name}|g' " \
          "-e 's|@@TAGS@@|#{tags_json}|g' " \
          "#{prom_sed_clause} " \
+         "#{synth_sed_clause} " \
          "#{config_tmpl}) " \
          "#{config_path}"
   notifies :run, "execute[restart elastic-agent]"

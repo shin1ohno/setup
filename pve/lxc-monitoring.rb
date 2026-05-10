@@ -54,5 +54,11 @@ node.reverse_merge!(elastic_agent: {
   # Prometheus) consume the resulting metrics-prometheus.collector-default
   # data stream.
   enable_prometheus_integration: true,
+  # Enable Synthetics integration — centralized probe-host topology.
+  # CT 111 probes 14 LXC service endpoints (HTTP + TCP) and feeds the
+  # synthetics-* indices, which back the Kibana Observability Uptime
+  # app. See cookbooks/elastic-agent/files/elastic-agent.synthetics-input.yml
+  # for the endpoint inventory.
+  enable_synthetics_integration: true,
 })
 include_cookbook "elastic-agent"
