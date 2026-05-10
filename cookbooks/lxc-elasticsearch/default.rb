@@ -542,6 +542,13 @@ end
 
 s3_snapshot_script = "/usr/local/bin/elasticsearch-snapshot-bootstrap"
 
+remote_file "#{files_dir}/snapshot-bootstrap.sh" do
+  source "files/snapshot-bootstrap.sh"
+  owner user
+  group group
+  mode "0755"
+end
+
 execute "stage snapshot-bootstrap.sh" do
   command "install -m 0700 -o root -g root #{files_dir}/snapshot-bootstrap.sh #{s3_snapshot_script}"
   only_if "test -f #{files_dir}/snapshot-bootstrap.sh"
