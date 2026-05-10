@@ -55,7 +55,19 @@ fi
 : "${ELASTIC_PASSWORD:?ELASTIC_PASSWORD must be set (env file readable?)}"
 : "${TRANSPORT_HOST:?TRANSPORT_HOST must be set (env file readable?)}"
 
-ES_URL="http://${TRANSPORT_HOST}:9200"
+# Phase 7-tls: probe via HTTPS when http.ssl is enabled in elasticsearch.yml.
+# Trust the cluster's CA (Phase 3b transport CA reused for HTTP layer).
+ES_CONFIG="${ES_CONFIG:-/etc/elasticsearch/elasticsearch.yml}"
+CA_CERT="${CA_CERT:-/etc/elasticsearch/certs/ca.crt}"
+CURL_TLS=()
+if grep -qE '^xpack\.security\.http\.ssl\.enabled:\s*true' "${ES_CONFIG}" 2>/dev/null; then
+  ES_URL="https://${TRANSPORT_HOST}:9200"
+  if [[ -f "${CA_CERT}" ]]; then
+    CURL_TLS=(--cacert "${CA_CERT}")
+  fi
+else
+  ES_URL="http://${TRANSPORT_HOST}:9200"
+fi
 deadline=$(( $(date +%s) + WAIT_TIMEOUT ))
 attempt=0
 
@@ -65,14 +77,14 @@ while :; do
   if (( now >= deadline )); then
     echo "[wait-cluster-ready] timeout after ${WAIT_TIMEOUT}s — cluster did not reach ${EXPECTED_COUNT} nodes" >&2
     # Emit the last observed state for postmortem clarity.
-    curl -sS --max-time 5 -u "elastic:${ELASTIC_PASSWORD}" \
-      "${ES_URL}/_cat/nodes?h=name" 2>&1 | sed 's/^/[wait-cluster-ready] last _cat/nodes: /' >&2 || true
+    curl -sS "${CURL_TLS[@]}" --max-time 5 -u "elastic:${ELASTIC_PASSWORD}" \
+      "${ES_URL}/_cat/nodes?h=name" 2>&1 | sed 's|^|[wait-cluster-ready] last _cat/nodes: |' >&2 || true
     exit 1
   fi
 
   # -sf: silent + fail-on-non-2xx so the pipe receives empty output
   # rather than HTML / error JSON when the node isn't HTTP-ready yet.
-  output=$(curl -sf --max-time 5 -u "elastic:${ELASTIC_PASSWORD}" \
+  output=$(curl -sf "${CURL_TLS[@]}" --max-time 5 -u "elastic:${ELASTIC_PASSWORD}" \
     "${ES_URL}/_cat/nodes?h=name" 2>/dev/null || true)
 
   count=$(printf '%s\n' "${output}" | grep -cE "${EXPECTED_NODES_REGEX}" || true)
