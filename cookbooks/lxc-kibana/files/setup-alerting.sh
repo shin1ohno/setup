@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# Idempotent Kibana Synthetics alerting setup.
+# Idempotent Kibana Uptime/Synthetics alerting setup.
 #
 # Creates:
 #   1. Server Log connector  — writes alert events to Kibana's own log
 #                              (visible via `journalctl -u kibana`)
-#   2. Synthetics Status rule — fires when any monitor is down for 2 consecutive
-#                               checks (~2 min); action = log via #1
-#   3. Synthetics TLS rule    — fires when any HTTPS monitor's cert is within
-#                               30 days of expiry; action = log via #1
+#   2. Uptime Status rule    — fires when any monitor is down for 5 consecutive
+#                              checks (~5 min); action = log via #1
+#   3. Uptime TLS rule       — fires when any HTTPS monitor's cert is within
+#                              30 days of expiry; action = log via #1
+#
+# Rule type choice: standalone Elastic Agent's Synthetics integration ships
+# probe results to `synthetics-*` data streams (which the Uptime app reads
+# via the `xpack.uptime.heartbeatIndices` setting we set to
+# `heartbeat-*,synthetics-*`). The legacy `xpack.uptime.alerts.*` rule
+# types query that same setting; the newer `xpack.synthetics.alerts.*`
+# rule types only see Fleet-managed monitors registered via the Synthetics
+# UI — so they would never fire on our standalone probes.
 #
 # Operator alert channel choice (2026-05-10): journal-only. No Slack/SMTP.
 # Server Log connector is the "free" Kibana built-in that requires zero
@@ -35,8 +43,8 @@ KIBANA_USER="${KIBANA_USER:?KIBANA_USER must be set}"
 KIBANA_PASSWORD="${KIBANA_PASSWORD:?KIBANA_PASSWORD must be set}"
 
 CONNECTOR_NAME="synthetics-server-log"
-STATUS_RULE_NAME="Synthetics monitor down (Phase 2 liveness)"
-TLS_RULE_NAME="Synthetics TLS cert expiry (Phase 2 liveness)"
+STATUS_RULE_NAME="Uptime monitor down (Phase 2 liveness)"
+TLS_RULE_NAME="Uptime TLS cert expiry (Phase 2 liveness)"
 
 curl_kib() {
     curl -sS --max-time 30 \
@@ -77,7 +85,7 @@ fi
 # --------------------------------------------------------------------------
 # 2. Synthetics monitor-status rule
 # --------------------------------------------------------------------------
-echo "[2/3] Synthetics Status rule (${STATUS_RULE_NAME})..."
+echo "[2/3] Uptime Status rule (${STATUS_RULE_NAME})..."
 
 existing_status_rule="$(curl_kib "${KIBANA_HOST}/api/alerting/rules/_find?per_page=100&search_fields=name&search=${STATUS_RULE_NAME// /+}" \
     | jq -r --arg name "${STATUS_RULE_NAME}" \
@@ -91,24 +99,25 @@ else
             --arg name "${STATUS_RULE_NAME}" \
             --arg connector_id "${connector_id}" '{
             name: $name,
-            rule_type_id: "xpack.synthetics.alerts.monitorStatus",
+            rule_type_id: "xpack.uptime.alerts.monitorStatus",
             consumer: "uptime",
             schedule: { interval: "1m" },
             tags: ["liveness", "phase2"],
             params: {
-                condition: {
-                    downThreshold: 2,
-                    locationsThreshold: 1,
-                    window: { numberOfChecks: 5 },
-                    groupBy: "locationId"
-                }
+                numTimes: 2,
+                timerangeUnit: "m",
+                timerangeCount: 5,
+                shouldCheckStatus: true,
+                shouldCheckAvailability: false,
+                filters: { tags: [], "observer.geo.name": [], "url.port": [], "monitor.type": [] },
+                search: ""
             },
             actions: [{
                 id: $connector_id,
-                group: "xpack.synthetics.alerts.actionGroups.monitorStatus",
+                group: "xpack.uptime.alerts.actionGroups.monitorStatus",
                 params: {
                     level: "warn",
-                    message: "Synthetics monitor down: {{context.monitorName}} ({{context.monitorUrl}}) — {{context.reason}}"
+                    message: "Uptime monitor DOWN: {{context.monitorName}} ({{context.monitorUrl}}) — {{context.reason}}"
                 },
                 frequency: {
                     summary: false,
@@ -128,7 +137,7 @@ fi
 # --------------------------------------------------------------------------
 # 3. Synthetics TLS cert-expiry rule
 # --------------------------------------------------------------------------
-echo "[3/3] Synthetics TLS rule (${TLS_RULE_NAME})..."
+echo "[3/3] Uptime TLS rule (${TLS_RULE_NAME})..."
 
 existing_tls_rule="$(curl_kib "${KIBANA_HOST}/api/alerting/rules/_find?per_page=100&search_fields=name&search=${TLS_RULE_NAME// /+}" \
     | jq -r --arg name "${TLS_RULE_NAME}" \
@@ -142,17 +151,17 @@ else
             --arg name "${TLS_RULE_NAME}" \
             --arg connector_id "${connector_id}" '{
             name: $name,
-            rule_type_id: "xpack.synthetics.alerts.tls",
+            rule_type_id: "xpack.uptime.alerts.tlsCertificate",
             consumer: "uptime",
             schedule: { interval: "1h" },
             tags: ["liveness", "phase2", "tls"],
             params: {},
             actions: [{
                 id: $connector_id,
-                group: "xpack.synthetics.alerts.actionGroups.tls",
+                group: "xpack.uptime.alerts.actionGroups.tlsCertificate",
                 params: {
                     level: "warn",
-                    message: "TLS cert near expiry: {{context.commonName}} on {{context.hostName}} expires in {{context.summary}}"
+                    message: "TLS cert near expiry: {{context.commonName}} on {{context.summary}}"
                 },
                 frequency: {
                     summary: false,
@@ -170,5 +179,5 @@ else
 fi
 
 echo
-echo "All Synthetics alerting resources present. Alerts will surface in"
-echo "Kibana logs (journalctl -u kibana | grep -E 'Synthetics|TLS')."
+echo "All Uptime alerting resources present. Alerts will surface in"
+echo "Kibana logs (journalctl -u kibana | grep -E 'Uptime|TLS')."
