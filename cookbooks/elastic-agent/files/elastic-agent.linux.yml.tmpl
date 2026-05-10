@@ -53,6 +53,23 @@ inputs:
         period: 30s
         processes: ['.*']
 
+  # Journald input — primary log source on Debian/Ubuntu LXCs which
+  # use systemd-journal exclusively (no /var/log/syslog by default).
+  # Captures both syslog and auth events; per-message routing to
+  # logs-system.syslog vs logs-system.auth happens via downstream
+  # processors / index template (Elastic-bundled). Without this, LXC
+  # hosts ship metrics but zero logs.
+  - type: journald
+    id: system-journal
+    data_stream:
+      dataset: system.journal
+      namespace: default
+    streams:
+      - id: system-journal-stream
+
+  # Filestream inputs — for hosts that DO write classic /var/log files
+  # (bare-metal pro with rsyslog, EC2 AL2023). Harmless no-op on
+  # journald-only hosts (filestream sees no files, ships nothing).
   - type: filestream
     id: system-syslog
     data_stream:
