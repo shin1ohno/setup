@@ -144,3 +144,204 @@ git grep -nE 'bootstrap_profile.*pve-bootstrap-ssm|aws sts get-caller-identity.*
 Any fleet-host cookbook using its OWN runtime IAM identity as `bootstrap_profile` is a candidate to verify against the home-monitor IAM policy.
 
 This rule exists because setup PR #166 (2026-05-07, aws-credentials systematic-化) included `aws-credentials` in `auto-mitamae-target` with `bootstrap_profile=pve-bootstrap-ssm`. The cookbook's `aws sts get-caller-identity` probe passed; the actual `aws ssm get-parameter` then failed with `AccessDeniedException` on `/home-monitor/iam/pve-bootstrap-ssm/access-key-id`. Recovery required revert PR #167 + manual re-apply on CT 111. The IAM policy denial is intentional — `pve-bootstrap-ssm` cannot read its own credential paths to prevent self-rotation as a privilege-escalation surface. The cookbook now uses the external `bin/bootstrap-lxc-creds` script as the systematic-化 channel instead.
+
+## kms:Decrypt with EncryptionContext — wildcard `*` denies silently
+
+When granting `kms:Decrypt` to a role that needs to read SSM SecureString
+parameters, AWS encrypts the parameter value with a KMS data key bound
+to an `EncryptionContext` of the form:
+
+```json
+{ "PARAMETER_ARN": "arn:aws:ssm:<region>:<account>:parameter/<name>" }
+```
+
+The IAM `Condition` block on `kms:Decrypt` MUST match this context with
+the **explicit account ID**. A wildcard like
+`"arn:aws:ssm:*:*:parameter/<name>"` looks reasonable but is rejected by
+KMS's StringLike evaluator — every Decrypt call returns
+`AccessDeniedException: ciphertext refers to a customer master key that
+does not exist, does not exist in this region, or you are not allowed
+to access`. The error message **does not name the missing condition** —
+the failure looks like a missing key reference rather than an unmet
+condition.
+
+**Wrong** (wildcard, silently denies every Decrypt):
+
+```hcl
+condition {
+  test     = "StringLike"
+  variable = "kms:EncryptionContext:PARAMETER_ARN"
+  values = [
+    "arn:aws:ssm:*:*:parameter/home-monitor/secrets/tailscale-oauth-client-id",
+    "arn:aws:ssm:*:*:parameter/home-monitor/secrets/tailscale-oauth-client-secret",
+    "arn:aws:ssm:*:*:parameter/tailscale/auth-key",
+  ]
+}
+```
+
+**Right** (explicit account ID, derived from `data.aws_caller_identity`):
+
+```hcl
+data "aws_caller_identity" "current" {}
+
+condition {
+  test     = "StringLike"
+  variable = "kms:EncryptionContext:PARAMETER_ARN"
+  values = [
+    "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/home-monitor/secrets/tailscale-oauth-client-id",
+    "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/home-monitor/secrets/tailscale-oauth-client-secret",
+    "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/tailscale/auth-key",
+  ]
+}
+```
+
+**Why wildcards fail**: KMS evaluates the EncryptionContext condition
+as exact-match on each entry; the StringLike pattern is treated as a
+literal pattern that never matches a real ARN unless the wildcard
+positions align with the actual ARN structure. Even when they "could"
+align, KMS's policy engine specifically rejects wildcarded account IDs
+in EncryptionContext conditions for the SSM SecureString integration —
+the documented behavior is that the context must be an **exact** ARN,
+and `StringLike` provides forward-compat for SSM internal evolution,
+not for caller-side abbreviation.
+
+**Detection signal**: an IAM role that *should* have `kms:Decrypt` is
+denied on every SSM SecureString GetParameter call with `--with-decryption`,
+returning the misleading "ciphertext refers to a CMK that does not
+exist" error. Probe with `aws iam get-role-policy ... --query
+'PolicyDocument.Statement[?contains(Action, kms:Decrypt)]'` and look
+for `*:*:parameter/...` ARNs in the EncryptionContext condition.
+
+**Fix shape**: always use `${var.aws_region}` (already known at TF
+parse time) + `${data.aws_caller_identity.current.account_id}`
+(authoritative). If you need to grant Decrypt across multiple regions,
+enumerate each region explicitly — never wildcard the region either,
+same evaluator restriction.
+
+This rule exists because home-monitor PR #57 (2026-05-10, KMS Decrypt
+for Tailscale rotation script) shipped wildcarded ARNs in the
+EncryptionContext condition. The on-EC2 systemd-timer rotation script
+hit `AccessDeniedException` on every SSM `GetParameter`, with no clue
+in the error message that the EncryptionContext condition was the
+cause. PR #58 replaced the wildcards with `data.aws_caller_identity.current.account_id`
+and the next timer fire (`[2026-05-10T17:32:48+00:00] Tailscale auth
+key rotated`) succeeded. The diagnostic arc cost one PR + one re-apply
++ one wakeup wait for timer fire — all preventable by writing the
+explicit account ID at PR design time.
+
+## Tailscale OAuth client scope — UI/API divergence requires API-side verification
+
+Tailscale's admin UI for OAuth client editing (`/admin/settings/oauth/<id>/edit`)
+sometimes shows scope checkboxes (e.g. `Auth Keys: Read ✓ Write ✓`)
+in a state that does NOT match what the API enforces. The Save banner
+appearing is not authoritative — the API call still rejects key-mint
+attempts with `requested tags '<list>' invalid or not permitted (400)`,
+even though the tag list is correctly enumerated and the UI shows the
+required scope as granted.
+
+Empirical signature of this divergence:
+
+- UI shows checkbox state X for scope Y
+- `POST /api/v2/oauth/token` succeeds (the client itself is valid)
+- `POST /api/v2/tailnet/-/keys` with the minted token fails with 400
+  `tags ... invalid or not permitted` regardless of which valid tag
+  combination is passed
+
+**Mandatory verification** before treating any OAuth client as functional:
+
+```bash
+CLIENT_ID=$(aws ssm get-parameter --name <id-path> --with-decryption \
+  --query 'Parameter.Value' --output text --profile <profile>)
+CLIENT_SECRET=$(aws ssm get-parameter --name <secret-path> --with-decryption \
+  --query 'Parameter.Value' --output text --profile <profile>)
+TOKEN=$(curl -s -X POST -d "client_id=$CLIENT_ID" -d "client_secret=$CLIENT_SECRET" \
+  https://api.tailscale.com/api/v2/oauth/token | jq -r '.access_token')
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  https://api.tailscale.com/api/v2/tailnet/-/keys \
+  -d '{"capabilities":{"devices":{"create":{"reusable":true,"ephemeral":true,"preauthorized":true,"tags":["<your-tag-list>"]}}}}' \
+  | jq '.key // .message'
+```
+
+Expected: `"tskey-auth-..."`. If `"... invalid or not permitted"`
+appears, the OAuth client is broken and the only known recovery is to
+**create a fresh OAuth client** in the admin UI (not edit the existing
+one) and update the SSM parameters. Editing the existing client and
+re-saving has been observed to leave the API state unchanged.
+
+**When this matters**:
+
+- Adding a new tailscale_tailnet_key resource referencing this OAuth
+  client → `terraform apply` will fail at create-time
+- The on-EC2 60-day rotation timer for the auth key → silent timer
+  failure, SSM `/tailscale/auth-key` slowly drifts toward expiry
+- EC2 replacement → first boot `tailscale up --auth-key` rejects the
+  stale SSM key → user_data Phase 01 fail → no nginx, no cert, public
+  endpoints DOWN
+
+**Don't trust the UI state**. Always run the API verification curl
+chain before merging any TF / cookbook change that depends on the
+OAuth client minting a key. Five seconds at PR time prevents a
+multi-hour incident at apply / boot time.
+
+This rule exists because the 2026-05-10 home-monitor incident traced
+to OAuth client `kLoCzbwNyn11CNTRL` whose admin UI showed `Auth Keys:
+Read ✓ Write ✓` while the API returned `tags ... invalid or not
+permitted` for every tag combination. Recovery required generating a
+brand-new OAuth client `kBiQ8wcpEB21CNTRL`, updating SSM, and verifying
+via the curl chain above. The runbook for this failure mode is at
+`~/ManagedProjects/home-monitor/docs/runbooks/tailscale-key.md`.
+
+## Reusable Tailscale auth keys for ephemeral compute
+
+When provisioning a Tailscale tailnet key (`tailscale_tailnet_key`
+resource) for an EC2 / Auto Scaling Group / similar replaceable
+compute instance, set `reusable = true` unless there's a documented
+reason to enforce single-use. Single-use (`reusable = false`) breaks
+EC2 replacement workflows in a non-obvious way:
+
+- AWS auto-recovery, AMI bumps, `terraform taint`, or any
+  `user_data_replace_on_change` trigger destroys the instance
+- The new instance boots, runs user_data, fetches the same SSM key,
+  calls `tailscale up --auth-key=<key>` → rejected with `invalid key:
+  API key <id> not valid` because the prior boot consumed it
+- All downstream user_data phases (TLS, Docker, nginx) skip → public
+  endpoints DOWN until manual intervention
+
+`reusable = true` allows the same SSM-stored key to authenticate
+unlimited boots. The key still expires (90-day default), so pair with
+a rotation timer (on-EC2 systemd timer minting fresh keys via the
+OAuth client) to keep the SSM value valid indefinitely.
+
+```hcl
+resource "tailscale_tailnet_key" "subnet_router" {
+  reusable      = true              # MUST for ASG/replaceable EC2
+  ephemeral     = false
+  preauthorized = true
+  expiry        = local.tailscale_key_expiry_seconds  # 90 days
+  description   = "AWS VPC subnet router for home monitoring"
+  tags          = ["tag:subnet-router", "tag:aws", "tag:home-monitoring"]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+```
+
+**Don't pair this with `single_use = true`** on the rotated key either
+— the rotation script writes a fresh key to SSM, but if the next EC2
+boot races with a manual rotation, the boot's fetch and the rotate's
+put may conflict and leave a single-use key already-consumed before
+the boot's `tailscale up` runs.
+
+The complete pattern (reusable key + 60-day rotation timer + KMS
+Decrypt with explicit account ID) is documented in
+`~/ManagedProjects/home-monitor/docs/runbooks/tailscale-key.md`.
+
+This rule exists because home-monitor's `tailscale_tailnet_key` was
+originally `reusable = false` for a defensive single-use posture
+(2025 design). The 2026-05-10 EC2 auto-recovery cycle terminated the
+running EC2 mid-incident, the new EC2 booted, and `tailscale up`
+rejected the consumed SSM key. mcp.ohno.be went DOWN for the duration
+of the recovery (~30 min including OAuth-scope-drift discovery). PR
+#56 changed to `reusable = true` and PR #57+#58 added the timer +
+Decrypt grants for the long-term fix.
