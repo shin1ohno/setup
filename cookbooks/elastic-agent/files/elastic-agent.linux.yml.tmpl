@@ -52,6 +52,9 @@ inputs:
         metricsets: [process]
         period: 30s
         processes: ['.*']
+      - data_stream.dataset: system.uptime
+        metricsets: [uptime]
+        period: 60s
 
   # Journald input — primary log source on Debian/Ubuntu LXCs which
   # use systemd-journal exclusively (no /var/log/syslog by default).
