@@ -9,6 +9,60 @@ description: "Sub-agent design principles, bulk research pattern, and tool selec
 - Review gate: always include a review step for important outputs
 - Background first: any research task that does not block the next step must use `run_in_background: true`. This includes Cognee/Mem0 searches at conversation start, web research, and catalog lookups. The main conversation should never idle while waiting for research results — either launch background agents or continue interacting with the user
 
+## Parallel Stream File-Exclusivity Declaration
+
+When launching 3+ sub-agents in parallel over the same repository, declare which files each stream may write to BEFORE launching the batch. Streams that share file ownership produce merge conflicts that cost a full PR cycle to resolve.
+
+**Pre-launch checklist**:
+
+1. List planned file edits per stream (in the prompt body)
+2. Cross-reference: does the same file appear in 2+ streams' scopes?
+3. If yes, choose explicitly:
+   - **Serialize**: stream B waits for stream A to merge, then rebases
+   - **Merge into one stream**: combine the two scopes into one agent
+   - **Split the file**: split the cookbook / module so each stream owns a distinct file (e.g., `cookbooks/elastic-agent/files/elastic-agent.linux.yml.tmpl` vs `elastic-agent.darwin.yml.tmpl`)
+4. State the exclusivity decision in each stream's prompt: "You will write to FILES X, Y, Z. DO NOT modify any file under cookbooks/foo/ — Stream <name> owns it."
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 4 session launched Stream P (Linux Elastic Agent) and Stream Q (macOS Elastic Agent) in parallel without declaring file ownership. Both independently created `cookbooks/elastic-agent/default.rb`. Stream P merged first (PR #277), Stream Q's PR #276 hit a merge conflict that required Stream Z to spawn for rebase + cross-platform branching (PR #276 second-merge cycle). One full PR cycle wasted.
+
+## Sub-agent Destructive-Operation Scope Boundary
+
+When instructing a sub-agent via Agent tool, explicitly state whether it may delete, rename, or overwrite existing artifacts not mentioned in its task description. **Default assumption: NO deletions of existing artifacts outside the declared scope.**
+
+If the parent prompt does not say "you may delete X", the sub-agent must:
+
+1. Surface the proposed deletion in its completion report
+2. Send `SendMessage` to parent BEFORE executing if the deletion blocks completion
+3. Stop and wait for explicit authorization
+
+Applies to:
+
+- **Kibana saved objects** (data views, dashboards, lens, search) created by predecessor PRs
+- **Files in `~/deploy/` or `/var/lib/`** that the sub-agent did not create
+- **Git-committed files** that pre-date the sub-agent's branch
+- **System services** (`systemctl disable`, `systemctl mask`)
+- **Database tables / collections / indices**
+- **Cloud resources** (S3 buckets, IAM users, KMS keys)
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 5 Stream N "rtx-overview-v2 layout adjustment" task autonomously interpreted "consolidate dashboards" as authorization to delete Phase 5 (PR #238) saved objects (rtx-discover, top-src lens, top-dst-port lens, rtx-overview-min). The harness blocked the push but the in-stream deletions had already happened. Push was deferred indefinitely awaiting user judgment. The deletion was outside the original "build rtx-overview-v2 dashboard" task scope.
+
+## Tool Availability — ToolSearch Before Claiming Unavailable
+
+A sub-agent that cannot find a named tool (`SendMessage`, `EnterPlanMode`, `AskUserQuestion`, any skill, any MCP tool) MUST call `ToolSearch` with the tool name before reporting the constraint to the parent session. Tools may be deferred-loaded, registered under a slightly different name, or behind a search index — they exist in many sessions even when not visible in the initial tool catalog.
+
+Sequence:
+
+1. Try `ToolSearch("select:<tool_name>")` for direct match
+2. Try `ToolSearch("<keyword>")` for fuzzy match
+3. Only if both return no result, escalate via the available channels:
+   - SendMessage to parent (if reachable)
+   - Embed the blocker in the completion output
+   - Mark the task partially-complete + describe what was achieved
+
+Parent prompts for sessions involving deferred tools should explicitly include: "If a tool appears unavailable, call `ToolSearch('<tool>')` before reporting the blockage." For sub-agent prompts that depend on `SendMessage`, `EnterPlanMode`, or skill invocation, name the ToolSearch query directly: "ToolSearch with `select:SendMessage` to load the SendMessage schema."
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 4 Stream O blocked itself reporting "no SendMessage tool available" / "no EnterPlanMode tool available" — both reachable via ToolSearch. The stream consumed a slot for ~60 seconds and produced no output. The Fleet Server work was re-routed via parent-session SendMessage broadcasts, but Stream O's idle slot was wasted.
+
 ## Bulk Research Pattern
 
 When collecting information from multiple sources (URLs, products, brands, categories), **proactively** apply this pattern (propose and execute before the user asks for parallelism):
