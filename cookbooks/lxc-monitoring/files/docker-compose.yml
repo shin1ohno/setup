@@ -45,6 +45,15 @@ services:
       # Auth gate is the host firewall + LAN-only. Tailscale exposure (Phase
       # 2c) will switch to OAuth2-Proxy upstream of grafana.
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Public access via EC2 nginx reverse proxy at
+      # https://monitoring.ohno.be/grafana — Grafana must serve from the
+      # subpath so its assets + redirects use the same prefix. SameSite=None
+      # required because the proxy origin (monitoring.ohno.be) differs from
+      # the upstream (3000); Secure=true because the proxy terminates TLS.
+      GF_SERVER_ROOT_URL: "https://monitoring.ohno.be/grafana"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: "None"
     ports:
       - "3000:3000"
     volumes:
