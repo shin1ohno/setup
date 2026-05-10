@@ -294,3 +294,65 @@ execute "restart kibana" do
   action :nothing
   only_if "test -f #{env_output_path} && test -f #{kibana_yml_path} && id kibana >/dev/null 2>&1"
 end
+
+# === Kibana alerting setup (Phase 2 + Phase 3 of liveness plan) ===
+#
+# After Kibana is up, install:
+#   1. Server Log connector + Uptime Status rule + Uptime TLS rule
+#      (setup-alerting.sh)
+#   2. 31 .es-query process-liveness rules per expected-processes.json
+#      (setup-process-alerts.sh)
+#
+# Both scripts are idempotent (probe-then-create). The cookbook fetches
+# the elastic superuser password from SSM at run time. Gated by the
+# same SSM-availability check as the kibana-secrets step.
+
+setup_alerting_script = File.join(File.dirname(__FILE__), "files", "setup-alerting.sh")
+setup_process_alerts_script = File.join(File.dirname(__FILE__), "files", "setup-process-alerts.sh")
+elastic_password_ssm = "/monitoring/elastic/elastic-password"
+
+require_external_auth(
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for #{elastic_password_ssm}",
+  check_command: "aws ssm get-parameter --name #{elastic_password_ssm} " \
+                 "--with-decryption --profile #{aws_profile} --region #{aws_region} " \
+                 "> /dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
+                "#{elastic_password_ssm} in #{aws_region}. " \
+                "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
+) do
+  # Wait for kibana.service to report active before running alerting scripts.
+  # Each script's first phase is its own /api/status poll loop, so even on a
+  # cold boot the script will wait — this only short-circuits if kibana
+  # is genuinely down at converge time.
+  execute "install Synthetics alerting (connector + Status + TLS rules)" do
+    command <<~SH.strip
+      set -euo pipefail
+      KIBANA_PASSWORD=$(aws ssm get-parameter \
+        --name #{elastic_password_ssm} \
+        --with-decryption \
+        --profile #{aws_profile} --region #{aws_region} \
+        --query 'Parameter.Value' --output text)
+      export KIBANA_USER=elastic
+      export KIBANA_PASSWORD
+      bash #{setup_alerting_script}
+    SH
+    user user
+    only_if "systemctl is-active kibana.service >/dev/null 2>&1"
+  end
+
+  execute "install process-liveness rules (~31 .es-query rules)" do
+    command <<~SH.strip
+      set -euo pipefail
+      KIBANA_PASSWORD=$(aws ssm get-parameter \
+        --name #{elastic_password_ssm} \
+        --with-decryption \
+        --profile #{aws_profile} --region #{aws_region} \
+        --query 'Parameter.Value' --output text)
+      export KIBANA_USER=elastic
+      export KIBANA_PASSWORD
+      bash #{setup_process_alerts_script}
+    SH
+    user user
+    only_if "systemctl is-active kibana.service >/dev/null 2>&1"
+  end
+end
