@@ -63,21 +63,12 @@
         timeout: 10s
         tags: [cognee, auth-proxy, lan-internal]
 
-  - type: synthetics/http
-    id: synthetics-memory-api
-    use_output: default
-    data_stream:
-      namespace: default
-    streams:
-      - data_stream.dataset: http
-        type: http
-        id: memory-api-docs
-        name: OpenMemory API docs
-        enabled: true
-        schedule: "@every 60s"
-        urls: ["http://memory.home.local:8765/docs"]
-        timeout: 10s
-        tags: [memory, lan-internal]
+  # synthetics-memory-api removed: openmemory-api on memory:8765 binds to
+  # 127.0.0.1 only (LAN-internal access goes through the auth-proxy on
+  # :8766 which is the only publicly-bound port). The auth-proxy /health
+  # probe (synthetics-memory-authproxy below) covers the memory stack
+  # liveness — if the upstream openmemory-api is down, auth-proxy's
+  # /health forwarding would surface it.
 
   - type: synthetics/http
     id: synthetics-memory-authproxy
@@ -104,15 +95,15 @@
       - data_stream.dataset: http
         type: http
         id: roon-mcp-health
-        name: Roon MCP health (bearer required, 401 == reachable)
+        name: Roon MCP health (bearer required, 4xx == reachable)
         enabled: true
         schedule: "@every 60s"
         urls: ["http://roon-mcp.home.local:8080/health"]
         timeout: 10s
-        # Bearer token not injected; service responds 401 which still
-        # proves the listener is up. Treat 401 as "up" via response
-        # status filter.
-        check.response.status: [200, 401]
+        # Bearer token not injected; service responds 403 (or 401 in
+        # other configs) which still proves the listener is up. Treat
+        # both as "up" via response status filter.
+        check.response.status: [200, 401, 403]
         tags: [roon-mcp, bearer-required, lan-internal]
 
   - type: synthetics/http
@@ -127,7 +118,9 @@
         name: Weave API server
         enabled: true
         schedule: "@every 60s"
-        urls: ["http://weave.home.local:3001/"]
+        # weave HTTP API is on :3000 (returns 200 at /). :3001 is a
+        # different service with no root path (returns 404 by design).
+        urls: ["http://weave.home.local:3000/"]
         timeout: 10s
         tags: [weave, lan-internal]
 
@@ -163,19 +156,24 @@
         timeout: 10s
         tags: [hydra, oidc, lan-internal]
 
-  - type: synthetics/http
-    id: synthetics-consent
+  - type: synthetics/tcp
+    id: synthetics-consent-tcp
     use_output: default
     data_stream:
       namespace: default
     streams:
-      - data_stream.dataset: http
-        type: http
-        id: consent-root
-        name: Hydra consent UI
+      - data_stream.dataset: tcp
+        type: tcp
+        id: consent-tcp-9020
+        name: Hydra consent UI TCP 9020
         enabled: true
         schedule: "@every 60s"
-        urls: ["http://consent.home.local:9020/"]
+        # HTTP probe was removed: hydra-consent's UI requires the
+        # `login_challenge` query param (issued by hydra at OAuth flow
+        # start) to render anything — every plain URL returns 404 by
+        # design. TCP port-open verifies the listener is alive without
+        # needing a valid OAuth challenge token.
+        hosts: ["consent.home.local:9020"]
         timeout: 10s
         tags: [consent, hydra, lan-internal]
 
