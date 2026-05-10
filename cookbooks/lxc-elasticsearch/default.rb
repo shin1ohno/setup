@@ -198,6 +198,34 @@ execute "create /etc/elasticsearch/certs directory" do
          "test \"$(stat -c '%U:%G:%a' /etc/elasticsearch/certs)\" = 'root:elasticsearch:750'"
 end
 
+# === wait-cluster-ready.sh staging (BEFORE elasticsearch.yml render) ===
+#
+# The wait script must be installed at /usr/local/bin/es-wait-cluster-ready.sh
+# BEFORE the elasticsearch.yml render, because:
+#   1. yml render fires `restart elasticsearch` :immediately
+#   2. systemd elasticsearch.service runs the wait script via ExecStartPost
+#   3. If wait script is stale (e.g. hardcoded http:// when yml just flipped
+#      to https), restart fails on the wait timeout, mitamae aborts
+#
+# Phase 7-tls migration: stale wait script (http://) caused CT 113 ES
+# to fail boot when yml flipped to TLS. Reordering the resources so the
+# new wait script lands first ensures every restart sees the matching
+# protocol detection.
+wait_script_staging = "#{files_dir}/wait-cluster-ready.sh"
+wait_script_path    = "/usr/local/bin/es-wait-cluster-ready.sh"
+
+remote_file wait_script_staging do
+  source "files/wait-cluster-ready.sh"
+  owner user
+  group group
+  mode "0755"
+end
+
+execute "install es-wait-cluster-ready.sh to /usr/local/bin" do
+  command "install -m 0755 -o root -g root #{wait_script_staging} #{wait_script_path}"
+  not_if "test -f #{wait_script_path} && diff -q #{wait_script_staging} #{wait_script_path} 2>/dev/null"
+end
+
 # === elasticsearch.yml render ===
 #
 # elasticsearch.yml is rendered from a template by substituting NODE_NAME
@@ -275,26 +303,8 @@ end
 unit_override_staging = "#{files_dir}/elasticsearch.service.override.conf"
 unit_override_dir     = "/etc/systemd/system/elasticsearch.service.d"
 unit_override_path    = "#{unit_override_dir}/override.conf"
-wait_script_staging   = "#{files_dir}/wait-cluster-ready.sh"
-wait_script_path      = "/usr/local/bin/es-wait-cluster-ready.sh"
 
-# Stage in user space (mode 0755) then install to /usr/local/bin so the
-# elasticsearch systemd unit's ExecStartPost (running as the
-# `elasticsearch` system user) can exec it. /root is mode 700 — non-root
-# users can't traverse it, so the staged path under node[:setup][:root]
-# is unreachable for ExecStartPost. /usr/local/bin is world-readable.
-remote_file wait_script_staging do
-  source "files/wait-cluster-ready.sh"
-  owner user
-  group group
-  mode "0755"
-end
-
-execute "install es-wait-cluster-ready.sh to /usr/local/bin" do
-  command "install -m 0755 -o root -g root #{wait_script_staging} #{wait_script_path}"
-  not_if "test -f #{wait_script_path} && diff -q #{wait_script_staging} #{wait_script_path} 2>/dev/null"
-  notifies :run, "execute[restart elasticsearch]", :immediately
-end
+# (wait_script_staging + install relocated above, before elasticsearch.yml render)
 
 remote_file unit_override_staging do
   source "files/elasticsearch.service.override.conf"
