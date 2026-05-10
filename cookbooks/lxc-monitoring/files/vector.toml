@@ -339,15 +339,17 @@ geoip_subdivision_name = "{{ geoip_subdivision_name }}"
 type = "elasticsearch"
 inputs = ["parsed_rtx_for_es"]
 endpoints = [
-  "http://es-0.home.local:9200",
-  "http://es-1.home.local:9200",
-  "http://es-2.home.local:9200",
+  "https://es-0.home.local:9200",
+  "https://es-1.home.local:9200",
+  "https://es-2.home.local:9200",
 ]
 mode = "data_stream"
 data_stream = { type = "logs", dataset = "rtx", namespace = "default" }
 auth = { strategy = "basic", user = "vector_writer", password = "${ELASTIC_VECTOR_PASSWORD}" }
-# tls block re-enabled by Phase 7-tls (HTTPS on :9200):
-# tls = { ca_file = "/etc/vector/elastic-ca.crt", verify_certificate = true, verify_hostname = true }
+# Phase 7-tls: HTTPS to ES cluster. CA cert bind-mounted into the
+# vector container at /etc/vector/elastic-ca.crt (cookbook fetches
+# from SSM /monitoring/elastic/ca/cert).
+tls = { ca_file = "/etc/vector/elastic-ca.crt", verify_certificate = true, verify_hostname = true }
 buffer = { type = "disk", max_size = 1073741824, when_full = "drop_newest" }
 
 # Prometheus scrape endpoint for Vector self-metrics. Replaces Promtail's

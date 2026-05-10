@@ -73,10 +73,13 @@ if node[:platform] == "darwin"
   es_password_ssm = node.dig(:elastic_agent, :es_password_ssm) ||
                     "/monitoring/elastic/elastic-agent-password"
   es_username = node.dig(:elastic_agent, :es_username) || "elastic_agent_writer"
+  # Phase 7-tls: HTTPS to ES cluster. CA cert installed at
+  # /Library/Elastic/Agent/ca.crt by the macOS install path below
+  # (fetched from SSM /monitoring/elastic/ca/cert).
   es_hosts = node.dig(:elastic_agent, :es_hosts) || %w[
-    http://es-0.home.local:9200
-    http://es-1.home.local:9200
-    http://es-2.home.local:9200
+    https://es-0.home.local:9200
+    https://es-1.home.local:9200
+    https://es-2.home.local:9200
   ]
 
   arch = run_command("uname -m").stdout.strip
@@ -378,6 +381,46 @@ end
 file env_temp_path do
   action :delete
   only_if "test -f #{env_temp_path} && test -f #{env_output_path}"
+end
+
+# === Phase 7-tls: fetch ES CA cert into /etc/elastic-agent/certs/ ===
+#
+# elastic-agent.yml output.default.ssl.certificate_authorities references
+# /etc/elastic-agent/certs/ca.crt. Fetch from SSM /monitoring/elastic/ca/cert
+# (placed there by Phase 1b TF). Same pattern as cookbooks/lxc-kibana
+# fetch_ca.sh.
+
+ca_temp_path   = "#{node[:setup][:root]}/elastic-agent/ca.crt"
+ca_output_path = "/etc/elastic-agent/certs/ca.crt"
+
+require_external_auth(
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/elastic/ca/cert",
+  check_command: "aws ssm get-parameter --name /monitoring/elastic/ca/cert " \
+                 "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
+                "/monitoring/elastic/ca/cert in #{aws_region}.",
+  skip_if: -> { File.exist?(ca_output_path) },
+) do
+  execute "fetch elastic-agent CA cert" do
+    command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+            "aws ssm get-parameter --name /monitoring/elastic/ca/cert " \
+            "--query 'Parameter.Value' --output text > #{ca_temp_path} && " \
+            "chmod 644 #{ca_temp_path}"
+    user user
+  end
+end
+
+execute "install elastic-agent CA cert" do
+  command "sudo install -d -m 0755 -o root -g root /etc/elastic-agent/certs && " \
+          "sudo install -m 0644 -o root -g root #{ca_temp_path} #{ca_output_path}"
+  only_if "test -f #{ca_temp_path}"
+  not_if "test -f #{ca_output_path} && sudo diff -q #{ca_temp_path} #{ca_output_path} 2>/dev/null"
+  notifies :run, "execute[restart elastic-agent]"
+end
+
+file ca_temp_path do
+  action :delete
+  only_if "test -f #{ca_temp_path} && test -f #{ca_output_path}"
 end
 
 # === Render elastic-agent.yml from template ===
