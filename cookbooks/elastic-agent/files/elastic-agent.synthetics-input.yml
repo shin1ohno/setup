@@ -294,11 +294,16 @@
     streams:
       - data_stream.dataset: http
         type: http
-        id: mcp-ohno-be-root
-        name: MCP gateway (mcp.ohno.be) HTTPS
+        id: mcp-ohno-be-oauth-metadata
+        name: MCP gateway (mcp.ohno.be) OAuth metadata
         enabled: true
         schedule: "@every 60s"
-        urls: ["https://mcp.ohno.be/"]
+        # /.well-known/oauth-authorization-server is the OAuth 2.1
+        # discovery endpoint that the MCP gateway must publicly expose
+        # for claude.ai client discovery. Unauth, returns 200 with the
+        # JSON metadata document. Probed live 2026-05-10: 0.1s response.
+        # Bare / and other paths return TLS unexpected EOF on
+        # unauthenticated GET (gateway closes the connection).
+        urls: ["https://mcp.ohno.be/.well-known/oauth-authorization-server"]
         timeout: 15s
-        check.response.status: [200, 401, 403, 404]
         tags: [mcp, external, https, tls]
