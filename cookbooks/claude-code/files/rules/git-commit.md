@@ -61,6 +61,27 @@ Before writing any file or running `git add` in a repo that is part of the curre
 
 Do NOT commit onto: merged PR branches still checked out locally, in-flight feature branches for unrelated work, or any branch whose `git log` shows commits unrelated to the current task. Scope-bleed discovered after the commit requires cherry-pick surgery that is easy to prevent with this 2-second check.
 
+### Branch check immediately before `gh pr create`
+
+The branch check at first commit time is necessary but not sufficient. In multi-stream worktree sessions where multiple branches coexist, the current branch can change between commit and PR-create — a parallel agent finishes, you switch context, and `gh pr create` runs against the NEW current branch. The PR's title and body describe one set of changes, but the diff contains a different stream's content.
+
+Before `gh pr create`, assert the current branch matches the intended branch in the same Bash invocation:
+
+```bash
+test "$(git -C . branch --show-current)" = "feat/my-branch" && \
+  cat /tmp/pr-body.md | gh pr create --base main --title "..." --body-file -
+```
+
+Or, more explicit, pass `--head <branch>` to gh:
+
+```bash
+cat /tmp/pr-body.md | gh pr create --base main --head feat/my-branch --title "..." --body-file -
+```
+
+The `--head` form is the safest — gh uses the explicit branch regardless of CWD's current branch state.
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 4 Stream T session shipped PR #280 with the WRONG content. `gh pr create` was invoked while CWD's current branch was `feat/kibana-port-rtx-routers-dashboard` (Stream U's), not the intended `feat/elastic-agent-prometheus-integration` (Stream T's). PR #280's title described Stream T's Prometheus federation cookbook but the diff was Stream U's rtx-routers dashboard NDJSON — a duplicate of PR #279. Stream T's actual code was shipped in a re-do PR #281. One full PR cycle wasted; the title/diff mismatch was discoverable only by reading the diff after merge.
+
 ### Multi-repo tasks
 
 When a task spans 2+ repositories (e.g., CWD is `weave`, edits land in `edge-agent`), run the branch check **per repository** before the first `git add` in each repo:
