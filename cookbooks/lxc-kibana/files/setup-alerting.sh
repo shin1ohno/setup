@@ -100,8 +100,7 @@ else
                     downThreshold: 2,
                     locationsThreshold: 1,
                     window: { numberOfChecks: 5 },
-                    groupBy: "locationId",
-                    alertOnNoData: true
+                    groupBy: "locationId"
                 }
             },
             actions: [{
