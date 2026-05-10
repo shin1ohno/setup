@@ -27,7 +27,6 @@ set -euo pipefail
 
 ENV_FILE="${ES_ENV_FILE:-/etc/elasticsearch/elasticsearch-secrets.env}"
 KEYSTORE_BIN="/usr/share/elasticsearch/bin/elasticsearch-keystore"
-KEYSTORE_USER="elasticsearch"
 SENTINEL="/var/lib/elasticsearch/.s3-keystore-hash"
 BUCKET_FILE="/var/lib/elasticsearch/.s3-bucket"
 REPO_NAME="s3-home-monitor"
@@ -60,9 +59,11 @@ es_curl_status() {
 }
 
 ks_add() {
+  # Run as root: /etc/elasticsearch/ is drwxr-s--- root:elasticsearch on
+  # the DEB install — only root can write. The keystore binary itself
+  # respects the existing file ownership/group permissions.
   local setting="$1" value="$2"
-  printf '%s' "${value}" | sudo -u "${KEYSTORE_USER}" \
-    "${KEYSTORE_BIN}" add --stdin --force "${setting}"
+  printf '%s' "${value}" | "${KEYSTORE_BIN}" add --stdin --force "${setting}"
 }
 
 cmd_keystore_add() {
