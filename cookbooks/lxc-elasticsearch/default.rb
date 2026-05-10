@@ -227,7 +227,7 @@ execute "render elasticsearch.yml" do
          "diff -q <(sed -e 's|@@NODE_NAME@@|#{node_name}|g' " \
          "-e 's|@@TRANSPORT_HOST@@|#{transport_host}|g' #{es_yml_tmpl}) " \
          "#{es_yml_path}"
-  notifies :run, "execute[restart elasticsearch]"
+  notifies :run, "execute[restart elasticsearch]", :immediately
 end
 
 # Also render once if both inputs exist but rendered file is absent
@@ -262,7 +262,7 @@ execute "install jvm.options.d/heap.options" do
   command "install -m 0660 -o root -g elasticsearch #{heap_options_staging} #{heap_options_path}"
   only_if "id elasticsearch >/dev/null 2>&1"
   not_if "test -f #{heap_options_path} && diff -q #{heap_options_staging} #{heap_options_path} 2>/dev/null"
-  notifies :run, "execute[restart elasticsearch]"
+  notifies :run, "execute[restart elasticsearch]", :immediately
 end
 
 # === systemd override ===
@@ -293,7 +293,7 @@ end
 execute "install es-wait-cluster-ready.sh to /usr/local/bin" do
   command "install -m 0755 -o root -g root #{wait_script_staging} #{wait_script_path}"
   not_if "test -f #{wait_script_path} && diff -q #{wait_script_staging} #{wait_script_path} 2>/dev/null"
-  notifies :run, "execute[restart elasticsearch]"
+  notifies :run, "execute[restart elasticsearch]", :immediately
 end
 
 remote_file unit_override_staging do
@@ -312,7 +312,7 @@ execute "install elasticsearch systemd override" do
   command "install -m 0644 -o root -g root #{unit_override_staging} #{unit_override_path}"
   not_if "test -f #{unit_override_path} && diff -q #{unit_override_staging} #{unit_override_path} 2>/dev/null"
   notifies :run, "execute[elasticsearch daemon-reload]", :immediately
-  notifies :run, "execute[restart elasticsearch]"
+  notifies :run, "execute[restart elasticsearch]", :immediately
 end
 
 execute "elasticsearch daemon-reload" do
@@ -413,7 +413,7 @@ execute "install elasticsearch-secrets.env" do
   command "install -m 0640 -o root -g elasticsearch #{env_temp_path} #{env_output_path}"
   only_if "test -f #{env_temp_path} && id elasticsearch >/dev/null 2>&1"
   not_if "test -f #{env_output_path} && diff -q #{env_temp_path} #{env_output_path} 2>/dev/null"
-  notifies :run, "execute[restart elasticsearch]"
+  notifies :run, "execute[restart elasticsearch]", :immediately
   notifies :run, "execute[run elasticsearch bootstrap]"
 end
 
@@ -448,7 +448,7 @@ certs_dir = "/etc/elasticsearch/certs"
     command "install -m #{mode} -o root -g elasticsearch #{src} #{dest}"
     only_if "test -f #{src} && id elasticsearch >/dev/null 2>&1"
     not_if "test -f #{dest} && diff -q #{src} #{dest} 2>/dev/null"
-    notifies :run, "execute[restart elasticsearch]"
+    notifies :run, "execute[restart elasticsearch]", :immediately
   end
 end
 
