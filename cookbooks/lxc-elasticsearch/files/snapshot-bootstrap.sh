@@ -106,8 +106,12 @@ cmd_reload_secure_settings() {
 }
 
 cmd_repo_exists() {
+  # GET /_snapshot/<name>/_status returns 200 even when the repo does
+  # not exist (it answers "no snapshot in progress" without checking
+  # repo registration). Use GET /_snapshot/<name> instead — that
+  # returns 404 for unknown repos.
   local status
-  status=$(es_curl_status "${ES_URL}/_snapshot/${REPO_NAME}/_status" || true)
+  status=$(es_curl_status "${ES_URL}/_snapshot/${REPO_NAME}" || true)
   [[ "${status}" == "200" ]]
 }
 
