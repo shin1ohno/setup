@@ -13,6 +13,13 @@ server.publicBaseUrl: "https://monitoring.ohno.be"
 # "definition for this key is missing" (FATAL on startup).
 xpack.security.sameSiteCookies: "None"
 
+# `SameSite: None` cookies require `Secure` per RFC 6265bis. Without
+# this Kibana logs ERROR "SameSite: None requires Secure connection"
+# on every request and returns 500 to the browser. server.ssl is OFF
+# (TLS terminated at the EC2 nginx proxy), so we must explicitly tell
+# Kibana to issue Secure cookies regardless of its own bind protocol.
+xpack.security.secureCookies: true
+
 # Native install: data dir override (DEB default is /var/lib/kibana).
 # /data/kibana is on rpool inside the LXC (50 GB, no bind-mount).
 path.data: /data/kibana/data
