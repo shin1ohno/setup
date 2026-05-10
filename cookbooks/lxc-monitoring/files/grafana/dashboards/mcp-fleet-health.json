@@ -10,7 +10,7 @@
   "panels": [
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Number of MCP servers where the most recent prober cycle completed all 4 phases successfully (auth -> sse_open -> initialize -> tools/list).",
+      "description": "Number of MCP servers whose /health endpoint returned 200 in the most recent prober cycle (via auth-proxy unauthenticated path).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -177,11 +177,8 @@
           "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "Value #A" }, "properties": [ { "id": "displayName", "value": "auth" } ] },
-          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [ { "id": "displayName", "value": "sse_open" } ] },
-          { "matcher": { "id": "byName", "options": "Value #C" }, "properties": [ { "id": "displayName", "value": "initialize" } ] },
-          { "matcher": { "id": "byName", "options": "Value #D" }, "properties": [ { "id": "displayName", "value": "tools_list" } ] },
-          { "matcher": { "id": "byName", "options": "Value #E" }, "properties": [ { "id": "displayName", "value": "e2e" } ] }
+          { "matcher": { "id": "byName", "options": "Value #A" }, "properties": [ { "id": "displayName", "value": "health" } ] },
+          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [ { "id": "displayName", "value": "e2e" } ] }
         ]
       },
       "gridPos": { "h": 7, "w": 12, "x": 0, "y": 5 },
@@ -193,16 +190,13 @@
       },
       "pluginVersion": "11.6.14",
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_phase_success{phase=\"auth\"}",       "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "A" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_phase_success{phase=\"sse_open\"}",  "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "B" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_phase_success{phase=\"initialize\"}","format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "C" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_phase_success{phase=\"tools_list\"}","format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "D" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_e2e_success",                        "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "E" }
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_phase_success{phase=\"health\"}", "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "mcp_probe_e2e_success",                     "format": "table", "instant": true, "legendFormat": "__auto", "range": false, "refId": "B" }
       ],
-      "title": "MCP per-server protocol health",
+      "title": "MCP per-server health",
       "transformations": [
         { "id": "joinByField", "options": { "byField": "server", "mode": "outer" } },
-        { "id": "organize", "options": { "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true, "phase 1": true, "phase 2": true, "phase 3": true, "phase 4": true, "__name__ 1": true, "__name__ 2": true, "__name__ 3": true, "__name__ 4": true, "__name__ 5": true, "instance 1": true, "instance 2": true, "instance 3": true, "instance 4": true, "instance 5": true, "job 1": true, "job 2": true, "job 3": true, "job 4": true, "job 5": true } } }
+        { "id": "organize", "options": { "excludeByName": { "Time 1": true, "Time 2": true, "phase 1": true, "phase 2": true, "__name__ 1": true, "__name__ 2": true, "instance 1": true, "instance 2": true, "job 1": true, "job 2": true } } }
       ],
       "type": "table"
     },
