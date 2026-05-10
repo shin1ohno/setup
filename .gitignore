@@ -6,5 +6,6 @@ bin/*.zip
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .claude/worktrees/
+.claude/plans/
 .mcp.json
 cookbooks/claude-code/cowork-migration/zips-ready/*.zip
