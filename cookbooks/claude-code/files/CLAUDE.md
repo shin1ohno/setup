@@ -56,6 +56,20 @@ A confidently-wrong capability claim is more expensive than asking the user, bec
 
 This rule exists because the 2026-05-04 git-remote-codecommit session answered "yes, mise can manage it via pipx backend" without probing. Hit two real blockers in sequence (pipx not on PATH, mise pipx venvs cannot be `pipx inject`-ed for runtime extras), pivoted the entire cookbook to pyenv pip, total cost ~30 min + an approach rewrite. The 5-check verification batch run before the assertion would have surfaced both blockers instantly.
 
+**Option label accuracy gate — name the actual artifact, not a recalled component**: before writing the option labels in an AskUserQuestion call, `grep` or `Read` the relevant directory to confirm the component's *actual* identifier. Never write an option label from recall alone. A recalled component name that turns out to be wrong makes the user accept a scope they didn't intend — and the cost is a complete plan U-turn (closed PR, scope rewind, scrapped implementation). The probe is 2 seconds:
+
+```
+grep -rn '<topic>' <relevant-dir> | head -5
+ls cookbooks/<area>/files/ | head
+```
+
+Examples of names that must be probed, not recalled:
+- "blackbox-exporter probe" vs "custom Python prober" — `ls cookbooks/lxc-monitoring/files/` + `find cookbooks -name 'mcp-probe*'`
+- "the auth-proxy" — singular vs per-service: `find cookbooks -path '*auth-proxy*' -type d`
+- "the dashboard" — there may be many: `ls cookbooks/lxc-monitoring/files/grafana/dashboards/`
+
+This rule exists because the 2026-05-10 cognee-mcp leak retro session labelled an option as "blackbox-exporter の cognee /sse プローブを /health に変更" when the actual prober was `cookbooks/mcp-probe/files/probe.py` — a custom Python script, not blackbox. The user accepted the option based on the label, then reversed scope mid-implementation. One full PR (#310) opened and closed, plus a plan revision.
+
 **When a diagnosis yields 5+ issues**: do NOT flatten them into a single "which of these do you care about?" AskUserQuestion — the user ends up with a question whose shape doesn't match how they think about the product. Instead, group the issues by user-goal theme (not by file, not by severity) and make the themes the options. Example: 7 痛点 across Edit form → group into "フォーム内部 / 行内アクション / drawer 差別化 / Save モデル" and ask which themes to tackle. This makes the plan's top-level structure correct from the start and avoids rewriting it after the user corrects the framing.
 
 ## Critical Rules — General

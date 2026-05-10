@@ -201,3 +201,24 @@ If the LXC is privileged (no `unprivileged:` line) AND the unit status is `activ
 **When designing new fleet cookbooks that ship systemd units**: assume any LXC in the fleet might be privileged (today only CT 100 roon is, but the rule is "support both"). Skip the namespace-related hardening directives in the cookbook-managed unit; if defense-in-depth is needed for a specific deployment, add a drop-in (which, as noted, may not actually take effect on privileged LXCs — accept the limitation).
 
 This rule exists because setup PR #164 (2026-05-06) was required after Phase 3b apply on CT 100 left node-exporter cycling in `activating` state. CT 100 (roon) is the only privileged LXC in the home fleet (it predates the unprivileged-default convention). The hardening directives shipped fine on every other LXC; only privileged tripped over them.
+
+## PVE / LXC reachability — read the LAN IP from `devices.json`, do not guess FQDNs
+
+`contracts/devices.json` logical names (the JSON key, e.g. `pve-host`, `cognee`, `monitoring`) are identifiers, not hostnames. The routable address for SSH / API / `pct exec` access is the `lxc.ip` or top-level `ip` field of that entry — NOT `<key>.home.local`, `<key>.tailscale.ts.net`, or any other constructed FQDN. The logical name and the machine's `hostname` often diverge (e.g., `pve-host` in devices.json while the machine reports `hostname=pro` and listens on `192.168.1.10`).
+
+Probe before SSH / scp / curl:
+
+```bash
+jq -r '.devices["<logical-name>"] | .lxc.ip // .ip // .tailscale.ip // "not found"' \
+  ~/ManagedProjects/home-monitor/contracts/devices.json
+```
+
+If the result is `not found`, dump the entry's whole structure to find the correct field:
+
+```bash
+jq '.devices["<logical-name>"]' ~/ManagedProjects/home-monitor/contracts/devices.json
+```
+
+Construct an FQDN only when the entry has an explicit `fqdn` or `tailscale` field — never from the logical name alone. For PVE LXCs specifically, prefer `pct exec <ct_id>` from the PVE host over direct SSH, since LXCs may not have SSH keys provisioned for your user.
+
+This rule exists because the 2026-05-10 cognee leak diagnosis burned three SSH attempts on `pve-host.home.local`, `pve.home.local`, and other guessed FQDNs before discovering that `pve-host` (devices.json logical name) maps to the same machine as `pro` (the bare-metal Linux entry, IP `192.168.1.10`). The correct path was always `ssh root@192.168.1.10` — the IP was right there in `pve-host`'s sibling `pro` entry, not under a constructed FQDN.
