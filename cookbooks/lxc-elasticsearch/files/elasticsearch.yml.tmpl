@@ -58,9 +58,13 @@ xpack.security.transport.ssl.certificate: /etc/elasticsearch/certs/@@NODE_NAME@@
 xpack.security.transport.ssl.certificate_authorities:
   - /etc/elasticsearch/certs/ca.crt
 
-# HTTP TLS — disabled in Phase 3b. Switch to true in Phase 7-tls and
-# point at the same node cert.
-xpack.security.http.ssl.enabled: false
+# HTTP TLS — Phase 7-tls. Reuses the transport-layer node cert (same
+# /etc/elasticsearch/certs/ paths, same SAN).
+xpack.security.http.ssl.enabled: true
+xpack.security.http.ssl.key: /etc/elasticsearch/certs/@@NODE_NAME@@.key
+xpack.security.http.ssl.certificate: /etc/elasticsearch/certs/@@NODE_NAME@@.crt
+xpack.security.http.ssl.certificate_authorities:
+  - /etc/elasticsearch/certs/ca.crt
 
 # Native install: ES reads /etc/elasticsearch/elasticsearch.yml. The
 # data, logs, and certs directories live under /data/elasticsearch/ via

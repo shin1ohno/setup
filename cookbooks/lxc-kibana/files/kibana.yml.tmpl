@@ -9,10 +9,16 @@ server.publicBaseUrl: "http://kibana.home.local:5601"
 # /data/kibana is on rpool inside the LXC (50 GB, no bind-mount).
 path.data: /data/kibana/data
 
+# Phase 7-tls: HTTPS to ES cluster. CA cert installed at
+# /etc/kibana/certs/ca.crt by the lxc-kibana cookbook (fetched from
+# SSM /monitoring/elastic/ca/cert, mode 0640 root:kibana).
 elasticsearch.hosts:
-  - http://es-0.home.local:9200
-  - http://es-1.home.local:9200
-  - http://es-2.home.local:9200
+  - https://es-0.home.local:9200
+  - https://es-1.home.local:9200
+  - https://es-2.home.local:9200
+elasticsearch.ssl.certificateAuthorities:
+  - /etc/kibana/certs/ca.crt
+elasticsearch.ssl.verificationMode: full
 
 elasticsearch.username: kibana_system
 elasticsearch.password: "${KIBANA_PASSWORD}"

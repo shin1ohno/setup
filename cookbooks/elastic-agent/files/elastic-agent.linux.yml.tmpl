@@ -20,10 +20,16 @@ agent:
 outputs:
   default:
     type: elasticsearch
+    # Phase 7-tls: HTTPS to ES cluster. CA cert installed by the
+    # elastic-agent cookbook at /etc/elastic-agent/certs/ca.crt
+    # (fetched from SSM /monitoring/elastic/ca/cert).
     hosts:
-      - http://es-0.home.local:9200
-      - http://es-1.home.local:9200
-      - http://es-2.home.local:9200
+      - https://es-0.home.local:9200
+      - https://es-1.home.local:9200
+      - https://es-2.home.local:9200
+    ssl.certificate_authorities:
+      - /etc/elastic-agent/certs/ca.crt
+    ssl.verification_mode: full
     username: elastic_agent_writer
     password: ${ELASTIC_AGENT_PASSWORD}
 
