@@ -31,7 +31,8 @@ SENTINEL="/var/lib/elasticsearch/.s3-keystore-hash"
 BUCKET_FILE="/var/lib/elasticsearch/.s3-bucket"
 REPO_NAME="s3-home-monitor"
 SLM_POLICY="daily-snapshot"
-ES_URL="${ES_URL:-http://localhost:9200}"
+ES_URL="${ES_URL:-https://localhost:9200}"
+CA_CERT="${CA_CERT:-/etc/elasticsearch/certs/ca.crt}"
 
 SSM_ACCESS_KEY_PATH="/monitoring/elastic/s3-snapshot/access-key-id"
 SSM_SECRET_KEY_PATH="/monitoring/elastic/s3-snapshot/secret-access-key"
@@ -49,12 +50,18 @@ ssm_get() {
     --output text --query 'Parameter.Value'
 }
 
+# Phase 7-tls: trust the cluster's CA when ES_URL is https.
+CURL_TLS=()
+if [[ "${ES_URL}" == https://* && -f "${CA_CERT}" ]]; then
+  CURL_TLS=(--cacert "${CA_CERT}")
+fi
+
 es_curl() {
-  curl -fsS -u "elastic:${ELASTIC_PASSWORD}" "$@"
+  curl -fsS "${CURL_TLS[@]}" -u "elastic:${ELASTIC_PASSWORD}" "$@"
 }
 
 es_curl_status() {
-  curl -s -o /dev/null -w '%{http_code}' \
+  curl -s "${CURL_TLS[@]}" -o /dev/null -w '%{http_code}' \
     -u "elastic:${ELASTIC_PASSWORD}" "$@"
 }
 

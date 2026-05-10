@@ -66,6 +66,14 @@ fi
 CURL_AUTH=(-u "elastic:${ELASTIC_PASSWORD}")
 CURL_OPTS=(-sS --max-time 30)
 
+# Phase 7-tls: ES is HTTPS. Trust the cluster's CA when ES_URL starts
+# with https:// — orchestrator passes "ES_URL=https://<ip>:9200" to
+# this script. CA is at /etc/elasticsearch/certs/ca.crt (Phase 3b
+# transport CA reused for HTTP layer).
+if [[ "${ES_URL}" == https://* ]]; then
+  CURL_OPTS+=(--cacert /etc/elasticsearch/certs/ca.crt)
+fi
+
 es_curl() {
   curl "${CURL_OPTS[@]}" "${CURL_AUTH[@]}" "$@"
 }

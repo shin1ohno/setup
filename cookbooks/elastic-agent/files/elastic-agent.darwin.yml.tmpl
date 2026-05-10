@@ -19,14 +19,15 @@ agent:
 outputs:
   default:
     type: elasticsearch
+    # Phase 7-tls: HTTPS to ES cluster. CA cert installed by the
+    # elastic-agent cookbook at /Library/Elastic/Agent/ca.crt
+    # (fetched from SSM /monitoring/elastic/ca/cert).
     hosts:
 @@ES_HOSTS_YAML@@
+    ssl.certificate_authorities: ["/Library/Elastic/Agent/ca.crt"]
+    ssl.verification_mode: full
     username: "@@ES_USERNAME@@"
     password: "@@ES_PASSWORD@@"
-    # Phase 3b ships HTTP. Phase 7-tls cuts over to HTTPS + the SSM-distributed
-    # CA at /monitoring/elastic/ca/cert. Re-render this file (cookbook bump)
-    # when the cluster cuts over.
-    # ssl.certificate_authorities: ["/Library/Elastic/Agent/ca.crt"]
 
 inputs:
   # ---------- system metrics (host-level cpu / memory / disk / network) ----------
