@@ -8,7 +8,10 @@ server.publicBaseUrl: "https://monitoring.ohno.be"
 # SameSite=None required because the EC2 nginx proxy origin
 # (monitoring.ohno.be) differs from Kibana's bind host (kibana.home.local);
 # Secure cookies are auto-set by Kibana when X-Forwarded-Proto=https.
-xpack.security.session.sameSiteAttribute: "None"
+# Kibana 8.x key is `xpack.security.sameSiteCookies` — earlier
+# `xpack.security.session.sameSiteAttribute` failed validation with
+# "definition for this key is missing" (FATAL on startup).
+xpack.security.sameSiteCookies: "None"
 
 # Native install: data dir override (DEB default is /var/lib/kibana).
 # /data/kibana is on rpool inside the LXC (50 GB, no bind-mount).
