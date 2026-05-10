@@ -52,6 +52,15 @@ inputs:
         metricsets: [process]
         period: 30s
         processes: ['.*']
+        # Limit per-scrape footprint: top 20 by CPU + top 20 by memory.
+        # `processes: ['.*']` alone collects every running process per
+        # 30s scrape — on small LXCs (samba/pro-router/housekeeping/hydra
+        # at 512MB) this triggers OOM-kill of metricbeat. top_n still
+        # captures the meaningful processes (heaviest CPU + memory
+        # consumers) while bounding scrape memory cost.
+        process.include_top_n:
+          by_cpu: 20
+          by_memory: 20
       - data_stream.dataset: system.uptime
         metricsets: [uptime]
         period: 60s
