@@ -37,7 +37,7 @@
     "cluster": ["monitor"],
     "indices": [
       {
-        "names": ["logs-*", "metrics-*", ".monitoring-*"],
+        "names": ["logs-*", "metrics-*", "synthetics-*", ".monitoring-*"],
         "privileges": ["create_index", "create_doc", "write", "auto_configure", "view_index_metadata"]
       }
     ]
