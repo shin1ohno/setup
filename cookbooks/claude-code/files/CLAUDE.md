@@ -62,6 +62,7 @@ This rule exists because the 2026-05-04 git-remote-codecommit session answered "
 
 - Communicate in Japanese (style rules: see "Japanese Output Discipline" below)
 - Git commit messages, source code comments, and spec documentation must be in English
+- **Codebase pattern search: `rg`, not `grep -rn`**. `rg` (ripgrep) is installed and respects `.gitignore` by default — that alone removes most false positives from `__pycache__/`, `node_modules/`, `.venv/`, build artifacts. Use `grep` only for piping inside another tool's output (`<cmd> | grep ...`), parsing single files, or shell function/alias inspection (`type grep`). Anti-pattern: `grep -rn <pattern> <dir>` — replace with `rg -n <pattern> <dir>`. The flag spelling differs slightly: `rg -F` for fixed-string (≈ `grep -F`), `rg -w` for word-boundary, `rg -l` to list filenames only, `rg --no-ignore` if you genuinely need to search ignored files
 - **Non-trivial tasks**: ALWAYS enter plan mode before implementation. Non-trivial = any task touching 2+ files, any task spanning 2+ repositories, any config change with deploy steps, any new agent/hook/skill creation. **Exception**: hardware/protocol debugging where root cause is unknown — use hypothesis-driven iteration instead (state hypothesis → minimal code change → user tests on device → confirm or invalidate → next hypothesis). Enter plan mode only after root cause is identified and the fix scope is clear.
 
   **Frequently misclassified as trivial — these still require plan mode:**
