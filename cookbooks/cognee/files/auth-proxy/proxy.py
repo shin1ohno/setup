@@ -296,6 +296,13 @@ async def handle(request: web.Request) -> web.StreamResponse:
         await response.prepare(request)
         try:
             async for chunk in upstream.content.iter_any():
+                # Probe the downstream transport before writing: mid-stream
+                # client disconnects don't always raise from response.write
+                # in time, so the upstream keeps producing chunks while the
+                # cognee-mcp side leaves the TCP connection ESTABLISHED.
+                if request.transport is None or request.transport.is_closing():
+                    logger.info("SSE downstream transport closing for %s", request.path)
+                    break
                 logger.info("SSE chunk: %s", chunk[:300])
                 chunk = rewrite_sse_paths(chunk, PATH_PREFIX)
                 await response.write(chunk)
@@ -304,7 +311,11 @@ async def handle(request: web.Request) -> web.StreamResponse:
         except Exception as exc:
             logger.warning("SSE streaming error: %s", exc)
         finally:
-            await upstream.release()
+            # close() forces the upstream socket shut. release() would return
+            # it to the aiohttp pool, but a chunked SSE stream has no clean
+            # boundary mid-flight — a "released" connection sits idle in the
+            # pool while the upstream server keeps it ESTABLISHED.
+            upstream.close()
         return response
 
     # Regular responses
