@@ -149,7 +149,7 @@ else
             params: {},
             actions: [{
                 id: $connector_id,
-                group: "xpack.synthetics.alerts.actionGroups.tlsCertificate",
+                group: "xpack.synthetics.alerts.actionGroups.tls",
                 params: {
                     level: "warn",
                     message: "TLS cert near expiry: {{context.commonName}} on {{context.hostName}} expires in {{context.summary}}"
