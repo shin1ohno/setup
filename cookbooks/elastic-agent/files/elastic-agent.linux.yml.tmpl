@@ -112,6 +112,7 @@ inputs:
           - /var/log/auth.log
           - /var/log/secure
 @@PROMETHEUS_INPUT@@
+@@SYNTHETICS_INPUT@@
 processors:
   - add_host_metadata: {}
   - add_fields:
