@@ -274,3 +274,31 @@
         hosts: ["weave.home.local:1883"]
         timeout: 10s
         tags: [weave, mqtt, lan-internal]
+
+  # ===== External HTTPS probes (TLS expiry coverage) =====
+  #
+  # mcp.ohno.be is the public OAuth-protected MCP gateway (cognee /
+  # roon-mcp / openmemory backends accessed by claude.ai). HTTPS probe
+  # populates the synthetics-http-default `tls.*` fields, which the
+  # Synthetics TLS rule (Phase 2 setup-alerting.sh) watches for cert
+  # expiry within 30 days.
+  #
+  # Service requires Bearer token at `/`; treat 401 / 403 as "reachable"
+  # — the goal here is liveness + TLS, not auth verification.
+
+  - type: synthetics/http
+    id: synthetics-mcp-ohno-be
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: mcp-ohno-be-root
+        name: MCP gateway (mcp.ohno.be) HTTPS
+        enabled: true
+        schedule: "@every 60s"
+        urls: ["https://mcp.ohno.be/"]
+        timeout: 15s
+        check.response.status: [200, 401, 403, 404]
+        tags: [mcp, external, https, tls]
