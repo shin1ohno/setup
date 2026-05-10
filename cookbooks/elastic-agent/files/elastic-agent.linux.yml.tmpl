@@ -64,6 +64,14 @@ inputs:
       - data_stream.dataset: system.uptime
         metricsets: [uptime]
         period: 60s
+      # process_summary feeds Kibana Observability "Inventory > Hosts >
+      # Processes" view (per-host aggregate counts: total / running /
+      # sleeping / stopped / zombie / dead / idle). Distinct dataset
+      # from system.process (per-process detail). Both are needed for
+      # full Inventory experience.
+      - data_stream.dataset: system.process_summary
+        metricsets: [process_summary]
+        period: 30s
 
   # Journald input — primary log source on Debian/Ubuntu LXCs which
   # use systemd-journal exclusively (no /var/log/syslog by default).
