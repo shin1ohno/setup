@@ -258,11 +258,16 @@ def probe_one(server: tuple[str, str, str], token_url: str, client_id: str, clie
         metrics.append(m("mcp_probe_e2e_success", {"server": name}, 0))
         return metrics
 
-    # Phase 2: SSE open + session
-    sid, messages_path, sse_handle, lat_sse, err = open_sse(base_url, sse_path, token)
+    # Phase 2: SSE open + session — success metric only.
+    # Latency metric was previously emitted here but is no longer published:
+    # the probe holds the SSE connection long enough that the latency
+    # reflects upstream contention more than transport health, so the value
+    # was noisy and operationally misleading. success/failure is still
+    # tracked. Downstream (initialize / tools_list) phases still report
+    # their own latency, which is what actually matters for MCP RPC health.
+    sid, messages_path, sse_handle, _lat_sse, err = open_sse(base_url, sse_path, token)
     sse_ok = 1 if sid else 0
     metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "sse_open"}, sse_ok))
-    metrics.append(m("mcp_probe_phase_latency_seconds", {"server": name, "phase": "sse_open"}, f"{lat_sse:.4f}"))
     if not sid:
         metrics.append(m("mcp_probe_e2e_success", {"server": name}, 0))
         return metrics
