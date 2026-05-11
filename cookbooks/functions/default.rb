@@ -64,16 +64,48 @@ module RecipeHelper
   # auth. Downstream cookbooks that depend on the block's side effects
   # (e.g. .env files) should guard their consumers with `only_if "test
   # -f <path>"`.
-  def require_external_auth(tool_name:, check_command:, instructions:, skip_if: nil)
+  def require_external_auth(tool_name:, check_command:, instructions:, skip_if: nil, login_profile: nil)
     if skip_if && skip_if.call
       return
     end
+
+    # Ensure aws CLI binary is available before the check_command runs.
+    # require_external_auth check_commands universally start with `aws`
+    # (sts get-caller-identity, ssm get-parameter, etc.) and exit 127
+    # without it. Compile-time install is necessary because:
+    #   - include_cookbook "awscli" only QUEUES install resources for the
+    #     converge phase; they have not run yet when this helper executes
+    #     at compile time
+    #   - the operator cannot satisfy a TTY prompt asking them to
+    #     `aws configure` if `aws` itself is not on PATH
+    ensure_awscli_installed!
 
     # First check before any prompting — covers the warm-rerun case.
     result = run_command(check_command, error: false)
     if result.exit_status == 0
       yield if block_given?
       return
+    end
+
+    # Auth missing + login_profile provided + TTY: attempt the device-code
+    # flow via `aws login --profile <p> --remote`. This is the v2.27+ AWS
+    # CLI login command (note: `--remote` disables the local callback
+    # server and shows URL+code so the operator can paste back the auth
+    # code from another device). After login succeeds the CLI caches a
+    # refresh token, so subsequent aws calls in this same mitamae run see
+    # valid credentials without another prompt.
+    if login_profile && STDIN.tty?
+      MItamae.logger.warn("=" * 60)
+      MItamae.logger.warn("[bootstrap] #{tool_name} auth missing — running: aws login --profile #{login_profile} --remote")
+      MItamae.logger.warn("Follow the URL + paste the authorization code from another device.")
+      MItamae.logger.warn("=" * 60)
+      system("aws", "login", "--profile", login_profile, "--remote")
+
+      result = run_command(check_command, error: false)
+      if result.exit_status == 0
+        yield if block_given?
+        return
+      end
     end
 
     # Non-interactive context (CI / dry-run / agent-driven): can't pause for
@@ -117,6 +149,52 @@ module RecipeHelper
         end
       end
     end
+  end
+
+  # Compile-time AWS CLI installer. Idempotent — no-op when `aws` is
+  # already on PATH. Used by require_external_auth so the first check_command
+  # at compile time finds the binary even on a fresh LXC where the awscli
+  # cookbook's converge-phase install hasn't run yet.
+  #
+  # Bypasses mitamae's resource model deliberately: needed at compile time
+  # because resources don't execute until converge. The awscli cookbook is
+  # still the canonical install path for steady-state idempotency (its
+  # `not_if` matches this installer's destination at /usr/local/aws-cli/).
+  def ensure_awscli_installed!
+    return if system("command -v aws >/dev/null 2>&1")
+
+    MItamae.logger.warn("[bootstrap] aws CLI not found — installing at compile time")
+    uname_s = `uname -s`.strip
+    case uname_s
+    when "Linux"
+      arch = `uname -m`.strip
+      asset = arch == "aarch64" ? "awscli-exe-linux-aarch64.zip" : "awscli-exe-linux-x86_64.zip"
+      # apt-get update + install unzip is best-effort: a fresh PVE Debian LXC
+      # has an empty apt index until the first apt-get update. Both calls
+      # tolerate failure (|| true) so this helper still raises a clear error
+      # on the actual curl/unzip/install step instead of an opaque apt error.
+      system("sudo apt-get update -qq 2>/dev/null || true")
+      system("sudo apt-get install -y -qq unzip curl ca-certificates 2>/dev/null || true")
+      cmd = "curl -fsSL https://awscli.amazonaws.com/#{asset} -o /tmp/awscliv2.zip && " \
+            "unzip -q -o /tmp/awscliv2.zip -d /tmp && " \
+            "sudo /tmp/aws/install --update >/dev/null && " \
+            "rm -rf /tmp/awscliv2.zip /tmp/aws"
+    when "Darwin"
+      cmd = "curl -fsSL https://awscli.amazonaws.com/AWSCLIV2.pkg -o /tmp/AWSCLIV2.pkg && " \
+            "sudo installer -pkg /tmp/AWSCLIV2.pkg -target / >/dev/null && " \
+            "rm -f /tmp/AWSCLIV2.pkg"
+    else
+      raise "ensure_awscli_installed!: unsupported platform #{uname_s}"
+    end
+
+    unless system(cmd)
+      raise "ensure_awscli_installed!: install command failed (see output above)"
+    end
+
+    # /usr/local/bin/aws is the symlink installed by the official AWS CLI
+    # installer (Linux) and pkg (Darwin). Prepend now so the rest of this
+    # mitamae run finds the freshly-installed binary.
+    prepend_path("/usr/local/bin")
   end
 
   # Prepend dirs to mitamae's running ENV['PATH'] so subsequent execute
