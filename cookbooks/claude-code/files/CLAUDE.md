@@ -115,7 +115,7 @@ When responding in Japanese (default), follow these. They override English-rule 
 ## Planning and Execution Model
 
 - `/plan` mode + user confirmation before proceeding
-- **Batch plan-phase questions** into one AskUserQuestion (multiSelect when non-exclusive) at the end of the plan draft. **Partial-answer guard**: count answered questions; re-issue a single AskUserQuestion for any unaddressed
+- **Batch plan-phase questions** into one AskUserQuestion (multiSelect when non-exclusive) at the end of the plan draft. **Partial-answer guard**: count answered questions; re-issue a single AskUserQuestion for any unaddressed. **File compression/refactor tasks**: when the user signals size dissatisfaction (「大きい」「40k とかある」「削減」), the initial AskUserQuestion MUST include both inline-removal AND architectural-split (move sections to on-demand `rules/*.md`) options. Discovering the split option after the user already answered inline-only forces a 2-turn plan revision. Origin: 2026-05-11 CLAUDE.md trim — 3 sequential trim rounds before the split option was surfaced
 - **After plan approval, execute autonomously** — no per-step permission. PR is the reviewable artifact (branch → implement → test → commit → `gh pr create`)
 - **Auto mode ≠ skipping plan** for non-trivial work
 - **State archaeology before reusing a TF resource type**: `terraform state show`, `aws iam get-user-policy`, `pct config <existing-vmid>`, `cat cookbooks/<existing>/default.rb`. Origin: 2026-05-06 CT 111 lost ~45 min to 2 blockers visible from a 2-min archaeology
