@@ -1,18 +1,4 @@
 services:
-  chromadb:
-    image: chromadb/chroma:0.6.3
-    restart: unless-stopped
-    environment:
-      - CHROMA_WORKERS=4
-    volumes:
-      - ./chroma_data:/chroma/chroma
-    healthcheck:
-      test: ["CMD", "/bin/bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
   cognee:
     image: cognee/cognee:0.5.8
     restart: unless-stopped
@@ -28,12 +14,13 @@ services:
       - CORS_ALLOWED_ORIGINS=*
       - ENABLE_BACKEND_ACCESS_CONTROL=false
       - COGNEE_SKIP_CONNECTION_TEST=true
-      - VECTOR_DB_URL=http://chromadb:8000
       - GUNICORN_WORKERS=1
       - POOL_ARGS={"pool_size":30,"max_overflow":20,"pool_recycle":300,"pool_timeout":30,"pool_pre_ping":true}
-      # Relational metadata DB → shared RDS Postgres (mem0 instance).
-      # Replaces the in-container SQLite (which suffered byte-0 corruption
-      # 2026-05-11). DB_HOST and DB_PASSWORD flow from .env via env_file.
+      # Relational metadata + vector store on shared RDS Postgres (mem0).
+      # SQLite was replaced 2026-05-11 after byte-0 corruption; ChromaDB
+      # was replaced same day to consolidate on RDS PITR backups. cognee
+      # PGVectorAdapter reuses the relational engine when both target the
+      # same Postgres → single connection pool.
       - DB_PROVIDER=postgres
       - DB_NAME=cognee
       - DB_USERNAME=cognee
@@ -47,9 +34,6 @@ services:
       - ./ingest:/app/ingest:ro
       - ${HOME}/ObsidianVaults/cognee-generated:/vault
       - ./scripts:/app/scripts:ro
-    depends_on:
-      chromadb:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s

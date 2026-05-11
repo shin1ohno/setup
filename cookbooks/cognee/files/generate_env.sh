@@ -69,6 +69,17 @@ COGNEE_MCP_API_TOKEN=${COGNEE_MCP_API_TOKEN}
 
 DB_HOST=${DB_HOST}
 DB_PASSWORD=${DB_PASSWORD}
+
+# Vector DB also on shared RDS Postgres (replaces ChromaDB). pgvector
+# extension is enabled on the cognee database. Cognee shares the SQLAlchemy
+# engine when relational and vector are both Postgres (PGVectorAdapter
+# detects this and reuses connection pool).
+VECTOR_DB_PROVIDER=pgvector
+VECTOR_DB_HOST=${DB_HOST}
+VECTOR_DB_PORT=5432
+VECTOR_DB_NAME=cognee
+VECTOR_DB_USERNAME=cognee
+VECTOR_DB_PASSWORD=${DB_PASSWORD}
 EOF
 
 chmod 600 "${OUTPUT_FILE}"
