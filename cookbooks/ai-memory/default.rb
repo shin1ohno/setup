@@ -32,7 +32,7 @@ remote_file "#{deploy_dir}/docker-compose.yml" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
-  notifies :run, "execute[restart ai-memory]"
+  notifies :run, "execute[restart memory]"
 end
 
 # Auth proxy — validates sage OAuth tokens in front of openmemory-api
@@ -50,7 +50,7 @@ end
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
-    notifies :run, "execute[restart ai-memory]"
+    notifies :run, "execute[restart memory]"
   end
 end
 
@@ -74,7 +74,7 @@ remote_file "#{patches_dir}/database.py" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
-  notifies :run, "execute[restart ai-memory]"
+  notifies :run, "execute[restart memory]"
 end
 
 # Generate .env with secrets from SSM Parameter Store
@@ -115,7 +115,7 @@ remote_file env_output_path do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "600"
-  notifies :run, "execute[restart ai-memory]"
+  notifies :run, "execute[restart memory]"
   only_if "test -f #{env_temp_path}"
 end
 
@@ -136,7 +136,7 @@ execute "fetch apm-server CA cert for ai-memory auth-proxy" do
           "chmod 0644 #{apm_ca_path}"
   user node[:setup][:user]
   not_if "test -f #{apm_ca_path}"
-  notifies :run, "execute[restart ai-memory]"
+  notifies :run, "execute[restart memory]"
 end
 
 # Ensure pgvector extension exists on Aurora (uses ephemeral postgres container).
@@ -164,8 +164,11 @@ execute "enable pgvector extension on Aurora" do
 end
 
 # Compose orchestration via the compose_service DSL
-# (cookbooks/functions/default.rb). Emits `ensure ai-memory running` and
-# `restart ai-memory` resources. `build_flag: false` because the compose
+# (cookbooks/functions/default.rb). Emits `ensure memory running` and
+# `restart memory` resources — project_name defaults to File.basename(deploy_dir)
+# = "memory" (the docker compose project label, not the logical service name).
+# Notify targets above must match the emitted resource name.
+# `build_flag: false` because the compose
 # spec uses ghcr.io/mem0ai/openmemory-mcp pre-built images for openmemory
 # itself (auth-proxy still builds lazily via `docker compose up`'s implicit
 # build-on-first-run behaviour), and `wait: true` because openmemory-api
