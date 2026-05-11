@@ -51,6 +51,20 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - **Every meaningful unit of work**: commit immediately
 - **Dual-managed file**: source `~/ManagedProjects/setup/cookbooks/claude-code/files/CLAUDE.md`, deploy `~/.claude/CLAUDE.md`. Update both, `diff` to verify
 
+## Rule placement
+
+When adding or extending a rule, place it by these criteria:
+
+| Target | Use when |
+|---|---|
+| `~/.claude/CLAUDE.md` (always loaded) | Applies every conversation; fits in 1-3 sentences; or is a navigational pointer |
+| `~/.claude/rules/<topic>.md` `@`-imported (always loaded) | Broadly applicable; >3 sentences; multiple sub-cases. Currently reserved for sub-agents, plugins, writing, knowledge-persistence |
+| `~/.claude/rules/<topic>.md` on-demand (loaded via Read) | Task-specific playbook. Open with a `Load when …` trigger line |
+
+Default to on-demand. Promote to `@`-import only when the rule genuinely applies to every conversation; promote to main CLAUDE.md only for 1-3 sentence steering rules.
+
+When extending an existing rule, keep it in place unless cumulative size grew past ~10 lines or 3+ sub-cases diverge by task type — then split to a new on-demand file.
+
 ## Japanese Output Discipline
 
 When responding in Japanese (default), follow these. They override English-rule wording on output style; rule *behavior* (AskUserQuestion, Plan-then-confirm, Verify-before-done) is unchanged. Without these, calque-style "変な日本語" leaks through.
