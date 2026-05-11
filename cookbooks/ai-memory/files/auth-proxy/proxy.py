@@ -22,6 +22,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger("auth-proxy")
 
+# ── OpenTelemetry tracing ──────────────────────────────────────────────
+# Env-driven (OTEL_EXPORTER_OTLP_ENDPOINT / _CERTIFICATE / _HEADERS,
+# OTEL_SERVICE_NAME, DEPLOYMENT_ENVIRONMENT). When OTLP endpoint is unset
+# the BatchSpanProcessor still attaches, but its exporter silently no-ops —
+# acceptable for local dev. Logs are NOT instrumented (only spans).
+
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.aiohttp_server import AioHttpServerInstrumentor
+from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
+
+_service_name = os.environ.get("OTEL_SERVICE_NAME", "ai-memory-auth-proxy")
+_resource = Resource.create({
+    "service.name": _service_name,
+    "deployment.environment": os.environ.get("DEPLOYMENT_ENVIRONMENT", "home"),
+})
+_provider = TracerProvider(resource=_resource)
+_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+trace.set_tracer_provider(_provider)
+
+# Server instrumentation must be applied before web.Application() is built.
+# Client instrumentation applies globally to all aiohttp ClientSession instances.
+AioHttpServerInstrumentor().instrument()
+AioHttpClientInstrumentor().instrument()
+
 SAGE_ISSUER = os.environ.get("SAGE_ISSUER", "https://mcp.ohno.be")
 SAGE_JWKS_URL = os.environ.get(
     "SAGE_JWKS_URL", "https://mcp.ohno.be/.well-known/jwks.json"
