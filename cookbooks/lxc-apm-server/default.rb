@@ -149,7 +149,14 @@ end
 execute "install apm-server.yml" do
   command "install -m 0640 -o root -g apm-server #{apm_yml_staging} #{apm_yml_path}"
   only_if "test -f #{apm_yml_staging}"
-  not_if "test -f #{apm_yml_path} && diff -q #{apm_yml_staging} #{apm_yml_path} 2>/dev/null"
+  # not_if must check BOTH content AND ownership/mode — a content-only
+  # check skips install when content matches an older PR's wrong owner
+  # (e.g. PR #318 left files root:root, PR #320 needed to fix to
+  # root:apm-server but `diff -q` was true so install was skipped and
+  # owner stayed root:root, crashing apm-server with "permission denied").
+  not_if "test -f #{apm_yml_path} && " \
+         "diff -q #{apm_yml_staging} #{apm_yml_path} >/dev/null 2>&1 && " \
+         "test \"$(stat -c '%U:%G:%a' #{apm_yml_path})\" = 'root:apm-server:640'"
   notifies :run, "execute[restart apm-server]"
 end
 
@@ -265,13 +272,15 @@ execute "add APM_SERVER_PASSWORD to keystore" do
   notifies :run, "execute[restart apm-server]"
 end
 
-# Keystore is created with root:root 0600 by default — chown after each
-# add so the apm-server runtime user can read it. Idempotent stat probe.
+# apm-server strict-perms requires the keystore to be owned by the
+# runtime user with mode 0600 (no group read) — `root:apm-server 0640`
+# triggers "permission too open" at startup. Chown to
+# `apm-server:apm-server 0600` after each `keystore add`.
 execute "chown apm-server keystore" do
-  command "chown root:apm-server /var/lib/apm-server/apm-server.keystore && " \
-          "chmod 0640 /var/lib/apm-server/apm-server.keystore"
+  command "chown apm-server:apm-server /var/lib/apm-server/apm-server.keystore && " \
+          "chmod 0600 /var/lib/apm-server/apm-server.keystore"
   only_if "test -f /var/lib/apm-server/apm-server.keystore"
-  not_if "test \"$(stat -c '%U:%G %a' /var/lib/apm-server/apm-server.keystore 2>/dev/null)\" = 'root:apm-server 640'"
+  not_if "test \"$(stat -c '%U:%G %a' /var/lib/apm-server/apm-server.keystore 2>/dev/null)\" = 'apm-server:apm-server 600'"
 end
 
 # Delete the staged env file now that the password is in the keystore.
@@ -284,12 +293,15 @@ end
 # the unit with User=apm-server, so apm-server group must read these).
 # server.crt / ca.crt 0640, server.key 0640 (group-read needed for the
 # apm-server runtime user).
+# Cert installs use the same content+ownership not_if pattern as
+# apm-server.yml above — see comment there for the rationale.
 execute "install apm-server TLS cert" do
   command "install -m 0640 -o root -g apm-server #{certs_staging_dir}/server.crt " \
           "/etc/apm-server/certs/server.crt"
   only_if "test -f #{certs_staging_dir}/server.crt"
   not_if "test -f /etc/apm-server/certs/server.crt && " \
-         "diff -q #{certs_staging_dir}/server.crt /etc/apm-server/certs/server.crt 2>/dev/null"
+         "diff -q #{certs_staging_dir}/server.crt /etc/apm-server/certs/server.crt >/dev/null 2>&1 && " \
+         "test \"$(stat -c '%U:%G:%a' /etc/apm-server/certs/server.crt)\" = 'root:apm-server:640'"
   notifies :run, "execute[restart apm-server]"
 end
 
@@ -298,7 +310,8 @@ execute "install apm-server TLS key" do
           "/etc/apm-server/certs/server.key"
   only_if "test -f #{certs_staging_dir}/server.key"
   not_if "test -f /etc/apm-server/certs/server.key && " \
-         "diff -q #{certs_staging_dir}/server.key /etc/apm-server/certs/server.key 2>/dev/null"
+         "diff -q #{certs_staging_dir}/server.key /etc/apm-server/certs/server.key >/dev/null 2>&1 && " \
+         "test \"$(stat -c '%U:%G:%a' /etc/apm-server/certs/server.key)\" = 'root:apm-server:640'"
   notifies :run, "execute[restart apm-server]"
 end
 
@@ -307,7 +320,8 @@ execute "install apm-server CA cert" do
           "/etc/apm-server/certs/ca.crt"
   only_if "test -f #{certs_staging_dir}/ca.crt"
   not_if "test -f /etc/apm-server/certs/ca.crt && " \
-         "diff -q #{certs_staging_dir}/ca.crt /etc/apm-server/certs/ca.crt 2>/dev/null"
+         "diff -q #{certs_staging_dir}/ca.crt /etc/apm-server/certs/ca.crt >/dev/null 2>&1 && " \
+         "test \"$(stat -c '%U:%G:%a' /etc/apm-server/certs/ca.crt)\" = 'root:apm-server:640'"
   notifies :run, "execute[restart apm-server]"
 end
 
