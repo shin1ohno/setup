@@ -6,7 +6,6 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 
 - **Every ambiguity**: use AskUserQuestion, never guess
 - **Analysis is NOT a proposal**: end findings with AskUserQuestion asking direction
-- **Use structured AskUserQuestion, not prose menus**: ❌「A: … B: … どれにしますか？」 ✓ `AskUserQuestion(options=[…])`
 
 **Pause** and confirm:
 1. Ambiguous requirements ("improve this", "clean this up")
@@ -14,6 +13,19 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 3. Scope decisions (no unilateral expansion)
 4. Technical choices with no known preference
 5. Uncertain assumptions ("this is probably right")
+
+**例（違反 / 改善後）:**
+
+```
+❌ 悪い例: 「以下の3点が問題です。[分析結果]。実装を進めます。」
+✓ 良い例: 「以下の3点が問題です。[分析結果]。」 → AskUserQuestion("どの方針で進めますか？")
+
+❌ 悪い例: 「調査結果をまとめました。[7項目のリスト]」
+✓ 良い例: 「調査結果をまとめました。」 → AskUserQuestion("どれを採用しますか？", multiSelect)
+
+❌ 悪い例: 「以下の選択肢があります。A: ... B: ... C: ... どれにしますか？」（散文形式のメニューを質問の体裁にしただけ — これも違反）
+✓ 良い例: 同じ状況 → AskUserQuestion("どれにしますか？", options=["A: ...", "B: ...", "C: ..."])
+```
 
 **When NOT needed**: clear single path, all reversible. Steps inside an approved plan don't need individual confirmation.
 
@@ -70,6 +82,17 @@ When responding in Japanese (default), follow these. They override English-rule 
 - 「Verify-before-done」→ ✓「修正したら観測可能な状態で確認してから完了報告」
 
 英語ルール名そのままの引用は可（識別子として）。
+
+### 例（違反 / 改善後）
+
+❌ 悪い例: 「このアプローチは検討する価値があると思います」
+✓ 良い例: 「このアプローチを採用する。理由は X と Y。」
+
+❌ 悪い例: 「次回確認できますが、たぶん問題ないかもしれません」
+✓ 良い例: 「いま確認した。X 行目で Err。Y を変更して再実行する。」
+
+❌ 悪い例: 「Plan-then-confirm に従って計画を作成しました。実装してもよろしいでしょうか？」
+✓ 良い例: 「以下のプランで実装する。[plan]」（明示反対が無ければ実装に入る、明示承認は不要）
 
 ## Behavioral Principles
 
