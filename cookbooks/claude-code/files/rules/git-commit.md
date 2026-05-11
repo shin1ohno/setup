@@ -61,6 +61,18 @@ Before writing any file or running `git add` in a repo that is part of the curre
 
 Do NOT commit onto: merged PR branches still checked out locally, in-flight feature branches for unrelated work, or any branch whose `git log` shows commits unrelated to the current task. Scope-bleed discovered after the commit requires cherry-pick surgery that is easy to prevent with this 2-second check.
 
+### Config-editing tasks — branch check at first Write, not first commit
+
+For tasks whose primary output is edits to `CLAUDE.md`, `~/.claude/rules/*.md`, or any rules/docs file that accumulates many Write calls before any `git add`, run the branch check **before the FIRST Write tool call** — not just before `git add`. By the time you reach `git add`, you may have applied 5+ Writes across multiple turns to the wrong branch; the cherry-pick (or stash → branch → pop) recovery cost dwarfs the 2-second check.
+
+```
+git -C /path/to/repo branch --show-current  # before the first Write
+```
+
+If the current branch is not the intended one (typically: not `main`, not a branch created for this task), cut a fresh branch from `origin/main` BEFORE editing. The existing rule's "Before writing any file" wording is correct but easily missed when the editing session spans many turns and never touches `git add` until late.
+
+Origin: 2026-05-11 CLAUDE.md trim session applied 5+ Writes to `cookbooks/claude-code/files/CLAUDE.md` while sitting on `fix/aws-credentials-login-session-bootstrap` (an unrelated open PR's branch). The user surfaced the scope-bleed with "origin/mainにも入ってる？" only after all edits had landed; recovery required `git stash --include-untracked` → fresh branch from `origin/main` → `git stash pop` → 2 commits cycle.
+
 ### Branch check immediately before `gh pr create`
 
 The branch check at first commit time is necessary but not sufficient. In multi-stream worktree sessions where multiple branches coexist, the current branch can change between commit and PR-create — a parallel agent finishes, you switch context, and `gh pr create` runs against the NEW current branch. The PR's title and body describe one set of changes, but the diff contains a different stream's content.
@@ -203,6 +215,23 @@ gh pr view <n> --json reviewThreads --jq '[.reviewThreads[] | select(.isResolved
 **Verification gate before pushing the fix commit**: count unresolved threads, count comments you've addressed. If the numbers don't match, re-fetch — there is at least one comment from a review submission you didn't see.
 
 This rule exists because the 2026-05-07 PR #179 session fetched only 2 inline comments via `pulls/179/comments` and pushed a "review feedback addressed" commit. The reviewer had submitted a SECOND review (review id `PRR_kwDOJGwgDM787Pie`) adding a third comment at line 113 that was missed. User had to flag "一つ対応もれ" before I re-fetched and saw the gap. The `reviewThreads` approach would have surfaced all 3 from the start.
+
+### Diff before acting on comments that reference content by name
+
+When a review comment references content by name ("keep X", "restore Y", "don't remove Z", "X を日本語にしてほしい"), the reviewer is reacting to a specific diff state. Confirm what actually changed before applying a fix:
+
+```bash
+# vs the PR base — what this PR removed / added / renamed
+git diff origin/main...HEAD -- <file> | grep -F '<content-phrase>'
+# vs the previous commit on the branch
+git diff HEAD~1 HEAD -- <file> | grep -F '<content-phrase>'
+```
+
+This tells you whether the named content was deleted, renamed, still present, or never existed. Apply only the minimum fix the diff actually requires.
+
+Comments that look like single-axis style requests can in fact span two axes — e.g., "Bad/Good は日本語のままにしてほしい" parses simultaneously as (a) relabel `Bad/Good` → `悪い例/良い例` and (b) restore the example pairs that were deleted. The diff disambiguates: if the named tokens are absent from `HEAD` but present in the diff's `-` lines, the reviewer is asking for restoration AND relabel, not just relabel.
+
+Origin: 2026-05-11 PR #341 review comment on a line my diff had deleted. Both interpretations happened to be correct; running `git diff origin/main...HEAD` first would have made that explicit rather than guessed.
 
 ## Stacked PR Merge Guard — retarget downstream PRs before `--delete-branch`
 
