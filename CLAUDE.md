@@ -15,10 +15,10 @@ This repository configures:
 | Bare-metal Linux workstation | `pro` | `linux.rb` (refuses to apply inside any container — guarded by `systemd-detect-virt -c`; bypass with `MITAMAE_FORCE_BARE_METAL=1`) |
 | Proxmox VE host | the host that runs the LXCs | `pve/pve-host.rb` |
 | Developer workstation LXC | `pro-dev` (CT 104), future `*-dev` | `pve/lxc-pro-dev.rb` (delegates to the `lxc-dev-workstation` cookbook; future LXCs reuse the cookbook with their own `node[:lxc_dev][:*]` overrides) |
-| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-monitoring`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router` | matching `pve/lxc-<service>.rb` (apply all in parallel via `bin/apply-pve-lxcs`) |
+| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-monitoring`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router`, `lxc-es-0/1/2` (Elasticsearch cluster), `lxc-kibana`, `lxc-apm-server` | matching `pve/lxc-<service>.rb` (apply all in parallel via `bin/apply-pve-lxcs`) |
 | macOS | `air`, `ohnos-macbook` | `darwin.rb` |
 
-`linux.rb` is bare-metal-only. MCP servers (cognee, ai-memory, hydra, hydra-consent) and Roon Server / MCP have migrated to dedicated LXCs and are NOT installed on bare-metal pro.
+`linux.rb` is bare-metal-only. MCP servers (cognee, ai-memory, hydra, hydra-consent), Roon Server / MCP, and the Elastic stack (Elasticsearch / Kibana / APM Server — see `docs/adr/0005-rtx-logs-loki-to-elasticsearch.md`) have all migrated to dedicated LXCs and are NOT installed on bare-metal pro.
 
 This repository does NOT configure:
 
@@ -44,7 +44,7 @@ This repository does NOT configure:
 - `roles/extras/` - Specialized development tools (terraform, neovim, docker)
 - `roles/manage/` - Managed projects setup from JSON configuration
 - `roles/server/` - Server-specific setup (Linux only, deploy directory)
-- `roles/mcp-server/` - Self-hosted MCP servers (Linux only)
+- `roles/lxc-core/` - Shared base for every `pve/lxc-*.rb` + `pve-host.rb`: bundles `node-exporter` (Prometheus scrape on :9100) + `auto-mitamae-target` (forced-command authorized_keys for orchestrator-pushed mitamae apply)
 
 **Implementation Pattern:**
 
