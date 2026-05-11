@@ -31,6 +31,15 @@ services:
       - VECTOR_DB_URL=http://chromadb:8000
       - GUNICORN_WORKERS=1
       - POOL_ARGS={"pool_size":30,"max_overflow":20,"pool_recycle":300,"pool_timeout":30,"pool_pre_ping":true}
+      # Relational metadata DB → shared RDS Postgres (mem0 instance).
+      # Replaces the in-container SQLite (which suffered byte-0 corruption
+      # 2026-05-11). DB_HOST and DB_PASSWORD flow from .env via env_file.
+      - DB_PROVIDER=postgres
+      - DB_NAME=cognee
+      - DB_USERNAME=cognee
+      - DB_PORT=5432
+      - DB_HOST=${DB_HOST}
+      - DB_PASSWORD=${DB_PASSWORD}
     volumes:
       - ./data:/app/cognee/.data_storage
       - ./entrypoint-override.sh:/app/entrypoint.sh:ro
