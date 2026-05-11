@@ -561,8 +561,14 @@ jobs:
           )
         ' /tmp/devices.json > /dev/null
 
-        # All devices must have a description
-        jq -e '.devices | to_entries | all(.value.description | type == "string" and length > 0)' /tmp/devices.json > /dev/null
+        # NOTE: per-device `description` is intentionally absent from
+        # the SSM-published payload (home-monitor host-registry-ssm.tf
+        # strips it before publish, 8KB Advanced-tier cap fix in
+        # home-monitor PR #62). Descriptions remain in the canonical
+        # contracts/devices.json source for PR readability; no consumer
+        # cookbook reads description. The previous "description must be
+        # non-empty" check would force a revert of the strip and is
+        # removed here.
 
         # ssm_prefix (when present) must match the SSM path pattern
         jq -e '
