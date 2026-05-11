@@ -41,5 +41,14 @@
         "privileges": ["create_index", "create_doc", "write", "auto_configure", "view_index_metadata"]
       }
     ]
+  },
+  "apm_server_writer": {
+    "cluster": ["monitor", "manage_ilm", "manage_index_templates"],
+    "indices": [
+      {
+        "names": ["traces-apm-*", "logs-apm-*", "metrics-apm-*", "apm-*", ".apm-*"],
+        "privileges": ["create_index", "create_doc", "write", "auto_configure", "view_index_metadata", "manage"]
+      }
+    ]
   }
 }

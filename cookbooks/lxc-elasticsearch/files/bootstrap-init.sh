@@ -62,6 +62,7 @@ fi
 : "${ANALYST_PASSWORD:?ANALYST_PASSWORD must be set}"
 : "${MONITOR_PASSWORD:?MONITOR_PASSWORD must be set}"
 : "${ELASTIC_AGENT_PASSWORD:?ELASTIC_AGENT_PASSWORD must be set}"
+: "${APM_SERVER_PASSWORD:?APM_SERVER_PASSWORD must be set}"
 
 CURL_AUTH=(-u "elastic:${ELASTIC_PASSWORD}")
 CURL_OPTS=(-sS --max-time 30)
@@ -327,6 +328,7 @@ main() {
   put_role "grafana_reader"
   put_role "rtx_analyst"
   put_role "elastic_agent_writer"
+  put_role "apm_server_writer"
 
   # Drift detection — application users.
   put_or_reset_user "vector_writer"        "${VECTOR_PASSWORD}"        '["vector_writer"]'
@@ -334,6 +336,7 @@ main() {
   put_or_reset_user "rtx_analyst"          "${ANALYST_PASSWORD}"       '["rtx_analyst"]'
   put_or_reset_user "es_monitor"           "${MONITOR_PASSWORD}"       '["monitoring_user"]'
   put_or_reset_user "elastic_agent_writer" "${ELASTIC_AGENT_PASSWORD}" '["elastic_agent_writer"]'
+  put_or_reset_user "apm_server_writer"    "${APM_SERVER_PASSWORD}"    '["apm_server_writer"]'
 
   # Built-in kibana_system — only password can be set.
   reset_kibana_system_password
