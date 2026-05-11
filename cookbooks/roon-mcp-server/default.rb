@@ -29,7 +29,7 @@ return if node[:platform] == "darwin"
 
 include_cookbook "docker-engine"
 
-version     = node.dig(:roon_mcp_server, :version)     || "0.5.4"
+version     = node.dig(:roon_mcp_server, :version)     || "0.5.5"
 http_port   = node.dig(:roon_mcp_server, :http_port)   || 8080
 # core_host default is the direct IP rather than `roon-lxc.home.local`
 # because the container DNS (Docker's embedded resolver, even with RTX
