@@ -226,6 +226,21 @@ file env_temp_path do
   only_if "test -f #{env_temp_path}"
 end
 
+# APM CA cert for the auth-proxy container's OTLP TLS handshake. Fetched
+# separately from .env because the cookbook regenerates .env only on first
+# apply (skip_if File.exist?(env_output_path)). The CA cert is similarly
+# fetched once; manual rotation = delete this file and re-apply.
+apm_ca_path = "#{deploy_dir}/apm-ca.crt"
+execute "fetch apm-server CA cert for cognee auth-proxy" do
+  command "aws ssm get-parameter --name /monitoring/apm/ca/cert " \
+          "--profile #{aws_profile} --region #{aws_region} " \
+          "--query Parameter.Value --output text > #{apm_ca_path} && " \
+          "chmod 0644 #{apm_ca_path}"
+  user node[:setup][:user]
+  not_if "test -f #{apm_ca_path}"
+  notifies :run, "execute[restart cognee]"
+end
+
 # Compose orchestration via the compose_service DSL
 # (cookbooks/functions/default.rb). Emits `execute "ensure cognee running"`
 # (idempotency probe + up -d --build) and `execute "restart cognee"`

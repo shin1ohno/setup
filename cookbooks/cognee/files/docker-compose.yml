@@ -178,6 +178,13 @@ services:
     restart: unless-stopped
     ports:
       - "8767:8767"
+    env_file:
+      # Phase 5 APM env: OTEL_EXPORTER_OTLP_HEADERS holds the
+      # cognee-auth-proxy-scoped ApiKey fetched from SSM at apply time
+      # (mode 0600). Endpoint + service-name + deployment-env + CA path
+      # are in plaintext under `environment:` below. Shares the same
+      # .env as the rest of the cognee stack.
+      - .env
     environment:
       - SAGE_ISSUER=https://mcp.ohno.be
       - SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
@@ -185,6 +192,15 @@ services:
       - PORT=8767
       - PATH_PREFIX=/cognee
       - HOST_OVERRIDE=127.0.0.1:8000
+      - OTEL_EXPORTER_OTLP_ENDPOINT=https://apm-server.home.local:8200
+      # Mount + reference the home APM Server CA cert so the OTLP gRPC
+      # TLS handshake verifies against es_ca (not in OS roots). Without
+      # this the SDK silently drops every batch.
+      - OTEL_EXPORTER_OTLP_CERTIFICATE=/etc/ssl/apm-ca.crt
+      - OTEL_SERVICE_NAME=cognee-auth-proxy
+      - DEPLOYMENT_ENVIRONMENT=home
+    volumes:
+      - ./apm-ca.crt:/etc/ssl/apm-ca.crt:ro
     depends_on:
       cognee-mcp:
         condition: service_started
