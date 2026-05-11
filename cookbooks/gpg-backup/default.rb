@@ -5,7 +5,7 @@
 #
 # Two tools:
 #   gpg-keychain      - macOS Keychain (local, iCloud sync) - for subkeys on daily machines
-#   gpg-master-backup - AWS Secrets Manager (remote, cross-platform) - for master key disaster recovery
+#   gpg-master-backup - AWS SSM Parameter Store (remote, cross-platform) - for master key disaster recovery
 #
 
 setup_root = node[:setup][:root]
@@ -512,7 +512,7 @@ if node[:platform] == "darwin"
 end
 
 #
-# gpg-master-backup - AWS Secrets Manager backup (Linux/macOS)
+# gpg-master-backup - AWS SSM Parameter Store backup (Linux/macOS)
 #
 file "#{setup_root}/bin/gpg-master-backup" do
   owner user
@@ -520,21 +520,30 @@ file "#{setup_root}/bin/gpg-master-backup" do
   content <<~'SCRIPT'
     #!/usr/bin/env bash
     #
-    # GPG Master Backup - Save/restore GPG master keys to AWS Secrets Manager
+    # GPG Master Backup - Save/restore GPG master keys to AWS SSM Parameter Store
     #
     # Strategy:
     # - Master key exported with --export-options backup for full fidelity
     # - Client-side encrypted with passphrase (AES-256) before upload
-    # - Stored in AWS Secrets Manager (encrypted again with KMS)
+    # - Stored as SSM SecureString (encrypted again with KMS)
     # - Requires both AWS access AND passphrase to restore
+    #
+    # Tier handling:
+    # - SSM Standard tier: free, up to 4096 bytes per parameter
+    # - SSM Advanced tier: $0.05/month per parameter, up to 8192 bytes
+    # - This script auto-uses Advanced tier when payload exceeds 4096 bytes.
     #
     # Prerequisites:
     # - AWS CLI configured with appropriate credentials
-    # - Secrets Manager permissions (secretsmanager:*)
+    # - SSM Parameter Store permissions (ssm:GetParameter, ssm:PutParameter,
+    #   ssm:DeleteParameter, ssm:GetParametersByPath, ssm:DescribeParameters)
+    # - KMS Decrypt permission on the alias/aws/ssm key (default SecureString CMK)
     #
 
     set -euo pipefail
 
+    # SSM path prefix groups all GPG-related parameters under /gpg/.
+    SSM_PREFIX="/gpg"
     SECRET_PREFIX="gpg-master-key"
     SUBKEY_PREFIX="gpg-subkeys"
     REVOCATION_PREFIX="gpg-revocation"
@@ -566,6 +575,73 @@ file "#{setup_root}/bin/gpg-master-backup" do
         fi
     }
 
+    # Build full SSM parameter path: $SSM_PREFIX/<name>
+    ssm_path() {
+        local name="$1"
+        echo "${SSM_PREFIX}/${name}"
+    }
+
+    # Put a SecureString into SSM, auto-selecting Standard or Advanced tier
+    # based on payload size (4096 byte boundary).
+    # Args: <ssm-name-without-prefix> <value> <description>
+    ssm_put_secure() {
+        local name="$1"
+        local value="$2"
+        local description="$3"
+        local path
+        path=$(ssm_path "$name")
+
+        local size=${#value}
+        local tier="Standard"
+        if [[ $size -gt 4096 ]]; then
+            tier="Advanced"
+            log_warn "Payload size ${size} bytes > 4096 — using Advanced tier (\$0.05/month)"
+        fi
+
+        aws ssm put-parameter \
+            --name "$path" \
+            --type SecureString \
+            --value "$value" \
+            --description "$description" \
+            --tier "$tier" \
+            --overwrite \
+            --output text > /dev/null
+    }
+
+    # Get a SecureString from SSM, decrypted. Returns 0 if found, 1 if not.
+    # Args: <ssm-name-without-prefix>
+    ssm_get_secure() {
+        local name="$1"
+        local path
+        path=$(ssm_path "$name")
+
+        aws ssm get-parameter \
+            --name "$path" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text 2>/dev/null
+    }
+
+    # Test whether an SSM parameter exists. Returns 0 if exists, non-zero otherwise.
+    # Args: <ssm-name-without-prefix>
+    ssm_exists() {
+        local name="$1"
+        local path
+        path=$(ssm_path "$name")
+
+        aws ssm get-parameter --name "$path" &>/dev/null
+    }
+
+    # Delete an SSM parameter (no-op if missing).
+    # Args: <ssm-name-without-prefix>
+    ssm_delete() {
+        local name="$1"
+        local path
+        path=$(ssm_path "$name")
+
+        aws ssm delete-parameter --name "$path" --output text > /dev/null 2>&1 || true
+    }
+
     # List available GPG secret keys
     list_gpg_keys() {
         echo "Available GPG secret keys:"
@@ -573,20 +649,22 @@ file "#{setup_root}/bin/gpg-master-backup" do
         gpg --list-secret-keys --keyid-format LONG 2>/dev/null || echo "No keys found"
     }
 
-    # List keys saved in Secrets Manager
+    # List keys saved in SSM Parameter Store under $SSM_PREFIX.
     list_secrets() {
-        echo "GPG keys saved in AWS Secrets Manager:"
+        echo "GPG keys saved in AWS SSM Parameter Store (${SSM_PREFIX}/):"
         echo "---"
         echo "Master keys:"
-        aws secretsmanager list-secrets \
-            --filter Key=name,Values="${SECRET_PREFIX}" \
-            --query 'SecretList[].Name' \
+        aws ssm get-parameters-by-path \
+            --path "${SSM_PREFIX}/${SECRET_PREFIX}" \
+            --recursive \
+            --query 'Parameters[].Name' \
             --output text 2>/dev/null | tr '\t' '\n' | sed 's/^/  /' || echo "  (none)"
         echo ""
         echo "Subkeys:"
-        aws secretsmanager list-secrets \
-            --filter Key=name,Values="${SUBKEY_PREFIX}" \
-            --query 'SecretList[].Name' \
+        aws ssm get-parameters-by-path \
+            --path "${SSM_PREFIX}/${SUBKEY_PREFIX}" \
+            --recursive \
+            --query 'Parameters[].Name' \
             --output text 2>/dev/null | tr '\t' '\n' | sed 's/^/  /' || echo "  (none)"
     }
 
@@ -597,7 +675,7 @@ file "#{setup_root}/bin/gpg-master-backup" do
             grep -E "^sec" | head -1 | awk '{print $2}' | cut -d'/' -f2
     }
 
-    # Save master key to Secrets Manager
+    # Save master key to SSM Parameter Store
     save_key() {
         local key_id="$1"
 
@@ -640,23 +718,15 @@ file "#{setup_root}/bin/gpg-master-backup" do
         rm -f "$plain_key"
         sync
 
-        # Check if secret exists
-        if aws secretsmanager describe-secret --secret-id "$secret_name" &>/dev/null; then
-            log_warn "Secret already exists. Updating..."
-            aws secretsmanager put-secret-value \
-                --secret-id "$secret_name" \
-                --secret-string "$(cat "$encrypted_key")" \
-                --output text > /dev/null
+        # Put (create or overwrite) the SecureString parameter.
+        if ssm_exists "$secret_name"; then
+            log_warn "Parameter already exists. Overwriting..."
         else
-            log_info "Creating new secret: $secret_name"
-            aws secretsmanager create-secret \
-                --name "$secret_name" \
-                --description "GPG Master Key: $fingerprint" \
-                --secret-string "$(cat "$encrypted_key")" \
-                --output text > /dev/null
+            log_info "Creating new parameter: $(ssm_path "$secret_name")"
         fi
+        ssm_put_secure "$secret_name" "$(cat "$encrypted_key")" "GPG Master Key: $fingerprint"
 
-        log_info "Master key saved to Secrets Manager"
+        log_info "Master key saved to SSM Parameter Store"
 
         # Save revocation certificate
         save_revocation "$key_id" "$fingerprint" "$temp_dir"
@@ -711,22 +781,14 @@ file "#{setup_root}/bin/gpg-master-backup" do
         rm -f "$plain_key"
         sync
 
-        if aws secretsmanager describe-secret --secret-id "$secret_name" &>/dev/null; then
-            log_warn "Secret already exists. Updating..."
-            aws secretsmanager put-secret-value \
-                --secret-id "$secret_name" \
-                --secret-string "$(cat "$encrypted_key")" \
-                --output text > /dev/null
+        if ssm_exists "$secret_name"; then
+            log_warn "Parameter already exists. Overwriting..."
         else
-            log_info "Creating new secret: $secret_name"
-            aws secretsmanager create-secret \
-                --name "$secret_name" \
-                --description "GPG Subkeys: $fingerprint" \
-                --secret-string "$(cat "$encrypted_key")" \
-                --output text > /dev/null
+            log_info "Creating new parameter: $(ssm_path "$secret_name")"
         fi
+        ssm_put_secure "$secret_name" "$(cat "$encrypted_key")" "GPG Subkeys: $fingerprint"
 
-        log_info "Subkeys saved to Secrets Manager"
+        log_info "Subkeys saved to SSM Parameter Store"
         echo ""
         echo "To restore subkeys on a daily machine:"
         echo "  gpg-master-backup restore-subkeys $fingerprint"
@@ -745,19 +807,8 @@ file "#{setup_root}/bin/gpg-master-backup" do
         echo "y" | gpg --command-fd 0 --gen-revoke "$key_id" > "$revocation_file" 2>/dev/null || true
 
         if [[ -s "$revocation_file" ]]; then
-            if aws secretsmanager describe-secret --secret-id "$secret_name" &>/dev/null; then
-                aws secretsmanager put-secret-value \
-                    --secret-id "$secret_name" \
-                    --secret-string "$(cat "$revocation_file")" \
-                    --output text > /dev/null
-            else
-                aws secretsmanager create-secret \
-                    --name "$secret_name" \
-                    --description "GPG Revocation Cert: $fingerprint" \
-                    --secret-string "$(cat "$revocation_file")" \
-                    --output text > /dev/null
-            fi
-            log_info "Revocation certificate saved to Secrets Manager"
+            ssm_put_secure "$secret_name" "$(cat "$revocation_file")" "GPG Revocation Cert: $fingerprint"
+            log_info "Revocation certificate saved to SSM Parameter Store"
         else
             log_warn "Could not generate revocation certificate"
         fi
@@ -769,19 +820,8 @@ file "#{setup_root}/bin/gpg-master-backup" do
         trust_data=$(gpg --export-ownertrust 2>/dev/null)
 
         if [[ -n "$trust_data" ]]; then
-            if aws secretsmanager describe-secret --secret-id "$OWNERTRUST_SECRET" &>/dev/null; then
-                aws secretsmanager put-secret-value \
-                    --secret-id "$OWNERTRUST_SECRET" \
-                    --secret-string "$trust_data" \
-                    --output text > /dev/null
-            else
-                aws secretsmanager create-secret \
-                    --name "$OWNERTRUST_SECRET" \
-                    --description "GPG Owner Trust" \
-                    --secret-string "$trust_data" \
-                    --output text > /dev/null
-            fi
-            log_info "Owner trust saved to Secrets Manager"
+            ssm_put_secure "$OWNERTRUST_SECRET" "$trust_data" "GPG Owner Trust"
+            log_info "Owner trust saved to SSM Parameter Store"
         fi
     }
 
@@ -797,14 +837,14 @@ file "#{setup_root}/bin/gpg-master-backup" do
 
         local secret_name="${SECRET_PREFIX}/${fingerprint}"
 
-        log_info "Retrieving master key from Secrets Manager..."
+        log_info "Retrieving master key from SSM Parameter Store..."
 
         local encrypted_key
-        if ! encrypted_key=$(aws secretsmanager get-secret-value \
-            --secret-id "$secret_name" \
-            --query 'SecretString' \
-            --output text 2>/dev/null); then
-            die "Key not found in Secrets Manager: $secret_name"
+        if ! encrypted_key=$(ssm_get_secure "$secret_name"); then
+            die "Key not found in SSM Parameter Store: $(ssm_path "$secret_name")"
+        fi
+        if [[ -z "$encrypted_key" ]]; then
+            die "Key not found in SSM Parameter Store: $(ssm_path "$secret_name")"
         fi
 
         local temp_dir
@@ -851,14 +891,14 @@ file "#{setup_root}/bin/gpg-master-backup" do
 
         local secret_name="${SUBKEY_PREFIX}/${fingerprint}"
 
-        log_info "Retrieving subkeys from Secrets Manager..."
+        log_info "Retrieving subkeys from SSM Parameter Store..."
 
         local encrypted_key
-        if ! encrypted_key=$(aws secretsmanager get-secret-value \
-            --secret-id "$secret_name" \
-            --query 'SecretString' \
-            --output text 2>/dev/null); then
-            die "Subkeys not found in Secrets Manager: $secret_name"
+        if ! encrypted_key=$(ssm_get_secure "$secret_name"); then
+            die "Subkeys not found in SSM Parameter Store: $(ssm_path "$secret_name")"
+        fi
+        if [[ -z "$encrypted_key" ]]; then
+            die "Subkeys not found in SSM Parameter Store: $(ssm_path "$secret_name")"
         fi
 
         local temp_dir
@@ -893,10 +933,7 @@ file "#{setup_root}/bin/gpg-master-backup" do
     # Restore ownertrust
     restore_ownertrust() {
         local trust_data
-        if trust_data=$(aws secretsmanager get-secret-value \
-            --secret-id "$OWNERTRUST_SECRET" \
-            --query 'SecretString' \
-            --output text 2>/dev/null); then
+        if trust_data=$(ssm_get_secure "$OWNERTRUST_SECRET") && [[ -n "$trust_data" ]]; then
             echo "$trust_data" | gpg --import-ownertrust 2>/dev/null || true
             log_info "Owner trust restored"
         fi
@@ -913,11 +950,8 @@ file "#{setup_root}/bin/gpg-master-backup" do
         local secret_name="${REVOCATION_PREFIX}/${fingerprint}"
 
         local revocation
-        if ! revocation=$(aws secretsmanager get-secret-value \
-            --secret-id "$secret_name" \
-            --query 'SecretString' \
-            --output text 2>/dev/null); then
-            die "Revocation certificate not found in Secrets Manager"
+        if ! revocation=$(ssm_get_secure "$secret_name") || [[ -z "$revocation" ]]; then
+            die "Revocation certificate not found in SSM Parameter Store: $(ssm_path "$secret_name")"
         fi
 
         local output_file="revocation-${fingerprint}.asc"
@@ -929,7 +963,7 @@ file "#{setup_root}/bin/gpg-master-backup" do
         echo "  gpg --import $output_file"
     }
 
-    # Delete key from Secrets Manager
+    # Delete key from SSM Parameter Store
     delete_key() {
         local fingerprint="$1"
 
@@ -944,10 +978,12 @@ file "#{setup_root}/bin/gpg-master-backup" do
         local revocation_secret="${REVOCATION_PREFIX}/${fingerprint}"
 
         echo ""
-        echo "This will delete the following secrets:"
-        echo "  - $master_secret"
-        echo "  - $subkey_secret"
-        echo "  - $revocation_secret"
+        echo "This will delete the following SSM parameters:"
+        echo "  - $(ssm_path "$master_secret")"
+        echo "  - $(ssm_path "$subkey_secret")"
+        echo "  - $(ssm_path "$revocation_secret")"
+        echo ""
+        echo "NOTE: SSM delete-parameter is immediate and irreversible (no recovery window)."
         echo ""
         read -rp "Are you sure? [y/N] " confirm
         if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
@@ -956,37 +992,39 @@ file "#{setup_root}/bin/gpg-master-backup" do
         fi
 
         for secret in "$master_secret" "$subkey_secret" "$revocation_secret"; do
-            if aws secretsmanager describe-secret --secret-id "$secret" &>/dev/null; then
-                aws secretsmanager delete-secret \
-                    --secret-id "$secret" \
-                    --force-delete-without-recovery \
-                    --output text > /dev/null
-                log_info "Deleted: $secret"
+            if ssm_exists "$secret"; then
+                ssm_delete "$secret"
+                log_info "Deleted: $(ssm_path "$secret")"
             else
-                log_warn "Not found: $secret"
+                log_warn "Not found: $(ssm_path "$secret")"
             fi
         done
     }
 
     show_usage() {
         cat <<EOF
-    GPG Master Backup - Securely backup GPG keys to AWS Secrets Manager
+    GPG Master Backup - Securely backup GPG keys to AWS SSM Parameter Store
 
     Usage: $(basename "$0") <command> [options]
 
     Commands:
-        save [key-id]              Save master key + subkeys to Secrets Manager
+        save [key-id]              Save master key + subkeys to SSM Parameter Store
         save-subkeys [key-id]      Save subkeys only (for daily machine recovery)
         restore [fingerprint]      Restore master key + subkeys
         restore-subkeys [fp]       Restore subkeys only (master becomes stub)
         restore-revocation <fp>    Restore revocation certificate
-        delete [fingerprint]       Delete key from Secrets Manager
-        list                       List keys in Secrets Manager
+        delete [fingerprint]       Delete key from SSM Parameter Store
+        list                       List keys in SSM Parameter Store
         list-gpg                   List available GPG keys
+
+    Storage layout:
+        All parameters live under /gpg/ in SSM Parameter Store, as SecureString.
+        Tier is auto-selected: Standard (free, <=4096 bytes) or Advanced
+        (\$0.05/month/param, <=8192 bytes).
 
     Security:
         - Keys are encrypted client-side with AES-256 before upload
-        - Stored in Secrets Manager (encrypted again with KMS)
+        - Stored as SSM SecureString (encrypted again with KMS alias/aws/ssm)
         - You need BOTH AWS access AND the encryption passphrase
         - Revocation certificates and ownertrust are also backed up
 
@@ -996,7 +1034,9 @@ file "#{setup_root}/bin/gpg-master-backup" do
 
     Prerequisites:
         - AWS CLI configured (aws configure)
-        - Secrets Manager permissions
+        - SSM Parameter Store permissions (ssm:GetParameter, ssm:PutParameter,
+          ssm:DeleteParameter, ssm:GetParametersByPath)
+        - KMS Decrypt on alias/aws/ssm (default SecureString CMK)
 
     Examples:
         $(basename "$0") save 59E8544A4001372A
