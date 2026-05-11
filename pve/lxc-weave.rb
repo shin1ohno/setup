@@ -31,6 +31,11 @@ node.reverse_merge!(
 )
 
 include_cookbook "docker-engine"
+include_cookbook "awscli"
+
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "cookbooks", "ssh-keys", "files", "aws-config.json")))
+aws_profile = ssh_keys_config["aws_profile"]
+aws_region  = ssh_keys_config["aws_region"]
 
 deploy_dir = "#{node[:setup][:home]}/deploy/weave"
 
@@ -170,9 +175,18 @@ file "#{deploy_dir}/docker-compose.yml" do
         restart: unless-stopped
         depends_on:
           - mosquitto
+        env_file:
+          # Phase 4 APM env: OTEL_EXPORTER_OTLP_HEADERS holds the
+          # weave-server-scoped ApiKey fetched from SSM at apply time
+          # (mode 0600). Endpoint + service-name + deployment-env are
+          # in plaintext under `environment:` below.
+          - ./weave-server.env
         environment:
           MQTT_HOST: mosquitto
           MQTT_PORT: 1883
+          OTEL_EXPORTER_OTLP_ENDPOINT: https://apm-server.home.local:8200
+          OTEL_SERVICE_NAME: weave-server
+          DEPLOYMENT_ENVIRONMENT: home
         ports:
           # weave-server listens on 3001 (api_port) per its source. The
           # legacy nginx upstream config in home-monitor still maps 8888
@@ -208,6 +222,41 @@ end
 # weave compose spec does not consume a .env file (Roon Core IP and
 # weave_git_ref come from node attributes baked into docker-compose.yml
 # at apply time).
+# Phase 4 APM env: weave-server.env holds the OTLP ApiKey for
+# apm-server.home.local:8200. Fetched from SSM
+# /monitoring/apm/api-keys/weave-server (per-service rotation isolated).
+# Format = single bare KEY=VALUE per docker-compose env_file spec.
+apm_env_path = "#{deploy_dir}/weave-server.env"
+
+require_external_auth(
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/apm/* SSM params",
+  check_command: "aws ssm get-parameter --name /monitoring/apm/api-keys/weave-server " \
+                 "--with-decryption --profile #{aws_profile} --region #{aws_region} " \
+                 "> /dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
+                "/monitoring/apm/* in #{aws_region}. " \
+                "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
+  # Skip when env file already exists. SSM regen on every apply would
+  # rotate the .env mtime + force-recreate the container; we want that
+  # only when the key itself changes (manual rotation via
+  # bin/issue-apm-api-keys.sh).
+  skip_if: -> { File.exist?(apm_env_path) },
+) do
+  execute "generate weave-server APM env" do
+    command <<~SH.strip
+      umask 077 && key=$(aws ssm get-parameter \
+        --name /monitoring/apm/api-keys/weave-server \
+        --with-decryption \
+        --profile #{aws_profile} --region #{aws_region} \
+        --query Parameter.Value --output text) && \
+        printf 'OTEL_EXPORTER_OTLP_HEADERS=authorization=ApiKey %s\n' "$key" > #{apm_env_path} && \
+        chmod 0600 #{apm_env_path}
+    SH
+    user user
+    notifies :run, "execute[restart weave]"
+  end
+end
+
 compose_service "weave" do
   compose_path "#{deploy_dir}/docker-compose.yml"
   deploy_dir deploy_dir
