@@ -185,6 +185,11 @@ file "#{deploy_dir}/docker-compose.yml" do
           MQTT_HOST: mosquitto
           MQTT_PORT: 1883
           OTEL_EXPORTER_OTLP_ENDPOINT: https://apm-server.home.local:8200
+          # Mount + reference the home APM Server CA cert so tonic's
+          # gRPC TLS handshake verifies against es_ca (not in OS roots).
+          # Without this the SDK silently drops every batch with
+          # "TLS handshake error: EOF" visible only in apm-server logs.
+          OTEL_EXPORTER_OTLP_CERTIFICATE: /etc/ssl/apm-ca.crt
           OTEL_SERVICE_NAME: weave-server
           DEPLOYMENT_ENVIRONMENT: home
         ports:
@@ -196,6 +201,7 @@ file "#{deploy_dir}/docker-compose.yml" do
           - "8888:3001"
         volumes:
           - ./weave-data:/data
+          - ./apm-ca.crt:/etc/ssl/apm-ca.crt:ro
 
       weave-web:
         build:
@@ -227,6 +233,13 @@ end
 # /monitoring/apm/api-keys/weave-server (per-service rotation isolated).
 # Format = single bare KEY=VALUE per docker-compose env_file spec.
 apm_env_path = "#{deploy_dir}/weave-server.env"
+# Phase 4 APM CA: weave-server.env doesn't ship the CA bundle, but
+# the OTel gRPC TLS handshake needs to trust es_ca (not in OS roots).
+# Mount this cookbook-fetched copy of /monitoring/apm/ca/cert into the
+# container at /etc/ssl/apm-ca.crt (docker-compose volumes:) and point
+# OTEL_EXPORTER_OTLP_CERTIFICATE at it (already wired in the
+# `environment:` block of the weave-server service above).
+apm_ca_path = "#{deploy_dir}/apm-ca.crt"
 
 require_external_auth(
   tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/apm/* SSM params",
@@ -236,11 +249,11 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "/monitoring/apm/* in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  # Skip when env file already exists. SSM regen on every apply would
-  # rotate the .env mtime + force-recreate the container; we want that
-  # only when the key itself changes (manual rotation via
-  # bin/issue-apm-api-keys.sh).
-  skip_if: -> { File.exist?(apm_env_path) },
+  # Skip when env file AND CA cert already exist. SSM regen on every
+  # apply would rotate the .env mtime + force-recreate the container;
+  # we want that only when the key/CA itself changes (manual rotation
+  # via bin/issue-apm-api-keys.sh or es_ca regen).
+  skip_if: -> { File.exist?(apm_env_path) && File.exist?(apm_ca_path) },
 ) do
   execute "generate weave-server APM env" do
     command <<~SH.strip
@@ -252,6 +265,15 @@ require_external_auth(
         printf 'OTEL_EXPORTER_OTLP_HEADERS=authorization=ApiKey %s\n' "$key" > #{apm_env_path} && \
         chmod 0600 #{apm_env_path}
     SH
+    user user
+    notifies :run, "execute[restart weave]"
+  end
+
+  execute "fetch apm-server CA cert for weave-server" do
+    command "aws ssm get-parameter --name /monitoring/apm/ca/cert " \
+            "--profile #{aws_profile} --region #{aws_region} " \
+            "--query Parameter.Value --output text > #{apm_ca_path} && " \
+            "chmod 0644 #{apm_ca_path}"
     user user
     notifies :run, "execute[restart weave]"
   end
