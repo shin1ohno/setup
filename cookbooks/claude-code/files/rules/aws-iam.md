@@ -291,6 +291,63 @@ brand-new OAuth client `kBiQ8wcpEB21CNTRL`, updating SSM, and verifying
 via the curl chain above. The runbook for this failure mode is at
 `~/ManagedProjects/home-monitor/docs/runbooks/tailscale-key.md`.
 
+### Scope-to-endpoint reference — probe the RIGHT endpoint for each scope
+
+Tailscale's UI scope categories do NOT map 1-to-1 to API endpoint families. Notably,
+**Routes is a sibling top-level scope, NOT a sub-scope of Devices Core** — the
+`/api/v2/device/<id>/routes` endpoint requires `Routes`, even though it lives under
+the `/device/<id>/` URL prefix. Probing `devices:core:write` via the routes endpoint
+returns 403 even when the scope IS granted, leading to false "scope didn't propagate"
+conclusions.
+
+When verifying an OAuth client's scopes, probe each UI scope category with its actual
+representative endpoint:
+
+| UI scope label        | Representative probe                                                                  | Pass signal               |
+|-----------------------|---------------------------------------------------------------------------------------|---------------------------|
+| Devices Core: Read    | `GET /api/v2/tailnet/-/devices`                                                       | HTTP 200 + devices array  |
+| Devices Core: Write   | `POST /api/v2/device/<id>/tags` body `{"tags":["tag:foo"]}`                           | HTTP 200                  |
+| Routes: Read          | `GET /api/v2/device/<id>/routes`                                                      | HTTP 200 + routes object  |
+| Routes: Write         | `POST /api/v2/device/<id>/routes` body `{"routes":[...]}` (idempotent re-write OK)    | HTTP 200                  |
+| DNS: Read             | `GET /api/v2/tailnet/-/dns/split-dns`                                                 | HTTP 200                  |
+| DNS: Write            | `POST /api/v2/tailnet/-/dns/split-dns/<domain>` body `{"nameservers":[...]}`          | HTTP 200                  |
+| Auth Keys: Write      | `POST /api/v2/tailnet/-/keys` (body per existing rule)                                | HTTP 200 + `tskey-auth-`  |
+
+When the actual terraform resource is `tailscale_device_subnet_routes`, the missing
+scope is **Routes**, not `Devices Core: Write`. When the resource is
+`tailscale_dns_split_nameservers`, the missing scope is **DNS**. Match the probe to
+the scope you're verifying — not to a guess about which scope category the endpoint
+URL appears to belong to.
+
+### Same error on a freshly-created client = hypothesis is wrong, not drift
+
+The "create a fresh OAuth client" workaround above is the recovery for genuine UI/API
+divergence. It is NOT the recovery for "I configured the wrong scope". If a
+brand-new client (never edited) returns the **same 403** as the prior client on the
+**same endpoint** with **all UI-visible scopes checked**, the configuration mental
+model is wrong — not the persistence.
+
+Action gate when a fresh client reproduces the failure:
+
+1. Stop reaching for "UI/API drift" or "tag scope mismatch" explanations
+2. Probe other write endpoints under the scope you THINK should cover this call
+   (e.g. `POST /device/<id>/tags` to verify `Devices Core: Write` independently of
+   the failing endpoint)
+3. If the sibling probe returns 200, the scope IS granted — the failing endpoint
+   requires a different scope. Consult the scope-to-endpoint table above.
+4. If the sibling probe also returns 403, then the scope itself is not granted —
+   re-check the UI checkbox state, and only then suspect drift
+
+This rule exists because the 2026-05-11 home-monitor session created a fresh
+OAuth client (`koFXKg78P311CNTRL`) with all 4 ticked scopes after the prior client
+(`kBiQ8wcpEB21CNTRL`) returned 403 on `/device/<id>/routes`. The fresh client
+returned identical 403s. I interpreted this as a tag-scope mismatch (`hnd-subnet-router`
+has only `tag:home-router`, not in the OAuth client's tag list) and burned 2-3
+round-trips before probing `POST /device/<id>/tags` and getting 200 — proving
+`Devices Core: Write` was fine and the actual missing scope was **Routes**, a
+separate top-level UI category. Two-fresh-clients-same-result was a sufficient
+signal at iteration 2 to pivot the hypothesis away from drift.
+
 ## Reusable Tailscale auth keys for ephemeral compute
 
 When provisioning a Tailscale tailnet key (`tailscale_tailnet_key`
