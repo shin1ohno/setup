@@ -111,6 +111,31 @@ Pre-batch checklist:
 
 This rule exists because the 2026-05-04 PVE-migration session burned 4 separate refresh-and-re-SCP cycles when the token expired mid-batch. Each cycle required pausing apply, re-fetching, re-distributing, then resuming — a ~3-min loss per cycle that is fully preventable by pre-batch validation + instance profiles for steady-state.
 
+## Multi-profile auth chain — enumerate every profile's IAM scope at design time
+
+Before designing any flow that chains "admin profile auths → fetch service-profile keys from SSM → service profile reads downstream paths", enumerate the **real SSM-path-level permission** of every profile in the chain on a representative path the downstream cookbook will actually read.
+
+`aws sts get-caller-identity` is insufficient — it succeeds for any valid identity regardless of SSM scope. The probe must hit the downstream-targeted path:
+
+```bash
+# For each profile in the chain (bootstrap + service):
+aws ssm get-parameter \
+  --name "<actual-path-cookbook-will-read>" \
+  --profile "<profile>" \
+  --region "<region>" \
+  > /dev/null 2>&1 && echo "OK" || echo "DENY"
+```
+
+If the service profile returns `DENY` for a path the downstream cookbook needs, the chain is structurally broken regardless of how reliably the upstream admin auth works. Either:
+
+1. Expand the service profile's IAM policy to include the missing paths (home-monitor TF change), OR
+2. Switch the downstream cookbook to use a different profile that has the access, OR
+3. Abandon the design — the cookbook's existing `skip_if: File.exist?(env_output_path)` may already cover the gap on warm re-runs
+
+This applies equally to **`kms:Decrypt`** chains for SSM SecureString (see the `EncryptionContext` rule below — even with sts identity working and ssm:GetParameter granted, missing `kms:Decrypt` on the parameter's KMS context still returns AccessDeniedException at fetch time).
+
+This rule exists because the 2026-05-11 PR #339+#340 designed a two-stage `aws login --remote → aws-credentials fetches pve-bootstrap-ssm` flow that was structurally moot: `pve-bootstrap-ssm` has `/ssh-keys/*` only, not `/cognee/*`, so even a perfectly-working sh1admn admin auth couldn't fix `aws ssm get-parameter --name /cognee/llm-endpoint --profile pve-bootstrap-ssm`. The 30-second per-profile probe at design time would have caught this. Reverted via PR #343.
+
 ## IAM principal that cannot self-rotate — design `bootstrap_profile` chain accordingly
 
 A common security posture for fleet-deployed IAM principals (e.g., `pve-bootstrap-ssm` in home-monitor) is **least-privilege at runtime + cannot read its own credential SSM parameters**. This intentional asymmetry blocks credential-leak escalation: even with the leaked key, the attacker cannot read future rotated keys from SSM.
