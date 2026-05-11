@@ -120,7 +120,7 @@ end
 
 directory "/etc/apm-server/certs" do
   owner "root"
-  group "root"
+  group "apm-server"
   mode "750"
 end
 
@@ -147,7 +147,7 @@ execute "render apm-server.yml" do
 end
 
 execute "install apm-server.yml" do
-  command "install -m 0600 -o root -g root #{apm_yml_staging} #{apm_yml_path}"
+  command "install -m 0640 -o root -g apm-server #{apm_yml_staging} #{apm_yml_path}"
   only_if "test -f #{apm_yml_staging}"
   not_if "test -f #{apm_yml_path} && diff -q #{apm_yml_staging} #{apm_yml_path} 2>/dev/null"
   notifies :run, "execute[restart apm-server]"
@@ -229,10 +229,12 @@ require_external_auth(
   end
 end
 
-# Install secrets env — mode 0600 root:root. apm-server runs as root on
-# Debian (no dedicated DEB user) so 0640 root:apm-server is not needed.
+# Install secrets env — mode 0640 root:apm-server. Debian apt package
+# installs the systemd unit with User=apm-server (verified on CT 116
+# bookworm install 2026-05-11), so config files must be group-readable
+# by the apm-server group.
 execute "install apm-server-secrets.env" do
-  command "install -m 0600 -o root -g root #{env_temp_path} #{env_output_path}"
+  command "install -m 0640 -o root -g apm-server #{env_temp_path} #{env_output_path}"
   only_if "test -f #{env_temp_path}"
   not_if "test -f #{env_output_path} && diff -q #{env_temp_path} #{env_output_path} 2>/dev/null"
   notifies :run, "execute[restart apm-server]"
@@ -243,10 +245,12 @@ file env_temp_path do
   only_if "test -f #{env_temp_path} && test -f #{env_output_path}"
 end
 
-# Install TLS certs (server.crt mode 0644, server.key mode 0600, ca.crt
-# mode 0644). All root:root since apm-server runs as root.
+# Install TLS certs. Owned root:apm-server (Debian apt package installs
+# the unit with User=apm-server, so apm-server group must read these).
+# server.crt / ca.crt 0640, server.key 0640 (group-read needed for the
+# apm-server runtime user).
 execute "install apm-server TLS cert" do
-  command "install -m 0644 -o root -g root #{certs_staging_dir}/server.crt " \
+  command "install -m 0640 -o root -g apm-server #{certs_staging_dir}/server.crt " \
           "/etc/apm-server/certs/server.crt"
   only_if "test -f #{certs_staging_dir}/server.crt"
   not_if "test -f /etc/apm-server/certs/server.crt && " \
@@ -255,7 +259,7 @@ execute "install apm-server TLS cert" do
 end
 
 execute "install apm-server TLS key" do
-  command "install -m 0600 -o root -g root #{certs_staging_dir}/server.key " \
+  command "install -m 0640 -o root -g apm-server #{certs_staging_dir}/server.key " \
           "/etc/apm-server/certs/server.key"
   only_if "test -f #{certs_staging_dir}/server.key"
   not_if "test -f /etc/apm-server/certs/server.key && " \
@@ -264,7 +268,7 @@ execute "install apm-server TLS key" do
 end
 
 execute "install apm-server CA cert" do
-  command "install -m 0644 -o root -g root #{certs_staging_dir}/ca.crt " \
+  command "install -m 0640 -o root -g apm-server #{certs_staging_dir}/ca.crt " \
           "/etc/apm-server/certs/ca.crt"
   only_if "test -f #{certs_staging_dir}/ca.crt"
   not_if "test -f /etc/apm-server/certs/ca.crt && " \
