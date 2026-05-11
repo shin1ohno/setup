@@ -46,6 +46,17 @@ Do NOT attempt `terraform apply` from a feature branch — permission gates ofte
 
 This rule exists because the 2026-04-25 session attempted `terraform apply` from an unmerged feature branch in home-monitor; the permission layer correctly denied it, surfacing that the proper flow is merge-first-then-apply.
 
+**Post-apply sanity check**: after `terraform apply` returns, run `terraform validate` (or a no-op `terraform plan -refresh-only`) to confirm the working tree's config files are still self-consistent. Mid-session edits, stash/pop interactions, or manual reverts can leave the tf file syntactically intact (no parse error) but resource-name-duplicated — the error surfaces only on the next operation, often hours later.
+
+```bash
+terraform apply -target=... -auto-approve
+terraform validate   # → "Success! The configuration is valid."
+```
+
+If validate reports `Duplicate ... configuration`, the most common cause is a stash/pop or manual edit that re-introduced an already-committed block into the working tree. `git diff HEAD -- <file>.tf` will show the duplicate hunk. Recovery: `git checkout HEAD -- <file>.tf` if the only WIP was the unintended duplication, or surgical removal of the duplicate hunk if there are other legitimate WIP changes.
+
+This second rule exists because 2026-05-11 RDS RI apply (home-monitor PR #65) was followed by `terraform output` failing with `Duplicate data "aws_rds_reserved_instance_offering" configuration` — the working tree had the RI block twice due to a stash-pop merge. `git checkout HEAD -- rds.tf` cleaned it, but a `terraform validate` immediately post-apply would have caught it in the same minute instead of surfacing on the next `terraform output` minutes later.
+
 ## AWS SSM Parameter Path Constraints
 
 Before writing any `aws_ssm_parameter` Terraform resource or `aws ssm put-parameter` cookbook call, validate the planned path is not in a reserved namespace. AWS blocks any path starting with `/aws` or `/AWS` at the API level (`AccessDeniedException: No access to reserved parameter name: ...`) — the error fires at apply time, not at plan time, and Terraform does not surface it as a plan diff.
@@ -402,3 +413,49 @@ rejected the consumed SSM key. mcp.ohno.be went DOWN for the duration
 of the recovery (~30 min including OAuth-scope-drift discovery). PR
 #56 changed to `reusable = true` and PR #57+#58 added the timer +
 Decrypt grants for the long-term fix.
+
+## Cost Table Labeling Conventions
+
+When presenting AWS cost breakdowns to the user, use **explicit category labels** instead of generic 「小計」/「合計」. The mismatch between recurring base cost and annual spikes is a frequent source of misunderstanding — a single line "subtotal $X" mixing recurring + annual + spike cannot tell the reader whether $X is a typical month, a worst-case month, or includes one-off charges.
+
+**Required label categories**:
+
+| Label | Meaning |
+|---|---|
+| `月次固定 (recurring)` | Every month, predictable baseline |
+| `年次スパイク (annual)` | Charges that occur once per year (domain renewal, RI upfront, audit etc.) |
+| `削減後ベース (post-action)` | Projected month-end after a fix lands (after RI / feature off / migration) |
+| `当月実績 (MTD actual)` | Cost Explorer reported amount for the partial month |
+
+**Anti-pattern**:
+
+```
+| Service       | 小計  |
+| RDS           | $20   |
+| Route53       | $1.66 |
+| ...           | ...   |
+| 合計          | $48   |
+```
+
+What does $48 cover? Recurring? With or without the annual Registrar charge? Post or pre RI? The user has to ask.
+
+**Correct shape**:
+
+```
+| Service       | 月次固定 | 年次スパイク         | 削減後ベース       |
+| RDS           | $20.00  | $0                  | $13.42 (post-RI)  |
+| Route53       | $1.66   | $11 (Registrar 4月) | $1.66             |
+| ...           |         |                     |                   |
+| **Subtotal**  | $X      | $Y (next: 4月)      | $Z                |
+```
+
+When the totals would mix categories, split the totals row by category — never a single ambiguous 「合計」.
+
+**For RI-related accounting, label both**:
+
+- **UnblendedCost** (実支払額 — RI upfront lands in the purchase month as a $-spike)
+- **AmortizedCost** (実態の月次負担 — RI cost spread over the commitment period)
+
+When discussing a month where RI was purchased, present both views side by side. UnblendedCost without context looks like a cost explosion; AmortizedCost reflects the true monthly burden.
+
+This rule exists because the 2026-05-11 cost-analysis session presented 「小計 (RDS 以外) ~$20/月」 while the actual 4月 total for that group was $47.64 (containing Registrar $11 annual + ELB/WAF residue from discontinued services + Tax). The user had to ask 「これは何？」 to surface the missing context; the 5月 projection was actually $27/月 due to the annual Registrar not recurring. The vague 「小計」 label hid the discontinuity entirely.

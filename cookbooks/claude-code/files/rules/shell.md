@@ -128,3 +128,53 @@ Why this works:
 **Detection while composing**: if the command body has any of `()`, `$()`, backticks, `*`, `!`, `<<`, or quotes nested >1 level deep, switch to the heredoc + `bash -s` form. The cost of switching is one extra line; the cost of debugging a layer-2 misinterpretation through three remote shells is several round-trips.
 
 This rule exists because the 2026-05-06 monitoring CT 111 bootstrap tried `ssh ... pct exec ... bash -c "echo === step 1.3: bin/setup (mitamae binary download) ==="` and failed with `bash: -c: line 12: syntax error near unexpected token '('`. Removing the parens worked but the trap is structural — the next session will hit it with a different metacharacter unless the heredoc + `bash -s` pattern is the default.
+
+## awk Cross-platform Pitfalls (BWK vs gawk)
+
+`awk -v VAR=value` looks portable BUT **macOS BWK awk rejects literal newlines inside `-v` values**, while Linux gawk accepts them. CI runs on Linux → bug invisible. mitamae apply on Mac → `awk: newline in string` with exit 2.
+
+Trap (real, 2026-05-11 setup PR #330):
+
+```bash
+ES_HOSTS_YAML="    - https://es-0...
+    - https://es-1...
+    - https://es-2..."
+
+awk -v hosts="${ES_HOSTS_YAML}" '{ ... }'   # OK on Linux gawk, FAILS on macOS BWK
+```
+
+**Fixes** (pick by context):
+
+1. **Temp file pattern** (most portable, no escape traps):
+
+```bash
+HOSTS_FILE=$(mktemp)
+trap 'rm -f "${HOSTS_FILE}"' EXIT
+printf '%s\n' "${ES_HOSTS_YAML}" > "${HOSTS_FILE}"
+awk -v hosts_file="${HOSTS_FILE}" '
+{
+    if ($0 ~ /@@MARKER@@/) {
+        while ((getline line < hosts_file) > 0) print line
+        close(hosts_file)
+    } else { print }
+}' "$TEMPLATE"
+```
+
+2. **stdin via pipe** (when the value IS the awk input):
+
+```bash
+printf '%s\n' "${MULTI_LINE}" | awk '{ ... }'
+```
+
+3. **Replace newlines with a sentinel + split inside awk** (when the value is one of several `-v` inputs):
+
+```bash
+awk -v hosts="$(printf '%s' "${MULTI_LINE}" | tr '\n' '\036')" \
+    'BEGIN { n = split(hosts, a, "\036") } { ... }'
+```
+
+Default to the **temp file pattern**. Other approaches accumulate escape complexity. `-v` values with a single embedded newline can sometimes pass on Mac too — do not rely on this; treat any multi-line `-v` value as unsupported.
+
+**Plan-time detection**: any cookbook with a multi-line shell variable feeding `awk -v` must be tested with macOS BWK awk before merge. `bash -n` does not catch this; the failure surfaces only at runtime under mac awk. CI on Linux gawk is also blind to it.
+
+This rule exists because setup PR #330 (2026-05-11) fixed a 3-host `ES_HOSTS_YAML` -v failure in the elastic-agent cookbook. CI (Linux gawk) passed; macOS mitamae apply failed with `awk: newline in string` exit 2. Fix shipped as the temp file pattern in `cookbooks/elastic-agent/files/generate_config.sh`.
