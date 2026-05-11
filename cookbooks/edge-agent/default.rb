@@ -43,6 +43,19 @@ home = node[:setup][:home]
 mise_bin = "#{home}/.local/bin/mise"
 edge_spec = "cargo:edge-agent[features=hue,locked=true]"
 
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
+aws_profile = ssh_keys_config["aws_profile"]
+aws_region  = ssh_keys_config["aws_region"]
+
+# Phase 4 APM env paths (used by both Linux systemd --user and macOS launchd
+# wrapper). OTEL_EXPORTER_OTLP_HEADERS holds the edge-agent-scoped ApiKey
+# fetched from SSM at apply time (mode 0600). apm-ca.crt is the home APM
+# Server CA cert; tonic's gRPC TLS handshake verifies against es_ca (not in
+# OS roots) so without this the SDK silently drops every batch with "TLS
+# handshake error: EOF" visible only in apm-server logs.
+apm_env_path = "#{home}/.config/edge-agent/apm.env"
+apm_ca_path  = "#{home}/.config/edge-agent/apm-ca.crt"
+
 # Install (and auto-upgrade) via mise's cargo backend. mise resolves @latest each
 # call, so a newer crates.io release is picked up on the next mitamae run.
 execute "mise install #{edge_spec}@latest" do
@@ -59,6 +72,46 @@ end
 directory "#{home}/.config/edge-agent" do
   owner user
   mode "755"
+end
+
+# Phase 4 APM: fetch the per-host ApiKey and CA cert from SSM. Skip when
+# both files already exist — SSM regen on every apply would rotate the
+# .env mtime, and we want that only when the key/CA itself changes
+# (manual rotation via bin/issue-apm-api-keys.sh or es_ca regen). Auth
+# gate fails-soft in non-TTY contexts so fresh hosts without AWS creds
+# still converge the rest of the recipe; the resulting EnvironmentFile
+# is consumed with `-` prefix (systemd) / sourced under `[ -f ]` guard
+# (launchd wrapper) so its absence is non-fatal.
+require_external_auth(
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/apm/* SSM params",
+  check_command: "aws ssm get-parameter --name /monitoring/apm/api-keys/edge-agent " \
+                 "--with-decryption --profile #{aws_profile} --region #{aws_region} " \
+                 "> /dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
+                "/monitoring/apm/* in #{aws_region}. " \
+                "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
+  skip_if: -> { File.exist?(apm_env_path) && File.exist?(apm_ca_path) },
+) do
+  execute "generate edge-agent APM env" do
+    command <<~SH.strip
+      umask 077 && key=$(aws ssm get-parameter \
+        --name /monitoring/apm/api-keys/edge-agent \
+        --with-decryption \
+        --profile #{aws_profile} --region #{aws_region} \
+        --query Parameter.Value --output text) && \
+        printf 'OTEL_EXPORTER_OTLP_HEADERS=authorization=ApiKey %s\n' "$key" > #{apm_env_path} && \
+        chmod 0600 #{apm_env_path}
+    SH
+    user user
+  end
+
+  execute "fetch apm-server CA cert for edge-agent" do
+    command "aws ssm get-parameter --name /monitoring/apm/ca/cert " \
+            "--profile #{aws_profile} --region #{aws_region} " \
+            "--query Parameter.Value --output text > #{apm_ca_path} && " \
+            "chmod 0644 #{apm_ca_path}"
+    user user
+  end
 end
 
 remote_file "#{home}/.config/edge-agent/config.toml" do
@@ -87,6 +140,7 @@ if node[:platform] == "darwin"
 
   app_bundle = "#{home}/Applications/EdgeAgent.app"
   bundle_exec = "#{app_bundle}/Contents/MacOS/edge-agent"
+  bundle_launcher = "#{app_bundle}/Contents/MacOS/edge-agent-launcher"
   bundle_info = "#{app_bundle}/Contents/Info.plist"
   launchd_plist = "#{home}/Library/LaunchAgents/com.shin1ohno.edge-agent.plist"
 
@@ -136,6 +190,31 @@ if node[:platform] == "darwin"
     PLIST
   end
 
+  # Phase 4 APM: wrapper script that sources apm.env (OTEL_EXPORTER_OTLP_HEADERS)
+  # then exports OTEL_EXPORTER_OTLP_{ENDPOINT,CERTIFICATE} + OTEL_SERVICE_NAME +
+  # DEPLOYMENT_ENVIRONMENT before exec'ing the bundle binary. launchd has no
+  # EnvironmentFile-equivalent for plists, so a wrapper is the cleanest path
+  # to keep the ApiKey out of the plist (mode 0644, world-readable) while
+  # still getting it into the process environment. The `[ -f ]` guard makes
+  # apm.env optional: hosts without AWS auth still run edge-agent (just
+  # without OTLP telemetry until SSM auth lands). The bundle codesign step
+  # below uses --deep so it covers the wrapper too — no separate sign needed.
+  file bundle_launcher do
+    owner user
+    mode "755"
+    content <<~LAUNCHER
+      #!/bin/sh
+      set -a
+      [ -f "$HOME/.config/edge-agent/apm.env" ] && . "$HOME/.config/edge-agent/apm.env"
+      set +a
+      export OTEL_EXPORTER_OTLP_ENDPOINT=https://apm-server.home.local:8200
+      export OTEL_EXPORTER_OTLP_CERTIFICATE="$HOME/.config/edge-agent/apm-ca.crt"
+      export OTEL_SERVICE_NAME=edge-agent
+      export DEPLOYMENT_ENVIRONMENT=home
+      exec "$(dirname "$0")/edge-agent" "$@"
+    LAUNCHER
+  end
+
   # Sync binary + ad-hoc sign + reload launchd whenever the mise-resolved binary
   # is newer than the bundled copy (or the copy is missing). `mise where` returns
   # the active install dir at converge time, so this picks up any version bump
@@ -173,7 +252,7 @@ if node[:platform] == "darwin"
           <string>com.shin1ohno.edge-agent</string>
           <key>ProgramArguments</key>
           <array>
-              <string>#{bundle_exec}</string>
+              <string>#{bundle_launcher}</string>
           </array>
           <key>EnvironmentVariables</key>
           <dict>
@@ -228,7 +307,12 @@ else
       [Service]
       Type=simple
       ExecStart=%h/.local/share/mise/shims/edge-agent
+      EnvironmentFile=-%h/.config/edge-agent/apm.env
       Environment=RUST_LOG=info
+      Environment=OTEL_EXPORTER_OTLP_ENDPOINT=https://apm-server.home.local:8200
+      Environment=OTEL_EXPORTER_OTLP_CERTIFICATE=%h/.config/edge-agent/apm-ca.crt
+      Environment=OTEL_SERVICE_NAME=edge-agent
+      Environment=DEPLOYMENT_ENVIRONMENT=home
       Restart=on-failure
       RestartSec=5s
 
@@ -238,7 +322,13 @@ else
   end
 
   # systemctl --user needs the user's DBus session — not available to mitamae.
-  # Run once interactively:
+  # First-run bootstrap:
   #   systemctl --user daemon-reload
   #   systemctl --user enable --now edge-agent
+  # After this cookbook edits the unit (env vars, ExecStart), the user must:
+  #   systemctl --user daemon-reload
+  #   systemctl --user restart edge-agent
+  # for the new OTEL_* / EnvironmentFile= lines to take effect on the
+  # running process. `daemon-reload` alone updates only the in-memory
+  # unit spec; `restart` re-execs the binary with the new env.
 end
