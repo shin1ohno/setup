@@ -4,12 +4,28 @@ services:
     restart: unless-stopped
     ports:
       - "8766:8766"
+    env_file:
+      # Phase 5 APM env: OTEL_EXPORTER_OTLP_HEADERS holds the
+      # ai-memory-auth-proxy-scoped ApiKey appended by generate_env.sh
+      # at apply time. Endpoint + service-name + deployment-env are
+      # plaintext under `environment:` below.
+      - .env
     environment:
       - SAGE_ISSUER=https://mcp.ohno.be
       - SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
       - UPSTREAM_URL=http://openmemory-api:8765
       - PORT=8766
       - PATH_PREFIX=/memory
+      - OTEL_EXPORTER_OTLP_ENDPOINT=https://apm-server.home.local:8200
+      # Mount + reference the home APM Server CA cert so the OTLP gRPC
+      # TLS handshake verifies against es_ca (not in OS roots). Without
+      # this the SDK silently drops every batch with "TLS handshake
+      # error: EOF" visible only in apm-server logs.
+      - OTEL_EXPORTER_OTLP_CERTIFICATE=/etc/ssl/apm-ca.crt
+      - OTEL_SERVICE_NAME=ai-memory-auth-proxy
+      - DEPLOYMENT_ENVIRONMENT=home
+    volumes:
+      - ./apm-ca.crt:/etc/ssl/apm-ca.crt:ro
     depends_on:
       openmemory-api:
         condition: service_healthy
