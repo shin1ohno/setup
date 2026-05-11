@@ -141,7 +141,16 @@ services:
       - COGNEE_API=http://cognee:8000
       - COGNEE_USER_EMAIL=default_user@example.com
       - COGNEE_USER_PASSWORD=default_password
-      - EXPORT_POLL_SECONDS=60
+      # 600s (10min) was 60s. The 60s poll burst (9 datasets, each
+      # retrieving the full 7761-node / 27942-edge graph) blocked the
+      # cognee API SSE handler ~8s during the burst window. The
+      # 72s busy/sleep cycle drifted through every-minute mcp-probe
+      # runs, producing periodic ~8s spikes in mcp_probe_phase_latency
+      # for cognee/sse_open (visible in the Probe latency by server x
+      # phase Grafana dashboard). Cognee graph data is near-static for
+      # LLM memory use, so 10min staleness on the Obsidian export is
+      # acceptable; spike rate drops ~10/h → ~1/h.
+      - EXPORT_POLL_SECONDS=600
       - STARTUP_DELAY_SECONDS=30
       - VAULT_DIR=/vault
     volumes:
