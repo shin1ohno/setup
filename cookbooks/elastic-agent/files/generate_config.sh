@@ -54,17 +54,24 @@ HOSTNAME_SHORT=$(hostname -s)
 
 # Use a temp file then atomic rename so partial writes never reach OUTPUT.
 TMP_OUTPUT="${OUTPUT}.tmp.$$"
-trap 'rm -f "${TMP_OUTPUT}"' EXIT
+
+# Stage ES_HOSTS_YAML to a temp file rather than passing it via `awk -v`.
+# macOS BWK awk forbids literal newlines in -v values ("awk: newline in
+# string"); gawk on Linux tolerates them, hiding this bug from CI. Reading
+# the YAML fragment from a file at marker-substitution time works on both.
+HOSTS_FILE="$(mktemp)"
+trap 'rm -f "${TMP_OUTPUT}" "${HOSTS_FILE}"' EXIT
+printf '%s\n' "${ES_HOSTS_YAML}" > "${HOSTS_FILE}"
 
 # awk-based substitution avoids sed's headaches with passwords containing
-# `/`, `&`, or `\`. Each marker is a literal single-line substitution
-# except @@ES_HOSTS_YAML@@ which expands to multiple indented lines.
+# `/`, `&`, or `\`. Single-line markers go through -v; the multi-line
+# @@ES_HOSTS_YAML@@ block is streamed in via the staged file.
 awk \
     -v username="${ES_USERNAME}" \
     -v password="${ES_PASSWORD}" \
     -v variant="${VARIANT}" \
     -v hostname="${HOSTNAME_SHORT}" \
-    -v hosts_yaml="${ES_HOSTS_YAML}" \
+    -v hosts_file="${HOSTS_FILE}" \
     '
     {
         gsub(/@@ES_USERNAME@@/, username)
@@ -72,7 +79,8 @@ awk \
         gsub(/@@VARIANT@@/, variant)
         gsub(/@@HOSTNAME@@/, hostname)
         if ($0 ~ /@@ES_HOSTS_YAML@@/) {
-            print hosts_yaml
+            while ((getline line < hosts_file) > 0) print line
+            close(hosts_file)
         } else {
             print
         }
