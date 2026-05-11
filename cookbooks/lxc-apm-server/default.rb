@@ -208,12 +208,15 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "/monitoring/elastic/* + /monitoring/apm/* in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  # Skip when env file AND certs already exist.
+  # Skip when keystore is loaded with the password key AND certs are
+  # already in place. Keystore CLI exits success only if the named key
+  # exists, so the grep on `keystore list` is the canonical probe.
   skip_if: -> {
-    File.exist?(env_output_path) &&
+    File.exist?("/var/lib/apm-server/apm-server.keystore") &&
       File.exist?("/etc/apm-server/certs/server.crt") &&
       File.exist?("/etc/apm-server/certs/server.key") &&
-      File.exist?("/etc/apm-server/certs/ca.crt")
+      File.exist?("/etc/apm-server/certs/ca.crt") &&
+      system("apm-server keystore list 2>/dev/null | grep -q '^APM_SERVER_PASSWORD$'")
   },
 ) do
   execute "generate apm-server secrets env" do
@@ -229,20 +232,52 @@ require_external_auth(
   end
 end
 
-# Install secrets env — mode 0640 root:apm-server. Debian apt package
-# installs the systemd unit with User=apm-server (verified on CT 116
-# bookworm install 2026-05-11), so config files must be group-readable
-# by the apm-server group.
-execute "install apm-server-secrets.env" do
-  command "install -m 0640 -o root -g apm-server #{env_temp_path} #{env_output_path}"
+# === apm-server keystore — password injection ===
+#
+# Switched away from EnvironmentFile + YAML `${VAR}` substitution (PR
+# #318 / #320 approach) because the Terraform-generated random_password
+# can contain YAML-significant characters (~, &, <, ,) that apm-server's
+# libbeat parses as YAML structure after substitution — producing
+# "can not convert 'object' into 'string' accessing
+# output.elasticsearch.password" even with the value double-quoted in
+# the template. Keystore-resolved values are inserted post-parse so
+# quoting / chars are irrelevant.
+#
+# Keystore file: /var/lib/apm-server/apm-server.keystore (DEB default).
+# Owned root:apm-server 0640 — the apm-server runtime user reads it at
+# startup.
+
+execute "initialize apm-server keystore" do
+  command "apm-server keystore create --force"
+  not_if "test -f /var/lib/apm-server/apm-server.keystore"
+end
+
+# Re-add the password whenever the staging env file exists (i.e. on
+# the apply cycle right after require_external_auth ran). --force makes
+# `keystore add` overwrite cleanly. We cannot probe the keystore value
+# (CLI lists keys only), so we re-add only when env_temp_path is
+# present — the require_external_auth skip_if above already gates that.
+execute "add APM_SERVER_PASSWORD to keystore" do
+  command "grep ^APM_SERVER_PASSWORD= #{env_temp_path} | cut -d= -f2- | " \
+          "apm-server keystore add APM_SERVER_PASSWORD --stdin --force"
   only_if "test -f #{env_temp_path}"
-  not_if "test -f #{env_output_path} && diff -q #{env_temp_path} #{env_output_path} 2>/dev/null"
+  notifies :run, "execute[chown apm-server keystore]"
   notifies :run, "execute[restart apm-server]"
 end
 
+# Keystore is created with root:root 0600 by default — chown after each
+# add so the apm-server runtime user can read it. Idempotent stat probe.
+execute "chown apm-server keystore" do
+  command "chown root:apm-server /var/lib/apm-server/apm-server.keystore && " \
+          "chmod 0640 /var/lib/apm-server/apm-server.keystore"
+  only_if "test -f /var/lib/apm-server/apm-server.keystore"
+  not_if "test \"$(stat -c '%U:%G %a' /var/lib/apm-server/apm-server.keystore 2>/dev/null)\" = 'root:apm-server 640'"
+end
+
+# Delete the staged env file now that the password is in the keystore.
 file env_temp_path do
   action :delete
-  only_if "test -f #{env_temp_path} && test -f #{env_output_path}"
+  only_if "test -f #{env_temp_path}"
 end
 
 # Install TLS certs. Owned root:apm-server (Debian apt package installs
@@ -289,7 +324,7 @@ end
 execute "enable + start apm-server" do
   command "systemctl enable --now apm-server.service"
   only_if <<~SH.tr("\n", " ").strip
-    test -f #{env_output_path} || exit 1;
+    test -f /var/lib/apm-server/apm-server.keystore || exit 1;
     test -f #{apm_yml_path} || exit 1;
     test -f /etc/apm-server/certs/server.crt || exit 1;
     systemctl is-enabled apm-server.service > /dev/null 2>&1 &&
@@ -300,6 +335,6 @@ end
 execute "restart apm-server" do
   command "systemctl restart apm-server.service"
   action :nothing
-  only_if "test -f #{env_output_path} && test -f #{apm_yml_path} && " \
+  only_if "test -f /var/lib/apm-server/apm-server.keystore && test -f #{apm_yml_path} && " \
           "test -f /etc/apm-server/certs/server.crt"
 end
