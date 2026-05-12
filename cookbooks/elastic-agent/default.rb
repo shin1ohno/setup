@@ -458,13 +458,20 @@ execute "render elastic-agent.yml" do
     rm -f #{staging}
   SH
   only_if "test -f #{config_tmpl} && test -d /etc/elastic-agent"
+  # mitamae executes not_if via /bin/sh -c, which on Debian/Ubuntu is dash.
+  # dash does not support `<(...)` process substitution, so the raw form
+  # raises `Syntax error: "(" unexpected`, exits non-zero, and mitamae
+  # treats the guard as "not satisfied" — firing render + restart on every
+  # apply. Render to a temp file and use plain `diff` (POSIX-compatible).
   not_if "test -f #{config_path} && " \
-         "diff -q <(sed -e 's|@@HOSTNAME@@|#{host_name}|g' " \
+         "rendered=$(mktemp) && " \
+         "sed -e 's|@@HOSTNAME@@|#{host_name}|g' " \
          "-e 's|@@TAGS@@|#{tags_json}|g' " \
          "#{prom_sed_clause} " \
          "#{synth_sed_clause} " \
-         "#{config_tmpl}) " \
-         "#{config_path}"
+         "#{config_tmpl} > \"$rendered\" && " \
+         "diff -q \"$rendered\" #{config_path}; " \
+         "ret=$?; rm -f \"$rendered\"; exit $ret"
   notifies :run, "execute[restart elastic-agent]"
 end
 
