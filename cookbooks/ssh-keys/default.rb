@@ -319,3 +319,57 @@ unless existing_config.include?(include_directive)
     content new_config
   end
 end
+
+# --- Step 5: Pre-populate ~/.ssh/known_hosts with github.com host keys ---
+#
+# Without this, `git clone git@github.com:...` on a fresh machine fails
+# with "Host key verification failed" because:
+#   1. ~/.ssh/known_hosts is empty (no prior connection)
+#   2. cookbooks/functions/default.rb's git_clone uses
+#      GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5', which
+#      disables the interactive "yes/no/fingerprint?" prompt
+#
+# Downstream clone-doing cookbooks (fzf, fzf-tab, oh-my-zsh via dot-zsh,
+# dot-tmux, dot-config-nvim, managed-projects) all rely on this entry
+# being present before they run.
+#
+# Pre-populate via `ssh-keyscan` + fingerprint verification against
+# GitHub's canonical published values (api.github.com/meta —
+# ssh_key_fingerprints). Mismatch fails the cookbook loudly (likely DNS
+# hijack / MITM — never silently install an unverified host key).
+github_known_hosts_script = <<~SH
+  set -euo pipefail
+  KNOWN='#{ssh_dir}/known_hosts'
+  TMP=$(mktemp)
+  trap 'rm -f "$TMP"' EXIT
+
+  ssh-keyscan -t rsa,ecdsa,ed25519 -T 10 github.com 2>/dev/null > "$TMP"
+  if [ ! -s "$TMP" ]; then
+    echo "ssh-keys: ssh-keyscan github.com returned no output" >&2
+    exit 1
+  fi
+
+  expected=$(printf '%s\\n%s\\n%s\\n' \\
+    'SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM' \\
+    'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s' \\
+    'SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU' \\
+    | sort)
+  actual=$(ssh-keygen -lf "$TMP" | awk '{print $2}' | sort)
+
+  if [ "$actual" != "$expected" ]; then
+    echo "ssh-keys: github.com host key fingerprint mismatch (possible MITM / DNS hijack)" >&2
+    echo "expected:" >&2; echo "$expected" >&2
+    echo "actual:" >&2;   echo "$actual" >&2
+    exit 1
+  fi
+
+  touch "$KNOWN"
+  chmod 600 "$KNOWN"
+  cat "$TMP" >> "$KNOWN"
+SH
+
+execute "register github.com host keys in known_hosts" do
+  command github_known_hosts_script
+  user user
+  not_if "test -f #{ssh_dir}/known_hosts && grep -q '^github.com ' #{ssh_dir}/known_hosts"
+end
