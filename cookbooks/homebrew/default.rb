@@ -15,9 +15,11 @@ remote_file "#{node[:setup][:root]}/homebrew-install.sh" do
   source "files/install.sh"
 end
 
-# Hit ENTER automatically when asked to install CLI tools.
-# HAVE_SUDO_ACCESS=0 is required to skip `sudo` capability check.
-execute "echo | env HAVE_SUDO_ACCESS=0 #{node[:setup][:root]}/homebrew-install.sh" do
+# NONINTERACTIVE=1 makes the upstream installer skip all prompts (CLT install,
+# sudo password retry, "press RETURN to continue"). Upstream's install.sh
+# `unset HAVE_SUDO_ACCESS`s the environment, so the prior HAVE_SUDO_ACCESS=0
+# hack no longer works — NONINTERACTIVE is the supported knob.
+execute "env NONINTERACTIVE=1 #{node[:setup][:root]}/homebrew-install.sh" do
   not_if "test -f #{node[:homebrew][:prefix]}/bin/brew"
 end
 
