@@ -309,6 +309,58 @@ After all hosts have migrated, simplify the guard back to `test -f` in a follow-
 
 This rule exists because setup PR #130 (2026-05-05) migrated edge-agent's `config_server_url` from `192.168.1.20:3101` (pre-PVE weave-server on pro) to `weave.home.local:8888` (PVE CT 109). The cookbook had `not_if "test -f #{config}"`, which would have left neo / air pinned to the dead endpoint forever despite the cookbook source being correct. The migration-specific grep guard solved this without changing semantics for new-host installs.
 
+## SSM-sourced `.env` generator: file-existence skip_if drops new KEY=VALUE lines silently
+
+When a cookbook uses `require_external_auth(skip_if: -> { File.exist?(env_output_path) })` (or `not_if "test -f #{env_path}"` on the `execute "generate ... .env"` resource) to avoid re-fetching from SSM on every apply, ADDING a new key to the underlying `generate_env.sh` script does NOT take effect on existing hosts. The skip_if returns true (`.env` already exists), the generate execute is skipped, no new content is produced, and the running container's `env_file` continues to load the OLD `.env` that lacks the new key. Cookbook apply reports success; the container's env is silently incomplete.
+
+The trap is invisible at code-review time (the generator change is correct) and at dry-run time (no resource fails). It surfaces only at functional verification — `docker exec <container> env | grep NEW_KEY` is empty even after a green apply.
+
+**Default for static credentials**: file-existence skip_if is fine when the generator's output shape is stable (e.g., `.env` holds only `LLM_API_KEY` + `DB_PASSWORD` and that set never grows). Saves redundant SSM round-trips on re-apply.
+
+**When generator content drifts** — adding a new SSM-sourced key, restructuring lines — use a content-aware guard that checks for the expected new key:
+
+```ruby
+require_external_auth(
+  tool_name: "AWS CLI for /<service>/* SSM params",
+  check_command: "aws ssm get-parameter --name /<service>/<probe-key> ...",
+  # Skip only when .env exists AND already contains every key generate_env.sh
+  # writes. Adding a new line to the generator → File.read mismatch →
+  # block fires → fresh fetch.
+  skip_if: -> {
+    File.exist?(env_output_path) &&
+      File.read(env_output_path).include?("OTEL_EXPORTER_OTLP_HEADERS=") &&
+      File.read(env_output_path).include?("APM_API_KEY=")
+  },
+) do
+  execute "generate <service> .env" do
+    command "AWS_PROFILE=... bash #{generate_env_script} #{env_temp_path}"
+  end
+end
+```
+
+For the simple case (one canonical key per generator change), single-key check is enough. For multi-key generators, list every key the generator writes — adding a key to the list when adding to the script is the discipline that keeps drift detection accurate.
+
+**Alternative — drop skip_if + let mitamae's `remote_file` diff handle no-ops**: regenerate `.env` to a temp path on every apply, then `remote_file env_output_path source env_temp_path`. mitamae's remote_file already content-diffs — same `.env` → no notify, no restart. Cost: every apply pays the SSM round-trip (1-5s per key); benefit: zero drift class.
+
+**Detection grep** for reviewing other cookbooks:
+
+```bash
+git grep -B2 -A1 'skip_if.*File.exist' cookbooks/ | grep -B2 'env_output_path\|\.env'
+```
+
+Any hit that doesn't check additional content beyond file existence is a candidate, especially if the cookbook's `generate_env.sh` fetches more than one SSM key.
+
+**Recovery procedure** on affected hosts (existing `.env` predates the new key):
+
+```bash
+# Per affected host (CT 105 / 107 in the originating incident).
+pct exec <ct> -- bash -c 'mv /root/deploy/<service>/.env /root/deploy/<service>/.env.bak-pre-<feature>-$(date +%F)'
+pct exec <ct> -- bash -lc 'cd /root/setup && ./bin/mitamae local pve/lxc-<service>.rb'
+# Verify: docker exec <container> env | grep <NEW_KEY> must show the value.
+```
+
+This rule exists because the 2026-05-12 APM Phase 5 rollout's cookbook PRs (setup #337 cognee, #333 ai-memory) added `OTEL_EXPORTER_OTLP_HEADERS=...` to `generate_env.sh` for both services, but `require_external_auth(skip_if: -> { File.exist?(env_output_path) })` made the generator a no-op on hosts whose `.env` predated the change. The container env had OTEL_SERVICE_NAME / ENDPOINT / CERTIFICATE (from docker-compose `environment:` block) but NOT OTEL_EXPORTER_OTLP_HEADERS (the one from env_file), so OTLP exports went out without auth → apm-server rejected them silently → service.name absent from `traces-apm-default`. Recovery required manual `.env` rename + reapply on every affected host. The content-aware skip_if would have re-fetched on the first apply post-merge.
+
 ## mitamae directory/file `owner`/`group` MUST be String, not Integer
 
 mitamae's `directory` and `file` resources accept `owner` / `group` as a **String** only — Integer literals raise `MItamae::Resource::InvalidTypeError: owner attribute should be String` at converge time. The error fires per-resource at apply on the target host, NOT at compile or `mitamae --dry-run` time, so the typo survives `ruby -c`, CI's syntax-check job, and even the cookbook's own dry-run gate.
