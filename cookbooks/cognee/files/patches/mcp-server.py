@@ -37,7 +37,21 @@ except ModuleNotFoundError:
     )
 
 
-mcp = FastMCP("Cognee")
+# Host = "0.0.0.0" matters at initialization time, not after-the-fact via CLI:
+# FastMCP.__init__ auto-enables DNS-rebinding protection (TransportSecurity
+# middleware with allowed_hosts=[127.0.0.1:*, localhost:*, [::1]:*]) when host
+# defaults to a loopback address. Setting host="0.0.0.0" here keeps
+# transport_security=None so the upstream reverse-proxy hostname
+# ("cognee-mcp:8000" via docker-compose service DNS) is not rejected with
+# 421 "Invalid Host header". The auth-proxy in front terminates external
+# traffic and validates JWT, so DNS-rebinding protection is redundant here.
+#
+# stateless_http=True drops MCP session-id tracking so each JSON-RPC request
+# is independent. Without it, every request after `initialize` must carry the
+# Mcp-Session-Id header from the prior response — but the MCP probe (and
+# claude.ai's MCP client when re-establishing) issues `tools/list` and
+# `tools/call` as fresh requests, which the stateful flow rejects with 400.
+mcp = FastMCP("Cognee", host="0.0.0.0", stateless_http=True)
 
 logger = get_logger()
 
@@ -75,6 +89,7 @@ async def run_http_with_cors():
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
 
     config = uvicorn.Config(
         http_app,
