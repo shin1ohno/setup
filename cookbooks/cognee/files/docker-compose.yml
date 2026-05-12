@@ -142,7 +142,7 @@ services:
     environment:
       - ENVIRONMENT=local
       - LOG_LEVEL=INFO
-      - TRANSPORT_MODE=sse
+      - TRANSPORT_MODE=http
       - MCP_LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
       - API_URL=http://cognee:8000
@@ -172,7 +172,6 @@ services:
       - UPSTREAM_URL=http://cognee-mcp:8000
       - PORT=8767
       - PATH_PREFIX=/cognee
-      - HOST_OVERRIDE=127.0.0.1:8000
       - OTEL_EXPORTER_OTLP_ENDPOINT=https://apm-server.home.local:8200
       # Mount + reference the home APM Server CA cert so the OTLP gRPC
       # TLS handshake verifies against es_ca (not in OS roots). Without

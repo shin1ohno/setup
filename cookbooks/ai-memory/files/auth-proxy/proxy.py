@@ -8,7 +8,6 @@ requests to the upstream openmemory-api service.
 import json
 import logging
 import os
-import re
 import time
 from urllib.request import urlopen
 
@@ -162,30 +161,6 @@ def add_cors(headers: dict) -> dict:
     return merged
 
 
-# ── SSE path rewriting ───────────────────────────────────────────────
-
-# Matches SSE endpoint events: "event: endpoint\ndata: /some/path..."
-_SSE_ENDPOINT_RE = re.compile(
-    rb"(event:\s*endpoint\s*\ndata:\s*)(\/\S+)",
-    re.MULTILINE,
-)
-
-
-def rewrite_sse_paths(chunk: bytes, prefix: str) -> bytes:
-    """Prepend PATH_PREFIX to SSE endpoint event paths."""
-    if not prefix:
-        return chunk
-    prefix_bytes = prefix.encode()
-
-    def _rewrite(m: re.Match) -> bytes:
-        path = m.group(2)
-        if path.startswith(prefix_bytes):
-            return m.group(0)  # already prefixed
-        return m.group(1) + prefix_bytes + path
-
-    return _SSE_ENDPOINT_RE.sub(_rewrite, chunk)
-
-
 # ── Request handling ───────────────────────────────────────────────────
 
 # Resource identifier — distinct from sage to avoid MCP client confusion
@@ -313,21 +288,23 @@ async def handle(request: web.Request) -> web.StreamResponse:
 
     logger.info("Upstream responded %d (%s) for %s %s", upstream.status, ct, request.method, request.path)
 
-    # Stream SSE responses
+    # Streaming response (MCP Streamable HTTP returns chunked SSE for long-running
+    # tool calls, application/json for single-RPC responses — handle both transparently).
     if "text/event-stream" in ct:
         response = web.StreamResponse(status=upstream.status, headers=resp_headers)
         await response.prepare(request)
         try:
             async for chunk in upstream.content.iter_any():
-                logger.info("SSE chunk: %s", chunk[:300])
-                chunk = rewrite_sse_paths(chunk, PATH_PREFIX)
+                if request.transport is None or request.transport.is_closing():
+                    logger.info("Downstream transport closing for %s", request.path)
+                    break
                 await response.write(chunk)
         except ConnectionResetError:
-            logger.info("SSE client disconnected for %s", request.path)
+            logger.info("Client disconnected for %s", request.path)
         except Exception as exc:
-            logger.warning("SSE streaming error: %s", exc)
+            logger.warning("Stream error: %s", exc)
         finally:
-            await upstream.release()
+            upstream.close()
         return response
 
     # Regular responses

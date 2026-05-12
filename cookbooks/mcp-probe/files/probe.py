@@ -47,23 +47,22 @@ def _ipv4_only_getaddrinfo(host, port, family=0, *args, **kwargs):
 
 socket.getaddrinfo = _ipv4_only_getaddrinfo
 
-# Servers to probe. Each tuple: (logical name, audience claim, sse path).
+# Servers to probe. Each tuple: (logical name, audience claim, mcp path, transport).
 # Audience is what the OAuth token's `aud` claim must include for the
 # server's JWT validator to accept it.
 #
-# SSE path notes (verified 2026-05-07):
-#   - cognee     → /cognee/sse (auth-proxy strips /cognee/ → backend /sse)
-#   - roon-mcp   → /roon/sse (auth-proxy strips /roon/ → backend /sse)
-#   - memory     → /memory/mcp/<client>/sse/<user> (openmemory upstream
-#                  uses path params for client+user identification;
-#                  auth-proxy preserves the path verbatim minus /memory/)
-# The actual messages URL is read out of the SSE `endpoint` event's data
-# line (NOT derived from sse_path) — each server emits the canonical
-# messages path it expects, including any auth-proxy prefix rewrite.
+# Transport (verified 2026-05-12):
+#   - cognee     → Streamable HTTP at /cognee/mcp (single POST endpoint)
+#   - memory     → Streamable HTTP at /memory/mcp (single POST endpoint)
+#   - roon-mcp   → SSE 2-endpoint at /roon/sse (legacy, not yet migrated)
+#
+# For SSE: the messages URL is read out of the SSE `endpoint` event's data
+# line (NOT derived from path), because each server's auth-proxy emits its
+# own canonical messages URL including the path prefix.
 SERVERS = [
-    ("cognee",   "cognee",   "/cognee/sse"),
-    ("memory",   "memory",   "/memory/mcp/monitoring-prober/sse/monitoring"),
-    ("roon-mcp", "roon-mcp", "/roon/sse"),
+    ("cognee",   "cognee",   "/cognee/mcp",  "http"),
+    ("memory",   "memory",   "/memory/mcp",  "http"),
+    ("roon-mcp", "roon-mcp", "/roon/sse",    "sse"),
 ]
 
 # Default 15s — SSE endpoint event has been observed to arrive 4-12s
@@ -188,7 +187,7 @@ def open_sse(base_url: str, sse_path: str, token: str):
 
 
 def post_jsonrpc(base_url: str, messages_path: str, session_id: str, token: str, payload: dict):
-    """POST a JSON-RPC message to the server's canonical messages URL.
+    """POST a JSON-RPC message to the server's canonical messages URL (SSE 2-endpoint flow).
 
     `messages_path` comes verbatim from the SSE `endpoint` event's data
     line (path portion only; query is reconstructed here). Servers using
@@ -209,6 +208,35 @@ def post_jsonrpc(base_url: str, messages_path: str, session_id: str, token: str,
     try:
         status, _, raw = _http("POST", url, headers=headers, body=body)
         if status not in (200, 202):
+            return status, now() - t0, f"http_{status}: {raw[:200].decode(errors='replace')}"
+        return status, now() - t0, None
+    except Exception as e:
+        return 0, now() - t0, f"exception: {e}"
+
+
+def post_streamable_http(base_url: str, mcp_path: str, token: str, payload: dict):
+    """POST a JSON-RPC method to a Streamable HTTP MCP endpoint.
+
+    Streamable HTTP transport uses a single endpoint (typically /mcp) and
+    returns the JSON-RPC response inline (status 200 with body containing
+    either application/json or text/event-stream chunks). FastMCP requires
+    a trailing slash to avoid a 307 redirect, so we ensure one is present.
+
+    Returns (status_code, latency, error).
+    """
+    t0 = now()
+    url = base_url.rstrip("/") + mcp_path
+    if not url.endswith("/"):
+        url += "/"
+    body = json.dumps(payload).encode()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    try:
+        status, _, raw = _http("POST", url, headers=headers, body=body)
+        if status != 200:
             return status, now() - t0, f"http_{status}: {raw[:200].decode(errors='replace')}"
         return status, now() - t0, None
     except Exception as e:
@@ -241,15 +269,27 @@ def write_textfile(metrics: list[str], out_path: str) -> None:
         raise
 
 
-def probe_one(server: tuple[str, str, str], token_url: str, client_id: str, client_secret: str, base_url: str) -> list[str]:
-    name, audience, sse_path = server
+def probe_one(server: tuple[str, str, str, str], token_url: str, client_id: str, client_secret: str, base_url: str) -> list[str]:
+    name, audience, path, transport = server
     metrics: list[str] = []
 
     def m(metric: str, labels: dict[str, str], value: Any) -> str:
         label_str = ",".join(f'{k}="{v}"' for k, v in labels.items())
         return f"{metric}{{{label_str}}} {value}"
 
-    # Phase 1: auth
+    init_payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "mcp-fleet-prober", "version": "0.1"},
+        },
+    }
+    tools_payload = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+
+    # Phase 1: auth (transport-agnostic)
     token, lat_auth, err = get_token(token_url, client_id, client_secret, audience)
     auth_ok = 1 if token else 0
     metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "auth"}, auth_ok))
@@ -258,14 +298,28 @@ def probe_one(server: tuple[str, str, str], token_url: str, client_id: str, clie
         metrics.append(m("mcp_probe_e2e_success", {"server": name}, 0))
         return metrics
 
+    if transport == "http":
+        # Streamable HTTP: skip SSE handshake, POST initialize + tools/list directly.
+        status, lat_init, err = post_streamable_http(base_url, path, token, init_payload)
+        init_ok = 1 if status == 200 else 0
+        metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "initialize"}, init_ok))
+        metrics.append(m("mcp_probe_phase_latency_seconds", {"server": name, "phase": "initialize"}, f"{lat_init:.4f}"))
+        if not init_ok:
+            metrics.append(m("mcp_probe_e2e_success", {"server": name}, 0))
+            return metrics
+
+        status, lat_tools, err = post_streamable_http(base_url, path, token, tools_payload)
+        tools_ok = 1 if status == 200 else 0
+        metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "tools_list"}, tools_ok))
+        metrics.append(m("mcp_probe_phase_latency_seconds", {"server": name, "phase": "tools_list"}, f"{lat_tools:.4f}"))
+
+        e2e = 1 if (auth_ok and init_ok and tools_ok) else 0
+        metrics.append(m("mcp_probe_e2e_success", {"server": name}, e2e))
+        return metrics
+
+    # transport == "sse": legacy 2-endpoint flow.
     # Phase 2: SSE open + session — success metric only.
-    # Latency metric was previously emitted here but is no longer published:
-    # the probe holds the SSE connection long enough that the latency
-    # reflects upstream contention more than transport health, so the value
-    # was noisy and operationally misleading. success/failure is still
-    # tracked. Downstream (initialize / tools_list) phases still report
-    # their own latency, which is what actually matters for MCP RPC health.
-    sid, messages_path, sse_handle, _lat_sse, err = open_sse(base_url, sse_path, token)
+    sid, messages_path, sse_handle, _lat_sse, err = open_sse(base_url, path, token)
     sse_ok = 1 if sid else 0
     metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "sse_open"}, sse_ok))
     if not sid:
@@ -274,16 +328,6 @@ def probe_one(server: tuple[str, str, str], token_url: str, client_id: str, clie
 
     try:
         # Phase 3: initialize
-        init_payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "mcp-fleet-prober", "version": "0.1"},
-            },
-        }
         status, lat_init, err = post_jsonrpc(base_url, messages_path, sid, token, init_payload)
         init_ok = 1 if status in (200, 202) else 0
         metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "initialize"}, init_ok))
@@ -293,7 +337,6 @@ def probe_one(server: tuple[str, str, str], token_url: str, client_id: str, clie
             return metrics
 
         # Phase 4: tools/list
-        tools_payload = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
         status, lat_tools, err = post_jsonrpc(base_url, messages_path, sid, token, tools_payload)
         tools_ok = 1 if status in (200, 202) else 0
         metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "tools_list"}, tools_ok))
