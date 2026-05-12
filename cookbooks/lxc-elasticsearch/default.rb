@@ -251,10 +251,18 @@ execute "render elasticsearch.yml" do
     install -m 0660 -o root -g elasticsearch #{es_yml_path}.new #{es_yml_path}
     rm -f #{es_yml_path}.new
   SH
+  # mitamae executes not_if via /bin/sh -c, which on Debian/Ubuntu is dash.
+  # dash does not support `<(...)` process substitution, so the raw form
+  # raises `Syntax error: "(" unexpected`, exits non-zero, and mitamae
+  # treats the guard as "not satisfied" — firing render + restart on every
+  # apply. Render to a temp file and use plain `diff` (POSIX-compatible).
   not_if "test -f #{es_yml_path} && " \
-         "diff -q <(sed -e 's|@@NODE_NAME@@|#{node_name}|g' " \
-         "-e 's|@@TRANSPORT_HOST@@|#{transport_host}|g' #{es_yml_tmpl}) " \
-         "#{es_yml_path}"
+         "rendered=$(mktemp) && " \
+         "sed -e 's|@@NODE_NAME@@|#{node_name}|g' " \
+         "-e 's|@@TRANSPORT_HOST@@|#{transport_host}|g' " \
+         "#{es_yml_tmpl} > \"$rendered\" && " \
+         "diff -q \"$rendered\" #{es_yml_path}; " \
+         "ret=$?; rm -f \"$rendered\"; exit $ret"
   notifies :run, "execute[restart elasticsearch]", :immediately
 end
 
