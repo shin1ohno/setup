@@ -386,6 +386,25 @@ generate_env_script = File.join(File.dirname(__FILE__), "files", "generate_env.s
 fetch_certs_script  = File.join(File.dirname(__FILE__), "files", "fetch_certs.sh")
 certs_staging_dir   = "#{generated_dir}/elasticsearch-certs"
 
+# Keys generate_env.sh writes to env_output_path. Adding a new key here
+# means new ES nodes won't roll forward without an env regen. Skip_if
+# below verifies every entry exists in the on-disk env so a missing key
+# forces re-fetch from SSM. Per CLAUDE.md "SSM-sourced .env generator
+# skip_if must be content-aware" — file-existence alone leaves stale
+# envs that fail bootstrap-init.sh's `${KEY:?must be set}` guard.
+required_env_keys = %w[
+  NODE_NAME
+  TRANSPORT_HOST
+  ELASTIC_PASSWORD
+  KIBANA_PASSWORD
+  VECTOR_PASSWORD
+  GRAFANA_PASSWORD
+  ANALYST_PASSWORD
+  MONITOR_PASSWORD
+  ELASTIC_AGENT_PASSWORD
+  APM_SERVER_PASSWORD
+].freeze
+
 # require_external_auth: probe the actual SSM read the cookbook will
 # perform, gated to the named profile (per CLAUDE.md
 # "Auth-check gate must match the cookbook's actual invocation profile").
@@ -397,16 +416,13 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "/monitoring/elastic/* in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  # Skip when env file AND all 3 certs already exist at the new
-  # /etc/elasticsearch/certs/ location. Previously skipped only on env
-  # presence, but the cert path migration (PR #257 fix) required
-  # re-fetching certs from SSM into the staging dir even when the env
-  # file was already in place from the partial PR #256 apply.
   skip_if: -> {
     File.exist?(env_output_path) &&
       File.exist?("/etc/elasticsearch/certs/ca.crt") &&
       File.exist?("/etc/elasticsearch/certs/#{node_name}.crt") &&
-      File.exist?("/etc/elasticsearch/certs/#{node_name}.key")
+      File.exist?("/etc/elasticsearch/certs/#{node_name}.key") &&
+      (env_body = File.read(env_output_path)) &&
+      required_env_keys.all? { |k| env_body.include?("#{k}=") }
   },
 ) do
   execute "generate elasticsearch secrets env" do
