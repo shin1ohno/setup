@@ -1,11 +1,15 @@
 #!/bin/bash
 # Generate rclone config for ingest-drop S3 bucket from AWS SSM Parameter Store
 # Usage: generate_rclone_conf.sh <output_path>
+#
+# Required env: AWS_PROFILE (cookbook passes it from cookbooks/ssh-keys/files/aws-config.json).
+# Optional env: AWS_REGION (default: ap-northeast-1).
 
 set -euo pipefail
 
 OUTPUT_FILE="$1"
 AWS_REGION="${AWS_REGION:-ap-northeast-1}"
+AWS_PROFILE="${AWS_PROFILE:?AWS_PROFILE must be set (cookbook reads from cookbooks/ssh-keys/files/aws-config.json)}"
 
 fetch_ssm() {
   local param_path="$1"
@@ -14,8 +18,9 @@ fetch_ssm() {
     --with-decryption \
     --query "Parameter.Value" \
     --output text \
+    --profile "${AWS_PROFILE}" \
     --region "${AWS_REGION}" 2>/dev/null \
-    || { echo "SSM_FETCH_FAILED:${param_path}" >&2; return 1; }
+    || { echo "SSM_FETCH_FAILED:${param_path} (profile=${AWS_PROFILE} region=${AWS_REGION})" >&2; return 1; }
 }
 
 ACCESS_KEY_ID=$(fetch_ssm "/ingest/drop/access-key-id")

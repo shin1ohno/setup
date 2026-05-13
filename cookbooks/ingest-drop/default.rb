@@ -8,6 +8,15 @@
 include_cookbook "rclone"
 include_cookbook "awscli"
 
+# Mirror the ssh-keys cookbook's profile resolution so all SSM-gated
+# cookbooks fetch credentials via the same configured AWS identity.
+# On personal Macs and LXCs this is `pve-bootstrap-ssm` (configured by
+# the ssh-keys cookbook during bootstrap); home-monitor IAM grants this
+# profile ssm:GetParameter on /ingest/drop/*.
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
+aws_profile = ssh_keys_config["aws_profile"]
+aws_region  = ssh_keys_config["aws_region"]
+
 config_dir = "#{node[:setup][:root]}/ingest-drop"
 rclone_conf = "#{config_dir}/rclone.conf"
 mount_point = "#{node[:setup][:home]}/ingest/drop"
@@ -45,14 +54,23 @@ end
 
 # Generate rclone config from SSM. Gated by AWS auth on first run; on warm
 # re-runs the existence check short-circuits the prompt + the execute.
+# `check_command` attempts the actual SSM read the script will perform —
+# `aws sts get-caller-identity` succeeds for any valid IAM identity and
+# would mask a missing /ingest/drop/* grant (see ~/.claude/rules/ruby.md
+# "Auth-check gate must match the cookbook's actual invocation profile").
 require_external_auth(
-  tool_name: "AWS CLI (for /ingest/drop/* SSM params)",
-  check_command: "aws sts get-caller-identity",
-  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /ingest/drop/* SSM params",
+  check_command: "aws ssm get-parameter --name /ingest/drop/access-key-id " \
+                 "--with-decryption --profile #{aws_profile} --region #{aws_region} " \
+                 "> /dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
+                "/ingest/drop/* in #{aws_region} (home-monitor terraform manages this grant). " \
+                "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
   skip_if: -> { File.exist?(rclone_conf) },
 ) do
   execute "generate ingest-drop rclone config" do
-    command "bash #{generate_script} #{rclone_conf}"
+    command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+            "bash #{generate_script} #{rclone_conf}"
     user node[:setup][:user]
   end
 end
