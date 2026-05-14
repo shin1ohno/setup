@@ -1,5 +1,21 @@
 #  setup
 
+## Quick start (new machine)
+
+Pick the column that matches the target. Each step assumes you start in the repo root after `git clone`.
+
+| Step | macOS | Bare-metal Linux | PVE host |
+|---|---|---|---|
+| 0. Prereq | `softwareupdate --install-rosetta` (Apple Silicon)<br>install git via xcode-select | — | fresh PVE 9.x install |
+| 1. Fetch mitamae | `./bin/setup` | `./bin/setup` | `./bin/setup` |
+| 2. Apply | `./bin/mitamae local darwin.rb` | `./bin/mitamae local linux.rb` | `./bin/mitamae local pve/pve-host.rb` |
+| 3. First-run pauses | AWS CLI auth + sudo password (see [Interactive bootstrap](#interactive-bootstrap-first-time-machine)) | same | AWS CLI auth |
+| 4. Manual extras | install AppStore apps (Twingate etc.) | — | — |
+
+**Prereq for any host**: the device's public key must already be registered to GitHub via `home-monitor/` Terraform (`github_user_ssh_key.device[*]`) — `ssh-keys` cookbook fetches the matching private key from SSM during step 2.
+
+**LXC fleet** (dev workstation + service LXCs): provision each CT via `home-monitor/` Terraform, seed AWS creds with `./bin/bootstrap-lxc-creds <CT>` from the PVE host, then apply all `pve/lxc-*.rb` in parallel with `./bin/apply-pve-lxcs`. Per-LXC details in the table below.
+
 ## Entry recipe by host type
 
 Pick the entry recipe that matches the target host. Running the wrong
@@ -16,14 +32,6 @@ any container — so the right one matters.
 
 Override the `linux.rb` container guard with `MITAMAE_FORCE_BARE_METAL=1`
 only if `systemd-detect-virt -c` misclassifies a genuine bare-metal host.
-
-## darwin
-
-1. Install git (hit `git` and you are asked to install it)
-2. Install Rosetta 2: `softwareupdate --install-rosetta`
-3. Download or clone this repository and `./bin/setup`  to install mitamae
-4. `./bin/mitamae local darwin.rb`
-5. Install [Twingate](https://apps.apple.com/jp/app/twingate/id1501592214?l=en&mt=12) etc. from AppStore manually
 
 ## Interactive bootstrap (first-time machine)
 
