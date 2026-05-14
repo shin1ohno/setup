@@ -18,8 +18,21 @@ add_profile "dot-zsh" do
 export PATH=#{node[:setup][:root]}/bin:#{node[:setup][:home]}/.local/bin:$PATH
 export ARCHPREFERENCE=arm64
 alias bri="envchain bricolage bundle exec bricolage"
+
+# compinit + bashcompinit, initialized once so all later profile.d entries
+# (sheldon, fzf-tab, fzf-advanced, mise, zoxide, ...) can register
+# completions via `compdef` without triggering compinit a second time.
+# Daily-cache pattern: rebuild dump only if older than 24h, otherwise
+# load cached dump with -C (no security audit).
+autoload -Uz compinit
+if [[ -n ${ZDOTDIR:-$HOME}/.zcompdump(#qN.mh+24) ]]; then
+  compinit
+else
+  compinit -C
+fi
 autoload -U bashcompinit
 bashcompinit
+
 function select-history() {
   BUFFER=$(history -n -r 1 | fzf-tmux -d --reverse --no-sort +m --query "$LBUFFER" --prompt="History > ")
   CURSOR=$#BUFFER

@@ -57,17 +57,9 @@ add_profile "sheldon" do
   priority 20
   bash_content <<~EOM
     # Sheldon plugin manager + starship prompt + minimal vi keybinds.
-    # Replaces OMZ + typewritten (priority 20 slot).
+    # Replaces OMZ + typewritten (priority 20 slot). compinit is set up
+    # by cookbooks/dot-zsh priority 10 — do not re-init here.
     export PATH="#{node[:setup][:root]}/bin:$PATH"
-
-    # compinit daily-cache: rebuild dump only if older than 24h.
-    # Cuts ~200ms off the every-shell compinit cost.
-    autoload -Uz compinit
-    if [[ -n ${ZDOTDIR:-$HOME}/.zcompdump(#qN.mh+24) ]]; then
-      compinit
-    else
-      compinit -C
-    fi
 
     ZSH_AUTOSUGGEST_MANUAL_REBIND=1
     eval "$(sheldon source)"
