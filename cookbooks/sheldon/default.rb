@@ -62,14 +62,30 @@ end
 
 add_profile "sheldon" do
   priority 20
-  bash_content <<~EOM
+  bash_content <<~'EOM'
     # Sheldon plugin manager + starship prompt + minimal vi keybinds.
     # Replaces OMZ + typewritten (priority 20 slot). compinit is set up
     # by cookbooks/dot-zsh priority 10 — do not re-init here.
-    export PATH="#{node[:setup][:root]}/bin:$PATH"
+    export PATH="$HOME/.setup_shin1ohno/bin:$PATH"
 
+    # Cache `sheldon source` and `starship init zsh` outputs so the
+    # subprocess spawn (sheldon ~30ms + starship ~20ms) only fires when
+    # the underlying binary or sheldon config file changes. Regenerate
+    # logic uses zsh's -ot ("older than") test against the binary /
+    # config mtime.
+    _sh1_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}"
+    [[ -d $_sh1_cache_dir ]] || mkdir -p $_sh1_cache_dir
+
+    _sh1_sheldon_cache="${_sh1_cache_dir}/sheldon-source.zsh"
+    _sh1_sheldon_bin="$HOME/.setup_shin1ohno/bin/sheldon"
+    _sh1_sheldon_cfg="$HOME/.config/sheldon/plugins.toml"
+    if [[ ! -s $_sh1_sheldon_cache \
+       || $_sh1_sheldon_cache -ot $_sh1_sheldon_bin \
+       || $_sh1_sheldon_cache -ot $_sh1_sheldon_cfg ]]; then
+      "$_sh1_sheldon_bin" source > "$_sh1_sheldon_cache"
+    fi
     ZSH_AUTOSUGGEST_MANUAL_REBIND=1
-    eval "$(sheldon source)"
+    source "$_sh1_sheldon_cache"
 
     # vi mode (inline 4-line replacement for OMZ vi-mode plugin)
     bindkey -v
@@ -91,6 +107,14 @@ add_profile "sheldon" do
       tree -La 1
     }
 
-    eval "$(starship init zsh)"
+    _sh1_starship_cache="${_sh1_cache_dir}/starship-init.zsh"
+    _sh1_starship_bin=$(command -v starship)
+    if [[ -n $_sh1_starship_bin ]] && [[ ! -s $_sh1_starship_cache \
+       || $_sh1_starship_cache -ot $_sh1_starship_bin ]]; then
+      "$_sh1_starship_bin" init zsh --print-full-init > "$_sh1_starship_cache"
+    fi
+    [[ -s $_sh1_starship_cache ]] && source "$_sh1_starship_cache"
+
+    unset _sh1_cache_dir _sh1_sheldon_cache _sh1_sheldon_bin _sh1_sheldon_cfg _sh1_starship_cache _sh1_starship_bin
   EOM
 end
