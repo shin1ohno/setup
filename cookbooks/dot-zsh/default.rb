@@ -1,16 +1,11 @@
 # frozen_string_literal: true
 
-# Phase 4 zsh-startup refactor: darwin migrated to Sheldon + starship.
-# linux.rb still uses oh-my-zsh + typewritten until Phase 4 is extended
-# to linux. Keep both cookbook trees on disk for ~1 week as a rollback
-# safety net (revert by swapping the includes here).
-if node[:platform] == "darwin"
-  include_cookbook "starship"
-  include_cookbook "sheldon"
-else
-  include_cookbook "typewritten"
-  include_cookbook "oh-my-zsh"
-end
+# Phase 4 zsh-startup refactor: Sheldon + starship on all platforms.
+# cookbooks/oh-my-zsh/ and cookbooks/typewritten/ are intentionally left
+# on disk for ~1 week as a rollback safety net — revert by swapping these
+# two includes back to typewritten + oh-my-zsh.
+include_cookbook "starship"
+include_cookbook "sheldon"
 
 add_profile "dot-zsh" do
   priority 10

@@ -4,10 +4,8 @@
 # Oh-My-Zsh framework. Activates the starship prompt at the end of its
 # profile entry so prompt + plugins share one place.
 #
-# Scope: darwin-only for now. linux.rb still uses oh-my-zsh + typewritten
-# via cookbooks/dot-zsh platform guard.
-
-return unless node[:platform] == "darwin"
+# Cross-platform: the rossmacarthur crate.sh installer detects darwin /
+# linux / arm64 / x86_64 automatically.
 
 sheldon_bin = "#{node[:setup][:root]}/bin/sheldon"
 sheldon_config_dir = "#{node[:setup][:home]}/.config/sheldon"
