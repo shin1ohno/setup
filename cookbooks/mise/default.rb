@@ -70,20 +70,22 @@ end
 
 add_profile "mise" do
   bash_content <<~EOS
-    # mise-en-place tool version manager
+    # mise-en-place tool version manager.
+    # Using --shims mode for faster shell startup (~100ms saved over hook mode).
+    # Trade-off: `[env]` sections and `[hooks]` in mise.toml do not apply with
+    # shims. Switch back to bare `mise activate` if those features are needed.
     if [ -f "$HOME/.local/bin/mise" ]; then
-      # Detect shell and activate accordingly
       if [ -n "$BASH_VERSION" ]; then
-        eval "$($HOME/.local/bin/mise activate bash)"
+        eval "$($HOME/.local/bin/mise activate bash --shims)"
       elif [ -n "$ZSH_VERSION" ]; then
-        eval "$($HOME/.local/bin/mise activate zsh)"
+        eval "$($HOME/.local/bin/mise activate zsh --shims)"
       fi
     fi
   EOS
   fish_content <<~FISH
-    # mise-en-place tool version manager
+    # mise-en-place tool version manager (shims mode; see bash_content note)
     if test -f "$HOME/.local/bin/mise"
-      eval ($HOME/.local/bin/mise activate fish)
+      eval ($HOME/.local/bin/mise activate fish --shims)
     end
   FISH
 end
