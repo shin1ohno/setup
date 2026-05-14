@@ -1,0 +1,21 @@
+shell = "zsh"
+
+# zsh-defer must load synchronously so the `defer` template below resolves.
+[plugins.zsh-defer]
+github = "romkatv/zsh-defer"
+apply = ["source"]
+
+# Custom template: deferred source. Plugins applying `defer` load via
+# zsh-defer, which runs them after the first prompt — invisible to the user
+# but eliminates them from the synchronous startup path.
+[templates]
+defer = """{% for file in files %}zsh-defer source "{{ file }}"
+{% endfor %}"""
+
+[plugins.zsh-autosuggestions]
+github = "zsh-users/zsh-autosuggestions"
+apply = ["defer"]
+
+[plugins.fast-syntax-highlighting]
+github = "zdharma-continuum/fast-syntax-highlighting"
+apply = ["defer"]

@@ -31,6 +31,10 @@ execute "touch #{node[:setup][:home]}/.zshrc" do
   not_if { File.exist?("#{node[:setup][:home]}/.zshrc") }
 end
 
+# Match any form of the profile source line: tilde (`. ~/.setup_shin1ohno/profile`),
+# absolute (`. /Users/.../.setup_shin1ohno/profile`), or `$HOME`-prefixed. The prior
+# absolute-only check missed legacy tilde-form lines and re-appended a duplicate
+# absolute-form line on every apply, doubling shell startup time.
 execute "echo '. #{node[:setup][:root]}/profile' >> ~/.zshrc" do
-  not_if "fgrep -q '. #{node[:setup][:root]}/profile' ~/.zshrc"
+  not_if "fgrep -q 'setup_shin1ohno/profile' ~/.zshrc"
 end
