@@ -153,18 +153,9 @@ when "arch"
   end
 end
 
-# Add profile entry for documentation
-add_profile "eternal-terminal" do
-  bash_content <<~BASH
-    # Eternal Terminal - Resilient remote shell
-    # Usage: et user@hostname
-    # Automatically reconnects when network changes
-    # Uses SSH for authentication, port 2022 by default
-  BASH
-  fish_content <<~FISH
-    # Eternal Terminal - Resilient remote shell
-    # Usage: et user@hostname
-    # Automatically reconnects when network changes
-    # Uses SSH for authentication, port 2022 by default
-  FISH
+# Delete the prior documentation-only profile entry. Pure comments still
+# take ~1-3ms to parse on every shell start; `man et` and the cookbook
+# itself are the documentation channels.
+file "#{node[:setup][:root]}/profile.d/50-eternal-terminal.sh" do
+  action :delete
 end

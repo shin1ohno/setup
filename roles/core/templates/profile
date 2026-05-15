@@ -1,4 +1,34 @@
-for profile in <%= node[:setup][:root] %>/profile.d/*.sh
-do
-  test -r "$profile" && . "$profile"
-done
+# Sourced by ~/.zshrc / ~/.bashrc. Concatenates every profile.d/*.sh
+# into a single bundle file, zcompiles it under zsh, and sources the
+# bundle directly. Avoids the per-file source overhead of the prior
+# loop (32 files × ~5ms each = ~160ms saved).
+#
+# Bundle is rebuilt when any profile.d/*.sh is newer than the bundle.
+_sh1_bundle="${XDG_CACHE_HOME:-$HOME/.cache}/setup-profile-bundle.zsh"
+_sh1_profile_dir="<%= node[:setup][:root] %>/profile.d"
+[ -d "$(dirname "$_sh1_bundle")" ] || mkdir -p "$(dirname "$_sh1_bundle")"
+
+# Newest .sh by mtime. zsh glob (om[1]) avoids a subprocess; bash falls
+# back to `ls -t` (cheap one-off check at shell start).
+if [ -n "$ZSH_VERSION" ]; then
+  _sh1_newest=( "$_sh1_profile_dir"/*.sh(om[1]N) )
+  _sh1_newest=${_sh1_newest[1]:-}
+else
+  _sh1_newest=$(ls -1t "$_sh1_profile_dir"/*.sh 2>/dev/null | head -1)
+fi
+
+if [ ! -s "$_sh1_bundle" ] || { [ -n "$_sh1_newest" ] && [ "$_sh1_newest" -nt "$_sh1_bundle" ]; }; then
+  # Trailing newline per file — some profile.d entries omit it (e.g.
+  # 50-cargo.sh ends in `source "$HOME/.cargo/env"` with no LF) and
+  # naively `cat`ing them merges the last token of one file with the
+  # first token of the next.
+  : > "$_sh1_bundle"
+  for _sh1_f in "$_sh1_profile_dir"/*.sh; do
+    cat "$_sh1_f" >> "$_sh1_bundle"
+    echo >> "$_sh1_bundle"
+  done
+  unset _sh1_f
+  [ -n "$ZSH_VERSION" ] && zcompile "$_sh1_bundle" 2>/dev/null
+fi
+. "$_sh1_bundle"
+unset _sh1_bundle _sh1_profile_dir _sh1_newest

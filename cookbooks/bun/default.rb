@@ -12,11 +12,17 @@ execute "#{node[:setup][:root]}/bun-install.sh" do
 end
 
 add_profile "bun" do
-  bash_content <<-END 
-export BUN_INSTALL="$HOME/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"
-[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
-END
+  bash_content <<~'END'
+    # Lazy-load bun completion. PATH is set eagerly so `which bun` works;
+    # the completion file (~40ms to source) loads only on first bun call.
+    export BUN_INSTALL="$HOME/.bun"
+    export PATH="$BUN_INSTALL/bin:$PATH"
+    bun() {
+      unset -f bun
+      [ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
+      bun "$@"
+    }
+  END
 end
 
 execute "$HOME/.bun/bin/bun upgrade" do

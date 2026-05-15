@@ -20,17 +20,15 @@ add_profile "fzf" do
 if [[ ! "$PATH" == */opt/homebrew/opt/fzf/bin* ]]; then
   PATH="${PATH:+${PATH}:}/opt/homebrew/opt/fzf/bin"
 fi
-[[ $- == *i* ]] && source "/opt/homebrew/opt/fzf/shell/completion.zsh" 2> /dev/null
-source "/opt/homebrew/opt/fzf/shell/key-bindings.zsh"
 export FZF_COMPLETION_TRIGGER='--'
 export FZF_DEFAULT_COMMAND='fd --type file'
 export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
 export FZF_DEFAULT_OPTS=$FZF_DEFAULT_OPTS"
---height=40% 
---layout=reverse 
---info=inline 
---border 
---margin=1 
+--height=40%
+--layout=reverse
+--info=inline
+--border
+--margin=1
 --padding=1
 --prompt 'All> '
 --header 'CTRL-D: Directories / CTRL-F: Files'
@@ -38,8 +36,17 @@ export FZF_DEFAULT_OPTS=$FZF_DEFAULT_OPTS"
 --bind 'ctrl-f:change-prompt(Files> )+reload(find * -type f)'
 --color=bg+:#3B4252,bg:#2E3440,spinner:#81A1C1,hl:#616E88,fg:#D8DEE9,header:#616E88,info:#81A1C1,pointer:#81A1C1,marker:#81A1C1,fg+:#D8DEE9,prompt:#81A1C1,hl+:#81A1C1
 "
-
-
+# Defer completion + key-bindings — they post-prompt load via zsh-defer
+# (registered by Sheldon at priority 20). First Ctrl-T / Ctrl-R may miss
+# the binding by a few ms; fall through to eager source if zsh-defer is
+# absent (non-zsh shells or sheldon not yet sourced).
+if (( $+functions[zsh-defer] )); then
+  zsh-defer source "/opt/homebrew/opt/fzf/shell/completion.zsh"
+  zsh-defer source "/opt/homebrew/opt/fzf/shell/key-bindings.zsh"
+else
+  [[ $- == *i* ]] && source "/opt/homebrew/opt/fzf/shell/completion.zsh" 2> /dev/null
+  source "/opt/homebrew/opt/fzf/shell/key-bindings.zsh"
+fi
 EOM
 
 end
@@ -88,7 +95,13 @@ end
 
 add_profile "fzf-git" do
   bash_content <<~EOS
-    source "#{node[:setup][:root]}/fzf-git.sh/fzf-git.sh"
+    # Defer fzf-git widget registration to post-prompt; same fallback as
+    # the fzf core profile entry.
+    if (( $+functions[zsh-defer] )); then
+      zsh-defer source "#{node[:setup][:root]}/fzf-git.sh/fzf-git.sh"
+    else
+      source "#{node[:setup][:root]}/fzf-git.sh/fzf-git.sh"
+    fi
   EOS
 end
 
