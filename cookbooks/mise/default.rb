@@ -69,17 +69,32 @@ execute "$HOME/.local/bin/mise completion fish > #{node[:setup][:home]}/.config/
 end
 
 add_profile "mise" do
-  bash_content <<~EOS
+  bash_content <<~'EOS'
     # mise-en-place tool version manager.
-    # Using --shims mode for faster shell startup (~100ms saved over hook mode).
-    # Trade-off: `[env]` sections and `[hooks]` in mise.toml do not apply with
-    # shims. Switch back to bare `mise activate` if those features are needed.
+    # --shims mode + per-shell cache: caches the `mise activate --shims`
+    # output and only regenerates when the mise binary itself changes.
+    # `mise activate --shims` is ~110ms unsalted because it parses config
+    # + emits a shim PATH export each shell. Caching cuts that to ~1ms.
+    # Trade-off: `[env]` sections and `[hooks]` in mise.toml do not apply
+    # with shims. Switch back to bare `mise activate` if those are needed.
     if [ -f "$HOME/.local/bin/mise" ]; then
+      _sh1_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}"
+      [ -d "$_sh1_cache_dir" ] || mkdir -p "$_sh1_cache_dir"
+      _sh1_mise_bin="$HOME/.local/bin/mise"
       if [ -n "$BASH_VERSION" ]; then
-        eval "$($HOME/.local/bin/mise activate bash --shims)"
+        _sh1_mise_cache="${_sh1_cache_dir}/mise-activate.bash"
+        _sh1_mise_shell=bash
       elif [ -n "$ZSH_VERSION" ]; then
-        eval "$($HOME/.local/bin/mise activate zsh --shims)"
+        _sh1_mise_cache="${_sh1_cache_dir}/mise-activate.zsh"
+        _sh1_mise_shell=zsh
       fi
+      if [ -n "${_sh1_mise_shell:-}" ]; then
+        if [ ! -s "$_sh1_mise_cache" ] || [ "$_sh1_mise_cache" -ot "$_sh1_mise_bin" ]; then
+          "$_sh1_mise_bin" activate "$_sh1_mise_shell" --shims > "$_sh1_mise_cache"
+        fi
+        . "$_sh1_mise_cache"
+      fi
+      unset _sh1_cache_dir _sh1_mise_bin _sh1_mise_cache _sh1_mise_shell
     fi
   EOS
   fish_content <<~FISH

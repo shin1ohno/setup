@@ -12,8 +12,21 @@ execute "echo | env #{node[:setup][:root]}/zoxide-install.sh" do
 end
 
 add_profile "zoxide" do
-  bash_content <<-BASH
-  eval "$(zoxide init zsh)"
+  bash_content <<~'BASH'
+    # Cache `zoxide init zsh` output; regenerate when binary changes.
+    # ~10ms subprocess spawn → ~1ms source.
+    _sh1_zoxide_bin=$(command -v zoxide)
+    if [ -n "$_sh1_zoxide_bin" ]; then
+      _sh1_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}"
+      [ -d "$_sh1_cache_dir" ] || mkdir -p "$_sh1_cache_dir"
+      _sh1_zoxide_cache="${_sh1_cache_dir}/zoxide-init.zsh"
+      if [ ! -s "$_sh1_zoxide_cache" ] || [ "$_sh1_zoxide_cache" -ot "$_sh1_zoxide_bin" ]; then
+        "$_sh1_zoxide_bin" init zsh > "$_sh1_zoxide_cache"
+      fi
+      . "$_sh1_zoxide_cache"
+      unset _sh1_cache_dir _sh1_zoxide_cache
+    fi
+    unset _sh1_zoxide_bin
   BASH
 end
 

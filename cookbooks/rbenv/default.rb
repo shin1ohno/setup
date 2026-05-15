@@ -148,12 +148,13 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
   end
 end
 
+# Resolve nproc at apply time so the profile entry is a static literal
+# (`export BUNDLE_JOBS=10`) and skips a ~5-10ms subprocess on every
+# shell start. The value rarely changes (only on hardware swaps); a
+# subsequent `mitamae` apply rewrites it.
+ncpu_cmd = node[:platform] == "darwin" ? "/usr/sbin/sysctl -n hw.ncpu" : "nproc"
+ncpu = run_command(ncpu_cmd).stdout.strip
 add_profile "bundler" do
-  if node[:platform] == "darwin"
-    bash_content "export BUNDLE_JOBS=$(/usr/sbin/sysctl -n hw.ncpu)\n"
-    fish_content "set -gx BUNDLE_JOBS (sysctl -n hw.ncpu)\n"
-  else
-    bash_content "export BUNDLE_JOBS=$(nproc)\n"
-    fish_content "set -gx BUNDLE_JOBS (nproc)\n"
-  end
+  bash_content "export BUNDLE_JOBS=#{ncpu}\n"
+  fish_content "set -gx BUNDLE_JOBS #{ncpu}\n"
 end

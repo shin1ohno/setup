@@ -13,9 +13,16 @@ end
 
 add_profile "fzf-tab" do
   bash_content <<~EOS
-    source "#{node[:setup][:root]}/fzf-tab/fzf-tab.plugin.zsh"
+    # zstyles can be set before the plugin loads (they're read at use time).
     zstyle ':completion:*:descriptions' format '[%d]'
     zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
     zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -la $realpath'
+    # Defer the plugin source itself — first TAB may briefly miss the
+    # fzf-tab widget, normal completion fallback handles that case.
+    if (( $+functions[zsh-defer] )); then
+      zsh-defer source "#{node[:setup][:root]}/fzf-tab/fzf-tab.plugin.zsh"
+    else
+      source "#{node[:setup][:root]}/fzf-tab/fzf-tab.plugin.zsh"
+    fi
   EOS
 end

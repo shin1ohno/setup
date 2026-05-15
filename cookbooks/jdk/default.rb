@@ -9,7 +9,22 @@ when "darwin"
   end
 
   add_profile "java" do
-    bash_content "export JAVA_HOME=$($HOME/.local/bin/mise where java@corretto-17 2>/dev/null)\n"
+    bash_content <<~'EOS'
+      # Cache JAVA_HOME from `mise where java@corretto-17`. Without the
+      # cache, this profile entry spawns a 100-120ms mise subprocess on
+      # every shell start. Regenerate when the mise binary itself changes
+      # (any java install/update bumps mise's tools registry mtime).
+      _sh1_java_cache="${XDG_CACHE_HOME:-$HOME/.cache}/java-home"
+      _sh1_mise_bin="$HOME/.local/bin/mise"
+      if [ -x "$_sh1_mise_bin" ]; then
+        [ -d "$(dirname "$_sh1_java_cache")" ] || mkdir -p "$(dirname "$_sh1_java_cache")"
+        if [ ! -s "$_sh1_java_cache" ] || [ "$_sh1_java_cache" -ot "$_sh1_mise_bin" ]; then
+          "$_sh1_mise_bin" where java@corretto-17 2>/dev/null > "$_sh1_java_cache"
+        fi
+        [ -s "$_sh1_java_cache" ] && export JAVA_HOME="$(cat "$_sh1_java_cache")"
+      fi
+      unset _sh1_java_cache _sh1_mise_bin
+    EOS
     fish_content "set -gx JAVA_HOME ($HOME/.local/bin/mise where java@corretto-17 2>/dev/null)\n"
   end
 
