@@ -28,10 +28,15 @@ return if node[:platform] == "darwin"
 hardening_pattern = (
   "ProtectSystem|ProtectHome|PrivateTmp|NoNewPrivileges|ProtectControlGroups|" \
   "RestrictNamespaces|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|" \
-  "ProtectClock|ProtectHostname|PrivateDevices|PrivateUsers|PrivateNetwork|" \
-  "MemoryDenyWriteExecute|RestrictRealtime|RestrictSUIDSGID|LockPersonality|" \
+  "ProtectClock|ProtectHostname|ProtectProc|PrivateDevices|PrivateUsers|" \
+  "PrivateNetwork|PrivateMounts|PrivateIPC|PrivatePIDs|" \
+  "MemoryDenyWriteExecute|RestrictRealtime|RestrictSUIDSGID|" \
+  "RestrictAddressFamilies|LockPersonality|" \
   "SystemCallFilter|SystemCallArchitectures|CapabilityBoundingSet|" \
-  "AmbientCapabilities|ReadWritePaths|ReadOnlyPaths|InaccessiblePaths|RemoveIPC"
+  "AmbientCapabilities|ReadWritePaths|ReadOnlyPaths|InaccessiblePaths|" \
+  "ExecPaths|NoExecPaths|BindPaths|BindReadOnlyPaths|" \
+  "TemporaryFileSystem|RootDirectory|RootImage|MountFlags|" \
+  "DeviceAllow|DevicePolicy|KeyringMode|ProcSubset|RemoveIPC"
 )
 
 %w(logrotate systemd-logind man-db nftables postfix).each do |svc|
