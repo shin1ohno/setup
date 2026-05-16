@@ -87,11 +87,16 @@ add_profile "sheldon" do
     ZSH_AUTOSUGGEST_MANUAL_REBIND=1
     source "$_sh1_sheldon_cache"
 
-    # vi mode (inline 4-line replacement for OMZ vi-mode plugin)
+    # vi mode (inline replacement for OMZ vi-mode plugin) + emacs-style
+    # cursor / history motion in insert mode (^A ^E ^B ^F ^P ^N).
     bindkey -v
     export KEYTIMEOUT=1
     bindkey -M viins '^A' beginning-of-line
     bindkey -M viins '^E' end-of-line
+    bindkey -M viins '^B' backward-char
+    bindkey -M viins '^F' forward-char
+    bindkey -M viins '^P' up-line-or-history
+    bindkey -M viins '^N' down-line-or-history
 
     # Locale + SSH-aware editor (preserved from prior OMZ profile)
     export LANG=en_US.UTF-8
