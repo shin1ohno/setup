@@ -6,14 +6,16 @@
 # Bundle is rebuilt when any profile.d/*.sh is newer than the bundle.
 _sh1_bundle="${XDG_CACHE_HOME:-$HOME/.cache}/setup-profile-bundle.zsh"
 _sh1_profile_dir="<%= node[:setup][:root] %>/profile.d"
-[ -d "$(dirname "$_sh1_bundle")" ] || mkdir -p "$(dirname "$_sh1_bundle")"
 
-# Newest .sh by mtime. zsh glob (om[1]) avoids a subprocess; bash falls
-# back to `ls -t` (cheap one-off check at shell start).
 if [ -n "$ZSH_VERSION" ]; then
+  # Zsh fast-path. `${var:h}` is the head-of-pathname expansion (no
+  # subshell), `(om[1]N)` returns the single newest .sh file by mtime
+  # (empty if none). Skipping the bash branch saves ~3-5ms.
+  [[ -d ${_sh1_bundle:h} ]] || mkdir -p "${_sh1_bundle:h}"
   _sh1_newest=( "$_sh1_profile_dir"/*.sh(om[1]N) )
   _sh1_newest=${_sh1_newest[1]:-}
 else
+  [ -d "$(dirname "$_sh1_bundle")" ] || mkdir -p "$(dirname "$_sh1_bundle")"
   _sh1_newest=$(ls -1t "$_sh1_profile_dir"/*.sh 2>/dev/null | head -1)
 fi
 
