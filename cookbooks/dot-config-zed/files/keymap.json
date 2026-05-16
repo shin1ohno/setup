@@ -35,5 +35,17 @@
     "bindings": {
       "ctrl-a a": ["workspace::SendKeystrokes", ""]
     }
+  },
+  {
+    // Vim insert-mode quick-escape: `jk` typed in rapid succession
+    // returns to NORMAL. Zed waits for the second key within its
+    // sequence timeout (default ~1s); if only `j` is pressed and the
+    // timeout expires, `j` is inserted as text as normal. `!menu`
+    // disables the chord while completion / signature popups are open
+    // so `j` can still navigate menu entries.
+    "context": "vim_mode == insert && !menu",
+    "bindings": {
+      "j k": "vim::NormalBefore"
+    }
   }
 ]
