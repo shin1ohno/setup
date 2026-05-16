@@ -120,7 +120,7 @@ Auto-mitamae: `cookbooks/auto-mitamae-target` installs a systemd timer on each L
 ## Important Notes
 
 - Always test cookbook changes with `--dry-run` first
-- Project hooks in `.claude/hooks/`: `guard-mitamae-dry-run.rb` blocks `mitamae` without `--dry-run` for Claude (apply runs are user-only — present them as `! ./bin/mitamae local <platform>.rb`); `remind-cookbook-dry-run.rb` reminds Claude to run dry-run after cookbook edits
+- Project hooks in `.claude/hooks/`: `guard-mitamae-dry-run.rb` blocks **`sudo mitamae`** without `--dry-run` for Claude. Bare `./bin/mitamae local <recipe>.rb` (no outer sudo) is allowed even without `--dry-run` — cookbooks elevate per-resource via `execute "sudo ..."`, which still hits the user's sudo prompt for each privileged step. Add `--dry-run` whenever the apply must NOT be allowed to actually run, even without sudo. `remind-cookbook-dry-run.rb` reminds Claude to run dry-run after cookbook edits
 - **sudo context by host type**: `cookbooks/` resources use `execute "sudo install …"` for system paths and `mitamae runs without sudo` per `~/.claude/rules/ruby.md` — but this rule applies to the OUTER mitamae invocation differently per host:
   - **Bare-metal Linux + macOS** (`pro`, `air`, `ohnos-macbook`): run `./bin/mitamae local <platform>.rb` as the regular user. Do NOT prepend `sudo` — it changes `$HOME` to `/root` and breaks rbenv/mise/pyenv PATH resolution (recipes that compute paths from `ENV["HOME"]` end up with `/root/.rbenv` etc., then later resources try to write there as the regular user and fail)
   - **Service LXCs** (`pve/lxc-*.rb`): the LXC's only user IS root. Run `./bin/mitamae local pve/lxc-<name>.rb` from inside the CT — no sudo prefix needed (already root)
