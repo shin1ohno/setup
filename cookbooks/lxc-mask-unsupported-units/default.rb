@@ -21,6 +21,13 @@
 #     conflict with the host-side network config
 #   - sysctl, tmpfiles, udev: host owns these subsystems for LXC guests
 #
+# Unused-by-design units also masked:
+#   - postfix.service: every LXC in the fleet (Roon, monitoring,
+#     application LXCs) has no need for local mail delivery. CT 111
+#     (monitoring) had postfix in a failed exit=1 state for 5 days;
+#     CT 100 had it hardening-strip-started but unused. Masking on
+#     all LXCs is simpler than keeping per-LXC postfix configs.
+#
 # References: ~/.claude/rules/pve-lxc.md, PR #363 (sibling cookbook).
 
 return if node[:platform] == "darwin"
@@ -53,6 +60,7 @@ UNITS_TO_MASK = %w(
   systemd-journald-dev-log.socket
   systemd-journald.socket
   systemd-networkd.socket
+  postfix.service
 ).freeze
 
 UNITS_TO_MASK.each do |unit|
