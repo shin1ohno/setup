@@ -25,6 +25,13 @@
 
 return if node[:platform] == "darwin"
 
+# Only run inside an LXC container. lxc-core role (which includes this
+# cookbook) is shared with the bare-metal PVE host (pve/pve-host.rb)
+# which needs these units for normal operation — do NOT mask them
+# there. `systemd-detect-virt --container` returns "lxc" inside an
+# LXC and "none" on bare metal.
+return unless `systemd-detect-virt --container 2>/dev/null`.strip == "lxc"
+
 UNITS_TO_MASK = %w(
   dev-hugepages.mount
   dev-mqueue.mount
