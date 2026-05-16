@@ -33,7 +33,10 @@ alias bri="envchain bricolage bundle exec bricolage"
 # now live inside lazy-load wrappers (load bashcompinit themselves).
 ZSH_COMPDUMP="${ZDOTDIR:-$HOME}/.zcompdump-${HOST}-${ZSH_VERSION}"
 autoload -Uz compinit
-if [[ -s $ZSH_COMPDUMP ]] && (( $(date +%s) - $(stat -f %m "$ZSH_COMPDUMP" 2>/dev/null || echo 0) < 86400 )); then
+# Use zsh's zstat builtin (no fork, portable across macOS/Linux).
+# BSD `stat -f %m` and GNU `stat -c %Y` differ; zstat sidesteps both.
+zmodload -F zsh/stat b:zstat 2>/dev/null
+if [[ -s $ZSH_COMPDUMP ]] && (( $(date +%s) - $(zstat +mtime "$ZSH_COMPDUMP" 2>/dev/null || echo 0) < 86400 )); then
   compinit -C -d "$ZSH_COMPDUMP"
 else
   compinit -i -d "$ZSH_COMPDUMP"
