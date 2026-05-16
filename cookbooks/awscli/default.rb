@@ -59,10 +59,19 @@ when "darwin"
     only_if { File.exist?("#{node[:homebrew][:prefix]}/bin/aws") }
   end
 
+  # Lazy-load AWS completion. `complete -C` is bash-style and requires
+  # bashcompinit; loading both at every shell start cost ~5ms. The wrapper
+  # below pays the cost only on first `aws` invocation, then unfunctions
+  # itself so subsequent calls go straight to the real binary.
   add_profile "dot-zsh" do
-    bash_content <<"EOM"
-complete -C '/usr/local/bin/aws_completer' aws
-EOM
+    bash_content <<~'EOM'
+      aws() {
+        unfunction aws
+        autoload -U bashcompinit && bashcompinit
+        complete -C '/usr/local/bin/aws_completer' aws
+        command aws "$@"
+      }
+    EOM
   end
 
   # Match the Linux-side prepend: ensures `run_command("aws ...")` calls in

@@ -50,6 +50,10 @@ add_profile "pyenv" do
     }
     pipx() {
       unset -f pipx
+      # register-python-argcomplete emits bash-style `complete -F`, which
+      # requires bashcompinit. Load both here so 10-dot-zsh can keep
+      # bashcompinit out of the eager startup path.
+      autoload -U bashcompinit && bashcompinit
       eval "$(register-python-argcomplete pipx)"
       command pipx "$@"
     }
