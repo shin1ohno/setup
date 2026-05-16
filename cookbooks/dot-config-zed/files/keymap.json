@@ -47,5 +47,46 @@
     "bindings": {
       "j k": "vim::NormalBefore"
     }
+  },
+  {
+    // Vim NORMAL mode `<Leader>` = space, ported from the AstroNvim
+    // muscle memory. `space` single-press defaults to cursor-right in
+    // vim; defining chords here turns it into a leader prefix and the
+    // single-press fires after the ~1s chord timeout (acceptable lag).
+    //
+    // `shift-l` / `shift-h` override vim's L/H (move to viewport
+    // last/first visible line) — same trade-off AstroNvim makes for
+    // buffer cycling.
+    //
+    // `!menu` keeps completion / signature popups usable.
+    "context": "vim_mode == normal && !menu",
+    "bindings": {
+      // Buffer / Window
+      "shift-l": "pane::ActivateNextItem",
+      "shift-h": "pane::ActivatePrevItem",
+      "space b d": "pane::CloseActiveItem",
+      "space c": "pane::CloseActiveItem",
+      "space w": "workspace::Save",
+      "space q": "pane::CloseAllItems",
+      "space |": "pane::SplitRight",
+      "space -": "pane::SplitDown",
+      "space n": "workspace::NewFile",
+
+      // Find / Search
+      "space f f": "file_finder::Toggle",
+      "space f w": "pane::DeploySearch",
+      "space f b": "tab_switcher::Toggle",
+      "space f c": "command_palette::Toggle",
+      "space f r": "projects::OpenRecent",
+      "space f /": "buffer_search::Deploy",
+
+      // LSP
+      "space l a": "editor::ToggleCodeActions",
+      "space l r": "editor::Rename",
+      "space l f": "editor::Format",
+      "space l d": "diagnostics::Deploy",
+      "space l s": "outline::Toggle",
+      "space l h": "editor::Hover"
+    }
   }
 ]
