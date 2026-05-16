@@ -9,6 +9,9 @@
 # Affected units (observed on CT 100 roon, 2026-05-16):
 #   - systemd-logind.service  (restart loop, blocks login session mgmt)
 #   - logrotate.service       (daily timer fail, /var/log growth risk)
+#   - man-db.service          (12 directives, weekly timer fail, stale man cache)
+#   - nftables.service        (2 directives, in-LXC firewall load fails)
+#   - postfix.service         (22 directives, cron mail local delivery fails)
 #
 # Approach: copy /usr/lib/systemd/system/<unit>.service into
 # /etc/systemd/system/, stripped of every directive that triggers the
@@ -31,7 +34,7 @@ hardening_pattern = (
   "AmbientCapabilities|ReadWritePaths|ReadOnlyPaths|InaccessiblePaths|RemoveIPC"
 )
 
-%w(logrotate systemd-logind).each do |svc|
+%w(logrotate systemd-logind man-db nftables postfix).each do |svc|
   source_unit = "/usr/lib/systemd/system/#{svc}.service"
   override_unit = "/etc/systemd/system/#{svc}.service"
 
