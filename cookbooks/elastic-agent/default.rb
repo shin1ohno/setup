@@ -142,7 +142,7 @@ if node[:platform] == "darwin"
   end
 
   # === sudo install (Elastic Agent installer) ===
-  ea_check_version = "test -x #{ea_installed_path} && " \
+  ea_check_version = "sudo test -x #{ea_installed_path} && " \
                      "sudo #{ea_installed_path} version 2>/dev/null | " \
                      "grep -q 'elastic-agent[[:space:]]\\+#{ea_version}'"
   ea_check_loaded  = "sudo launchctl list co.elastic.elastic-agent >/dev/null 2>&1"
@@ -150,7 +150,7 @@ if node[:platform] == "darwin"
   execute "sudo install elastic-agent #{ea_version}" do
     command "cd #{extract_dir} && " \
             "sudo ./elastic-agent install --non-interactive --force"
-    user user
+    user "root"
     only_if "test -x #{extract_dir}/elastic-agent"
     not_if "#{ea_check_version} && #{ea_check_loaded}"
   end
