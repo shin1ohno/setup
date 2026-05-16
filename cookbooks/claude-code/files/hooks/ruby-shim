@@ -1,0 +1,9 @@
+#!/bin/sh
+# PATH preamble for Claude Code hook execution.
+# Claude hooks run in a non-interactive shell that bypasses the
+# rbenv lazy-load profile (cookbooks/rbenv/commands.rb). Without this
+# shim, `ruby` is not on PATH and every hook silently exits 127.
+# Mise shims are added so hooks that shell out to node / npm
+# (pre-commit-test.rb npm-test path) also resolve correctly.
+export PATH="$HOME/.rbenv/shims:$HOME/.local/share/mise/shims:$PATH"
+exec ruby "$@"

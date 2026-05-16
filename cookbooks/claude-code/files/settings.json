@@ -55,11 +55,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/pre-commit-test.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/pre-commit-test.rb"
           },
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/block-co-authored-by.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/block-co-authored-by.rb"
           }
         ]
       }
@@ -81,11 +81,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/check-trailing-newline.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/check-trailing-newline.rb"
           },
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/check-whitespace-lines.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/check-whitespace-lines.rb"
           }
         ]
       }
@@ -96,7 +96,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/post-compact-remind.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/post-compact-remind.rb"
           }
         ]
       }
