@@ -79,13 +79,24 @@ add_profile "sheldon" do
     _sh1_sheldon_cache="${_sh1_cache_dir}/sheldon-source.zsh"
     _sh1_sheldon_bin="$HOME/.setup_shin1ohno/bin/sheldon"
     _sh1_sheldon_cfg="$HOME/.config/sheldon/plugins.toml"
+    # Regenerate via tmpfile + atomic mv so a sheldon failure (libgit2
+    # auth hang, network outage, plugin clone error) cannot leave an
+    # empty cache or block shell startup. On failure the previous cache
+    # is preserved and the shell continues without plugins.
     if [[ ! -s $_sh1_sheldon_cache \
        || $_sh1_sheldon_cache -ot $_sh1_sheldon_bin \
        || $_sh1_sheldon_cache -ot $_sh1_sheldon_cfg ]]; then
-      "$_sh1_sheldon_bin" source > "$_sh1_sheldon_cache"
+      _sh1_sheldon_tmp="${_sh1_sheldon_cache}.tmp.$$"
+      if "$_sh1_sheldon_bin" source > "$_sh1_sheldon_tmp" 2>/dev/null \
+         && [[ -s $_sh1_sheldon_tmp ]]; then
+        mv "$_sh1_sheldon_tmp" "$_sh1_sheldon_cache"
+      else
+        rm -f "$_sh1_sheldon_tmp"
+      fi
+      unset _sh1_sheldon_tmp
     fi
     ZSH_AUTOSUGGEST_MANUAL_REBIND=1
-    source "$_sh1_sheldon_cache"
+    [[ -s $_sh1_sheldon_cache ]] && source "$_sh1_sheldon_cache"
 
     # vi mode (inline replacement for OMZ vi-mode plugin) + emacs-style
     # cursor / history motion in insert mode (^A ^E ^B ^F ^P ^N).
