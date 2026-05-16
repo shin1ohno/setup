@@ -11,7 +11,10 @@
 #   - logrotate.service       (daily timer fail, /var/log growth risk)
 #   - man-db.service          (12 directives, weekly timer fail, stale man cache)
 #   - nftables.service        (2 directives, in-LXC firewall load fails)
-#   - postfix.service         (22 directives, cron mail local delivery fails)
+#
+# postfix is intentionally NOT in this list — it is hardening-strippable
+# but the fleet (Roon LXC, monitoring LXC, etc.) does not need local mail
+# delivery. lxc-mask-unsupported-units masks it on all LXCs instead.
 #
 # Approach: copy /usr/lib/systemd/system/<unit>.service into
 # /etc/systemd/system/, stripped of every directive that triggers the
@@ -39,7 +42,7 @@ hardening_pattern = (
   "DeviceAllow|DevicePolicy|KeyringMode|ProcSubset|RemoveIPC"
 )
 
-%w(logrotate systemd-logind man-db nftables postfix).each do |svc|
+%w(logrotate systemd-logind man-db nftables).each do |svc|
   source_unit = "/usr/lib/systemd/system/#{svc}.service"
   override_unit = "/etc/systemd/system/#{svc}.service"
 
