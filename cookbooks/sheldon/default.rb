@@ -48,13 +48,13 @@ end
 # them up here keeps the cookbook-managed profile.d / sheldon-driven path
 # the sole source of plugin + prompt + jump-cd behavior.
 #
-#   20-ohmyzsh.sh       — replaced by 20-sheldon.sh
-#   50-typewritten.sh   — replaced by starship init in 20-sheldon.sh
-#   50-autojump.sh      — orphan from autojump install (no cookbook owns it);
-#                         zoxide (cookbooks/zoxide + 50-zoxide.sh) covers the
-#                         "jump to recently-used directory" intent and is
-#                         actively maintained
-%w(20-ohmyzsh.sh 50-typewritten.sh 50-autojump.sh).each do |stale|
+#   20-ohmyzsh.sh                       — replaced by 20-sheldon.sh
+#   50-typewritten.sh                   — replaced by starship init in 20-sheldon.sh
+#   50-autojump.sh                      — orphan from autojump install; zoxide
+#                                         covers the same intent
+#   50-claude-code-spec-workflow.sh     — orphan profile entry; no cookbook
+#                                         currently writes it
+%w(20-ohmyzsh.sh 50-typewritten.sh 50-autojump.sh 50-claude-code-spec-workflow.sh).each do |stale|
   file "#{node[:setup][:root]}/profile.d/#{stale}" do
     action :delete
   end

@@ -38,32 +38,9 @@ execute "install viu via mise" do
   not_if "$HOME/.local/bin/mise list | grep -q 'cargo:viu'"
 end
 
-# Add profile entry for documentation
-add_profile "imgcat" do
-  bash_content <<~BASH
-    # Terminal image viewers
-
-    # imgcat - Display images inline in iTerm2
-    # Usage: imgcat image.png
-    # Supports: PNG, JPEG, GIF, and more
-    # Works with iTerm2 and tmux
-
-    # viu - Fast terminal image viewer
-    # Usage: viu image.png
-    # Supports: iTerm2, Kitty protocols, and Unicode fallback
-    # Features: Animated GIFs, transparency, resizing
-  BASH
-  fish_content <<~FISH
-    # Terminal image viewers
-
-    # imgcat - Display images inline in iTerm2
-    # Usage: imgcat image.png
-    # Supports: PNG, JPEG, GIF, and more
-    # Works with iTerm2 and tmux
-
-    # viu - Fast terminal image viewer
-    # Usage: viu image.png
-    # Supports: iTerm2, Kitty protocols, and Unicode fallback
-    # Features: Animated GIFs, transparency, resizing
-  FISH
+# Delete the prior documentation-only profile entry. Pure comments still
+# take ~1-3ms to parse on every shell start; `man imgcat` / `viu --help`
+# and the cookbook source remain the documentation channels.
+file "#{node[:setup][:root]}/profile.d/50-imgcat.sh" do
+  action :delete
 end

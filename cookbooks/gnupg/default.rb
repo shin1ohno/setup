@@ -76,12 +76,21 @@ if node[:platform] == "darwin"
   package "pinentry"
 end
 
-# Add GnuPG to profile
+# Add GnuPG to profile. Defer `gpg-connect-agent updatestartuptty` until
+# first gpg / git invocation. The eager call costs ~13ms per shell start;
+# the typical shell never invokes gpg, so the cost was pure waste.
+# GPG_TTY is exported eagerly so gpg-agent has a TTY hint when the
+# lazy-loader fires.
 add_profile "gnupg" do
-  bash_content <<~EOH
-    # GPG Agent configuration
+  bash_content <<~'EOH'
+    # GPG Agent configuration. Lazy-load the TTY-refresh on first
+    # gpg / git invocation (CLAUDE.md notes git commit -S needs this).
     export GPG_TTY=$(tty)
-    # Refresh gpg-agent tty in case user switches into an X session
-    gpg-connect-agent updatestartuptty /bye >/dev/null 2>&1 || true
+    _sh1_gpg_tty_sync() {
+      unfunction _sh1_gpg_tty_sync 2>/dev/null
+      command gpg-connect-agent updatestartuptty /bye >/dev/null 2>&1 || true
+    }
+    gpg()  { _sh1_gpg_tty_sync; unfunction gpg  2>/dev/null; command gpg  "$@"; }
+    git()  { _sh1_gpg_tty_sync; unfunction git  2>/dev/null; command git  "$@"; }
   EOH
 end
