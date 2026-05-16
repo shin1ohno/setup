@@ -83,20 +83,22 @@ end
 # lazy-loader fires.
 add_profile "gnupg" do
   bash_content <<~'EOH'
-    # GPG Agent configuration. Lazy-load the TTY-refresh on first
-    # gpg / git invocation (CLAUDE.md notes git commit -S needs this).
+    # GPG Agent configuration. Each wrapper self-unfunctions on first
+    # invocation after pinging gpg-agent for a fresh TTY. The agent
+    # call is inlined (no shared helper) because Claude Code's shell
+    # snapshot drops single-underscore-prefixed functions, which broke
+    # the earlier `_sh1_gpg_tty_sync` helper-based design with
+    # `command not found: _sh1_gpg_tty_sync` on every git invocation.
     export GPG_TTY=$(tty)
-    typeset -g _sh1_gpg_tty_synced=0
-    _sh1_gpg_tty_sync() {
-      (( _sh1_gpg_tty_synced )) && return
-      _sh1_gpg_tty_synced=1
+    gpg() {
+      unfunction gpg 2>/dev/null
       command gpg-connect-agent updatestartuptty /bye >/dev/null 2>&1 || true
+      command gpg "$@"
     }
-    # Prior version self-unfunctioned `_sh1_gpg_tty_sync` on first call,
-    # which broke the second wrapper (whichever of gpg / git fires
-    # second) with `command not found: _sh1_gpg_tty_sync`. Use an
-    # idempotent flag instead.
-    gpg()  { _sh1_gpg_tty_sync; unfunction gpg  2>/dev/null; command gpg  "$@"; }
-    git()  { _sh1_gpg_tty_sync; unfunction git  2>/dev/null; command git  "$@"; }
+    git() {
+      unfunction git 2>/dev/null
+      command gpg-connect-agent updatestartuptty /bye >/dev/null 2>&1 || true
+      command git "$@"
+    }
   EOH
 end

@@ -12,6 +12,11 @@
 #   system. Installs the forced-command authorized_keys entry that the
 #   orchestrator on the monitoring LXC uses to SSH-push `mitamae local
 #   <role>` runs. Replaces the deprecated Phase 1 per-host systemd timer.
+# - lxc-mask-unsupported-units: masks Debian systemd units that LXC
+#   guests structurally cannot run (mount, getty, journald, networkd,
+#   sysctl, tmpfiles, udev). The cookbook self-guards via
+#   `systemd-detect-virt --container` so it no-ops on the bare-metal
+#   PVE host.
 #
 # Add a primitive here only if it applies to ALL hosts in this role pool.
 # Host-specific primitives (docker-engine, awscli, tailscale, ssh-keys)
@@ -19,3 +24,4 @@
 
 include_cookbook "node-exporter"
 include_cookbook "auto-mitamae-target"
+include_cookbook "lxc-mask-unsupported-units"

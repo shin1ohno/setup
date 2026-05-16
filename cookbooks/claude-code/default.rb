@@ -152,6 +152,17 @@ end
   end
 end
 
+# PATH-priming shim invoked by every ruby hook in settings.json.
+# Claude Code hooks run in a non-interactive shell that bypasses the
+# rbenv lazy-load profile, so `ruby` would otherwise be unreachable.
+remote_file "#{node[:setup][:home]}/.claude/hooks/ruby-shim" do
+  source "files/hooks/ruby-shim"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
 # Deploy global rules
 directory "#{node[:setup][:home]}/.claude/rules" do
   owner node[:setup][:user]
