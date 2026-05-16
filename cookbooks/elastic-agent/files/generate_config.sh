@@ -66,13 +66,27 @@ printf '%s\n' "${ES_HOSTS_YAML}" > "${HOSTS_FILE}"
 # awk-based substitution avoids sed's headaches with passwords containing
 # `/`, `&`, or `\`. Single-line markers go through -v; the multi-line
 # @@ES_HOSTS_YAML@@ block is streamed in via the staged file.
+# Pre-process the password: awk's gsub replacement string treats `&` as
+# the matched text. SSM-stored passwords commonly contain `&`, which
+# would otherwise expand back to `@@ES_PASSWORD@@` in the rendered yml
+# (the literal marker survives — auth fails or the next gsub double-
+# substitutes). Escape every `&` to `\&` so awk emits a literal `&`.
+ES_PASSWORD_ESCAPED="${ES_PASSWORD//&/\\&}"
+
 awk \
     -v username="${ES_USERNAME}" \
-    -v password="${ES_PASSWORD}" \
+    -v password="${ES_PASSWORD_ESCAPED}" \
     -v variant="${VARIANT}" \
     -v hostname="${HOSTNAME_SHORT}" \
     -v hosts_file="${HOSTS_FILE}" \
     '
+    # Skip comment lines so @@MARKER@@ documentation in the template
+    # header is not mistaken for a substitution site. Without this,
+    # the comment `#   @@ES_HOSTS_YAML@@    multi-line YAML array of
+    # ES URLs` triggers the host-list expansion at top level of the
+    # rendered yml, which fails parsing with
+    # `cannot unmarshal !!seq into map[string]interface {}`.
+    /^[[:space:]]*#/ { print; next }
     {
         gsub(/@@ES_USERNAME@@/, username)
         gsub(/@@ES_PASSWORD@@/, password)
