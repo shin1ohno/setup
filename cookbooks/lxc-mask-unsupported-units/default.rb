@@ -105,8 +105,15 @@ end
 # After mask --now the unit cannot transition back to active, but its
 # historic failed state remains until reset-failed. Clean once when any
 # failure is still recorded so `systemctl --failed` returns empty.
-execute "reset-failed after masking unsupported units" do
-  command "systemctl reset-failed #{UNITS_TO_MASK.join(' ')}"
+#
+# Build the unit list from `systemctl --failed` rather than the hardcoded
+# UNITS_TO_MASK list — once a unit is masked it becomes `not-loaded` and
+# `systemctl reset-failed <not-loaded-unit>` exits 1 with
+# "Unit <name> not loaded", failing the whole recipe even though the
+# real failed-state cleanup is unnecessary for that unit. Iterating over
+# the live failed list is both correct and idempotent.
+execute "reset-failed for currently-failed units" do
+  command "systemctl --failed --no-legend | awk '{print $2}' | xargs -r systemctl reset-failed"
   user node[:setup][:system_user]
   not_if "test \"$(systemctl --failed --no-legend | wc -l)\" = 0"
 end
