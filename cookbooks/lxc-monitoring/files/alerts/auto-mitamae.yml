@@ -120,3 +120,22 @@ groups:
             orchestrator_watchdog_last_run_timestamp_seconds. Last run was 10+ min ago.
             Either cron stopped or the script is failing before writing the textfile.
             Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "systemctl is-active cron; /usr/local/bin/orchestrator-watchdog.sh; cat /var/lib/node_exporter/textfile/orchestrator-watchdog.prom"'
+
+      - alert: AutoMitamaeCanaryFailing
+        # Phase 3: canary host's apply has failed for 10m+, so the
+        # orchestrator is aborting fleet rollout on every cycle. Either a
+        # cookbook bug landed (the design case — fix in next commit) or the
+        # canary host is itself broken (then move canary marker elsewhere).
+        expr: auto_mitamae_canary_last_status{result=~"mitamae_fail|git_fetch_fail|invalid_command"} == 1
+        for: 10m
+        labels:
+          severity: critical
+          component: auto-mitamae
+        annotations:
+          summary: "Canary apply failing 10m+ ({{ $labels.result }}) — fleet rollout blocked"
+          description: |
+            The canary host's mitamae apply has been in `{{ $labels.result }}` for 10+ minutes.
+            Orchestrator is aborting every cycle at the canary gate to prevent fleet-wide propagation.
+            Either fix the cookbook bug (then next commit triggers re-apply) or rotate the
+            canary marker in hosts.json if the canary host itself is broken.
+            Runbook: ssh root@192.168.1.10 'pct exec 104 -- tail -80 /tmp/auto-mitamae.log'
