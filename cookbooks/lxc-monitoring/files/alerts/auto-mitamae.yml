@@ -1,0 +1,88 @@
+groups:
+  - name: auto-mitamae-fleet
+    interval: 30s
+    rules:
+      - alert: AutoMitamaeApplyFailing
+        # Persistent cookbook failure on a single host. Excludes sha_mismatch
+        # (race during PR merge propagation, auto-recovers in ~1 cycle) and
+        # ssh_unreachable (orchestrator-side transient, often network).
+        expr: auto_mitamae_last_apply_status{result=~"mitamae_fail|git_fetch_fail|invalid_command"} == 1
+        for: 10m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "{{ $labels.host }} mitamae apply failing 10m+ ({{ $labels.result }})"
+          description: |
+            Host {{ $labels.host }} has been in apply state `{{ $labels.result }}` for 10+ minutes.
+            cookbook bug, missing dependency, or runtime config drift.
+            Runbook: ssh root@192.168.1.10 'pct exec <ct> -- tail -80 /tmp/auto-mitamae.log'
+
+      - alert: AutoMitamaeApplyStale
+        # Single host has not been apply-touched in 15+ minutes. Either
+        # ssh_unreachable on every recent cycle or orchestrator skipped it.
+        expr: (time() - auto_mitamae_last_apply_timestamp_seconds) > 900
+        for: 5m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "{{ $labels.host }} has not been apply-touched in 15m+"
+          description: |
+            auto_mitamae_last_apply_timestamp_seconds for {{ $labels.host }} is older than 15min.
+            Either the host is unreachable from orchestrator, or the orchestrator is skipping it.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- tail -30 /var/log/auto-mitamae-orchestrator.log'
+
+      - alert: AutoMitamaeOrchestratorStuck
+        # If the MINIMUM timestamp across ALL hosts is > 15 min old, the
+        # orchestrator itself is stuck — single host staleness only triggers
+        # ApplyStale above, not this. Critical because the entire fleet is
+        # drift-blind in this state.
+        expr: min(time() - auto_mitamae_last_apply_timestamp_seconds) > 900
+        for: 5m
+        labels:
+          severity: critical
+          component: auto-mitamae
+        annotations:
+          summary: "Orchestrator appears stuck: no host applied in 15m+"
+          description: |
+            The orchestrator on CT 111 has not produced any per-host apply timestamp in 15min.
+            Likely cron job is hung or drift-checker has been failing for >2 polls.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- ps -o pid,etime,cmd -C orchestrator.sh; tail -20 /var/log/auto-mitamae-orchestrator.log'
+
+      - alert: AutoMitamaeShaDivergent
+        # Drift-checker observed a new main HEAD but the orchestrator's
+        # expected_sha is still the previous one for 15+ minutes. Either
+        # the orchestrator is hung, OR drift-checker is failing intermittently
+        # (orchestrator skips its cycle when drift-checker result != "ok").
+        expr: |
+          (
+            setup_main_head_commit_info
+            unless on(commit) label_replace(
+              auto_mitamae_orchestrator_expected_sha_info, "commit", "$1", "commit", "(.*)"
+            )
+          ) == 1
+        for: 15m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "Orchestrator expected_sha lagging drift-checker observation 15m+"
+          description: |
+            drift-checker has observed main at commit {{ $labels.commit }} but the orchestrator
+            has not driven that SHA to the fleet for 15+ minutes.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "cat /var/lib/node_exporter/textfile/drift-checker.prom; grep expected_sha /var/lib/node_exporter/textfile/auto-mitamae.prom"'
+
+      - alert: DriftCheckerFailing
+        expr: setup_main_head_check_status{result!="ok"} == 1
+        for: 10m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "drift-checker poll failing for 10m+ ({{ $labels.result }})"
+          description: |
+            drift-checker.sh on CT 111 has been reporting `{{ $labels.result }}` for the last
+            10+ minutes. When drift-checker fails, orchestrator skips its cycle (no apply).
+            Likely GitHub API rate limit, network outage, or auth misconfig.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "tail -30 /var/log/auto-mitamae-orchestrator.log; /usr/local/bin/drift-checker.sh"'
