@@ -34,6 +34,10 @@
         "minimum": 100,
         "maximum": 999,
         "description": "Phase B-2: PVE LXC container ID. Set for LXC hosts (orchestrator's ensure_creds step calls bootstrap-lxc-creds <ct_id> on auth failure). Set to null for bare-metal / EC2 hosts where the credential re-seed step is skipped."
+      },
+      "canary": {
+        "type": "boolean",
+        "description": "Phase 3 stability rollout: if true, orchestrator applies this host BEFORE iterating the rest of the fleet. A cookbook failure on a canary aborts the cycle without touching non-canary hosts, containing fleet-wide propagation of cookbook bugs. Recovery is automatic: next commit fixes the bug, drift-checker observes the new SHA, canary apply succeeds, fleet rollout proceeds. Default: false. Pick a low-impact host (dev workstation, throwaway) — service LXCs should not be canary."
       }
     }
   }

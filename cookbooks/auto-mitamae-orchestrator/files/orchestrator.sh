@@ -4,11 +4,15 @@
 # 1. Read drift-checker's last-observed main HEAD SHA from a sibling
 #    textfile metric. Skip the cycle if drift-checker hasn't run yet OR its
 #    last poll was an api_failure (no point pushing a stale SHA).
-# 2. Iterate hosts.json. For each host, ssh-push `<role> <expected-sha>` —
-#    the remote forced-command (mitamae-runner) parses this and runs
-#    `mitamae local <role>` after verifying its origin/main matches the SHA.
-# 3. Capture per-host status from the runner's one-line stdout, accumulate
-#    into a tmp textfile, atomic-mv into place.
+# 2. Phase A (canary): iterate hosts.json entries with `canary: true`
+#    first. If any canary host fails apply, abort the cycle without
+#    touching non-canary hosts — the cookbook bug is contained to the
+#    canary's blast radius. Recovery is automatic: when the next commit
+#    fixes the bug, drift-checker observes the new SHA, orchestrator
+#    re-runs canary on the new SHA, succeeds, then rolls out to fleet.
+# 3. Phase B (fleet): iterate remaining non-canary hosts.
+# 4. Capture per-host status from each runner's one-line stdout into a
+#    tmp textfile, atomic-mv into place.
 #
 # Status enum (matches mitamae-runner.sh):
 #   success | mitamae_fail | sha_mismatch | git_fetch_fail
@@ -16,6 +20,10 @@
 #
 # ssh_unreachable is orchestrator-side: ssh exited non-zero AND the runner
 # never produced a `status=` line. Anything else is the runner's verdict.
+#
+# 2026-05-17 stability hardening (Phase 3 of stability rollout):
+# canary deploy prevents fleet-wide propagation of cookbook bugs.
+# Sibling alert AutoMitamaeCanaryFailing surfaces blocked rollouts.
 
 set -uo pipefail
 
@@ -74,6 +82,10 @@ now=$(date +%s)
     echo "# TYPE auto_mitamae_last_apply_sha_info gauge"
     echo "# HELP auto_mitamae_orchestrator_expected_sha_info SHA the orchestrator drove this cycle"
     echo "# TYPE auto_mitamae_orchestrator_expected_sha_info gauge"
+    echo "# HELP auto_mitamae_canary_last_status 1 = canary host's last apply ended with this status"
+    echo "# TYPE auto_mitamae_canary_last_status gauge"
+    echo "# HELP auto_mitamae_canary_last_sha_info SHA the canary host last tried to apply"
+    echo "# TYPE auto_mitamae_canary_last_sha_info gauge"
     echo "# HELP bootstrap_lxc_creds_last_result Per-host result of last credential probe (Phase B-3). result=valid|seeded|failed for LXCs, skipped for non-LXCs"
     echo "# TYPE bootstrap_lxc_creds_last_result gauge"
     echo "# HELP bootstrap_lxc_creds_last_attempt_timestamp_seconds Unix time of last creds probe (Phase B-3)"
@@ -81,11 +93,13 @@ now=$(date +%s)
     echo "auto_mitamae_orchestrator_expected_sha_info{commit=\"${expected_sha}\"} 1"
 } > "${tmp_out}"
 
-# Iterate hosts.json. Each entry: {host, user, role, label, ct_id?}.
-# ct_id is present only for PVE LXCs (Phase B-2). Bare-metal hosts and
-# EC2 omit it (or set null), in which case the credential re-seed step
-# below is skipped.
-while IFS= read -r entry; do
+# Helper: apply mitamae-runner on one host. Populates LAST_STATUS for the
+# caller (canary gate) and appends per-host metrics to ${tmp_out}.
+# Phase B-2 lazy credential re-seed logic preserved verbatim.
+apply_one_host() {
+    local entry="$1"
+    local host user role label ct_id creds_result cmd_start output rc status sha drift rdur
+
     host=$(jq -r '.host'  <<<"${entry}")
     user=$(jq -r '.user'  <<<"${entry}")
     role=$(jq -r '.role'  <<<"${entry}")
@@ -96,16 +110,7 @@ while IFS= read -r entry; do
     # the pve-bootstrap-ssm profile inside the LXC is still usable. If the
     # probe fails (creds missing / expired / revoked after B-1 IAM rotation),
     # invoke bootstrap-lxc-creds from this PVE host to refresh them. Warn-
-    # and-continue on bootstrap failure — orchestrator does not abort the
-    # whole cycle on per-host re-seed errors. The mitamae push below will
-    # then fail with status=ssh_unreachable or mitamae_fail and Grafana
-    # surfaces the per-host result.
-    #
-    # Phase B-3: record creds_result for the per-host textfile metric below.
-    # valid  = sts probe succeeded, no re-seed needed
-    # seeded = sts probe failed and bootstrap-lxc-creds re-seeded successfully
-    # failed = sts probe failed AND bootstrap-lxc-creds also failed
-    # skipped = non-LXC host (no ct_id) — re-seed step does not apply
+    # and-continue on bootstrap failure.
     creds_result="skipped"
     if [[ -n "${ct_id}" ]]; then
         if ssh -n \
@@ -129,11 +134,8 @@ while IFS= read -r entry; do
     fi
 
     cmd_start=$(date +%s)
-    # ssh -n is critical: without it, ssh inherits parent stdin (the
-    # process-substitution `< <(jq ...)` feeding the while-read loop) and
-    # consumes pending lines, so subsequent iterations see EOF and the
-    # second host is silently skipped. Classic bash trap — see bug
-    # discovery in PR description.
+    # ssh -n is critical: without it, ssh inherits parent stdin and consumes
+    # pending lines, breaking outer while-read loops. PR #153 origin.
     if output=$(ssh -n \
             -i "${SSH_KEY}" \
             -o BatchMode=yes \
@@ -146,8 +148,6 @@ while IFS= read -r entry; do
         :
     else
         rc=$?
-        # If output already has a status= token (runner emitted before exiting
-        # non-zero), keep its verdict. Otherwise classify as ssh_unreachable.
         if ! grep -q 'status=' <<<"${output}"; then
             cmd_dur=$(( $(date +%s) - cmd_start ))
             output="status=ssh_unreachable duration=${cmd_dur} ssh_rc=${rc}"
@@ -174,7 +174,57 @@ while IFS= read -r entry; do
         echo "bootstrap_lxc_creds_last_result{host=\"${label}\",result=\"${creds_result}\"} 1"
         echo "bootstrap_lxc_creds_last_attempt_timestamp_seconds{host=\"${label}\"} ${now}"
     } >> "${tmp_out}"
-done < <(jq -c '.[]' "${HOSTS_JSON}")
+
+    # Export for caller (canary gate).
+    LAST_STATUS="${status}"
+    LAST_LABEL="${label}"
+}
+
+# Phase A: canary hosts. Apply first; if any canary fails, abort the
+# cycle without touching non-canary hosts. The canary metrics (status +
+# sha + timestamp) are still emitted so Grafana shows the failure.
+# Non-canary host metrics are NOT touched on abort — they retain their
+# prior state from the last successful cycle.
+canary_failed=0
+canary_failure_label=""
+canary_failure_status=""
+
+while IFS= read -r entry; do
+    apply_one_host "${entry}"
+    if [[ "${LAST_STATUS}" != "success" ]]; then
+        # lock_held / sha_mismatch / ssh_unreachable are transient (auto-recover
+        # next cycle) — do not abort the rollout on these. Only persistent
+        # cookbook failures block the canary gate.
+        case "${LAST_STATUS}" in
+            mitamae_fail|git_fetch_fail|invalid_command)
+                canary_failed=1
+                canary_failure_label="${LAST_LABEL}"
+                canary_failure_status="${LAST_STATUS}"
+                ;;
+        esac
+    fi
+done < <(jq -c '.[] | select(.canary == true)' "${HOSTS_JSON}")
+
+# Always emit canary status metrics regardless of pass/fail. expected_sha
+# already in the textfile; canary_last_sha echoes it for Grafana joins.
+canary_overall_status="success"
+[[ "${canary_failed}" -eq 1 ]] && canary_overall_status="${canary_failure_status}"
+{
+    echo "auto_mitamae_canary_last_status{result=\"${canary_overall_status}\"} 1"
+    echo "auto_mitamae_canary_last_sha_info{commit=\"${expected_sha}\"} 1"
+} >> "${tmp_out}"
+
+if [[ "${canary_failed}" -eq 1 ]]; then
+    mv "${tmp_out}" "${OUTPUT_TEXTFILE}"
+    trap - EXIT
+    echo "orchestrator: canary ${canary_failure_label} FAILED (${canary_failure_status}) at expected_sha=${expected_sha} — aborting fleet rollout"
+    exit 0
+fi
+
+# Phase B: non-canary hosts (the fleet).
+while IFS= read -r entry; do
+    apply_one_host "${entry}"
+done < <(jq -c '.[] | select(.canary != true)' "${HOSTS_JSON}")
 
 mv "${tmp_out}" "${OUTPUT_TEXTFILE}"
 trap - EXIT
