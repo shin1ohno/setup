@@ -86,3 +86,37 @@ groups:
             10+ minutes. When drift-checker fails, orchestrator skips its cycle (no apply).
             Likely GitHub API rate limit, network outage, or auth misconfig.
             Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "tail -30 /var/log/auto-mitamae-orchestrator.log; /usr/local/bin/drift-checker.sh"'
+
+      - alert: OrchestratorWatchdogKill
+        # Sister cron orchestrator-watchdog.sh kills orchestrator/drift-checker
+        # processes that exceeded the outer `timeout` wrapper (12 min etime).
+        # ANY kill in 5 min is abnormal — the outer wrapper should have caught
+        # it. Triggers immediately (for: 1m, just to debounce a single sample).
+        expr: orchestrator_watchdog_kills_5m > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "Watchdog killed {{ $value }} orchestrator/drift-checker process(es) in 5m"
+          description: |
+            orchestrator-watchdog.sh delivered SIGTERM/SIGKILL to a process whose etime
+            exceeded 12 min. Outer `timeout` wrapper failed (signal-deaf child, kernel
+            uninterruptible state). Inspect journalctl for context.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- journalctl -t orchestrator-watchdog --since "30 min ago"'
+
+      - alert: OrchestratorWatchdogStale
+        # Watchdog itself stopped running. Cron failure, file permission
+        # issue, or the script aborted before writing the timestamp metric.
+        expr: (time() - orchestrator_watchdog_last_run_timestamp_seconds) > 600
+        for: 5m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "orchestrator-watchdog has not run in 10m+"
+          description: |
+            The watchdog cron should fire every 3 min and refresh
+            orchestrator_watchdog_last_run_timestamp_seconds. Last run was 10+ min ago.
+            Either cron stopped or the script is failing before writing the textfile.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "systemctl is-active cron; /usr/local/bin/orchestrator-watchdog.sh; cat /var/lib/node_exporter/textfile/orchestrator-watchdog.prom"'
