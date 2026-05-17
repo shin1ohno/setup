@@ -25,3 +25,4 @@
 include_cookbook "node-exporter"
 include_cookbook "auto-mitamae-target"
 include_cookbook "lxc-mask-unsupported-units"
+include_cookbook "dns-prefer-ipv4"
