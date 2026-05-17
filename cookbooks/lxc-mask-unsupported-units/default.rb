@@ -63,6 +63,37 @@ UNITS_TO_MASK = %w(
   postfix.service
 ).freeze
 
+# Postfix is an installed Debian package, not a built-in systemd unit.
+# Debian's postfix package writes its unit file directly to
+# /etc/systemd/system/postfix.service (rather than /lib/systemd/system/
+# where most packages put theirs). `systemctl mask` then fails with
+# "File '/etc/systemd/system/postfix.service' already exists" because
+# the target slot for the /dev/null symlink is occupied by the package's
+# regular file. Confirmed on CT 100 (roon) 2026-05-17: cycle stuck on
+# mitamae_fail until the package was purged AND the unit file removed.
+#
+# Two-step preparation before the mask loop:
+#   1. apt purge if the package is still installed (stops service, removes
+#      most config; leaves the systemd unit file because Debian's postfix
+#      does NOT list it as a dpkg-managed conffile)
+#   2. rm the orphan unit file if it is a regular file (not yet the
+#      /dev/null symlink mask --now will create)
+#
+# Both steps are idempotent — `only_if` gates ensure no-op on hosts that
+# have already converged. Re-applies after `daemon-reload` so the mask
+# step in the loop below sees a clean slot.
+execute "purge postfix package (unused; mask supersedes)" do
+  command "DEBIAN_FRONTEND=noninteractive apt-get purge -y postfix"
+  user node[:setup][:system_user]
+  only_if "dpkg -l postfix 2>/dev/null | grep -q '^ii'"
+end
+
+execute "remove orphan postfix.service unit file (left by apt purge)" do
+  command "rm -f /etc/systemd/system/postfix.service && systemctl daemon-reload"
+  user node[:setup][:system_user]
+  only_if "test -f /etc/systemd/system/postfix.service && ! test -L /etc/systemd/system/postfix.service"
+end
+
 UNITS_TO_MASK.each do |unit|
   execute "mask #{unit} (structurally non-functional in privileged LXC)" do
     command "systemctl mask --now #{unit}"
