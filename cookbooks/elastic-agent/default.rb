@@ -147,6 +147,27 @@ if node[:platform] == "darwin"
                      "grep -q 'elastic-agent[[:space:]]\\+#{ea_version}'"
   ea_check_loaded  = "sudo launchctl list co.elastic.elastic-agent >/dev/null 2>&1"
 
+  # Purge partial-install state. When /Library/Elastic/Agent/ exists
+  # but launchctl has no co.elastic.elastic-agent entry, a prior
+  # install was interrupted before Fleet enrollment. The leftover
+  # elastic-agent.yml lacks `agent.id`, so the next `install --force`
+  # — which uninstalls the existing copy first — aborts with
+  # `error loading agent config: missing field accessing 'agent.id'`
+  # and the install never proceeds. Clean up so --force sees a
+  # fresh-host state. No-op on healthy installs (launchctl entry
+  # present) and on first-time installs (directory absent).
+  execute "purge partial elastic-agent install" do
+    command "sudo launchctl unload " \
+              "/Library/LaunchDaemons/co.elastic.elastic-agent.plist " \
+              "2>/dev/null; " \
+            "sudo rm -f /Library/LaunchDaemons/co.elastic.elastic-agent.plist " \
+                      "/usr/local/bin/elastic-agent && " \
+            "sudo rm -rf /Library/Elastic/Agent"
+    user "root"
+    only_if "sudo test -d /Library/Elastic/Agent && " \
+            "! sudo launchctl list co.elastic.elastic-agent >/dev/null 2>&1"
+  end
+
   execute "sudo install elastic-agent #{ea_version}" do
     command "cd #{extract_dir} && " \
             "sudo ./elastic-agent install --non-interactive --force"
