@@ -1,0 +1,102 @@
+# CLAUDE.md — {{PROJECT_NAME}}
+
+このファイルは {{PROJECT_NAME}} で作業する AI エージェント向けの指示です。人間向けの概要は [README.md](./README.md) を参照してください。
+
+## エントリポイント
+
+README.md とこのファイルがプロジェクトの正規エントリポイントです。タスクを受けたらまず両方を読み、関連セクションのリンクを辿って一次情報に当たってください。memory から古い情報を再生する前に、ここの記述を最新と見なして優先します。
+
+## リポジトリの性質
+
+このリポジトリはドキュメントとリンクのみで構成されています。実装コードは別リポジトリにあります。本リポジトリでコードを生成・追加しないでください。
+
+## プロジェクト・コンテキスト
+
+{{PROJECT_PURPOSE}}
+
+重要な前提:
+
+- TBD — パートナー / 関係者
+- TBD — スケジュール / マイルストーン
+- TBD — 確定/未確定論点
+
+## 外部リソースへのアクセス
+
+外部サービスを参照・操作する場合は、Web 直叩きや手動コピペではなく対応する MCP ツール・skill を使用してください。
+
+| サービス | 使用するツール |
+|---|---|
+| Notion | `mcp__notion__*` ツール、または `/notion-cli` skill |
+| Slack | `mcp__claude_ai_slack__*` ツール |
+| Google Drive / Calendar / Gmail | `mcp__claude_ai_Google_Drive__*` / `_Google_Calendar__*` / `_Gmail__*` |
+| Figma | `mcp__claude_ai_Figma__*` ツール |
+| Atlassian (Jira / Confluence) | `mcp__claude_ai_Atlassian__*` |
+
+新しい外部サービスを使う前に、対応する MCP ツールがあるかツール一覧を確認してください。MCP が無い場合のみ Web fetch などの代替手段を検討します。
+
+## 一次情報のリンク先
+
+最新情報は README.md の各セクションに集約しています。タスクで以下が必要なときは、リポジトリ内のコピーではなくリンク先を参照してください。
+
+- TBD: 主要ドキュメントへの参照リンクを追記する
+
+## ドキュメント更新ルール
+
+- 意思決定・新規ドキュメント・外部リンクの変更が発生したら、同じ作業の中で README.md を更新する
+- TBD のままにしない。情報が無い場合は「未定」の理由と次のアクションを書く
+- README.md のセクションを追加した場合は目次相当の記述にも反映する
+
+## 作業・コミュニケーション規律
+
+詳細は以下の rules ファイルに分割しています。すべて常に適用されます。
+
+- @.claude/rules/communication-style.md — 日本語出力、Pyramid Principle、一次情報の扱い
+- @.claude/rules/work-discipline.md — AskUserQuestion、行動原則（Act/Plan/Verify）、破壊的・amend・バンドル前の確認
+- @.claude/rules/external-tools.md — 外部 CLI / パッケージ / リポジトリ参照時の probe-before-assert、公式プラグイン優先
+- @.claude/rules/content-freshness.md — 外部リンクの日付注記、鮮度マーカー
+- @.claude/rules/parallel-execution.md — サブエージェント並列実行、background 投入
+
+要点だけここに集約:
+
+- 曖昧な指示はそのまま進めず確認する
+- 意思決定の根拠は README.md または別ドキュメントに記録する
+- 外部サービスへの書き込み（Notion ページ作成、Slack 投稿等）は実行前に確認する
+
+## 同梱の Skills / Agents
+
+このリポジトリには `.claude/skills/` と `.claude/agents/` に共有用のツールが同梱されています。`git clone` した時点で自動的に利用可能です。
+
+### Skills (`.claude/skills/`)
+
+| 名前 | 用途 | 前提条件 |
+|---|---|---|
+| `interview` | 大きめの仕様作成前に要件をヒアリングして SPEC.md を生成 | なし |
+| `writing` | Pyramid Principle に基づく文書作成・校正 | なし |
+| `retro` | セッションの振り返り | なし |
+| `notion-cli` | Notion 操作（[kouzoh/notion-cli](https://github.com/kouzoh/notion-cli) 公式 skill） | `npx github:kouzoh/notion-cli` 経由で実行（インストール不要）。初回のみ `npx github:kouzoh/notion-cli login` で OAuth 認証 |
+| `sync-bundled-tools` | 同梱 skill / agent を上流リポジトリと diff し、選択的に同期 | `gh` CLI 認証済み |
+
+### Agents (`.claude/agents/`)
+
+| 名前 | 用途 | 前提条件 |
+|---|---|---|
+| `claude-docs-researcher` | Claude Code 公式仕様の調査 | なし |
+| `session-retrospective` | 会話パターンを分析し改善提案 | なし |
+
+## 推奨プラグイン
+
+個人で公開マーケットプレイスからインストールしてください。
+
+```
+/plugin install claude-md-management@claude-plugins-official
+/plugin install plan-kit@plan-kit-marketplace
+/plugin install roundtable@saladdays-skills
+/plugin install document-skills@anthropic-agent-skills
+```
+
+| プラグイン | 用途 |
+|---|---|
+| `claude-md-management` | CLAUDE.md の監査・更新 |
+| `plan-kit` | 計画立案の補助 |
+| `roundtable` | 多分野専門家による議論で意思決定の質を上げる |
+| `document-skills` | DOCX / PDF / PPTX / XLSX の生成・編集 |

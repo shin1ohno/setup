@@ -218,7 +218,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services ingest-batch security-review verify-cognee verify-data-integrity feature-parity verify-mise-backend).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services ingest-batch security-review verify-cognee verify-data-integrity feature-parity verify-mise-backend bootstrap-docs-hub).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -273,6 +273,41 @@ end
 %w(document-writer.md marginal-utility-editor.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/skills/writing/personas/#{file_name}" do
     source "files/skills/writing/personas/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+# Deploy bootstrap-docs-hub skill templates
+%w(
+  templates
+  templates/rules
+  templates/skills
+  templates/skills/sync-bundled-tools
+).each do |dir_name|
+  directory "#{node[:setup][:home]}/.claude/skills/bootstrap-docs-hub/#{dir_name}" do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
+end
+
+%w(
+  templates/README.md.tmpl
+  templates/CLAUDE.md.tmpl
+  templates/gitignore.tmpl
+  templates/rules/communication-style.md
+  templates/rules/work-discipline.md
+  templates/rules/external-tools.md
+  templates/rules/content-freshness.md
+  templates/rules/parallel-execution.md
+  templates/skills/sync-bundled-tools/SKILL.md
+).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/skills/bootstrap-docs-hub/#{file_name}" do
+    source "files/skills/bootstrap-docs-hub/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
