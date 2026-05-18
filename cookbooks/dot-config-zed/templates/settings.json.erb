@@ -35,6 +35,19 @@
       "type": "registry",
     },
   },
+  "languages": {
+    "Ruby": {
+      "language_servers": ["solargraph"],
+    },
+  },
+  "lsp": {
+    "solargraph": {
+      "binary": {
+        "path": "<%= node[:setup][:home] %>/.rbenv/shims/solargraph",
+        "arguments": ["stdio"],
+      },
+    },
+  },
   "ui_font_size": 16,
   "theme": "Glassy Nord Dark",
 }
