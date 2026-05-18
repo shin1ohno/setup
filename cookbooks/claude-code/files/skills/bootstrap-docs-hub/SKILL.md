@@ -38,9 +38,9 @@ Generates a documentation-hub repository skeleton matching the conventions docum
 
 Use AskUserQuestion to collect:
 
-- **Project name**: e.g. "Project Chimera"
-- **Owner name and GitHub handle**: e.g. "Shinichi Ohno" / `shin1ohno`
-- **One-sentence purpose**: e.g. "国内主要 MPM QR コード決済を 1 契約・1 運用で利用可能にするアライアンス構築"
+- **Project name**: e.g. "Project Atlas"
+- **Owner name and GitHub handle**: e.g. "Jane Doe" / `jane-doe`
+- **One-sentence purpose**: e.g. "新製品 X の社内意思決定とロードマップを集約するドキュメントハブ"
 - **Target directory**: default = current working directory
 
 If the user provides a partial answer, fill in the remaining fields with `TBD` and proceed.
