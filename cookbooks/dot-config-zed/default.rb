@@ -39,14 +39,27 @@ directory zed_themes_dir do
   action :create
 end
 
-remote_file "#{zed_config_dir}/settings.json" do
+template "#{zed_config_dir}/settings.json" do
   owner node[:setup][:user]
   group node[:setup][:group]
   # Zed reads from this path; 600 matches the live file's permissions
   # (Zed historically writes 600 since it can contain API tokens for
   # extension model providers).
   mode "600"
-  source "files/settings.json"
+  source "templates/settings.json.erb"
+end
+
+# Install solargraph into the active rbenv ruby so Zed's Ruby extension
+# can spawn the LSP via the absolute shim path pinned in settings.json.
+# System ruby (2.6 on macOS) is too old for solargraph's prism dep,
+# which is why Zed's auto-install path fails.
+rbenv_bin = "#{node[:setup][:home]}/.rbenv/bin/rbenv"
+solargraph_shim = "#{node[:setup][:home]}/.rbenv/shims/solargraph"
+
+execute "gem install solargraph (rbenv active)" do
+  command "#{rbenv_bin} exec gem install solargraph && #{rbenv_bin} rehash"
+  user node[:setup][:user]
+  not_if "test -x #{solargraph_shim}"
 end
 
 remote_file "#{zed_config_dir}/keymap.json" do
