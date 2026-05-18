@@ -38,9 +38,9 @@ Generates a documentation-hub repository skeleton matching the conventions docum
 
 Use AskUserQuestion to collect:
 
-- **Project name**: README / CLAUDE.md の見出しに使う正式名称（任意の文字列）
-- **Owner name and GitHub handle**: README に記載するリポジトリオーナー（フルネーム + ハンドル）
-- **One-sentence purpose**: プロジェクトを 1 文で表す目的（例: "新製品 X の社内意思決定とロードマップを集約するドキュメントハブ"）
+- **Project name**: the canonical name used in README / CLAUDE.md headings (any string)
+- **Owner name and GitHub handle**: full name + handle of the repository owner shown in README
+- **One-sentence purpose**: a single sentence describing the project (e.g. "A docs hub consolidating internal decisions and roadmap for product X")
 - **Target directory**: default = current working directory
 
 If the user provides a partial answer, fill in the remaining fields with `TBD` and proceed.
