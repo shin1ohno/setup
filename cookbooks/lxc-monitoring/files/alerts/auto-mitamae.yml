@@ -139,3 +139,46 @@ groups:
             Either fix the cookbook bug (then next commit triggers re-apply) or rotate the
             canary marker in hosts.json if the canary host itself is broken.
             Runbook: ssh root@192.168.1.10 'pct exec 104 -- tail -80 /tmp/auto-mitamae.log'
+
+      - alert: NodeExporterDown
+        # Source-of-truth alert: every other auto-mitamae alert is built on
+        # textfile metrics scraped through node-exporter. If node-exporter
+        # itself is down, those alerts paradoxically go silent (no metric
+        # = no expression result = no fire). `up{job=~"node-.*"} == 0` is
+        # Prometheus-native and independent of the textfile pipeline.
+        #
+        # Empirical: 2026-05-17 monitoring CT 111 node-exporter died of
+        # SIGPIPE and stayed dead 25h before user noticed an empty Grafana
+        # dashboard. With this alert, the silence would have fired at 5m.
+        expr: up{job=~"node-.*"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: auto-mitamae
+        annotations:
+          summary: "node-exporter down on {{ $labels.job }} ({{ $labels.instance }})"
+          description: |
+            Prometheus has been unable to scrape node-exporter at {{ $labels.instance }} for 5+ minutes.
+            All node-level metrics from this host (incl. auto-mitamae textfile metrics on monitoring)
+            are unavailable. cookbooks/node-exporter ships Restart=always — investigate why systemd
+            cannot restart, or whether the host itself is down.
+            Runbook: ssh root@192.168.1.10 'pct exec <ct> -- systemctl status node-exporter; journalctl -u node-exporter -n 50'
+
+      - alert: AutoMitamaeMetricMissing
+        # Defense-in-depth pair to NodeExporterDown: detects the case where
+        # node-exporter is up but the textfile is absent / unparseable, so
+        # the orchestrator metrics never appear in Prometheus. absent()
+        # specifically fires when no series matches the metric name.
+        expr: absent(auto_mitamae_last_apply_timestamp_seconds)
+        for: 10m
+        labels:
+          severity: critical
+          component: auto-mitamae
+        annotations:
+          summary: "auto_mitamae_last_apply_timestamp_seconds has no series in Prometheus"
+          description: |
+            The orchestrator metric is missing from Prometheus entirely. Either node-exporter on
+            monitoring (CT 111) is not reading /var/lib/node_exporter/textfile/auto-mitamae.prom,
+            the file is malformed (textfile collector is strict — one bad line skips the whole file),
+            or the orchestrator has never produced output.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "ls -la /var/lib/node_exporter/textfile/auto-mitamae.prom; head /var/lib/node_exporter/textfile/auto-mitamae.prom; curl -s http://localhost:9100/metrics | grep -E auto_mitamae | head"'
