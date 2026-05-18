@@ -1,0 +1,45 @@
+# praeco (ElastAlert 2 GUI) — PoC stack
+#
+# Two containers:
+#   - elastalert-server (praecoapp/elastalert-server:20260324)
+#       Wraps jertel/elastalert2 + provides REST API on :3030 for the
+#       praeco UI. Bind-mounts: ES CA cert, ElastAlert config, rules dir
+#       (rw, persisted on host), server_data (rw, persisted on host).
+#   - praeco (praecoapp/praeco:1.8.25)
+#       Vue.js SPA served by nginx on :8080. Frontend talks to the
+#       elastalert-server REST API via the Docker compose network alias
+#       `elastalert-server:3030`.
+#
+# Network exposure: 0.0.0.0:8080 for the praeco UI (LAN-direct for PoC).
+# elastalert-server :3030 stays on the compose-internal network only.
+
+services:
+  elastalert-server:
+    image: praecoapp/elastalert-server:20260324
+    restart: unless-stopped
+    volumes:
+      - /root/deploy/praeco/config/elastalert.yaml:/opt/elastalert/config.yaml:ro
+      - /root/deploy/praeco/config/elastalert-server.json:/opt/elastalert-server/config/config.json:ro
+      - /root/deploy/praeco/certs/ca.crt:/opt/elastalert/certs/ca.crt:ro
+      - /data/praeco/rules:/opt/elastalert/rules:rw
+      - /data/praeco/rule_templates:/opt/elastalert/rule_templates:rw
+      - /data/praeco/server_data:/opt/elastalert/server_data:rw
+    env_file: /root/deploy/praeco/.env
+    expose:
+      - "3030"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3030/status || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  praeco:
+    image: praecoapp/praeco:1.8.25
+    restart: unless-stopped
+    depends_on:
+      elastalert-server:
+        condition: service_started
+    ports:
+      - "0.0.0.0:8080:8080"
+    environment:
+      - ELASTALERT_API_URL=http://elastalert-server:3030

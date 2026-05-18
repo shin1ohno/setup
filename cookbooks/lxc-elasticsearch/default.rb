@@ -403,6 +403,7 @@ required_env_keys = %w[
   MONITOR_PASSWORD
   ELASTIC_AGENT_PASSWORD
   APM_SERVER_PASSWORD
+  ELASTALERT_PASSWORD
 ].freeze
 
 # require_external_auth: probe the actual SSM read the cookbook will
