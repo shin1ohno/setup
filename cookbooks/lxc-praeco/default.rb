@@ -231,7 +231,7 @@ execute "render elastalert.yaml" do
     sed "s|@@ELASTALERT_PASSWORD@@|${ELASTALERT_PASSWORD}|g" \
       #{elastalert_tmpl_path} > #{elastalert_yml_path}.new
     mv #{elastalert_yml_path}.new #{elastalert_yml_path}
-    chmod 600 #{elastalert_yml_path}
+    chmod 644 #{elastalert_yml_path}
   SH
   user user
   action :nothing
@@ -246,7 +246,7 @@ execute "ensure elastalert.yaml exists" do
     sed "s|@@ELASTALERT_PASSWORD@@|${ELASTALERT_PASSWORD}|g" \
       #{elastalert_tmpl_path} > #{elastalert_yml_path}.new
     mv #{elastalert_yml_path}.new #{elastalert_yml_path}
-    chmod 600 #{elastalert_yml_path}
+    chmod 644 #{elastalert_yml_path}
   SH
   user user
   only_if "test -f #{env_output_path} && test -f #{elastalert_tmpl_path} && ! test -f #{elastalert_yml_path}"

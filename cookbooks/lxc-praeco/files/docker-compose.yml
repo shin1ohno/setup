@@ -17,8 +17,17 @@ services:
   elastalert-server:
     image: praecoapp/elastalert-server:20260324
     restart: unless-stopped
+    # /etc/hosts injection — container netns has its own resolver and
+    # cannot use the LXC's /etc/hosts. Without these the elastalert config
+    # `es_host: es-1.home.local` fails with Errno 101 Network unreachable.
+    extra_hosts:
+      - "es-0.home.local:192.168.1.77"
+      - "es-1.home.local:192.168.1.78"
+      - "es-2.home.local:192.168.1.79"
     volumes:
-      - /root/deploy/praeco/config/elastalert.yaml:/opt/elastalert/config.yaml:ro
+      # config.yaml mounted :rw — ElastAlert 2 / elastalert-server rewrites
+      # the file on startup. :ro causes Errno 13 Permission denied.
+      - /root/deploy/praeco/config/elastalert.yaml:/opt/elastalert/config.yaml:rw
       - /root/deploy/praeco/config/elastalert-server.json:/opt/elastalert-server/config/config.json:ro
       - /root/deploy/praeco/certs/ca.crt:/opt/elastalert/certs/ca.crt:ro
       - /data/praeco/rules:/opt/elastalert/rules:rw
@@ -39,7 +48,9 @@ services:
     depends_on:
       elastalert-server:
         condition: service_started
+    # Container port is 80 (nginx default), not 8080 — image config
+    # confirmed at runtime: docker exec praeco ss -tln → :80 only.
     ports:
-      - "0.0.0.0:8080:8080"
+      - "0.0.0.0:8080:80"
     environment:
       - ELASTALERT_API_URL=http://elastalert-server:3030
