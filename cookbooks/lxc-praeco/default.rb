@@ -135,6 +135,20 @@ remote_file "#{deploy_dir}/config/elastalert-server.json" do
   notifies :run, "execute[restart praeco]"
 end
 
+# praeco's bundled nginx reverse-proxy config — extracted from
+# /tmp/nginx/praeco/nginx_config/default.conf in the praecoapp/praeco
+# image. The image's entrypoint does NOT auto-install it, so without
+# this bind-mount the SPA's /api/* calls hit the Debian nginx default
+# and return 404. Mounted over /etc/nginx/sites-enabled/default in the
+# praeco service (see docker-compose.yml).
+remote_file "#{deploy_dir}/config/praeco-nginx.conf" do
+  source "files/praeco-nginx.conf"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart praeco]"
+end
+
 # ElastAlert config template — placeholder @@ELASTALERT_PASSWORD@@ is
 # sed-substituted at converge time after .env is generated (mirrors
 # lxc-monitoring snmp.yml pattern; avoids env-var interpolation
