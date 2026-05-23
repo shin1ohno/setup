@@ -141,6 +141,13 @@ file "#{deploy_dir}/docker-compose.yml" do
         image: roon-mcp:#{version}
         container_name: roon-mcp
         restart: unless-stopped
+        # Container netns has its own resolver; LXC /etc/hosts is invisible.
+        # OTLP exporter targets apm-server.home.local — without this, LAN
+        # DNS outage (RTX SERVFAIL on home.local, see PR #390) breaks the
+        # exporter at startup. Defense-in-depth alongside Tailscale split-DNS.
+        # IP from contracts/devices.json apm-server entry (CT 116, IP .81).
+        extra_hosts:
+          - "apm-server.home.local:192.168.1.81"
         env_file:
           # Phase 4 APM env: OTEL_EXPORTER_OTLP_HEADERS holds the
           # roon-mcp-scoped ApiKey fetched from SSM at apply time
