@@ -113,8 +113,16 @@ file "#{node[:setup][:root]}/lxc-pro-router-tailnet-routes.sh" do
     # Fix: drop the 192.168.0.0/16 route from BOTH tables. The remaining
     # tailnet routes (10.33.128.0/18, 100.64.0.0/10) stay so the LXC can
     # forward LAN traffic to AWS VPC.
+    #
+    # accept-dns=true: enables Tailscale split DNS routing on this node so
+    # home.local queries forwarded through 100.100.100.100 reach the VPC
+    # Route53 Resolver (10.33.128.2) instead of returning SERVFAIL.
+    # The RTX (192.168.1.253) forwards home.local via 100.100.100.100 which
+    # passes through pro-router's tailscale0; without accept-dns=true the
+    # split DNS route is not applied and Tailscale returns SERVFAIL for all
+    # home.local queries, breaking homelab service discovery (2026-05-23).
     set -euo pipefail
-    /usr/bin/tailscale set --accept-routes=true
+    /usr/bin/tailscale set --accept-routes=true --accept-dns=true
     sleep 2
     /usr/sbin/ip route del 192.168.0.0/16 dev tailscale0 2>/dev/null || true
     /usr/sbin/ip route del 192.168.0.0/16 dev tailscale0 table 52 2>/dev/null || true
@@ -219,7 +227,7 @@ local_ruby_block "log lxc-pro-router tailscale up hint" do
             --advertise-routes=192.168.1.0/24 \\
             --advertise-tags=#{advertise_tags} \\
             --hostname=pro-router \\
-            --accept-dns=false \\
+            --accept-dns=true \\
             --ssh
       MSG
     end
