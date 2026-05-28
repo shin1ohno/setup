@@ -30,7 +30,17 @@
       "Bash(cat :*:*)",
       "Bash(osascript -e:*)",
       "mcp__context7__resolve-library-id",
-      "mcp__context7__get-library-docs"
+      "mcp__context7__get-library-docs",
+      "WebSearch",
+      "WebFetch",
+      "mcp__claude_ai_Cognee__search",
+      "mcp__claude_ai_Cognee__cognify",
+      "mcp__claude_ai_Cognee__cognify_status",
+      "mcp__claude_ai_Cognee__save_interaction",
+      "mcp__claude_ai_Cognee__list_data",
+      "mcp__claude_ai_memory__search_memory",
+      "mcp__claude_ai_memory__add_memories",
+      "mcp__claude_ai_memory__list_memories"
     ],
     "ask": [
       "Bash(git push:*)"
