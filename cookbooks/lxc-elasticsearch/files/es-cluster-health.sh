@@ -44,6 +44,25 @@ if [[ -n "${MONITOR_PASSWORD:-}" ]]; then
 fi
 
 now=$(date +%s)
+
+# SLM last-successful-snapshot age. es_monitor holds read_slm via the
+# cluster_health_monitor role. A stalled backup is otherwise invisible — the
+# 2026-05 incident had ~11 of 20 days with no successful snapshot and zero
+# operator signal. slm_age = -1 means SLM is unreadable or never succeeded
+# (the ESSnapshotStale alert treats -1 as stale). last_success is a flat JSON
+# object (no nested braces), so the [^}]* extraction is safe. The completion
+# timestamp field in last_success is "time" (epoch ms) — NOT "time_in_millis";
+# "start_time" is a separate field and the "time":<n> pattern does not match
+# inside "start_time": (the char before t there is '_', not '"').
+slm_age="-1"
+if [[ -n "${MONITOR_PASSWORD:-}" ]]; then
+  slm=$(curl -sS --max-time 10 --cacert "${CA_CERT}" \
+    -u "es_monitor:${MONITOR_PASSWORD}" \
+    "https://${host}:9200/_slm/policy/daily-snapshot" 2>/dev/null || true)
+  ts=$(grep -oE '"last_success":\{[^}]*"time":[0-9]+' <<<"${slm}" | grep -oE '[0-9]+$')
+  [[ -n "${ts}" ]] && slm_age=$(( now - ts / 1000 ))
+fi
+
 mkdir -p "${TEXTFILE_DIR}"
 tmp=$(mktemp "${OUT}.XXXXXX")
 trap 'rm -f "${tmp}"' EXIT
@@ -58,6 +77,9 @@ trap 'rm -f "${tmp}"' EXIT
   echo "# HELP elasticsearch_cluster_health_scrape_timestamp_seconds Unix time of last health probe"
   echo "# TYPE elasticsearch_cluster_health_scrape_timestamp_seconds gauge"
   echo "elasticsearch_cluster_health_scrape_timestamp_seconds ${now}"
+  echo "# HELP elasticsearch_slm_last_success_age_seconds Seconds since the last successful SLM snapshot (-1 = unknown/never)"
+  echo "# TYPE elasticsearch_slm_last_success_age_seconds gauge"
+  echo "elasticsearch_slm_last_success_age_seconds ${slm_age}"
 } > "${tmp}"
 mv "${tmp}" "${OUT}"
 trap - EXIT
