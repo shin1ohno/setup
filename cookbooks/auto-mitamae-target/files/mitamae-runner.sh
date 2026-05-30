@@ -65,6 +65,18 @@ if [[ "$actual_remote_sha" != "$expected_sha" ]]; then
 fi
 
 drift=$(git rev-list --count HEAD..origin/main)
+
+# Discard any local drift in /root/setup before the checkout. A dirty
+# working tree (stray edits to a tracked file, or an untracked cookbook
+# file from a manual partial apply) makes `git checkout` abort. Under
+# `set -e` that exits the runner BEFORE the status= line is printed, so the
+# orchestrator sees no status, classifies the host ssh_unreachable, and the
+# host silently never converges (observed on housekeeping/CT103, 2026-05:
+# a local edit to roles/lxc-core/default.rb + untracked cookbooks/timezone/
+# pinned it stale until a manual reset). The host must always track
+# expected_sha; local modifications are never authoritative.
+git reset --hard --quiet HEAD
+git clean -fdq
 git checkout --quiet "$expected_sha"
 
 start=$(date +%s)
