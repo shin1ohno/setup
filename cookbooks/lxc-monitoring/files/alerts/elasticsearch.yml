@@ -86,3 +86,21 @@ groups:
             three es nodes' node_exporter is down, or es-cluster-health.sh has
             never produced a textfile. The RED/YELLOW/stale alerts are all blind.
             Runbook: ssh root@192.168.1.10 'for c in 112 113 114; do pct exec $c -- systemctl is-active node-exporter es-cluster-health.timer; done'
+
+      - alert: ESSnapshotStale
+        # No successful SLM snapshot in >36h (daily policy fires 01:30), OR SLM
+        # is unreadable/never-succeeded (age=-1). This is the backup that makes a
+        # corrupt index recoverable — the 2026-05 incident had ~11 of 20 days
+        # with no snapshot and ZERO operator signal. for:1h debounces a single
+        # in-progress run.
+        expr: max(elasticsearch_slm_last_success_age_seconds) > 129600 or max(elasticsearch_slm_last_success_age_seconds) == -1
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "ES SLM snapshot stale (>36h) or unreadable"
+          description: >
+            No successful daily-snapshot in 36h+ (or SLM status unreadable from
+            the es_monitor probe). The off-host S3 backup — the only recovery
+            path for a hardware-induced corrupt index — is not running.
+            Runbook: ssh root@192.168.1.10 'pct exec 112 -- bash -lc "set -a; . /etc/elasticsearch/elasticsearch-secrets.env; set +a; curl -sk --cacert /etc/elasticsearch/certs/ca.crt -u elastic:\$ELASTIC_PASSWORD https://192.168.1.77:9200/_slm/policy/daily-snapshot?pretty"'
