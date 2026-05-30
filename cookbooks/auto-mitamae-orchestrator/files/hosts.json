@@ -16,5 +16,6 @@
   {"host": "192.168.1.79", "user": "root", "role": "pve/lxc-es-2.rb",         "label": "es-2",         "ct_id": 114},
   {"host": "192.168.1.80", "user": "root", "role": "pve/lxc-kibana.rb",       "label": "kibana",       "ct_id": 115},
   {"host": "192.168.1.82", "user": "root", "role": "pve/lxc-praeco.rb",       "label": "praeco",       "ct_id": 117},
+  {"host": "192.168.1.61", "user": "root", "role": "pve/lxc-dns-resolver.rb", "label": "dns-resolver", "ct_id": 118},
   {"host": "192.168.1.10", "user": "root", "role": "pve/pve-host.rb",         "label": "pve-host",     "ct_id": null}
 ]
