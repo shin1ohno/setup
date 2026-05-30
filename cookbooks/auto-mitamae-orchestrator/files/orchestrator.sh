@@ -136,7 +136,16 @@ apply_one_host() {
     cmd_start=$(date +%s)
     # ssh -n is critical: without it, ssh inherits parent stdin and consumes
     # pending lines, breaking outer while-read loops. PR #153 origin.
-    if output=$(ssh -n \
+    #
+    # `timeout 300` bounds a single host's apply: a host whose runner hangs
+    # (e.g. an ES node blocking on a RED-cluster wait_cluster_ready) must not
+    # consume the whole 600s cycle budget and starve the tail hosts or prevent
+    # the final metrics mv — which froze auto-mitamae.prom for 11 days in the
+    # 2026-05 incident (es-2 RED cluster → 5-min apply waits → cycle killed at
+    # es-1 every time → metrics never refreshed). On timeout (ssh exits 124)
+    # the no-status-line branch below marks the host ssh_unreachable and the
+    # cycle continues to the next host.
+    if output=$(timeout 300 ssh -n \
             -i "${SSH_KEY}" \
             -o BatchMode=yes \
             -o ConnectTimeout=5 \
