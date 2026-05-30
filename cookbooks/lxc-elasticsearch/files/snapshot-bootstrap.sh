@@ -165,6 +165,14 @@ cmd_register_slm() {
     return 0
   fi
 
+  # Broad data-stream coverage (logs-* / metrics-* / synthetics-* / traces-*)
+  # + include_global_state=true (captures cluster state AND, on 8.x, all feature
+  # states — Kibana saved objects, alerting rules, security). The prior policy
+  # covered only logs-rtx-* / synthetics-* / metrics-system.*, which left the
+  # metrics-prometheus.collector data stream (and traces-apm-*) UNbacked-up —
+  # exactly the index family that suffered irrecoverable dual-copy shard
+  # corruption in 2026-05 (no snapshot existed to restore from). Snapshots are
+  # incremental, so the broader scope adds little daily cost.
   echo "[s3-snapshot] registering SLM policy ${SLM_POLICY}"
   es_curl -X PUT "${ES_URL}/_slm/policy/${SLM_POLICY}" \
     -H 'Content-Type: application/json' \
@@ -174,8 +182,8 @@ cmd_register_slm() {
   "name": "<daily-snap-{now/d}>",
   "repository": "s3-home-monitor",
   "config": {
-    "indices": ["logs-rtx-*", "synthetics-*", "metrics-system.*"],
-    "include_global_state": false,
+    "indices": ["logs-*", "metrics-*", "synthetics-*", "traces-*"],
+    "include_global_state": true,
     "ignore_unavailable": true
   },
   "retention": {

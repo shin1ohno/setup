@@ -65,6 +65,6 @@
     ]
   },
   "cluster_health_monitor": {
-    "cluster": ["monitor"]
+    "cluster": ["monitor", "read_slm"]
   }
 }

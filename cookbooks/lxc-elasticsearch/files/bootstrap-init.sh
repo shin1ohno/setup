@@ -316,7 +316,18 @@ reset_kibana_system_password() {
 # --- main ----------------------------------------------------------------
 
 main() {
-  wait_cluster_ready
+  # RED-tolerance: if the cluster is not yellow/green after the (2-min) wait,
+  # skip the cluster-state bootstrap with a WARN instead of failing the whole
+  # es apply. A RED cluster (e.g. an unrecoverable corrupt shard) would
+  # otherwise make every es-* apply mitamae_fail — and pre-PR#394 the 5-min
+  # wait froze the auto-mitamae orchestrator fleet-wide. Per-node config
+  # (yml / certs / heap) was already applied by the cookbook's earlier
+  # resources; the cluster-state steps below retry on the next apply once the
+  # cluster recovers.
+  if ! wait_cluster_ready; then
+    echo "[bootstrap] WARN: cluster not yellow/green after wait — skipping cluster-state bootstrap (templates/roles/users/SLM) this run; will retry next apply" >&2
+    exit 0
+  fi
 
   # Reset local elastic password if API auth is broken (native install
   # first-boot case where the local node's reserved-realm cache lags
