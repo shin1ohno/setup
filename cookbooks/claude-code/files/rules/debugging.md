@@ -140,6 +140,22 @@ Protocol:
 
 Detail (anti-pattern + origin): see `~/.claude/rules/debugging-detail.md#frame-the-failure-class`.
 
+## Verify a chosen remediation is feasible before executing it
+
+Distinct from **Verify-before-done** (post-fix state confirmation): this is a *pre-execute precondition* check. After AskUserQuestion settles on a remediation, run the cheapest probe that confirms the chosen path can actually work **before** running the destructive or expensive step. A user selecting an option does not make its precondition true.
+
+Probe-before-execute pairs:
+
+- "restore from snapshot" → `GET _snapshot/<repo>/_all` — is the target index actually in a snapshot, with a non-failed shard? — before the restore
+- "cherry-pick that commit" → `git cat-file -e <hash>` / `git log <hash>` before the cherry-pick
+- "restore from S3 / backup" → `aws s3 ls <bucket>/<key>` before the restore
+- "roll back to version X" → confirm the tag / artifact exists before the rollback
+- "reassign to user/role Y" → confirm Y exists with the needed grant before the change
+
+If the precondition is absent, do NOT run the doomed command (it fails with a misleading error — "snapshot not found", "bad revision"). Return to the user with the corrected, actually-feasible options.
+
+Origin: 2026-05-30 auto-mitamae session — user chose "restore the corrupt ES index from snapshot", but `GET _snapshot/_all` showed the index was in zero snapshots (SLM covered only `logs-rtx-*`, not `metrics-prometheus.collector-*`). The probe proved snapshot-restore impossible before executing it; the corrected options (delete data stream / allocate-empty-primary) were re-offered and the user re-chose.
+
 ## Chain verify command with the fix in the same `!` block
 
 When presenting a credential or configuration fix to the user that must succeed before the main task can resume, **compose the verify command into the same `!` block** with `&&`:
