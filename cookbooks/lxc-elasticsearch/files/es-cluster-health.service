@@ -1,0 +1,11 @@
+[Unit]
+Description=Probe Elasticsearch cluster health into a node_exporter textfile metric
+Documentation=https://github.com/shin1ohno/setup cookbooks/lxc-elasticsearch
+After=elasticsearch.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/es-cluster-health.sh
+# Never let a slow/hung probe pile up across timer fires.
+TimeoutStartSec=30

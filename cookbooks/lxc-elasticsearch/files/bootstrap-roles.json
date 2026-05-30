@@ -63,5 +63,8 @@
         "privileges": ["read", "view_index_metadata"]
       }
     ]
+  },
+  "cluster_health_monitor": {
+    "cluster": ["monitor"]
   }
 }

@@ -650,3 +650,73 @@ execute "elasticsearch-snapshot: ensure SLM policy registered" do
   only_if { node[:elasticsearch] && node[:elasticsearch][:node_name] == "es-0" }
   not_if  "ES_URL=https://#{transport_host}:9200 #{s3_snapshot_script} slm-exists"
 end
+
+# === ES cluster-health node_exporter textfile metric ===
+#
+# Writes elasticsearch_cluster_status{color=...} to the node_exporter textfile
+# dir so Prometheus (already scraping node-es-* :9100) can alert on a
+# RED/YELLOW cluster — the 2026-05 corrupt-shard RED went undetected because
+# ES cluster health was not scraped, surfacing only as auto-mitamae es-* apply
+# failures. Textfile pattern (no separate elasticsearch_exporter); the probe
+# authenticates as es_monitor, which gains the cluster_health_monitor role
+# (cluster:monitor) via bootstrap-roles.json so it can read _cluster/health.
+health_script_staging = "#{files_dir}/es-cluster-health.sh"
+health_script_path    = "/usr/local/bin/es-cluster-health.sh"
+
+# Defensive: the textfile dir is created by node-exporter / auto-mitamae-target
+# (both in lxc-core), but declare it here too so include order is irrelevant.
+execute "create /var/lib/node_exporter/textfile for es-cluster-health" do
+  command "install -d -m 0755 -o root -g root /var/lib/node_exporter/textfile"
+  not_if "test -d /var/lib/node_exporter/textfile"
+end
+
+remote_file health_script_staging do
+  source "files/es-cluster-health.sh"
+  owner user
+  group group
+  mode "0755"
+end
+
+execute "install es-cluster-health.sh to /usr/local/bin" do
+  command "install -m 0755 -o root -g root #{health_script_staging} #{health_script_path}"
+  not_if "test -f #{health_script_path} && diff -q #{health_script_staging} #{health_script_path} 2>/dev/null"
+end
+
+%w[es-cluster-health.service es-cluster-health.timer].each do |unit|
+  unit_staging = "#{files_dir}/#{unit}"
+
+  remote_file unit_staging do
+    source "files/#{unit}"
+    owner user
+    group group
+    mode "0644"
+  end
+
+  execute "install #{unit} to /etc/systemd/system" do
+    command "install -m 0644 -o root -g root #{unit_staging} /etc/systemd/system/#{unit}"
+    not_if "test -f /etc/systemd/system/#{unit} && diff -q #{unit_staging} /etc/systemd/system/#{unit} 2>/dev/null"
+    # delayed notify (default) so reload/(re)start runs once at end-of-converge,
+    # after BOTH unit files are staged — avoids restarting before the timer
+    # file lands.
+    notifies :run, "execute[reload + enable es-cluster-health.timer]"
+  end
+end
+
+# All four steps per the systemd-timer verification rule: `enable --now` is a
+# no-op when the timer is already active, so without `restart timer` a
+# unit-body change would not be reloaded; `start service` seeds the
+# OnUnitInactiveSec deactivation reference for the recurring fire.
+execute "reload + enable es-cluster-health.timer" do
+  command "systemctl daemon-reload && " \
+          "systemctl enable es-cluster-health.timer && " \
+          "systemctl restart es-cluster-health.timer && " \
+          "systemctl start es-cluster-health.service"
+  action :nothing
+end
+
+# Ensure the timer is active even when the unit files were unchanged (fresh
+# host where staged == installed on first apply, or a prior manual disable).
+execute "ensure es-cluster-health.timer active" do
+  command "systemctl daemon-reload && systemctl enable --now es-cluster-health.timer"
+  not_if "systemctl is-active es-cluster-health.timer >/dev/null 2>&1"
+end

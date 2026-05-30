@@ -267,6 +267,17 @@ remote_file "#{deploy_dir}/alerts/auto-mitamae.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
+# Elasticsearch cluster health (RED/YELLOW/unreachable/stale). Fed by
+# elasticsearch_cluster_status{color=...} from each es node's node_exporter
+# textfile (cookbooks/lxc-elasticsearch es-cluster-health.timer).
+remote_file "#{deploy_dir}/alerts/elasticsearch.yml" do
+  source "files/alerts/elasticsearch.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # Loki + Vector (Phase B: RTX syslog visualization). Vector replaces the
 # previous Promtail syslog target after RTX1210/RTX830 firmware was found
 # to emit non-standard syslog (`<PRI>tag msg` with no TIMESTAMP/HOSTNAME)

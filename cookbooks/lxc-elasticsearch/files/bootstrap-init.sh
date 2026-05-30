@@ -123,7 +123,16 @@ EOF
 
 wait_cluster_ready() {
   local i
-  for i in $(seq 1 60); do
+  # 24 probes x 5s = 2 min. Was 60 (5 min): a RED cluster (irrecoverable
+  # shard corruption, etc.) never reaches yellow/green, so the longer wait
+  # only delayed the inevitable abort AND consumed the auto-mitamae
+  # orchestrator's per-cycle budget — one stuck ES node's 5-min wait
+  # contributed to the 2026-05 cycle-never-completes / metrics-frozen
+  # cascade. Healthy cluster formation reaches yellow in seconds, so 2 min
+  # is ample headroom while failing fast enough for the orchestrator's
+  # per-host timeout (300s) and surfacing via the AutoMitamaeApplyFailing
+  # alert promptly.
+  for i in $(seq 1 24); do
     local status
     status=$(es_curl "${ES_URL}/_cluster/health" \
       | sed -n 's/.*"status":"\([^"]*\)".*/\1/p' || true)
@@ -135,7 +144,7 @@ wait_cluster_ready() {
     esac
     sleep 5
   done
-  echo "[bootstrap] cluster not ready after 5 minutes — aborting" >&2
+  echo "[bootstrap] cluster not ready after 2 minutes — aborting" >&2
   return 1
 }
 
@@ -331,12 +340,16 @@ main() {
   put_role "elastic_agent_writer"
   put_role "apm_server_writer"
   put_role "elastalert_writer"
+  # cluster:monitor-only role for the es-cluster-health.sh node_exporter
+  # probe (es_monitor's built-in monitoring_user role does NOT grant
+  # cluster:monitor/health). No index privileges — least-privilege health read.
+  put_role "cluster_health_monitor"
 
   # Drift detection — application users.
   put_or_reset_user "vector_writer"        "${VECTOR_PASSWORD}"        '["vector_writer"]'
   put_or_reset_user "grafana_reader"       "${GRAFANA_PASSWORD}"       '["grafana_reader"]'
   put_or_reset_user "rtx_analyst"          "${ANALYST_PASSWORD}"       '["rtx_analyst"]'
-  put_or_reset_user "es_monitor"           "${MONITOR_PASSWORD}"       '["monitoring_user"]'
+  put_or_reset_user "es_monitor"           "${MONITOR_PASSWORD}"       '["monitoring_user","cluster_health_monitor"]'
   put_or_reset_user "elastic_agent_writer" "${ELASTIC_AGENT_PASSWORD}" '["elastic_agent_writer"]'
   put_or_reset_user "apm_server_writer"    "${APM_SERVER_PASSWORD}"    '["apm_server_writer"]'
   put_or_reset_user "elastalert_writer"    "${ELASTALERT_PASSWORD}"    '["elastalert_writer"]'
