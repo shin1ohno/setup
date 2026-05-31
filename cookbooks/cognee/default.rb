@@ -124,6 +124,19 @@ remote_file "#{deploy_dir}/scripts/bulk_ingest.py" do
   mode "644"
 end
 
+# pgvector HNSW indexes for the cognee vector tables. cognee's PGVectorAdapter
+# never builds an ANN index (create_vector_index just CREATE TABLEs), so every
+# similarity search seq-scans — measured ~4.9s on Entity_name (7036 rows) on the
+# shared db.t4g.micro RDS, the dominant half of the reported "8s" search latency.
+# The script is run inside the cognee container (which holds the DB_* env) by the
+# execute below; it is idempotent (CREATE INDEX CONCURRENTLY IF NOT EXISTS).
+remote_file "#{deploy_dir}/scripts/create_vector_indexes.py" do
+  source "files/scripts/create_vector_indexes.py"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+end
+
 # CPU-only override of cognee-mcp image. Removes ~5GB of dead nvidia/triton
 # libs (CT 105 has no GPU passthrough) via uninstall + flatten
 # (docker export | docker import). Plain layered uninstall would not shrink
@@ -226,4 +239,19 @@ compose_service "cognee" do
   compose_path "#{deploy_dir}/docker-compose.yml"
   deploy_dir deploy_dir
   env_path env_output_path
+end
+
+# Ensure pgvector HNSW indexes exist after the stack is up. Runs every apply:
+# the script CREATE INDEX CONCURRENTLY IF NOT EXISTS over every vector column it
+# discovers, so it is a cheap no-op once indexes exist and self-heals when a new
+# cognee collection (vector table) appears. Streamed into the running container
+# via stdin so no docker cp / image rebuild is needed; the container env supplies
+# DB_HOST/DB_USERNAME/DB_PASSWORD/DB_NAME. Gated on the stack actually running so
+# fresh hosts without a populated .env skip cleanly.
+execute "ensure cognee pgvector hnsw indexes" do
+  command "docker exec -i cognee-cognee-1 python3 - " \
+          "< #{deploy_dir}/scripts/create_vector_indexes.py"
+  user node[:setup][:user]
+  only_if "test -f #{env_output_path}"
+  only_if "docker ps --format '{{.Names}}' | grep -qx cognee-cognee-1"
 end
