@@ -7,7 +7,7 @@
 # vs apt+systemd").
 #
 # Stack:
-#   - Kibana 8.16.0 DEB (apt-mark hold)  :5601 (LAN)
+#   - Kibana 9.4.2 DEB (apt-mark hold)  :5601 (LAN)
 #   - systemd unit kibana.service (DEB-shipped)
 #   - /etc/systemd/system/kibana.service.d/override.conf (cookbook-managed)
 #
@@ -87,10 +87,10 @@ end
 
 execute "add elastic apt repo" do
   command "echo 'deb [signed-by=/etc/apt/keyrings/elastic.gpg] " \
-          "https://artifacts.elastic.co/packages/8.x/apt stable main' " \
-          "> /etc/apt/sources.list.d/elastic-8.x.list"
-  not_if "test -f /etc/apt/sources.list.d/elastic-8.x.list && " \
-         "grep -q 'artifacts.elastic.co' /etc/apt/sources.list.d/elastic-8.x.list"
+          "https://artifacts.elastic.co/packages/9.x/apt stable main' " \
+          "> /etc/apt/sources.list.d/elastic-9.x.list"
+  not_if "test -f /etc/apt/sources.list.d/elastic-9.x.list && " \
+         "grep -q 'artifacts.elastic.co' /etc/apt/sources.list.d/elastic-9.x.list"
   notifies :run, "execute[apt-get update for elastic]", :immediately
 end
 
@@ -122,9 +122,9 @@ end
 
 # === Install Kibana DEB ===
 
-execute "install kibana 8.16.0" do
-  command "apt-get install -y kibana=8.16.0"
-  not_if "dpkg-query -W -f='${Version}' kibana 2>/dev/null | grep -q '^8.16.0$'"
+execute "install kibana 9.4.2" do
+  command "apt-get install -y kibana=9.4.2"
+  not_if "dpkg-query -W -f='${Version}' kibana 2>/dev/null | grep -q '^9.4.2$'"
 end
 
 execute "apt-mark hold kibana" do

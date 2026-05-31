@@ -7,7 +7,7 @@
 # metrics-apm-* data streams to the 3-node ES cluster.
 #
 # Stack:
-#   - apm-server 8.16.0 DEB (apt-mark hold)  :8200 (LAN-IP-bound)
+#   - apm-server 9.4.2 DEB (apt-mark hold)  :8200 (LAN-IP-bound)
 #   - systemd unit apm-server.service (DEB-shipped)
 #   - /etc/systemd/system/apm-server.service.d/override.conf (cookbook-managed)
 #
@@ -92,10 +92,10 @@ end
 
 execute "add elastic apt repo" do
   command "echo 'deb [signed-by=/etc/apt/keyrings/elastic.gpg] " \
-          "https://artifacts.elastic.co/packages/8.x/apt stable main' " \
-          "> /etc/apt/sources.list.d/elastic-8.x.list"
-  not_if "test -f /etc/apt/sources.list.d/elastic-8.x.list && " \
-         "grep -q 'artifacts.elastic.co' /etc/apt/sources.list.d/elastic-8.x.list"
+          "https://artifacts.elastic.co/packages/9.x/apt stable main' " \
+          "> /etc/apt/sources.list.d/elastic-9.x.list"
+  not_if "test -f /etc/apt/sources.list.d/elastic-9.x.list && " \
+         "grep -q 'artifacts.elastic.co' /etc/apt/sources.list.d/elastic-9.x.list"
   notifies :run, "execute[apt-get update for elastic]", :immediately
 end
 
@@ -106,9 +106,9 @@ end
 
 # === Install apm-server DEB ===
 
-execute "install apm-server 8.16.0" do
-  command "apt-get install -y apm-server=8.16.0"
-  not_if "dpkg-query -W -f='${Version}' apm-server 2>/dev/null | grep -q '^8.16.0$'"
+execute "install apm-server 9.4.2" do
+  command "apt-get install -y apm-server=9.4.2"
+  not_if "dpkg-query -W -f='${Version}' apm-server 2>/dev/null | grep -q '^9.4.2$'"
 end
 
 execute "apt-mark hold apm-server" do
