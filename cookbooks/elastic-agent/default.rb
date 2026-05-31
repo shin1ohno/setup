@@ -31,7 +31,7 @@
 #   node[:elastic_agent][:host_name]                       short hostname
 #   node[:elastic_agent][:tags]                            array of tags
 #   node[:elastic_agent][:enable_prometheus_integration]   Linux only
-#   node[:elastic_agent][:version]                         macOS only (default 8.16.0)
+#   node[:elastic_agent][:version]                         macOS only (default 9.4.2)
 #
 # Operator apply (macOS):
 #   ./bin/mitamae local darwin.rb
@@ -67,7 +67,7 @@ if node[:platform] == "darwin"
   group      = node[:setup][:group]
   setup_root = node[:setup][:root]
 
-  ea_version  = node.dig(:elastic_agent, :version) || "8.16.0"
+  ea_version  = node.dig(:elastic_agent, :version) || "9.4.2"
   aws_profile = node.dig(:elastic_agent, :aws_profile) || "sh1admn"
   aws_region  = node.dig(:elastic_agent, :aws_region)  || "ap-northeast-1"
   es_password_ssm = node.dig(:elastic_agent, :es_password_ssm) ||
@@ -316,10 +316,10 @@ end
 
 execute "add elastic apt repo (elastic-agent)" do
   command "echo 'deb [signed-by=/etc/apt/keyrings/elastic.gpg] " \
-          "https://artifacts.elastic.co/packages/8.x/apt stable main' " \
-          "> /etc/apt/sources.list.d/elastic-8.x.list"
-  not_if "test -f /etc/apt/sources.list.d/elastic-8.x.list && " \
-         "grep -q 'artifacts.elastic.co' /etc/apt/sources.list.d/elastic-8.x.list"
+          "https://artifacts.elastic.co/packages/9.x/apt stable main' " \
+          "> /etc/apt/sources.list.d/elastic-9.x.list"
+  not_if "test -f /etc/apt/sources.list.d/elastic-9.x.list && " \
+         "grep -q 'artifacts.elastic.co' /etc/apt/sources.list.d/elastic-9.x.list"
   notifies :run, "execute[apt-get update for elastic-agent]", :immediately
 end
 
@@ -330,9 +330,9 @@ end
 
 # === Install Elastic Agent DEB ===
 
-execute "install elastic-agent 8.16.0" do
-  command "apt-get install -y elastic-agent=8.16.0"
-  not_if "dpkg-query -W -f='${Version}' elastic-agent 2>/dev/null | grep -q '^8.16.0$'"
+execute "install elastic-agent 9.4.2" do
+  command "apt-get install -y elastic-agent=9.4.2"
+  not_if "dpkg-query -W -f='${Version}' elastic-agent 2>/dev/null | grep -q '^9.4.2$'"
 end
 
 execute "apt-mark hold elastic-agent" do

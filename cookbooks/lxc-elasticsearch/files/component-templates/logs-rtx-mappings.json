@@ -1,9 +1,6 @@
 {
   "template": {
     "mappings": {
-      "_source": {
-        "mode": "synthetic"
-      },
       "dynamic": "strict",
       "properties": {
         "@timestamp":     { "type": "date" },
