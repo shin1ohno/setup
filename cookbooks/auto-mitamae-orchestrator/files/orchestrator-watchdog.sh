@@ -18,7 +18,10 @@
 
 set -uo pipefail
 
-KILL_THRESHOLD_SEC=720
+# 18 min, kept ABOVE the orchestrator cron `timeout 900` so the watchdog stays
+# a last-resort backstop (was 720 when the cron timeout was 600; both bumped
+# for the 19-host fleet where a loaded canary can hit its 300s per-host cap).
+KILL_THRESHOLD_SEC=1080
 TEXTFILE=/var/lib/node_exporter/textfile/orchestrator-watchdog.prom
 
 # Walk both binaries — orchestrator hangs were the trigger, but drift-checker

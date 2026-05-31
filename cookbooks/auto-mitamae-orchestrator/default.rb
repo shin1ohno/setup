@@ -186,10 +186,15 @@ end
 # (flock -n) — overlapping cycles exit cleanly with "previous cycle still
 # in progress, skipping" rather than racing.
 #
-# `timeout 600` / `timeout 90` wrappers hard-cap a single cycle so a hung
+# `timeout 900` / `timeout 90` wrappers hard-cap a single cycle so a hung
 # subprocess (network stall, signal-deaf child) cannot indefinitely hold
-# the flock. orchestrator-watchdog.sh is the last-resort backstop that
-# kills any orchestrator/drift-checker process running > 12 min — only
+# the flock. 900s (raised from 600s) gives headroom now that the fleet is 19
+# hosts and a loaded canary apply can hit its 300s per-host timeout;
+# orchestrator.sh also publishes the textfile after EACH host, so metrics stay
+# fresh (and the tail host status non-stale) even when a cycle is later killed
+# mid-flight. orchestrator-watchdog.sh is the last-resort backstop that kills
+# any orchestrator/drift-checker process running > 18 min (raised from 12 to
+# stay above the 900s timeout) — only
 # fires if the outer `timeout` failed to deliver SIGTERM. Watchdog also
 # emits Prometheus textfile metric `orchestrator_watchdog_kills_5m` for
 # alerting (alert added in cookbooks/lxc-monitoring/files/alerts/auto-mitamae.yml).
@@ -203,7 +208,7 @@ cron_content = <<~CRON
   MAILTO=""
 
   */2 * * * *  root  timeout 90  #{DRIFT_CHECKER_BIN} >> #{LOG_FILE} 2>&1
-  */5 * * * *  root  timeout 600 #{ORCHESTRATOR_BIN}  >> #{LOG_FILE} 2>&1
+  */5 * * * *  root  timeout 900 #{ORCHESTRATOR_BIN}  >> #{LOG_FILE} 2>&1
   */3 * * * *  root             #{WATCHDOG_BIN}       >> #{LOG_FILE} 2>&1
 CRON
 
