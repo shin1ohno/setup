@@ -86,10 +86,6 @@ now=$(date +%s)
     echo "# TYPE auto_mitamae_canary_last_status gauge"
     echo "# HELP auto_mitamae_canary_last_sha_info SHA the canary host last tried to apply"
     echo "# TYPE auto_mitamae_canary_last_sha_info gauge"
-    echo "# HELP bootstrap_lxc_creds_last_result Per-host result of last credential probe (Phase B-3). result=valid|seeded|failed for LXCs, skipped for non-LXCs"
-    echo "# TYPE bootstrap_lxc_creds_last_result gauge"
-    echo "# HELP bootstrap_lxc_creds_last_attempt_timestamp_seconds Unix time of last creds probe (Phase B-3)"
-    echo "# TYPE bootstrap_lxc_creds_last_attempt_timestamp_seconds gauge"
     echo "auto_mitamae_orchestrator_expected_sha_info{commit=\"${expected_sha}\"} 1"
 } > "${tmp_out}"
 
@@ -107,43 +103,26 @@ publish() {
 
 # Helper: apply mitamae-runner on one host. Populates LAST_STATUS for the
 # caller (canary gate) and appends per-host metrics to ${tmp_out}.
-# Phase B-2 lazy credential re-seed logic preserved verbatim.
+#
+# Note: there is intentionally NO per-cycle credential re-seed here. The
+# earlier "Phase B-2 lazy re-seed" block was architecturally dead when run
+# from this orchestrator host (CT 111): its probe ssh'd each LXC with the
+# restricted forced-command `orchestrator` key, which returns
+# invalid_command for `aws sts ...`, so the re-seed branch was ALWAYS taken;
+# and bootstrap-lxc-creds is a PVE-host-only operator script (all steps are
+# `ssh root@<pve> pct ...`), so from CT 111 it fails host-key verification
+# every time. The block emitted bootstrap_lxc_creds_* = failed for all 18
+# LXCs every cycle while doing no work. Real credential provisioning happens
+# inside each LXC's own mitamae apply (ssh-keys cookbook fetches from SSM).
+# bin/bootstrap-lxc-creds remains as a PVE-host one-shot operator tool.
 apply_one_host() {
     local entry="$1"
-    local host user role label ct_id creds_result cmd_start output rc status sha drift rdur
+    local host user role label cmd_start output rc status sha drift rdur
 
     host=$(jq -r '.host'  <<<"${entry}")
     user=$(jq -r '.user'  <<<"${entry}")
     role=$(jq -r '.role'  <<<"${entry}")
     label=$(jq -r '.label' <<<"${entry}")
-    ct_id=$(jq -r '.ct_id // empty' <<<"${entry}")
-
-    # Phase B-2: lazy credential re-seed. For LXC hosts only, probe whether
-    # the pve-bootstrap-ssm profile inside the LXC is still usable. If the
-    # probe fails (creds missing / expired / revoked after B-1 IAM rotation),
-    # invoke bootstrap-lxc-creds from this PVE host to refresh them. Warn-
-    # and-continue on bootstrap failure.
-    creds_result="skipped"
-    if [[ -n "${ct_id}" ]]; then
-        if ssh -n \
-                -i "${SSH_KEY}" \
-                -o BatchMode=yes \
-                -o ConnectTimeout=5 \
-                -o StrictHostKeyChecking=accept-new \
-                -o UserKnownHostsFile="${SSH_KNOWN_HOSTS}" \
-                "${user}@${host}" \
-                "timeout 5 aws sts get-caller-identity --profile pve-bootstrap-ssm" \
-                >/dev/null 2>&1; then
-            creds_result="valid"
-        else
-            if /usr/local/bin/bootstrap-lxc-creds "${ct_id}" >/dev/null 2>&1; then
-                creds_result="seeded"
-            else
-                creds_result="failed"
-                echo "orchestrator: warn — bootstrap-lxc-creds failed for ${label} (CT ${ct_id}), continuing" >&2
-            fi
-        fi
-    fi
 
     cmd_start=$(date +%s)
     # ssh -n is critical: without it, ssh inherits parent stdin and consumes
@@ -192,8 +171,6 @@ apply_one_host() {
         if [[ -n "${sha}" ]]; then
             echo "auto_mitamae_last_apply_sha_info{host=\"${label}\",sha=\"${sha}\"} 1"
         fi
-        echo "bootstrap_lxc_creds_last_result{host=\"${label}\",result=\"${creds_result}\"} 1"
-        echo "bootstrap_lxc_creds_last_attempt_timestamp_seconds{host=\"${label}\"} ${now}"
     } >> "${tmp_out}"
 
     # Export for caller (canary gate).
