@@ -267,6 +267,16 @@ remote_file "#{deploy_dir}/alerts/auto-mitamae.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
+# LAN DNS resolver (CT 118 / .61) health — fed by the PVE host's
+# unbound-watchdog node_exporter textfile metrics (cookbooks/unbound-watchdog).
+remote_file "#{deploy_dir}/alerts/unbound.yml" do
+  source "files/alerts/unbound.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # Elasticsearch cluster health (RED/YELLOW/unreachable/stale). Fed by
 # elasticsearch_cluster_status{color=...} from each es node's node_exporter
 # textfile (cookbooks/lxc-elasticsearch es-cluster-health.timer).

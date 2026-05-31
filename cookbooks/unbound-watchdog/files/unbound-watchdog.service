@@ -1,0 +1,12 @@
+[Unit]
+Description=Off-box self-heal probe for the CT 118 unbound LAN resolver (.61)
+Documentation=https://github.com/shin1ohno/setup cookbooks/unbound-watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/unbound-watchdog.sh
+# Never let a slow probe/restart pile up across timer fires.
+TimeoutStartSec=30

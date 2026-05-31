@@ -1,0 +1,19 @@
+[Unit]
+Description=Run unbound-watchdog.sh every ~60s
+
+[Timer]
+# Type=oneshot self-heal pattern (cf. ~/.claude infrastructure rules and the
+# es-cluster-health timer):
+#   OnBootSec        — first fire after cold boot
+#   OnActiveSec      — first fire after `systemctl restart timer` (boot long ago)
+#   OnUnitInactiveSec — recurring fire, measured from the unit's deactivation
+# OnUnitInactiveSec (NOT OnUnitActiveSec): the service is Type=oneshot with no
+# RemainAfterExit, so its active window is ~0 and "after last activation" would
+# yield Trigger: n/a (the timer would never fire).
+OnBootSec=60s
+OnActiveSec=60s
+OnUnitInactiveSec=60s
+Unit=unbound-watchdog.service
+
+[Install]
+WantedBy=timers.target
