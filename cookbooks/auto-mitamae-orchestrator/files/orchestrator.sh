@@ -65,7 +65,7 @@ if [[ ! -f "${HOSTS_JSON}" ]]; then
 fi
 
 tmp_out=$(mktemp "${OUTPUT_TEXTFILE}.tmp.XXXXXX")
-trap 'rm -f "${tmp_out}"' EXIT
+trap 'rm -f "${tmp_out}" "${OUTPUT_TEXTFILE}.pub"' EXIT
 
 now=$(date +%s)
 
@@ -92,6 +92,18 @@ now=$(date +%s)
     echo "# TYPE bootstrap_lxc_creds_last_attempt_timestamp_seconds gauge"
     echo "auto_mitamae_orchestrator_expected_sha_info{commit=\"${expected_sha}\"} 1"
 } > "${tmp_out}"
+
+# Atomically publish the in-progress textfile after every host so node_exporter
+# sees fresh per-host status even when the cron `timeout` later kills a long
+# cycle (e.g. an overloaded canary apply hits its 300s per-host timeout and
+# blows the cycle budget). Before this, the prom was written only at the final
+# mv, so a cycle that never completed froze ALL metrics — the orchestrator
+# looked dead while it was in fact still applying hosts, and the tail hosts'
+# status went stale. cp-then-rename keeps a scrape from reading a half-written
+# file. The .pub temp is cleaned by the EXIT trap.
+publish() {
+  cp "${tmp_out}" "${OUTPUT_TEXTFILE}.pub" && mv "${OUTPUT_TEXTFILE}.pub" "${OUTPUT_TEXTFILE}"
+}
 
 # Helper: apply mitamae-runner on one host. Populates LAST_STATUS for the
 # caller (canary gate) and appends per-host metrics to ${tmp_out}.
@@ -200,6 +212,7 @@ canary_failure_status=""
 
 while IFS= read -r entry; do
     apply_one_host "${entry}"
+    publish   # keep the prom fresh after each canary host
     if [[ "${LAST_STATUS}" != "success" ]]; then
         # lock_held / sha_mismatch / ssh_unreachable are transient (auto-recover
         # next cycle) — do not abort the rollout on these. Only persistent
@@ -222,6 +235,7 @@ canary_overall_status="success"
     echo "auto_mitamae_canary_last_status{result=\"${canary_overall_status}\"} 1"
     echo "auto_mitamae_canary_last_sha_info{commit=\"${expected_sha}\"} 1"
 } >> "${tmp_out}"
+publish
 
 if [[ "${canary_failed}" -eq 1 ]]; then
     mv "${tmp_out}" "${OUTPUT_TEXTFILE}"
@@ -230,9 +244,11 @@ if [[ "${canary_failed}" -eq 1 ]]; then
     exit 0
 fi
 
-# Phase B: non-canary hosts (the fleet).
+# Phase B: non-canary hosts (the fleet). publish after each so a cycle the
+# cron `timeout` later kills still leaves every processed host's status fresh.
 while IFS= read -r entry; do
     apply_one_host "${entry}"
+    publish
 done < <(jq -c '.[] | select(.canary != true)' "${HOSTS_JSON}")
 
 mv "${tmp_out}" "${OUTPUT_TEXTFILE}"
