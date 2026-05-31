@@ -5,10 +5,15 @@
   # Auto-mitamae Fleet, Proxmox via Prometheus) consume the resulting
   # `metrics-prometheus.collector-default` data stream.
   #
-  # match[] filter targets the metric classes the 3 dashboards need:
+  # match[] filter targets the metric classes the dashboards need:
   #   - node_*           Node Exporter (host CPU/mem/disk/net/load)
   #   - pve_*            prometheus-pve-exporter (VM/CT/storage/cluster)
-  #   - if(?:HC)?(In|Out)Octets, ifSpeed   SNMP (RTX router throughput)
+  #   - SNMP (RTX routers), for the Kibana "RTX Routers" SNMP dashboard:
+  #       if(?:HC)?(In|Out)(Octets|Errors|Discards)  interface throughput + errors
+  #       ifSpeed, ifHighSpeed, ifAdminStatus, ifOperStatus  interface state/table
+  #       sysUpTime, sysName                         system identity/uptime
+  #       yrf*  (YAMAHA-RT-FIRMWARE: yrfRevision/yrfUpTime)
+  #       yrh*  (YAMAHA-RT-HARDWARE: yrhCpuUtil1min/5min, yrhMemoryUtil, yrhInboxTemperature)
   #   - auto_mitamae_*, bootstrap_lxc_creds_*  textfile collector
   #   - up, scrape_*     scrape health visibility
   #
@@ -31,7 +36,7 @@
         period: 30s
         query:
           'match[]':
-            - '{__name__=~"node_.*|pve_.*|if(?:HC)?(In|Out)Octets|ifSpeed|auto_mitamae_.*|bootstrap_lxc_creds_.*|up|scrape_.*"}'
+            - '{__name__=~"node_.*|pve_.*|if(?:HC)?(In|Out)(Octets|Errors|Discards)|ifSpeed|ifHighSpeed|ifAdminStatus|ifOperStatus|sysUpTime|sysName|yrf.*|yrh.*|auto_mitamae_.*|bootstrap_lxc_creds_.*|up|scrape_.*"}'
         # Federation /federate response strips TYPE comments — keep all
         # metrics as untyped gauges to avoid type-inference errors.
         use_types: false
