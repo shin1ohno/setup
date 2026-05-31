@@ -46,6 +46,22 @@ Applies to:
 
 This rule exists because the 2026-05-09 ADR-0005 Phase 5 Stream N "rtx-overview-v2 layout adjustment" task autonomously interpreted "consolidate dashboards" as authorization to delete Phase 5 (PR #238) saved objects (rtx-discover, top-src lens, top-dst-port lens, rtx-overview-min). The harness blocked the push but the in-stream deletions had already happened. Push was deferred indefinitely awaiting user judgment. The deletion was outside the original "build rtx-overview-v2 dashboard" task scope.
 
+## Analysis-only Agent Scope — No File Edits Without Explicit Authorization
+
+When a sub-agent's (or workflow agent's) task is framed as **analysis, design, or review** — return a root cause, propose code, identify issues, draft a plan — it MUST NOT edit, create, or overwrite any file unless the prompt explicitly authorizes it. Returning the proposed change as text in the completion output is the correct deliverable; applying it is out of scope. (Distinct from the Destructive-Operation boundary above, which covers deletions; this covers creations and edits when the task was never meant to write at all.)
+
+**Prompt discipline**: when the intent is analysis-only, add this sentence verbatim to the agent prompt: "Do NOT edit or create any files. Return your findings as text in the completion output only."
+
+**Orchestrator discipline**: treat any file edits an analysis-phase agent made anyway as *proposals requiring review*, never as committed work. Before accepting them:
+
+1. Read the modified file and diff it against origin
+2. Verify the edit is correct against the FULL problem specification — not just "does it make the immediate error stop?"
+3. Only then keep it; otherwise discard and apply the correct fix yourself
+
+**Why "no immediate error" is insufficient**: an agent fixing a collection/serialization bug in a typed framework (Terraform provider, GraphQL resolver, protobuf/JSON codec) may eliminate the observable crash while introducing a subtler invariant violation — wrong list order, missing element, schema mismatch — that fails differently on a different code path. An adversarial verifier that only checks "did the panic go away?" misses it; it must check the framework's actual contract (e.g. for a Terraform list of a Required attribute, the applied value must equal the plan element-by-element in order and count).
+
+This rule exists because the 2026-05-31 terraform-provider-rtx session ran "analysis" workflow agents with full tool access. The dns_server-panic agent edited resource.go and created a test (out of scope) and produced a fix that stopped the nil-pointer panic but appended unmatched entries at the END of the reordered list — re-triggering "Provider produced inconsistent result after apply" because query_pattern is Required and must match plan order. The adversarial Verify phase accepted it; the parent session's independent source review caught it and replaced it with a plan-fallback.
+
 ## Tool Availability — ToolSearch Before Claiming Unavailable
 
 A sub-agent that cannot find a named tool (`SendMessage`, `EnterPlanMode`, `AskUserQuestion`, any skill, any MCP tool) MUST call `ToolSearch` with the tool name before reporting the constraint to the parent session. Tools may be deferred-loaded, registered under a slightly different name, or behind a search index — they exist in many sessions even when not visible in the initial tool catalog.
