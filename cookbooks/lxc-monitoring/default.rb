@@ -277,6 +277,20 @@ remote_file "#{deploy_dir}/alerts/unbound.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
+# RTX SNMP scrape health (hnd .253 / itm .254). `up{job="snmp-rtx"} == 0`
+# means snmp_exporter cannot poll the router — most often the device lost its
+# `snmp host any` / `snmpv2c host any` ACL on a reboot. The ACL is declared in
+# home-monitor rtx_snmp_server.<router> (provider >= 0.15.0); recovery is a
+# `terraform apply -target=rtx_snmp_server.<router>`. Added after the
+# 2026-05-31 silent HND SNMP outage (no down alert existed).
+remote_file "#{deploy_dir}/alerts/rtx-snmp.yml" do
+  source "files/alerts/rtx-snmp.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # Elasticsearch cluster health (RED/YELLOW/unreachable/stale). Fed by
 # elasticsearch_cluster_status{color=...} from each es node's node_exporter
 # textfile (cookbooks/lxc-elasticsearch es-cluster-health.timer).
