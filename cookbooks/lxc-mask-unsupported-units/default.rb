@@ -12,14 +12,20 @@
 # return `running` instead of `degraded`.
 #
 # Why masking is safe on a privileged LXC:
-#   - mount units: LXC inherits /dev, /run, /tmp, /run/lock from the host
-#     via bind-mounts; the systemd-managed mount units cannot mount over them
+#   - mount units (dev-*.mount, run-lock.mount, tmp.mount): the LXC has its
+#     own /run and /tmp tmpfs already populated by the container runtime; the
+#     systemd-managed mount units cannot mount over them. NOTE: /run/lock is
+#     NOT a host bind-mount — it is created as a 1777 dir on the /run tmpfs by
+#     systemd-tmpfiles-setup.service (which therefore must NOT be masked; see
+#     the unmask step below).
 #   - getty: LXC has no real TTY; `pct enter` and SSH bypass them entirely
 #   - journald: host journald captures container output (`journalctl
 #     --machine=<vmid>` on the PVE host); in-LXC journald is redundant
 #   - networkd: LXC inherits its veth from the host; in-LXC networkd would
 #     conflict with the host-side network config
-#   - sysctl, tmpfiles, udev: host owns these subsystems for LXC guests
+#   - sysctl, udev, systemd-tmpfiles-setup-dev*: host owns /dev + sysctl for
+#     LXC guests. Only the -dev tmpfiles variants are masked — the plain
+#     systemd-tmpfiles-setup.service must run (it creates /run/lock et al.).
 #
 # Unused-by-design units also masked:
 #   - postfix.service: every LXC in the fleet (Roon, monitoring,
@@ -55,7 +61,6 @@ UNITS_TO_MASK = %w(
   systemd-tmpfiles-clean.service
   systemd-tmpfiles-setup-dev-early.service
   systemd-tmpfiles-setup-dev.service
-  systemd-tmpfiles-setup.service
   systemd-udev-load-credentials.service
   systemd-journald-dev-log.socket
   systemd-journald.socket
@@ -100,6 +105,25 @@ UNITS_TO_MASK.each do |unit|
     user node[:setup][:system_user]
     not_if "systemctl is-enabled #{unit} 2>/dev/null | grep -qx 'masked'"
   end
+end
+
+# systemd-tmpfiles-setup.service was previously (incorrectly) in UNITS_TO_MASK.
+# It IS functional inside an LXC and is what CREATES /run/lock (mode 1777)
+# plus the other /run, /tmp, /var runtime dirs at boot — /run/lock is NOT
+# inherited from the host. With it masked, every LXC restart loses /run/lock,
+# silently breaking /var/lock → /run/lock consumers: notably the auto-mitamae
+# mitamae-runner's `exec 9>/var/lock/auto-mitamae.lock` flock, which then
+# emits no status= line and the orchestrator misclassifies the host as
+# ssh_unreachable (so it never converges). Unmask it on hosts a prior apply
+# masked, and run `systemd-tmpfiles --create` so /run/lock is restored
+# immediately without waiting for a reboot. (2026-05-31: es-0/1/2 hit this
+# after a storage-migration restart; the only -setup variant that must run is
+# the non-dev one — the -dev / -dev-early variants stay masked because /dev is
+# container-runtime-managed.)
+execute "unmask systemd-tmpfiles-setup.service + create /run/lock" do
+  command "systemctl unmask systemd-tmpfiles-setup.service && systemd-tmpfiles --create"
+  user node[:setup][:system_user]
+  only_if "systemctl is-enabled systemd-tmpfiles-setup.service 2>/dev/null | grep -qx 'masked'"
 end
 
 # After mask --now the unit cannot transition back to active, but its
