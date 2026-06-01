@@ -113,9 +113,12 @@ import_file() {
 # Explicit ordering — dashboard last so its references resolve.
 ordered=(
     "${SAVED_OBJECTS_DIR}/rtx-discover.ndjson"
+    # IKE/IPsec VPN event saved search (security panel — Grafana rtx-logs parity)
+    "${SAVED_OBJECTS_DIR}/rtx-discover-ike.ndjson"
     # v2 Lens objects: metrics
     "${SAVED_OBJECTS_DIR}/rtx-lens-metric-total-events.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-metric-unique-src.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-lens-metric-reject.ndjson"
     # v2 Lens objects: donuts (categorical breakdowns)
     "${SAVED_OBJECTS_DIR}/rtx-lens-donut-severity.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-donut-action.ndjson"
@@ -123,6 +126,7 @@ ordered=(
     "${SAVED_OBJECTS_DIR}/rtx-lens-donut-country.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-donut-top-src.ndjson"
     # v2 Lens objects: time series + heatmap + stacked bar
+    "${SAVED_OBJECTS_DIR}/rtx-lens-events-over-time.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-line-unique-src-over-time.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-heatmap-hour-router.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-stacked-country-over-time.ndjson"
