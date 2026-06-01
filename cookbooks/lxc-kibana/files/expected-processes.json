@@ -10,7 +10,7 @@
   "roon-mcp":     ["roon-mcp", "dockerd"],
   "weave":        ["weave-server", "mosquitto"],
   "consent":      ["uvicorn"],
-  "monitoring":   ["prometheus", "grafana", "loki", "vector"],
+  "monitoring":   ["prometheus", "grafana", "vector"],
   "es-0":         ["java", "controller"],
   "es-1":         ["java", "controller"],
   "es-2":         ["java", "controller"],
