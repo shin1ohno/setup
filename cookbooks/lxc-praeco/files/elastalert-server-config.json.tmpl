@@ -17,5 +17,13 @@
   "dataPath": {
     "relative": false,
     "path": "/opt/elastalert/server_data"
-  }
+  },
+  "es_host": "es-2.home.local",
+  "es_port": 9200,
+  "es_ssl": true,
+  "ea_verify_certs": true,
+  "es_ca_certs": "/opt/elastalert/certs/ca.crt",
+  "es_username": "elastalert_writer",
+  "es_password": "@@ELASTALERT_PASSWORD@@",
+  "writeback_index": "elastalert_status"
 }

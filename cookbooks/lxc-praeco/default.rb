@@ -127,12 +127,22 @@ remote_file "#{deploy_dir}/docker-compose.yml" do
   notifies :run, "execute[restart praeco]"
 end
 
-remote_file "#{deploy_dir}/config/elastalert-server.json" do
-  source "files/elastalert-server-config.json"
+# elastalert-server.json template. The file embeds es_password (same
+# value as elastalert.yaml) so it gets sed-substituted at converge
+# time. NOTE: ES JS client URL-parses node URLs (`scheme://user:pw@host`)
+# so the password MUST be URL-safe ASCII — random_password output with
+# `]`, `%`, `=`, `{` will cause 401 even though `curl -u user:pw` works.
+# random_password's override_special in home-monitor pve-monitoring-
+# elastic.tf must exclude these chars for the elastalert role.
+elastalert_server_tmpl_path = "#{files_dir}/elastalert-server-config.json.tmpl"
+elastalert_server_json_path = "#{deploy_dir}/config/elastalert-server.json"
+
+remote_file elastalert_server_tmpl_path do
+  source "files/elastalert-server-config.json.tmpl"
   owner user
   group group
   mode "0644"
-  notifies :run, "execute[restart praeco]"
+  notifies :run, "execute[render elastalert-server.json]"
 end
 
 # praeco's bundled nginx reverse-proxy config — extracted from
@@ -213,6 +223,7 @@ remote_file env_output_path do
   mode "0600"
   only_if "test -f #{env_temp_path}"
   notifies :run, "execute[render elastalert.yaml]"
+  notifies :run, "execute[render elastalert-server.json]"
   notifies :run, "execute[restart praeco]"
 end
 
@@ -264,6 +275,38 @@ execute "ensure elastalert.yaml exists" do
   SH
   user user
   only_if "test -f #{env_output_path} && test -f #{elastalert_tmpl_path} && ! test -f #{elastalert_yml_path}"
+end
+
+# Render elastalert-server.json from template via sed — mirrors the
+# elastalert.yaml flow above. elastalert-server's indices handler reads
+# es_host/es_username/es_password from this file (not from elastalert.yaml)
+# to construct its own ES client URL.
+execute "render elastalert-server.json" do
+  command <<~SH.strip
+    set -euo pipefail
+    . #{env_output_path}
+    sed "s|@@ELASTALERT_PASSWORD@@|${ELASTALERT_PASSWORD}|g" \
+      #{elastalert_server_tmpl_path} > #{elastalert_server_json_path}.new
+    mv #{elastalert_server_json_path}.new #{elastalert_server_json_path}
+    chmod 644 #{elastalert_server_json_path}
+  SH
+  user user
+  action :nothing
+  notifies :run, "execute[restart praeco]"
+  only_if "test -f #{env_output_path} && test -f #{elastalert_server_tmpl_path}"
+end
+
+execute "ensure elastalert-server.json exists" do
+  command <<~SH.strip
+    set -euo pipefail
+    . #{env_output_path}
+    sed "s|@@ELASTALERT_PASSWORD@@|${ELASTALERT_PASSWORD}|g" \
+      #{elastalert_server_tmpl_path} > #{elastalert_server_json_path}.new
+    mv #{elastalert_server_json_path}.new #{elastalert_server_json_path}
+    chmod 644 #{elastalert_server_json_path}
+  SH
+  user user
+  only_if "test -f #{env_output_path} && test -f #{elastalert_server_tmpl_path} && ! test -f #{elastalert_server_json_path}"
 end
 
 # Bring containers up. DOCKER_BUILDKIT=0 per CLAUDE.md "Docker Build in
