@@ -1,5 +1,9 @@
 # Knowledge Persistence: Mem0 / Cognee Details
 
+## Local write fallback (host-agnostic)
+
+If a knowledge-WRITE tool (`cognify`, `save_interaction`, `add_memories`, `delete`, `prune`) is denied in this session, a local MCP is configured on this host for writes — use the local equivalent instead: `mcp__cognee-local__cognify` / `mcp__cognee-local__save_interaction` / `mcp__memory-local__add_memories`. READS (`search`, `search_memory`, `list_data`, `list_memories`) continue to use whichever connector is available (hosted or local). On hosts where the local servers are not registered, the connector write tools are allowed and this note is a no-op.
+
 ## Mem0
 
 Cross-project memory for user attributes, preferences, and possessions.
