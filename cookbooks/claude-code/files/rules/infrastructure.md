@@ -172,6 +172,19 @@ sudo systemctl daemon-reload && \
 
 This rule exists because the 2026-05-09 tailscale route-fix timer session shipped `OnUnitActiveSec=60s` on `Type=oneshot` (PR #253). The unit reported `active` but had `Trigger: n/a` — the "fix" never fired. Three sequential PRs (#253 / #257 / #259) were needed to fully close the failure class. A single `systemctl show --property=Trigger` probe after PR #253 would have caught it before merge.
 
+## Auto-mitamae Fleet Cookbook Validation — Canary Before Fleet
+
+When validating a cookbook fix on ONE host before fleet-wide rollout, the auto-mitamae orchestrator (driven by **cron** on the monitoring LXC — `/etc/cron.d/auto-mitamae-orchestrator`, drift-checker every 2 min + orchestrator every 5 min — NOT a systemd timer) will SSH-push `mitamae-runner` and revert your test config within minutes. The runner resets each host's `/root/setup` to `origin/main` (`git fetch + reset --hard + checkout <sha>`, NOT `git pull` — the repo is detached HEAD) and re-applies. So an unmerged fix on a feature branch is reverted on the next cycle.
+
+Pause → validate → resume:
+
+1. **Pause** the orchestrator on the host that runs it (the monitoring LXC; reach via the PVE host): move its cron file aside — `pct exec <monitoring-ct> -- mv /etc/cron.d/auto-mitamae-orchestrator /root/PAUSED.cron`. Confirm no `mitamae-runner` is mid-run first.
+2. **Apply to the canary only**: get the change onto the canary's `/root/setup` (scp + `pct push`, or checkout the branch) and run `./bin/mitamae local pve/lxc-<name>.rb` inside the CT. The canary host is flagged `canary: true` in the orchestrator's `hosts.json`.
+3. **Verify FUNCTIONALLY** (not `systemctl is-active`): e.g. `elastic-agent status` HEALTHY + ES doc-count advancing.
+4. **Merge the cookbook PR to `main` FIRST, then resume** (restore the cron file). The orchestrator pulls from `origin/main`, so resuming before merge reverts the canary too. After resume, trigger one immediate cycle (run `drift-checker.sh` then `orchestrator.sh`) for fast rollout instead of waiting for the 5-min cron — the canary gate (canary applies first, fleet only if it succeeds) protects the rest of the fleet.
+
+This pattern exists because the 2026-06-01 elastic-agent `processors:` schema fix (PR #412) needed the orchestrator paused during the CT 111 canary validation, or it reverted the test config before the functional health check completed.
+
 ## "Known Limitation" Comments Are Incomplete Fixes
 
 When writing an inline comment in a cookbook, systemd unit, or config file that contains any of these phrases — or their semantic equivalents — STOP and treat the fix as incomplete:

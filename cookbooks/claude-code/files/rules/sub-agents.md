@@ -62,6 +62,30 @@ When a sub-agent's (or workflow agent's) task is framed as **analysis, design, o
 
 This rule exists because the 2026-05-31 terraform-provider-rtx session ran "analysis" workflow agents with full tool access. The dns_server-panic agent edited resource.go and created a test (out of scope) and produced a fix that stopped the nil-pointer panic but appended unmatched entries at the END of the reordered list — re-triggering "Provider produced inconsistent result after apply" because query_pattern is Required and must match plan order. The adversarial Verify phase accepted it; the parent session's independent source review caught it and replaced it with a plan-fallback.
 
+**Production service boundary** — when an analysis/synthesis-phase agent's task touches a RUNNING service (docker container, systemd unit, `elastic-agent`, the auto-mitamae orchestrator, any PVE LXC service), the read-only default applies EVEN IF the parent prompt omitted the verbatim sentence above. Default in these contexts:
+
+- Read config/log files, `systemctl status`, `elastic-agent status`, `docker compose ps` — allowed
+- Write config files, `systemctl restart`, `docker compose up`, `pct exec … bash -c "<service mutation>"` — NOT allowed without explicit authorization in the prompt
+
+If the agent concludes it MUST mutate a production service to resolve an ambiguity, it surfaces the proposed change as text + stops — it does not execute. An orchestrator / auto-mitamae auto-revert is NOT a safety net: it catches the action only AFTER the service was already restarted with an untested config.
+
+This boundary exists because the 2026-06-01 elastic-agent incident session ran a Workflow synthesis agent (full tools, "analyze + synthesize" framing) that edited CT 111's production `elastic-agent.yml` and restarted the service during the analysis phase. PR #408's rule was in effect but the verbatim sentence was absent from the `agent()` prompt, so the agent proceeded. Auto-mitamae reverted it on its next cycle — but the production agent had already been restarted with the unvalidated config.
+
+## Fleet Status Verification — Functional Probe in the Agent Prompt
+
+When dispatching an agent to verify health across fleet hosts, the prompt MUST name the FUNCTIONAL probe, not leave the agent to infer it. Agents default to artifact-level checks (`systemctl is-active`, `docker ps`, "process running") that return healthy even for a degraded service — producing false-positive HEALTHY reports that can close an incident prematurely.
+
+| Service | Artifact check (insufficient) | Functional check (required) |
+|---|---|---|
+| elastic-agent | `systemctl is-active elastic-agent` | `elastic-agent status` → top-level `HEALTHY` AND metric components present, plus ES doc-count advancing |
+| docker-compose stack | `docker ps` shows Up | `docker compose ps` shows `healthy` + one metric/endpoint probe |
+| auto-mitamae | the drift-checker/orchestrator **cron** is present (it runs via `/etc/cron.d/`, NOT a systemd timer) | per-host `auto_mitamae_last_apply_status{...,result="success"}` in `auto-mitamae.prom`, last apply within ~2× the 5-min cycle |
+| prometheus scrape | process running | `curl -s localhost:9090/-/healthy` + `targets?state=up` count |
+
+Prompt line to include: "Report each host's FUNCTIONAL health via `<specific-command>`, NOT `systemctl is-active`. A host is HEALTHY only when the functional check confirms behavior (data flowing, components active), not just that the process runs."
+
+This rule exists because the 2026-06-01 elastic-agent fleet rollout dispatched a fleet-scope agent that reported 19/19 hosts HEALTHY using (almost certainly) `systemctl is-active` — true for every host even while the OTel manager + metricbeat had stopped emitting. The synthesis phase caught the false positives by re-probing with `elastic-agent status`.
+
 ## Tool Availability — ToolSearch Before Claiming Unavailable
 
 A sub-agent that cannot find a named tool (`SendMessage`, `EnterPlanMode`, `AskUserQuestion`, any skill, any MCP tool) MUST call `ToolSearch` with the tool name before reporting the constraint to the parent session. Tools may be deferred-loaded, registered under a slightly different name, or behind a search index — they exist in many sessions even when not visible in the initial tool catalog.
