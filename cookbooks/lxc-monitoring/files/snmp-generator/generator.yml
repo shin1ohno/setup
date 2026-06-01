@@ -71,6 +71,17 @@ modules:
       - yrhMemorySize
       - yrhMemorySizeMB
       - yrhInboxTemperature
+      # YAMAHA-RT-HARDWARE multi-core CPU (yrhMultiCpuTable, OID .2.1.18):
+      # per-core 5sec / 1min / 5min utilization, indexed by yrhMultiCpuIndex
+      # and named by yrhMultiCpuName ("CPU0" / "CPU1"). Multi-core models
+      # (RTX830) report CPU HERE and leave the scalar yrhCpuUtil* at 0;
+      # single-core models (RTX1210) have no yrhMultiCpuTable. All
+      # Gauge(0..100) integer percent — NOT scaled. The dashboard picks the
+      # scalar for single-core and the per-core table for multi-core.
+      - yrhMultiCpuName
+      - yrhMultiCpuUtil5sec
+      - yrhMultiCpuUtil1min
+      - yrhMultiCpuUtil5min
       # YAMAHA-RT-FIRMWARE: firmware revision string + uptime.
       - yrfRevision
       - yrfFirmwareFile
@@ -88,6 +99,12 @@ modules:
       - source_indexes: [ifIndex]
         lookup: ifDescr
         drop_source_indexes: false
+      # Per-core CPU label: map yrhMultiCpuIndex (1, 2, …) to the core name
+      # (yrhMultiCpuName = "CPU0" / "CPU1") so the per-core util metrics carry
+      # a readable `yrhMultiCpuName` label in addition to the numeric index.
+      - source_indexes: [yrhMultiCpuIndex]
+        lookup: yrhMultiCpuName
+        drop_source_indexes: false
 
     overrides:
       ifAdminStatus:
@@ -101,4 +118,6 @@ modules:
       yrfRevision:
         type: DisplayString
       yrfFirmwareFile:
+        type: DisplayString
+      yrhMultiCpuName:
         type: DisplayString
