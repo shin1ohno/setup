@@ -129,6 +129,19 @@ ordered=(
     # Map + dashboard
     "${SAVED_OBJECTS_DIR}/rtx-maps-geo.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-overview-v2.ndjson"
+    # RTX SNMP metrics dashboard (elastic-agent prometheus.collector federation
+    # of the snmp-rtx job). Data view first, then Lens panels, dashboard last so
+    # references resolve. Panels break down by prometheus.labels.router, so new
+    # routers added to the snmp-rtx job appear automatically.
+    "${SAVED_OBJECTS_DIR}/rtx-snmp-dataview.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-snmp-cpu.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-snmp-memory.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-snmp-temperature.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-snmp-throughput.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-snmp-errors.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-snmp-status-table.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-snmp-iface-table.ndjson"
+    "${SAVED_OBJECTS_DIR}/rtx-snmp-routers.ndjson"
 )
 
 failures=0

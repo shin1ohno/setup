@@ -1,0 +1,1 @@
+{"attributes":{"name":"metrics-prometheus.collector-default","timeFieldName":"@timestamp","title":"metrics-prometheus.collector-default"},"coreMigrationVersion":"8.16.0","id":"metrics-prometheus-collector","managed":false,"references":[],"type":"index-pattern","typeMigrationVersion":"8.0.0"}
