@@ -126,6 +126,7 @@ ordered=(
     "${SAVED_OBJECTS_DIR}/rtx-lens-donut-country.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-donut-top-src.ndjson"
     # v2 Lens objects: time series + heatmap + stacked bar
+    "${SAVED_OBJECTS_DIR}/rtx-lens-events-over-time.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-line-unique-src-over-time.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-heatmap-hour-router.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-lens-stacked-country-over-time.ndjson"
