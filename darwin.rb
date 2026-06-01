@@ -46,4 +46,5 @@ include_cookbook "gpg-backup"
 include_cookbook "edge-agent"
 include_cookbook "elastic-agent"
 include_cookbook "macos-hub"
+include_cookbook "local-mcp"
 
