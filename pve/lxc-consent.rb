@@ -93,7 +93,7 @@ file "#{deploy_dir}/docker-compose.yml" do
         ports:
           - "9020:9020"
         # Static /etc/hosts injection for hydra. Belt-and-suspenders alongside
-        # the `dns:` block below: when the RTX DNS server (192.168.1.253)
+        # the `dns:` block below: when the unbound resolver (192.168.1.61)
         # SERVFAILs the home.local zone (observed when its upstream VPC
         # resolver via Tailscale is unreachable), the container's DNS lookup
         # falls back to /etc/hosts and resolves anyway. Without this,
@@ -106,12 +106,13 @@ file "#{deploy_dir}/docker-compose.yml" do
         extra_hosts:
           - "hydra.home.local:192.168.1.71"
         # Default Docker container DNS does not include the LAN's home.local
-        # zone (RTX-served at 192.168.1.253). consent's DCR proxy and admin
-        # API client (HYDRA_ADMIN_URL → hydra.home.local:4445) fail to
-        # resolve and abort with `httpx.ConnectError: [Errno -2] Name or
-        # service not known`, surfacing as HTTP 500 on /oauth2/register.
+        # zone. Point at the unbound resolver (CT118, 192.168.1.61), which
+        # forwards home.local to VPC Route53. consent's DCR proxy and admin
+        # API client (HYDRA_ADMIN_URL → hydra.home.local:4445) would otherwise
+        # fail to resolve and abort with `httpx.ConnectError: [Errno -2] Name
+        # or service not known`, surfacing as HTTP 500 on /oauth2/register.
         dns:
-          - 192.168.1.253
+          - 192.168.1.61
           - 1.1.1.1
         environment:
           HYDRA_ADMIN_URL: #{hydra_admin_url}
