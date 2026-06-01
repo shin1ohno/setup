@@ -1,0 +1,92 @@
+// Zed keymap. tmux-style prefix binding: Ctrl-a then h/j/k/l moves
+// focus to the left / bottom / top / right neighbour pane. Single-key
+// h/j/k/l remain usable for normal text input.
+//
+// `context: "Workspace"` ensures the chord works regardless of which
+// pane has focus (editor / terminal / agent). Note: Ctrl-a in Terminal
+// pane normally maps to zsh's `beginning-of-line`; under this binding
+// Zed intercepts ^A waiting for the second key, which produces a tiny
+// latency before zsh sees ^A if the chord is abandoned. Acceptable
+// trade-off for tmux muscle memory.
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "ctrl-a h": "workspace::ActivatePaneLeft",
+      "ctrl-a j": "workspace::ActivatePaneDown",
+      "ctrl-a k": "workspace::ActivatePaneUp",
+      "ctrl-a l": "workspace::ActivatePaneRight",
+      // Agent panel: focus the chat input. cmd-? toggles + focuses
+      // the agent panel (Zed default); the input is not a vim-mode
+      // editor, so a single keystroke is enough — typing starts
+      // immediately. Use this instead of `ctrl-a <direction>` when
+      // the destination is the agent.
+      "ctrl-a a": ["workspace::SendKeystrokes", "cmd-?"]
+    }
+  },
+  {
+    // Override inside agent panel + ACP thread editor: `cmd-?` toggles
+    // the panel CLOSED when already focused, which kicks the user back
+    // to the editor (vim NORMAL). Bind the chord to SendKeystrokes
+    // with an empty payload so the chord is consumed without effect
+    // and the user stays in the input — using `null` here would unbind
+    // the chord but leak `a` into the text input as a typed character.
+    "context": "AgentPanel || AcpThread > Editor",
+    "bindings": {
+      "ctrl-a a": ["workspace::SendKeystrokes", ""]
+    }
+  },
+  {
+    // Vim insert-mode quick-escape: `jk` typed in rapid succession
+    // returns to NORMAL. Zed waits for the second key within its
+    // sequence timeout (default ~1s); if only `j` is pressed and the
+    // timeout expires, `j` is inserted as text as normal. `!menu`
+    // disables the chord while completion / signature popups are open
+    // so `j` can still navigate menu entries.
+    "context": "vim_mode == insert && !menu",
+    "bindings": {
+      "j k": "vim::NormalBefore"
+    }
+  },
+  {
+    // Vim NORMAL mode `<Leader>` = space, ported from the AstroNvim
+    // muscle memory. `space` single-press defaults to cursor-right in
+    // vim; defining chords here turns it into a leader prefix and the
+    // single-press fires after the ~1s chord timeout (acceptable lag).
+    //
+    // `shift-l` / `shift-h` override vim's L/H (move to viewport
+    // last/first visible line) — same trade-off AstroNvim makes for
+    // buffer cycling.
+    //
+    // `!menu` keeps completion / signature popups usable.
+    "context": "vim_mode == normal && !menu",
+    "bindings": {
+      // Buffer / Window
+      "shift-l": "pane::ActivateNextItem",
+      "shift-h": "pane::ActivatePrevItem",
+      "space b d": "pane::CloseActiveItem",
+      "space c": "pane::CloseActiveItem",
+      "space w": "workspace::Save",
+      "space q": "pane::CloseAllItems",
+      "space |": "pane::SplitRight",
+      "space -": "pane::SplitDown",
+      "space n": "workspace::NewFile",
+
+      // Find / Search
+      "space f f": "file_finder::Toggle",
+      "space f w": "pane::DeploySearch",
+      "space f b": "tab_switcher::Toggle",
+      "space f c": "command_palette::Toggle",
+      "space f r": "projects::OpenRecent",
+      "space f /": "buffer_search::Deploy",
+
+      // LSP
+      "space l a": "editor::ToggleCodeActions",
+      "space l r": "editor::Rename",
+      "space l f": "editor::Format",
+      "space l d": "diagnostics::Deploy",
+      "space l s": "outline::Toggle",
+      "space l h": "editor::Hover"
+    }
+  }
+]

@@ -1,0 +1,9 @@
+# JVM heap sizing — installed at /etc/elasticsearch/jvm.options.d/heap.options.
+# ES merges every *.options file under jvm.options.d/ on top of the default
+# /etc/elasticsearch/jvm.options. Per ES recommendation, -Xms == -Xmx and
+# heap = 50% of available RAM with 31 GiB ceiling.
+#
+# CT 112/113/114 have 10 GiB allocated. 5 GiB heap leaves 1 GiB JVM overhead
+# (Lucene direct buffers, GC, etc.) + 4 GiB Linux file cache for ES indices.
+-Xms5g
+-Xmx5g

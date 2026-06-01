@@ -1,0 +1,184 @@
+groups:
+  - name: auto-mitamae-fleet
+    interval: 30s
+    rules:
+      - alert: AutoMitamaeApplyFailing
+        # Persistent cookbook failure on a single host. Excludes sha_mismatch
+        # (race during PR merge propagation, auto-recovers in ~1 cycle) and
+        # ssh_unreachable (orchestrator-side transient, often network).
+        expr: auto_mitamae_last_apply_status{result=~"mitamae_fail|git_fetch_fail|invalid_command"} == 1
+        for: 10m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "{{ $labels.host }} mitamae apply failing 10m+ ({{ $labels.result }})"
+          description: |
+            Host {{ $labels.host }} has been in apply state `{{ $labels.result }}` for 10+ minutes.
+            cookbook bug, missing dependency, or runtime config drift.
+            Runbook: ssh root@192.168.1.10 'pct exec <ct> -- tail -80 /tmp/auto-mitamae.log'
+
+      - alert: AutoMitamaeApplyStale
+        # Single host has not been apply-touched in 15+ minutes. Either
+        # ssh_unreachable on every recent cycle or orchestrator skipped it.
+        expr: (time() - auto_mitamae_last_apply_timestamp_seconds) > 900
+        for: 5m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "{{ $labels.host }} has not been apply-touched in 15m+"
+          description: |
+            auto_mitamae_last_apply_timestamp_seconds for {{ $labels.host }} is older than 15min.
+            Either the host is unreachable from orchestrator, or the orchestrator is skipping it.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- tail -30 /var/log/auto-mitamae-orchestrator.log'
+
+      - alert: AutoMitamaeOrchestratorStuck
+        # If the MINIMUM timestamp across ALL hosts is > 15 min old, the
+        # orchestrator itself is stuck — single host staleness only triggers
+        # ApplyStale above, not this. Critical because the entire fleet is
+        # drift-blind in this state.
+        expr: min(time() - auto_mitamae_last_apply_timestamp_seconds) > 900
+        for: 5m
+        labels:
+          severity: critical
+          component: auto-mitamae
+        annotations:
+          summary: "Orchestrator appears stuck: no host applied in 15m+"
+          description: |
+            The orchestrator on CT 111 has not produced any per-host apply timestamp in 15min.
+            Likely cron job is hung or drift-checker has been failing for >2 polls.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- ps -o pid,etime,cmd -C orchestrator.sh; tail -20 /var/log/auto-mitamae-orchestrator.log'
+
+      - alert: AutoMitamaeShaDivergent
+        # Drift-checker observed a new main HEAD but the orchestrator's
+        # expected_sha is still the previous one for 15+ minutes. Either
+        # the orchestrator is hung, OR drift-checker is failing intermittently
+        # (orchestrator skips its cycle when drift-checker result != "ok").
+        expr: |
+          (
+            setup_main_head_commit_info
+            unless on(commit) label_replace(
+              auto_mitamae_orchestrator_expected_sha_info, "commit", "$1", "commit", "(.*)"
+            )
+          ) == 1
+        for: 15m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "Orchestrator expected_sha lagging drift-checker observation 15m+"
+          description: |
+            drift-checker has observed main at commit {{ $labels.commit }} but the orchestrator
+            has not driven that SHA to the fleet for 15+ minutes.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "cat /var/lib/node_exporter/textfile/drift-checker.prom; grep expected_sha /var/lib/node_exporter/textfile/auto-mitamae.prom"'
+
+      - alert: DriftCheckerFailing
+        expr: setup_main_head_check_status{result!="ok"} == 1
+        for: 10m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "drift-checker poll failing for 10m+ ({{ $labels.result }})"
+          description: |
+            drift-checker.sh on CT 111 has been reporting `{{ $labels.result }}` for the last
+            10+ minutes. When drift-checker fails, orchestrator skips its cycle (no apply).
+            Likely GitHub API rate limit, network outage, or auth misconfig.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "tail -30 /var/log/auto-mitamae-orchestrator.log; /usr/local/bin/drift-checker.sh"'
+
+      - alert: OrchestratorWatchdogKill
+        # Sister cron orchestrator-watchdog.sh kills orchestrator/drift-checker
+        # processes that exceeded the outer `timeout` wrapper (12 min etime).
+        # ANY kill in 5 min is abnormal — the outer wrapper should have caught
+        # it. Triggers immediately (for: 1m, just to debounce a single sample).
+        expr: orchestrator_watchdog_kills_5m > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "Watchdog killed {{ $value }} orchestrator/drift-checker process(es) in 5m"
+          description: |
+            orchestrator-watchdog.sh delivered SIGTERM/SIGKILL to a process whose etime
+            exceeded 12 min. Outer `timeout` wrapper failed (signal-deaf child, kernel
+            uninterruptible state). Inspect journalctl for context.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- journalctl -t orchestrator-watchdog --since "30 min ago"'
+
+      - alert: OrchestratorWatchdogStale
+        # Watchdog itself stopped running. Cron failure, file permission
+        # issue, or the script aborted before writing the timestamp metric.
+        expr: (time() - orchestrator_watchdog_last_run_timestamp_seconds) > 600
+        for: 5m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "orchestrator-watchdog has not run in 10m+"
+          description: |
+            The watchdog cron should fire every 3 min and refresh
+            orchestrator_watchdog_last_run_timestamp_seconds. Last run was 10+ min ago.
+            Either cron stopped or the script is failing before writing the textfile.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "systemctl is-active cron; /usr/local/bin/orchestrator-watchdog.sh; cat /var/lib/node_exporter/textfile/orchestrator-watchdog.prom"'
+
+      - alert: AutoMitamaeCanaryFailing
+        # Phase 3: canary host's apply has failed for 10m+, so the
+        # orchestrator is aborting fleet rollout on every cycle. Either a
+        # cookbook bug landed (the design case — fix in next commit) or the
+        # canary host is itself broken (then move canary marker elsewhere).
+        expr: auto_mitamae_canary_last_status{result=~"mitamae_fail|git_fetch_fail|invalid_command"} == 1
+        for: 10m
+        labels:
+          severity: critical
+          component: auto-mitamae
+        annotations:
+          summary: "Canary apply failing 10m+ ({{ $labels.result }}) — fleet rollout blocked"
+          description: |
+            The canary host's mitamae apply has been in `{{ $labels.result }}` for 10+ minutes.
+            Orchestrator is aborting every cycle at the canary gate to prevent fleet-wide propagation.
+            Either fix the cookbook bug (then next commit triggers re-apply) or rotate the
+            canary marker in hosts.json if the canary host itself is broken.
+            Runbook: ssh root@192.168.1.10 'pct exec 104 -- tail -80 /tmp/auto-mitamae.log'
+
+      - alert: NodeExporterDown
+        # Source-of-truth alert: every other auto-mitamae alert is built on
+        # textfile metrics scraped through node-exporter. If node-exporter
+        # itself is down, those alerts paradoxically go silent (no metric
+        # = no expression result = no fire). `up{job=~"node-.*"} == 0` is
+        # Prometheus-native and independent of the textfile pipeline.
+        #
+        # Empirical: 2026-05-17 monitoring CT 111 node-exporter died of
+        # SIGPIPE and stayed dead 25h before user noticed an empty Grafana
+        # dashboard. With this alert, the silence would have fired at 5m.
+        expr: up{job=~"node-.*"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: auto-mitamae
+        annotations:
+          summary: "node-exporter down on {{ $labels.job }} ({{ $labels.instance }})"
+          description: |
+            Prometheus has been unable to scrape node-exporter at {{ $labels.instance }} for 5+ minutes.
+            All node-level metrics from this host (incl. auto-mitamae textfile metrics on monitoring)
+            are unavailable. cookbooks/node-exporter ships Restart=always — investigate why systemd
+            cannot restart, or whether the host itself is down.
+            Runbook: ssh root@192.168.1.10 'pct exec <ct> -- systemctl status node-exporter; journalctl -u node-exporter -n 50'
+
+      - alert: AutoMitamaeMetricMissing
+        # Defense-in-depth pair to NodeExporterDown: detects the case where
+        # node-exporter is up but the textfile is absent / unparseable, so
+        # the orchestrator metrics never appear in Prometheus. absent()
+        # specifically fires when no series matches the metric name.
+        expr: absent(auto_mitamae_last_apply_timestamp_seconds)
+        for: 10m
+        labels:
+          severity: critical
+          component: auto-mitamae
+        annotations:
+          summary: "auto_mitamae_last_apply_timestamp_seconds has no series in Prometheus"
+          description: |
+            The orchestrator metric is missing from Prometheus entirely. Either node-exporter on
+            monitoring (CT 111) is not reading /var/lib/node_exporter/textfile/auto-mitamae.prom,
+            the file is malformed (textfile collector is strict — one bad line skips the whole file),
+            or the orchestrator has never produced output.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "ls -la /var/lib/node_exporter/textfile/auto-mitamae.prom; head /var/lib/node_exporter/textfile/auto-mitamae.prom; curl -s http://localhost:9100/metrics | grep -E auto_mitamae | head"'

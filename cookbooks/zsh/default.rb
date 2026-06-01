@@ -31,6 +31,26 @@ execute "touch #{node[:setup][:home]}/.zshrc" do
   not_if { File.exist?("#{node[:setup][:home]}/.zshrc") }
 end
 
+# Match any form of the profile source line: tilde (`. ~/.setup_shin1ohno/profile`),
+# absolute (`. /Users/.../.setup_shin1ohno/profile`), or `$HOME`-prefixed. The prior
+# absolute-only check missed legacy tilde-form lines and re-appended a duplicate
+# absolute-form line on every apply, doubling shell startup time.
 execute "echo '. #{node[:setup][:root]}/profile' >> ~/.zshrc" do
-  not_if "fgrep -q '. #{node[:setup][:root]}/profile' ~/.zshrc"
+  not_if "fgrep -q 'setup_shin1ohno/profile' ~/.zshrc"
+end
+
+# Disable system-wide rc files via `unsetopt GLOBAL_RCS` in ~/.zshenv.
+# Saves ~10-20ms of shell startup by skipping /etc/zprofile, /etc/zshrc,
+# /etc/zlogin (which mostly set HISTFILE/SIZE and a few terminfo keymaps).
+# Those defaults are replicated in profile.d/10-dot-zsh.sh.
+#
+# Must live in .zshenv because .zshrc runs AFTER /etc/zshrc — too late.
+# /etc/zshenv has already run by .zshenv time (acceptable; it's nearly
+# always empty on macOS).
+execute "touch #{node[:setup][:home]}/.zshenv" do
+  not_if { File.exist?("#{node[:setup][:home]}/.zshenv") }
+end
+
+execute "echo 'unsetopt GLOBAL_RCS' >> #{node[:setup][:home]}/.zshenv" do
+  not_if "fgrep -q 'unsetopt GLOBAL_RCS' #{node[:setup][:home]}/.zshenv"
 end

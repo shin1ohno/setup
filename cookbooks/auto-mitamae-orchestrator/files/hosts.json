@@ -9,7 +9,13 @@
   {"host": "192.168.1.20", "user": "root", "role": "pve/lxc-roon.rb",         "label": "roon",         "ct_id": 100},
   {"host": "192.168.1.62", "user": "root", "role": "pve/lxc-samba.rb",        "label": "samba",        "ct_id": 101},
   {"host": "192.168.1.63", "user": "root", "role": "pve/lxc-housekeeping.rb", "label": "housekeeping", "ct_id": 103},
-  {"host": "192.168.1.64", "user": "root", "role": "pve/lxc-pro-dev.rb",      "label": "pro-dev",      "ct_id": 104},
+  {"host": "192.168.1.64", "user": "root", "role": "pve/lxc-pro-dev.rb",      "label": "pro-dev",      "ct_id": 104, "canary": true},
   {"host": "192.168.1.60", "user": "root", "role": "pve/lxc-pro-router.rb",   "label": "pro-router",   "ct_id": 102},
+  {"host": "192.168.1.77", "user": "root", "role": "pve/lxc-es-0.rb",         "label": "es-0",         "ct_id": 112},
+  {"host": "192.168.1.78", "user": "root", "role": "pve/lxc-es-1.rb",         "label": "es-1",         "ct_id": 113},
+  {"host": "192.168.1.79", "user": "root", "role": "pve/lxc-es-2.rb",         "label": "es-2",         "ct_id": 114},
+  {"host": "192.168.1.80", "user": "root", "role": "pve/lxc-kibana.rb",       "label": "kibana",       "ct_id": 115},
+  {"host": "192.168.1.82", "user": "root", "role": "pve/lxc-praeco.rb",       "label": "praeco",       "ct_id": 117},
+  {"host": "192.168.1.61", "user": "root", "role": "pve/lxc-dns-resolver.rb", "label": "dns-resolver", "ct_id": 118},
   {"host": "192.168.1.10", "user": "root", "role": "pve/pve-host.rb",         "label": "pve-host",     "ct_id": null}
 ]

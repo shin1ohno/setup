@@ -60,3 +60,15 @@ include_cookbook "ssh-keys"
 # rpool/ROOT/pve-1 before the first apply is the operator's pre-flight
 # (zfs snapshot rpool/ROOT/pve-1@phase-3c-pre).
 include_role "lxc-core"
+
+# Off-box self-heal for the CT 118 unbound LAN resolver (.61). Lives on the PVE
+# host because the "active but zero replies on eth0" wedge (2026-05-31) is
+# invisible to a CT-local probe; the host probes .61 over the LAN and restarts
+# unbound via `pct exec`. Depends on node-exporter's textfile dir (lxc-core).
+include_cookbook "unbound-watchdog"
+
+# Standalone Elastic Agent — ships PVE host syslog + system metrics to the
+# 3-node ES cluster. Tag with `pve-host` so Kibana queries can isolate the
+# hypervisor from the LXC fleet.
+node.reverse_merge!(elastic_agent: { tags: ["pve-host", "hypervisor"] })
+include_cookbook "elastic-agent"

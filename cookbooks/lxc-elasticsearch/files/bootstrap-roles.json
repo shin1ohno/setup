@@ -1,0 +1,70 @@
+{
+  "vector_writer": {
+    "cluster": ["monitor"],
+    "indices": [
+      {
+        "names": ["logs-rtx-*"],
+        "privileges": ["create_index", "create_doc", "write", "auto_configure", "view_index_metadata"]
+      }
+    ]
+  },
+  "grafana_reader": {
+    "cluster": ["monitor"],
+    "indices": [
+      {
+        "names": ["logs-rtx-*"],
+        "privileges": ["read", "view_index_metadata"]
+      }
+    ]
+  },
+  "rtx_analyst": {
+    "cluster": ["monitor"],
+    "indices": [
+      {
+        "names": ["logs-rtx-*", ".kibana*"],
+        "privileges": ["read", "view_index_metadata"]
+      }
+    ],
+    "applications": [
+      {
+        "application": "kibana-.kibana",
+        "privileges": ["space_all"],
+        "resources": ["space:default"]
+      }
+    ]
+  },
+  "elastic_agent_writer": {
+    "cluster": ["monitor"],
+    "indices": [
+      {
+        "names": ["logs-*", "metrics-*", "synthetics-*", ".monitoring-*"],
+        "privileges": ["create_index", "create_doc", "write", "auto_configure", "view_index_metadata"]
+      }
+    ]
+  },
+  "apm_server_writer": {
+    "cluster": ["monitor", "manage_ilm", "manage_index_templates"],
+    "indices": [
+      {
+        "names": ["traces-apm-*", "logs-apm-*", "metrics-apm-*", "apm-*", ".apm-*"],
+        "privileges": ["create_index", "create_doc", "write", "auto_configure", "view_index_metadata", "manage"]
+      }
+    ]
+  },
+  "elastalert_writer": {
+    "cluster": ["monitor"],
+    "indices": [
+      {
+        "names": ["elastalert_*", ".elastalert_*"],
+        "privileges": ["create_index", "create_doc", "write", "auto_configure", "view_index_metadata", "read", "manage"]
+      },
+      {
+        "names": ["logs-*", "traces-*", "metrics-*", "logs-rtx-*", ".ds-*", "synthetics-*"],
+        "privileges": ["read", "view_index_metadata"]
+      }
+    ]
+  },
+  "cluster_health_monitor": {
+    "cluster": ["monitor", "read_slm"]
+  }
+}

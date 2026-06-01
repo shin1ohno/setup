@@ -152,6 +152,17 @@ end
   end
 end
 
+# PATH-priming shim invoked by every ruby hook in settings.json.
+# Claude Code hooks run in a non-interactive shell that bypasses the
+# rbenv lazy-load profile, so `ruby` would otherwise be unreachable.
+remote_file "#{node[:setup][:home]}/.claude/hooks/ruby-shim" do
+  source "files/hooks/ruby-shim"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
 # Deploy global rules
 directory "#{node[:setup][:home]}/.claude/rules" do
   owner node[:setup][:user]
@@ -160,7 +171,7 @@ directory "#{node[:setup][:home]}/.claude/rules" do
   action :create
 end
 
-%w(ruby.md shell.md infrastructure.md aws-iam.md pve-lxc.md docker-compose.md tailscale.md writing.md sub-agents.md git-commit.md remote-trigger.md mcp-config.md rust.md architecture.md data-collection.md debugging.md claude-code-plugins.md editing.md frontend-dev.md mise-migration.md ios-build.md weave-protocol.md).each do |file_name|
+%w(ruby.md shell.md infrastructure.md aws-iam.md pve-lxc.md docker-compose.md tailscale.md writing.md sub-agents.md git-commit.md remote-trigger.md mcp-config.md rust.md architecture.md data-collection.md debugging.md claude-code-plugins.md editing.md frontend-dev.md mise-migration.md ios-build.md weave-protocol.md planning.md ffi-audit.md adversarial-review.md cookbook-prs.md kibana-lens.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
     source "files/rules/#{file_name}"
     owner node[:setup][:user]
@@ -207,7 +218,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services ingest-batch security-review verify-cognee verify-data-integrity feature-parity verify-mise-backend).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services ingest-batch security-review verify-cognee verify-data-integrity feature-parity verify-mise-backend bootstrap-docs-hub).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -262,6 +273,41 @@ end
 %w(document-writer.md marginal-utility-editor.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/skills/writing/personas/#{file_name}" do
     source "files/skills/writing/personas/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+# Deploy bootstrap-docs-hub skill templates
+%w(
+  templates
+  templates/rules
+  templates/skills
+  templates/skills/sync-bundled-tools
+).each do |dir_name|
+  directory "#{node[:setup][:home]}/.claude/skills/bootstrap-docs-hub/#{dir_name}" do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
+end
+
+%w(
+  templates/README.md.tmpl
+  templates/CLAUDE.md.tmpl
+  templates/gitignore.tmpl
+  templates/rules/communication-style.md
+  templates/rules/work-discipline.md
+  templates/rules/external-tools.md
+  templates/rules/content-freshness.md
+  templates/rules/parallel-execution.md
+  templates/skills/sync-bundled-tools/SKILL.md
+).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/skills/bootstrap-docs-hub/#{file_name}" do
+    source "files/skills/bootstrap-docs-hub/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"

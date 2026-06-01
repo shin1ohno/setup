@@ -8,7 +8,6 @@ requests to the upstream openmemory-api service.
 import json
 import logging
 import os
-import re
 import time
 from urllib.request import urlopen
 
@@ -21,6 +20,34 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger("auth-proxy")
+
+# ── OpenTelemetry tracing ──────────────────────────────────────────────
+# Env-driven (OTEL_EXPORTER_OTLP_ENDPOINT / _CERTIFICATE / _HEADERS,
+# OTEL_SERVICE_NAME, DEPLOYMENT_ENVIRONMENT). When OTLP endpoint is unset
+# the BatchSpanProcessor still attaches, but its exporter silently no-ops —
+# acceptable for local dev. Logs are NOT instrumented (only spans).
+
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.aiohttp_server import AioHttpServerInstrumentor
+from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
+
+_service_name = os.environ.get("OTEL_SERVICE_NAME", "cognee-auth-proxy")
+_resource = Resource.create({
+    "service.name": _service_name,
+    "deployment.environment": os.environ.get("DEPLOYMENT_ENVIRONMENT", "home"),
+})
+_provider = TracerProvider(resource=_resource)
+_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+trace.set_tracer_provider(_provider)
+
+# Server instrumentation must be applied before web.Application() is built.
+# Client instrumentation applies globally to all aiohttp ClientSession instances.
+AioHttpServerInstrumentor().instrument()
+AioHttpClientInstrumentor().instrument()
 
 SAGE_ISSUER = os.environ.get("SAGE_ISSUER", "https://mcp.ohno.be")
 SAGE_JWKS_URL = os.environ.get(
@@ -135,30 +162,6 @@ def add_cors(headers: dict) -> dict:
     merged = dict(headers)
     merged.update(CORS_HEADERS)
     return merged
-
-
-# ── SSE path rewriting ───────────────────────────────────────────────
-
-# Matches SSE endpoint events: "event: endpoint\ndata: /some/path..."
-_SSE_ENDPOINT_RE = re.compile(
-    rb"(event:\s*endpoint\s*\ndata:\s*)(\/\S+)",
-    re.MULTILINE,
-)
-
-
-def rewrite_sse_paths(chunk: bytes, prefix: str) -> bytes:
-    """Prepend PATH_PREFIX to SSE endpoint event paths."""
-    if not prefix:
-        return chunk
-    prefix_bytes = prefix.encode()
-
-    def _rewrite(m: re.Match) -> bytes:
-        path = m.group(2)
-        if path.startswith(prefix_bytes):
-            return m.group(0)  # already prefixed
-        return m.group(1) + prefix_bytes + path
-
-    return _SSE_ENDPOINT_RE.sub(_rewrite, chunk)
 
 
 # ── Request handling ───────────────────────────────────────────────────
@@ -290,21 +293,23 @@ async def handle(request: web.Request) -> web.StreamResponse:
 
     logger.info("Upstream responded %d (%s) for %s %s", upstream.status, ct, request.method, request.path)
 
-    # Stream SSE responses
+    # Streaming response (MCP Streamable HTTP returns chunked SSE for long-running
+    # tool calls, application/json for single-RPC responses — handle both transparently).
     if "text/event-stream" in ct:
         response = web.StreamResponse(status=upstream.status, headers=resp_headers)
         await response.prepare(request)
         try:
             async for chunk in upstream.content.iter_any():
-                logger.info("SSE chunk: %s", chunk[:300])
-                chunk = rewrite_sse_paths(chunk, PATH_PREFIX)
+                if request.transport is None or request.transport.is_closing():
+                    logger.info("Downstream transport closing for %s", request.path)
+                    break
                 await response.write(chunk)
         except ConnectionResetError:
-            logger.info("SSE client disconnected for %s", request.path)
+            logger.info("Client disconnected for %s", request.path)
         except Exception as exc:
-            logger.warning("SSE streaming error: %s", exc)
+            logger.warning("Stream error: %s", exc)
         finally:
-            await upstream.release()
+            upstream.close()
         return response
 
     # Regular responses

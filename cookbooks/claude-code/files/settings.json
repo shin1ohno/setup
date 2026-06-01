@@ -30,7 +30,17 @@
       "Bash(cat :*:*)",
       "Bash(osascript -e:*)",
       "mcp__context7__resolve-library-id",
-      "mcp__context7__get-library-docs"
+      "mcp__context7__get-library-docs",
+      "WebSearch",
+      "WebFetch",
+      "mcp__claude_ai_Cognee__search",
+      "mcp__claude_ai_Cognee__cognify",
+      "mcp__claude_ai_Cognee__cognify_status",
+      "mcp__claude_ai_Cognee__save_interaction",
+      "mcp__claude_ai_Cognee__list_data",
+      "mcp__claude_ai_memory__search_memory",
+      "mcp__claude_ai_memory__add_memories",
+      "mcp__claude_ai_memory__list_memories"
     ],
     "ask": [
       "Bash(git push:*)"
@@ -55,11 +65,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/pre-commit-test.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/pre-commit-test.rb"
           },
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/block-co-authored-by.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/block-co-authored-by.rb"
           }
         ]
       }
@@ -81,11 +91,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/check-trailing-newline.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/check-trailing-newline.rb"
           },
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/check-whitespace-lines.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/check-whitespace-lines.rb"
           }
         ]
       }
@@ -96,7 +106,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ruby ~/.claude/hooks/post-compact-remind.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/post-compact-remind.rb"
           }
         ]
       }

@@ -1,0 +1,74 @@
+# Rendered at deploy time by lxc-elasticsearch/default.rb — substitutes
+# @@NODE_NAME@@ and @@TRANSPORT_HOST@@ from the per-LXC node attributes.
+# Phase 3b ships transport-TLS only; xpack.security.http.ssl.enabled is
+# left disabled (set to true in Phase 7-tls).
+cluster.name: es-home-monitor
+node.name: @@NODE_NAME@@
+node.roles: [master, data, ingest]
+
+# Native systemd install — ES binds directly to the LXC's interface IP.
+# No docker-bridge netns split required (the bind/publish workaround was
+# a docker-ism). network.host covers both HTTP (9200) and transport (9300).
+network.host: @@TRANSPORT_HOST@@
+http.port: 9200
+transport.port: 9300
+
+# Static cluster discovery — three combined-role nodes.
+discovery.seed_hosts:
+  - 192.168.1.77:9300   # es-0 (CT 112)
+  - 192.168.1.78:9300   # es-1 (CT 113)
+  - 192.168.1.79:9300   # es-2 (CT 114)
+# NOTE: cluster.initial_master_nodes is intentionally NOT set here. It is a
+# bootstrap-only setting that ES uses on the very first cluster formation
+# only; once the cluster has formed (and persisted its voting configuration
+# to disk under path.data), subsequent restarts must NOT reference it
+# — leaving it set produces a startup warning about data-loss risk if any
+# listed node is missing. For a fresh-host bootstrap, set it via env on the
+# first node only (e.g. ES_JAVA_OPTS or a one-shot override drop-in), or
+# rely on discovery.seed_hosts auto-discovery once 2+ nodes are reachable.
+
+# Memory locking — requires LXC `lxc.prlimit.memlock unlimited` (Phase 3a
+# manual op) + LimitMEMLOCK=infinity in the systemd override (Phase 3b
+# native). The DEB unit defaults LimitMEMLOCK to infinity, but the
+# override re-states it for cookbook-source-of-truth clarity.
+bootstrap.memory_lock: true
+
+# Synthetic _source mode is configured per-index via component templates
+# (see files/component-templates/logs-rtx-mappings.json).
+
+# === Security ===
+xpack.security.enabled: true
+xpack.security.autoconfiguration.enabled: false
+
+# Transport TLS — node-to-node communication. Cert + key are PEM files
+# fetched from SSM and installed at /etc/elasticsearch/certs/ by the
+# cookbook. Native ES enforces a Java SecurityManager FilePermission
+# constraint: SSL resources MUST live under /etc/elasticsearch — paths
+# anywhere else (e.g. /data/elasticsearch/certs/) are denied at startup
+# with `SslConfigException: cannot read configured PEM certificate_authorities
+# ... access to read the file is blocked; SSL resources should be placed
+# in the [/etc/elasticsearch] directory`. Relative paths resolve against
+# ES_PATH_CONF=/etc/elasticsearch, so `certs/...` would also work; we use
+# absolute /etc/elasticsearch/certs/ for clarity.
+xpack.security.transport.ssl.enabled: true
+xpack.security.transport.ssl.verification_mode: certificate
+xpack.security.transport.ssl.client_authentication: required
+xpack.security.transport.ssl.key: /etc/elasticsearch/certs/@@NODE_NAME@@.key
+xpack.security.transport.ssl.certificate: /etc/elasticsearch/certs/@@NODE_NAME@@.crt
+xpack.security.transport.ssl.certificate_authorities:
+  - /etc/elasticsearch/certs/ca.crt
+
+# HTTP TLS — Phase 7-tls. Reuses the transport-layer node cert (same
+# /etc/elasticsearch/certs/ paths, same SAN).
+xpack.security.http.ssl.enabled: true
+xpack.security.http.ssl.key: /etc/elasticsearch/certs/@@NODE_NAME@@.key
+xpack.security.http.ssl.certificate: /etc/elasticsearch/certs/@@NODE_NAME@@.crt
+xpack.security.http.ssl.certificate_authorities:
+  - /etc/elasticsearch/certs/ca.crt
+
+# Native install: ES reads /etc/elasticsearch/elasticsearch.yml. The
+# data, logs, and certs directories live under /data/elasticsearch/ via
+# the path.* directives below (DEB default would be /var/lib/elasticsearch
+# and /var/log/elasticsearch).
+path.data: /data/elasticsearch/data
+path.logs: /data/elasticsearch/logs

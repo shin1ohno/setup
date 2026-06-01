@@ -44,3 +44,21 @@ node.reverse_merge!(
 include_cookbook "lxc-monitoring"
 include_role "lxc-core"
 include_cookbook "auto-mitamae-orchestrator"
+
+node.reverse_merge!(elastic_agent: {
+  tags: ["lxc", "monitoring"],
+  # Enable Prometheus federation input — CT 111 is the only host in the
+  # fleet running Prometheus, so this is the only LXC where the
+  # `prometheus/collector` integration makes sense. Streams U/V/W
+  # (Kibana dashboards: RTX Routers, Auto-mitamae Fleet, Proxmox via
+  # Prometheus) consume the resulting metrics-prometheus.collector-default
+  # data stream.
+  enable_prometheus_integration: true,
+  # Enable Synthetics integration — centralized probe-host topology.
+  # CT 111 probes 14 LXC service endpoints (HTTP + TCP) and feeds the
+  # synthetics-* indices, which back the Kibana Observability Uptime
+  # app. See cookbooks/elastic-agent/files/elastic-agent.synthetics-input.yml
+  # for the endpoint inventory.
+  enable_synthetics_integration: true,
+})
+include_cookbook "elastic-agent"

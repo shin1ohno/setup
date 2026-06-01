@@ -31,6 +31,11 @@ node.reverse_merge!(
 )
 
 include_cookbook "docker-engine"
+include_cookbook "awscli"
+
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "cookbooks", "ssh-keys", "files", "aws-config.json")))
+aws_profile = ssh_keys_config["aws_profile"]
+aws_region  = ssh_keys_config["aws_region"]
 
 deploy_dir = "#{node[:setup][:home]}/deploy/weave"
 
@@ -170,9 +175,30 @@ file "#{deploy_dir}/docker-compose.yml" do
         restart: unless-stopped
         depends_on:
           - mosquitto
+        # Container netns has its own resolver; LXC /etc/hosts is invisible.
+        # OTLP exporter targets apm-server.home.local — without this, LAN
+        # DNS outage (RTX SERVFAIL on home.local, see PR #390) breaks the
+        # exporter at startup. Defense-in-depth alongside Tailscale split-DNS.
+        # IP from contracts/devices.json apm-server entry (CT 116, IP .81).
+        extra_hosts:
+          - "apm-server.home.local:192.168.1.81"
+        env_file:
+          # Phase 4 APM env: OTEL_EXPORTER_OTLP_HEADERS holds the
+          # weave-server-scoped ApiKey fetched from SSM at apply time
+          # (mode 0600). Endpoint + service-name + deployment-env are
+          # in plaintext under `environment:` below.
+          - ./weave-server.env
         environment:
           MQTT_HOST: mosquitto
           MQTT_PORT: 1883
+          OTEL_EXPORTER_OTLP_ENDPOINT: https://apm-server.home.local:8200
+          # Mount + reference the home APM Server CA cert so tonic's
+          # gRPC TLS handshake verifies against es_ca (not in OS roots).
+          # Without this the SDK silently drops every batch with
+          # "TLS handshake error: EOF" visible only in apm-server logs.
+          OTEL_EXPORTER_OTLP_CERTIFICATE: /etc/ssl/apm-ca.crt
+          OTEL_SERVICE_NAME: weave-server
+          DEPLOYMENT_ENVIRONMENT: home
         ports:
           # weave-server listens on 3001 (api_port) per its source. The
           # legacy nginx upstream config in home-monitor still maps 8888
@@ -182,6 +208,7 @@ file "#{deploy_dir}/docker-compose.yml" do
           - "8888:3001"
         volumes:
           - ./weave-data:/data
+          - ./apm-ca.crt:/etc/ssl/apm-ca.crt:ro
 
       weave-web:
         build:
@@ -208,9 +235,63 @@ end
 # weave compose spec does not consume a .env file (Roon Core IP and
 # weave_git_ref come from node attributes baked into docker-compose.yml
 # at apply time).
+# Phase 4 APM env: weave-server.env holds the OTLP ApiKey for
+# apm-server.home.local:8200. Fetched from SSM
+# /monitoring/apm/api-keys/weave-server (per-service rotation isolated).
+# Format = single bare KEY=VALUE per docker-compose env_file spec.
+apm_env_path = "#{deploy_dir}/weave-server.env"
+# Phase 4 APM CA: weave-server.env doesn't ship the CA bundle, but
+# the OTel gRPC TLS handshake needs to trust es_ca (not in OS roots).
+# Mount this cookbook-fetched copy of /monitoring/apm/ca/cert into the
+# container at /etc/ssl/apm-ca.crt (docker-compose volumes:) and point
+# OTEL_EXPORTER_OTLP_CERTIFICATE at it (already wired in the
+# `environment:` block of the weave-server service above).
+apm_ca_path = "#{deploy_dir}/apm-ca.crt"
+
+require_external_auth(
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/apm/* SSM params",
+  check_command: "aws ssm get-parameter --name /monitoring/apm/api-keys/weave-server " \
+                 "--with-decryption --profile #{aws_profile} --region #{aws_region} " \
+                 "> /dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
+                "/monitoring/apm/* in #{aws_region}. " \
+                "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
+  # Skip when env file AND CA cert already exist. SSM regen on every
+  # apply would rotate the .env mtime + force-recreate the container;
+  # we want that only when the key/CA itself changes (manual rotation
+  # via bin/issue-apm-api-keys.sh or es_ca regen).
+  skip_if: -> { File.exist?(apm_env_path) && File.exist?(apm_ca_path) },
+) do
+  execute "generate weave-server APM env" do
+    command <<~SH.strip
+      umask 077 && key=$(aws ssm get-parameter \
+        --name /monitoring/apm/api-keys/weave-server \
+        --with-decryption \
+        --profile #{aws_profile} --region #{aws_region} \
+        --query Parameter.Value --output text) && \
+        printf 'OTEL_EXPORTER_OTLP_HEADERS=authorization=ApiKey %s\n' "$key" > #{apm_env_path} && \
+        chmod 0600 #{apm_env_path}
+    SH
+    user user
+    notifies :run, "execute[restart weave]"
+  end
+
+  execute "fetch apm-server CA cert for weave-server" do
+    command "aws ssm get-parameter --name /monitoring/apm/ca/cert " \
+            "--profile #{aws_profile} --region #{aws_region} " \
+            "--query Parameter.Value --output text > #{apm_ca_path} && " \
+            "chmod 0644 #{apm_ca_path}"
+    user user
+    notifies :run, "execute[restart weave]"
+  end
+end
+
 compose_service "weave" do
   compose_path "#{deploy_dir}/docker-compose.yml"
   deploy_dir deploy_dir
 end
 
 include_role "lxc-core"
+
+node.reverse_merge!(elastic_agent: { tags: ["lxc", "weave"] })
+include_cookbook "elastic-agent"

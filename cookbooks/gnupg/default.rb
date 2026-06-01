@@ -76,12 +76,29 @@ if node[:platform] == "darwin"
   package "pinentry"
 end
 
-# Add GnuPG to profile
+# Add GnuPG to profile. Defer `gpg-connect-agent updatestartuptty` until
+# first gpg / git invocation. The eager call costs ~13ms per shell start;
+# the typical shell never invokes gpg, so the cost was pure waste.
+# GPG_TTY is exported eagerly so gpg-agent has a TTY hint when the
+# lazy-loader fires.
 add_profile "gnupg" do
-  bash_content <<~EOH
-    # GPG Agent configuration
+  bash_content <<~'EOH'
+    # GPG Agent configuration. Each wrapper self-unfunctions on first
+    # invocation after pinging gpg-agent for a fresh TTY. The agent
+    # call is inlined (no shared helper) because Claude Code's shell
+    # snapshot drops single-underscore-prefixed functions, which broke
+    # the earlier `_sh1_gpg_tty_sync` helper-based design with
+    # `command not found: _sh1_gpg_tty_sync` on every git invocation.
     export GPG_TTY=$(tty)
-    # Refresh gpg-agent tty in case user switches into an X session
-    gpg-connect-agent updatestartuptty /bye >/dev/null 2>&1 || true
+    gpg() {
+      unfunction gpg 2>/dev/null
+      command gpg-connect-agent updatestartuptty /bye >/dev/null 2>&1 || true
+      command gpg "$@"
+    }
+    git() {
+      unfunction git 2>/dev/null
+      command gpg-connect-agent updatestartuptty /bye >/dev/null 2>&1 || true
+      command git "$@"
+    }
   EOH
 end

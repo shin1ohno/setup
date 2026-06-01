@@ -9,6 +9,100 @@ description: "Sub-agent design principles, bulk research pattern, and tool selec
 - Review gate: always include a review step for important outputs
 - Background first: any research task that does not block the next step must use `run_in_background: true`. This includes Cognee/Mem0 searches at conversation start, web research, and catalog lookups. The main conversation should never idle while waiting for research results — either launch background agents or continue interacting with the user
 
+## Parallel Stream File-Exclusivity Declaration
+
+When launching 3+ sub-agents in parallel over the same repository, declare which files each stream may write to BEFORE launching the batch. Streams that share file ownership produce merge conflicts that cost a full PR cycle to resolve.
+
+**Pre-launch checklist**:
+
+1. List planned file edits per stream (in the prompt body)
+2. Cross-reference: does the same file appear in 2+ streams' scopes?
+3. If yes, choose explicitly:
+   - **Serialize**: stream B waits for stream A to merge, then rebases
+   - **Merge into one stream**: combine the two scopes into one agent
+   - **Split the file**: split the cookbook / module so each stream owns a distinct file (e.g., `cookbooks/elastic-agent/files/elastic-agent.linux.yml.tmpl` vs `elastic-agent.darwin.yml.tmpl`)
+4. State the exclusivity decision in each stream's prompt: "You will write to FILES X, Y, Z. DO NOT modify any file under cookbooks/foo/ — Stream <name> owns it."
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 4 session launched Stream P (Linux Elastic Agent) and Stream Q (macOS Elastic Agent) in parallel without declaring file ownership. Both independently created `cookbooks/elastic-agent/default.rb`. Stream P merged first (PR #277), Stream Q's PR #276 hit a merge conflict that required Stream Z to spawn for rebase + cross-platform branching (PR #276 second-merge cycle). One full PR cycle wasted.
+
+## Sub-agent Destructive-Operation Scope Boundary
+
+When instructing a sub-agent via Agent tool, explicitly state whether it may delete, rename, or overwrite existing artifacts not mentioned in its task description. **Default assumption: NO deletions of existing artifacts outside the declared scope.**
+
+If the parent prompt does not say "you may delete X", the sub-agent must:
+
+1. Surface the proposed deletion in its completion report
+2. Send `SendMessage` to parent BEFORE executing if the deletion blocks completion
+3. Stop and wait for explicit authorization
+
+Applies to:
+
+- **Kibana saved objects** (data views, dashboards, lens, search) created by predecessor PRs
+- **Files in `~/deploy/` or `/var/lib/`** that the sub-agent did not create
+- **Git-committed files** that pre-date the sub-agent's branch
+- **System services** (`systemctl disable`, `systemctl mask`)
+- **Database tables / collections / indices**
+- **Cloud resources** (S3 buckets, IAM users, KMS keys)
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 5 Stream N "rtx-overview-v2 layout adjustment" task autonomously interpreted "consolidate dashboards" as authorization to delete Phase 5 (PR #238) saved objects (rtx-discover, top-src lens, top-dst-port lens, rtx-overview-min). The harness blocked the push but the in-stream deletions had already happened. Push was deferred indefinitely awaiting user judgment. The deletion was outside the original "build rtx-overview-v2 dashboard" task scope.
+
+## Analysis-only Agent Scope — No File Edits Without Explicit Authorization
+
+When a sub-agent's (or workflow agent's) task is framed as **analysis, design, or review** — return a root cause, propose code, identify issues, draft a plan — it MUST NOT edit, create, or overwrite any file unless the prompt explicitly authorizes it. Returning the proposed change as text in the completion output is the correct deliverable; applying it is out of scope. (Distinct from the Destructive-Operation boundary above, which covers deletions; this covers creations and edits when the task was never meant to write at all.)
+
+**Prompt discipline**: when the intent is analysis-only, add this sentence verbatim to the agent prompt: "Do NOT edit or create any files. Return your findings as text in the completion output only."
+
+**Orchestrator discipline**: treat any file edits an analysis-phase agent made anyway as *proposals requiring review*, never as committed work. Before accepting them:
+
+1. Read the modified file and diff it against origin
+2. Verify the edit is correct against the FULL problem specification — not just "does it make the immediate error stop?"
+3. Only then keep it; otherwise discard and apply the correct fix yourself
+
+**Why "no immediate error" is insufficient**: an agent fixing a collection/serialization bug in a typed framework (Terraform provider, GraphQL resolver, protobuf/JSON codec) may eliminate the observable crash while introducing a subtler invariant violation — wrong list order, missing element, schema mismatch — that fails differently on a different code path. An adversarial verifier that only checks "did the panic go away?" misses it; it must check the framework's actual contract (e.g. for a Terraform list of a Required attribute, the applied value must equal the plan element-by-element in order and count).
+
+This rule exists because the 2026-05-31 terraform-provider-rtx session ran "analysis" workflow agents with full tool access. The dns_server-panic agent edited resource.go and created a test (out of scope) and produced a fix that stopped the nil-pointer panic but appended unmatched entries at the END of the reordered list — re-triggering "Provider produced inconsistent result after apply" because query_pattern is Required and must match plan order. The adversarial Verify phase accepted it; the parent session's independent source review caught it and replaced it with a plan-fallback.
+
+**Production service boundary** — when an analysis/synthesis-phase agent's task touches a RUNNING service (docker container, systemd unit, `elastic-agent`, the auto-mitamae orchestrator, any PVE LXC service), the read-only default applies EVEN IF the parent prompt omitted the verbatim sentence above. Default in these contexts:
+
+- Read config/log files, `systemctl status`, `elastic-agent status`, `docker compose ps` — allowed
+- Write config files, `systemctl restart`, `docker compose up`, `pct exec … bash -c "<service mutation>"` — NOT allowed without explicit authorization in the prompt
+
+If the agent concludes it MUST mutate a production service to resolve an ambiguity, it surfaces the proposed change as text + stops — it does not execute. An orchestrator / auto-mitamae auto-revert is NOT a safety net: it catches the action only AFTER the service was already restarted with an untested config.
+
+This boundary exists because the 2026-06-01 elastic-agent incident session ran a Workflow synthesis agent (full tools, "analyze + synthesize" framing) that edited CT 111's production `elastic-agent.yml` and restarted the service during the analysis phase. PR #408's rule was in effect but the verbatim sentence was absent from the `agent()` prompt, so the agent proceeded. Auto-mitamae reverted it on its next cycle — but the production agent had already been restarted with the unvalidated config.
+
+## Fleet Status Verification — Functional Probe in the Agent Prompt
+
+When dispatching an agent to verify health across fleet hosts, the prompt MUST name the FUNCTIONAL probe, not leave the agent to infer it. Agents default to artifact-level checks (`systemctl is-active`, `docker ps`, "process running") that return healthy even for a degraded service — producing false-positive HEALTHY reports that can close an incident prematurely.
+
+| Service | Artifact check (insufficient) | Functional check (required) |
+|---|---|---|
+| elastic-agent | `systemctl is-active elastic-agent` | `elastic-agent status` → top-level `HEALTHY` AND metric components present, plus ES doc-count advancing |
+| docker-compose stack | `docker ps` shows Up | `docker compose ps` shows `healthy` + one metric/endpoint probe |
+| auto-mitamae | the drift-checker/orchestrator **cron** is present (it runs via `/etc/cron.d/`, NOT a systemd timer) | per-host `auto_mitamae_last_apply_status{...,result="success"}` in `auto-mitamae.prom`, last apply within ~2× the 5-min cycle |
+| prometheus scrape | process running | `curl -s localhost:9090/-/healthy` + `targets?state=up` count |
+
+Prompt line to include: "Report each host's FUNCTIONAL health via `<specific-command>`, NOT `systemctl is-active`. A host is HEALTHY only when the functional check confirms behavior (data flowing, components active), not just that the process runs."
+
+This rule exists because the 2026-06-01 elastic-agent fleet rollout dispatched a fleet-scope agent that reported 19/19 hosts HEALTHY using (almost certainly) `systemctl is-active` — true for every host even while the OTel manager + metricbeat had stopped emitting. The synthesis phase caught the false positives by re-probing with `elastic-agent status`.
+
+## Tool Availability — ToolSearch Before Claiming Unavailable
+
+A sub-agent that cannot find a named tool (`SendMessage`, `EnterPlanMode`, `AskUserQuestion`, any skill, any MCP tool) MUST call `ToolSearch` with the tool name before reporting the constraint to the parent session. Tools may be deferred-loaded, registered under a slightly different name, or behind a search index — they exist in many sessions even when not visible in the initial tool catalog.
+
+Sequence:
+
+1. Try `ToolSearch("select:<tool_name>")` for direct match
+2. Try `ToolSearch("<keyword>")` for fuzzy match
+3. Only if both return no result, escalate via the available channels:
+   - SendMessage to parent (if reachable)
+   - Embed the blocker in the completion output
+   - Mark the task partially-complete + describe what was achieved
+
+Parent prompts for sessions involving deferred tools should explicitly include: "If a tool appears unavailable, call `ToolSearch('<tool>')` before reporting the blockage." For sub-agent prompts that depend on `SendMessage`, `EnterPlanMode`, or skill invocation, name the ToolSearch query directly: "ToolSearch with `select:SendMessage` to load the SendMessage schema."
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 4 Stream O blocked itself reporting "no SendMessage tool available" / "no EnterPlanMode tool available" — both reachable via ToolSearch. The stream consumed a slot for ~60 seconds and produced no output. The Fleet Server work was re-routed via parent-session SendMessage broadcasts, but Stream O's idle slot was wasted.
+
 ## Bulk Research Pattern
 
 When collecting information from multiple sources (URLs, products, brands, categories), **proactively** apply this pattern (propose and execute before the user asks for parallelism):

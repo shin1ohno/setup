@@ -35,7 +35,14 @@ end
 execute "download-llama-3-elyza-jp" do
   command "#{model_dir}/download-llama-3-elyza-jp.sh #{model_dir}"
   user node[:setup][:user]
-  not_if "ollama list | fgrep -q 'elyza:jp8b' || test -f #{model_dir}/Llama-3-ELYZA-JP-8B-q4_k_m.gguf"
+  # Skip only when ollama already has the model. Do NOT short-circuit on
+  # file existence — a previous apply interrupted mid-download leaves a
+  # truncated GGUF on disk, which the cookbook would then hand to
+  # `ollama create` and fail with "tensor offset+size exceeds file size".
+  # download.sh itself validates the on-disk file size against EXPECTED_SIZE
+  # and re-downloads on mismatch, so re-invoking it on each apply is
+  # idempotent and self-healing (fast no-op when the file is complete).
+  not_if "ollama list | fgrep -q 'elyza:jp8b'"
 end
 
 execute "create ollama model file" do

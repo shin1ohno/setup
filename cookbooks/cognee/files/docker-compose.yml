@@ -1,18 +1,4 @@
 services:
-  chromadb:
-    image: chromadb/chroma:0.6.3
-    restart: unless-stopped
-    environment:
-      - CHROMA_WORKERS=4
-    volumes:
-      - ./chroma_data:/chroma/chroma
-    healthcheck:
-      test: ["CMD", "/bin/bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
   cognee:
     image: cognee/cognee:0.5.8
     restart: unless-stopped
@@ -28,19 +14,25 @@ services:
       - CORS_ALLOWED_ORIGINS=*
       - ENABLE_BACKEND_ACCESS_CONTROL=false
       - COGNEE_SKIP_CONNECTION_TEST=true
-      - VECTOR_DB_URL=http://chromadb:8000
       - GUNICORN_WORKERS=1
       - POOL_ARGS={"pool_size":30,"max_overflow":20,"pool_recycle":300,"pool_timeout":30,"pool_pre_ping":true}
+      # Relational metadata + vector store on shared RDS Postgres (mem0).
+      # SQLite was replaced 2026-05-11 after byte-0 corruption; ChromaDB
+      # was replaced same day to consolidate on RDS PITR backups. cognee
+      # PGVectorAdapter reuses the relational engine when both target the
+      # same Postgres → single connection pool.
+      - DB_PROVIDER=postgres
+      - DB_NAME=cognee
+      - DB_USERNAME=cognee
+      - DB_PORT=5432
+      - DB_HOST=${DB_HOST}
+      - DB_PASSWORD=${DB_PASSWORD}
     volumes:
       - ./data:/app/cognee/.data_storage
       - ./entrypoint-override.sh:/app/entrypoint.sh:ro
       - ./system:/app/cognee/.cognee_system
       - ./ingest:/app/ingest:ro
-      - ${HOME}/ObsidianVaults/cognee-generated:/vault
       - ./scripts:/app/scripts:ro
-    depends_on:
-      chromadb:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
@@ -140,26 +132,8 @@ services:
       cognee:
         condition: service_healthy
 
-  vault-exporter:
-    build:
-      context: ./vault-exporter
-    restart: unless-stopped
-    environment:
-      - COGNEE_API=http://cognee:8000
-      - COGNEE_USER_EMAIL=default_user@example.com
-      - COGNEE_USER_PASSWORD=default_password
-      - EXPORT_POLL_SECONDS=60
-      - STARTUP_DELAY_SECONDS=30
-      - VAULT_DIR=/vault
-    volumes:
-      - ${HOME}/ObsidianVaults/cognee-generated:/vault
-      - ./scripts:/scripts:ro
-    depends_on:
-      cognee:
-        condition: service_healthy
-
   cognee-mcp:
-    image: cognee/cognee-mcp:latest
+    image: cognee/cognee-mcp:cpu
     restart: unless-stopped
     ports:
       - "127.0.0.1:8002:8000"
@@ -168,7 +142,7 @@ services:
     environment:
       - ENVIRONMENT=local
       - LOG_LEVEL=INFO
-      - TRANSPORT_MODE=sse
+      - TRANSPORT_MODE=http
       - MCP_LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
       - API_URL=http://cognee:8000
@@ -185,13 +159,36 @@ services:
     restart: unless-stopped
     ports:
       - "8767:8767"
+    # Container netns has its own resolver; LXC /etc/hosts is invisible.
+    # OTLP exporter targets apm-server.home.local — without this, LAN DNS
+    # outage (e.g. RTX SERVFAIL on home.local, see PR #390) breaks the
+    # exporter at startup and the SDK silently drops every batch. Defense-
+    # in-depth alongside Tailscale split-DNS. IP from contracts/devices.json
+    # apm-server entry (CT 116, IP 192.168.1.81).
+    extra_hosts:
+      - "apm-server.home.local:192.168.1.81"
+    env_file:
+      # Phase 5 APM env: OTEL_EXPORTER_OTLP_HEADERS holds the
+      # cognee-auth-proxy-scoped ApiKey fetched from SSM at apply time
+      # (mode 0600). Endpoint + service-name + deployment-env + CA path
+      # are in plaintext under `environment:` below. Shares the same
+      # .env as the rest of the cognee stack.
+      - .env
     environment:
       - SAGE_ISSUER=https://mcp.ohno.be
       - SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
       - UPSTREAM_URL=http://cognee-mcp:8000
       - PORT=8767
       - PATH_PREFIX=/cognee
-      - HOST_OVERRIDE=127.0.0.1:8000
+      - OTEL_EXPORTER_OTLP_ENDPOINT=https://apm-server.home.local:8200
+      # Mount + reference the home APM Server CA cert so the OTLP gRPC
+      # TLS handshake verifies against es_ca (not in OS roots). Without
+      # this the SDK silently drops every batch.
+      - OTEL_EXPORTER_OTLP_CERTIFICATE=/etc/ssl/apm-ca.crt
+      - OTEL_SERVICE_NAME=cognee-auth-proxy
+      - DEPLOYMENT_ENVIRONMENT=home
+    volumes:
+      - ./apm-ca.crt:/etc/ssl/apm-ca.crt:ro
     depends_on:
       cognee-mcp:
         condition: service_started

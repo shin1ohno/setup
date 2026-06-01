@@ -11,8 +11,16 @@ Group=root
 ExecStart=/usr/local/bin/node_exporter \
   --collector.textfile.directory=/var/lib/node_exporter/textfile \
   --web.listen-address=:9100
-Restart=on-failure
+Restart=always
 RestartSec=5
+# `Restart=always` (was `on-failure`): SIGPIPE is observed in production
+# when a Prometheus scrape connection drops mid-write. systemd treats
+# signal=PIPE as a clean exit and `on-failure` does NOT restart, leaving
+# node-exporter dead with no Prometheus visibility. With `always`, ANY
+# exit (clean or signal) triggers RestartSec=5 → service comes back up.
+# Empirical: monitoring CT 111 went dark for >24h on 2026-05-17 from a
+# single SIGPIPE — auto-mitamae alerts were paradoxically silent because
+# their metrics are scraped through this very exporter.
 # Hardening directives (NoNewPrivileges, ProtectSystem, ProtectHome,
 # PrivateTmp) were removed because they cause systemd's namespace setup
 # to fail with status=226/NAMESPACE inside *privileged* PVE LXCs (e.g.

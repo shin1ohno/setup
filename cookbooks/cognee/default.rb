@@ -22,7 +22,6 @@ aws_profile = ssh_keys_config["aws_profile"]
 aws_region  = ssh_keys_config["aws_region"]
 
 deploy_dir = "#{node[:setup][:home]}/deploy/cognee"
-vault_dir = "#{node[:setup][:home]}/ObsidianVaults/cognee-generated"
 
 directory deploy_dir do
   owner node[:setup][:user]
@@ -43,13 +42,6 @@ end
 # chroma_data is written by the ChromaDB container (runs as root);
 # only ensure the directory exists — do not enforce ownership.
 directory "#{deploy_dir}/chroma_data" do
-  mode "755"
-  action :create
-end
-
-directory vault_dir do
-  owner node[:setup][:user]
-  group node[:setup][:group]
   mode "755"
   action :create
 end
@@ -125,27 +117,52 @@ end
   end
 end
 
-%w[bulk_ingest.py export_vault.py watch_and_export.py].each do |f|
-  remote_file "#{deploy_dir}/scripts/#{f}" do
-    source "files/scripts/#{f}"
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "644"
-  end
+remote_file "#{deploy_dir}/scripts/bulk_ingest.py" do
+  source "files/scripts/bulk_ingest.py"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
 end
 
-directory "#{deploy_dir}/vault-exporter" do
+# pgvector HNSW indexes for the cognee vector tables. cognee's PGVectorAdapter
+# never builds an ANN index (create_vector_index just CREATE TABLEs), so every
+# similarity search seq-scans — measured ~4.9s on Entity_name (7036 rows) on the
+# shared db.t4g.micro RDS, the dominant half of the reported "8s" search latency.
+# The script is run inside the cognee container (which holds the DB_* env) by the
+# execute below; it is idempotent (CREATE INDEX CONCURRENTLY IF NOT EXISTS).
+remote_file "#{deploy_dir}/scripts/create_vector_indexes.py" do
+  source "files/scripts/create_vector_indexes.py"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+end
+
+# CPU-only override of cognee-mcp image. Removes ~5GB of dead nvidia/triton
+# libs (CT 105 has no GPU passthrough) via uninstall + flatten
+# (docker export | docker import). Plain layered uninstall would not shrink
+# the image because parent layers persist in the image graph.
+# See files/cognee-mcp-cpu/build.sh for idempotency stamp logic.
+directory "#{deploy_dir}/cognee-mcp-cpu" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
   action :create
 end
 
-remote_file "#{deploy_dir}/vault-exporter/Dockerfile" do
-  source "files/vault-exporter/Dockerfile"
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "644"
+%w[Dockerfile build.sh].each do |f|
+  remote_file "#{deploy_dir}/cognee-mcp-cpu/#{f}" do
+    source "files/cognee-mcp-cpu/#{f}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode(f == "build.sh" ? "755" : "644")
+    notifies :run, "execute[build cognee-mcp:cpu]"
+  end
+end
+
+execute "build cognee-mcp:cpu" do
+  command "#{deploy_dir}/cognee-mcp-cpu/build.sh"
+  user node[:setup][:user]
+  action :nothing
   notifies :run, "execute[restart cognee]"
 end
 
@@ -197,6 +214,21 @@ file env_temp_path do
   only_if "test -f #{env_temp_path}"
 end
 
+# APM CA cert for the auth-proxy container's OTLP TLS handshake. Fetched
+# separately from .env because the cookbook regenerates .env only on first
+# apply (skip_if File.exist?(env_output_path)). The CA cert is similarly
+# fetched once; manual rotation = delete this file and re-apply.
+apm_ca_path = "#{deploy_dir}/apm-ca.crt"
+execute "fetch apm-server CA cert for cognee auth-proxy" do
+  command "aws ssm get-parameter --name /monitoring/apm/ca/cert " \
+          "--profile #{aws_profile} --region #{aws_region} " \
+          "--query Parameter.Value --output text > #{apm_ca_path} && " \
+          "chmod 0644 #{apm_ca_path}"
+  user node[:setup][:user]
+  not_if "test -f #{apm_ca_path}"
+  notifies :run, "execute[restart cognee]"
+end
+
 # Compose orchestration via the compose_service DSL
 # (cookbooks/functions/default.rb). Emits `execute "ensure cognee running"`
 # (idempotency probe + up -d --build) and `execute "restart cognee"`
@@ -207,4 +239,19 @@ compose_service "cognee" do
   compose_path "#{deploy_dir}/docker-compose.yml"
   deploy_dir deploy_dir
   env_path env_output_path
+end
+
+# Ensure pgvector HNSW indexes exist after the stack is up. Runs every apply:
+# the script CREATE INDEX CONCURRENTLY IF NOT EXISTS over every vector column it
+# discovers, so it is a cheap no-op once indexes exist and self-heals when a new
+# cognee collection (vector table) appears. Streamed into the running container
+# via stdin so no docker cp / image rebuild is needed; the container env supplies
+# DB_HOST/DB_USERNAME/DB_PASSWORD/DB_NAME. Gated on the stack actually running so
+# fresh hosts without a populated .env skip cleanly.
+execute "ensure cognee pgvector hnsw indexes" do
+  command "docker exec -i cognee-cognee-1 python3 - " \
+          "< #{deploy_dir}/scripts/create_vector_indexes.py"
+  user node[:setup][:user]
+  only_if "test -f #{env_output_path}"
+  only_if "docker ps --format '{{.Names}}' | grep -qx cognee-cognee-1"
 end

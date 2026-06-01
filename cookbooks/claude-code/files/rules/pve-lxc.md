@@ -4,6 +4,30 @@ description: "PVE LXC operational gotchas — bind mounts, terraform import, pct
 
 # PVE LXC Operational Gotchas
 
+## Design gate: Docker-in-LXC vs apt+systemd (NEW LXC service)
+
+Before writing a new `pve/lxc-<service>.rb` recipe with docker-compose, ask via AskUserQuestion: should this service run via docker-compose or directly via apt-get + systemd unit?
+
+Docker-in-LXC reliably produces this bug class:
+
+- **bind-mount UID mismatch**: container UID 1000 vs host LXC unprivileged UID mapping (100000 offset) vs cookbook chown — TLS cert / data dir ownership all need explicit cross-layer chown
+- **container netns vs host LXC netns**: container can't bind LXC IP, requires `network.bind_host: 0.0.0.0` + `network.publish_host: <LXC IP>` split
+- **docker-proxy port-forward silently drops some (port, transport) combinations** (UDP / 9300 between same-subnet LXCs in 2026-05-09 session — 9200 worked through the same DNAT shape, 9300 had pkt-count = 0)
+- **`.env` shell-interpretation collision**: docker-compose `env_file:` reads raw KEY=VALUE, but bash `source` interprets metacharacters in values — Terraform random_password values regularly contain `(` `)` `[` `&` etc.
+- **container restart lag in apply cycle**: `docker compose down + up` race conditions vs cookbook `notifies` chain
+- **healthcheck `${VAR}` substitution unsafe**: docker-compose substitutes raw value, then shell parses as command → metacharacters break
+
+Reserve docker-compose for genuinely multi-container stacks (e.g. monitoring with prometheus + grafana + vector + 3 exporters). For single-purpose service LXCs (1 service per CT), prefer apt-get + systemd unit:
+
+- env vars: systemd `EnvironmentFile=` (no shell source, metacharacter-safe)
+- log: journalctl-integrated
+- TLS cert install: standard `/etc/<service>/certs/`, systemd `User=<service>`
+- network: LXC interface direct bind, no port forward layer
+- memlock: LXC `lxc.prlimit.memlock unlimited` inherits naturally
+- no 1.4 GB image pull on every fresh CT
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 3b session lost ~5 hours debugging an ES + Kibana docker-compose deployment. 4 of 8 cookbook bugs were direct docker-isms (`.env` source collision, ES_TMPDIR image-internal path, network bind/publish split, docker-proxy 9300 drop). LXC native install would have made all 4 structurally impossible. The user surfaced the design question mid-session ("なんで Docker を使ってるんでしょう？") — it belonged at plan time.
+
 ## PVE LXC — Bind Mounts and `terraform import`
 
 `mount_point` blocks with `volume = "/<host-path>"` (which PVE treats as `type = bind`) **cannot be created via the bpg/proxmox provider when authenticating with an API token**, regardless of the token's role (PVEAdmin included). PVE's source-level check is literal:
@@ -85,6 +109,40 @@ If the cookbook omits explicit owners for subdirectories, the bind-mount target 
 
 This rule exists because the 2026-05-06 monitoring CT 111 first mitamae apply created `/data/monitoring/{prometheus,grafana}` as `root:root` inside the container; both Prometheus (UID 65534) and Grafana (UID 472) crash-looped on first write. Recovery: in-container chown to the correct runtime UIDs, then `docker compose restart`. Plan time should have included an explicit `directory` resource per service subdirectory with the runtime UID. Dry-run on the dev box hides this because the dev box is privileged Linux without UID mapping.
 
+## `pct set -rootfs size=` does not propagate to ZFS refquota
+
+When resizing (shrink or grow) an LXC root disk on a ZFS-backed PVE host, `pct set <vmid> -rootfs <vol>,size=<N>G` updates the PVE config but does NOT update the ZFS dataset's `refquota`. The CT continues to see the old size via `df -h /` until the ZFS quota is set explicitly.
+
+Two-step is always required — `pct set` alone is insufficient:
+
+```bash
+# Confirm the dataset name from PVE config
+pct config <vmid> | grep ^rootfs
+# → e.g. rootfs: local-zfs:subvol-105-disk-0,size=8G
+
+# Apply the ZFS quota separately (replace <N> and <vmid>)
+zfs set refquota=<N>G rpool/data/subvol-<vmid>-disk-0
+
+# Verify both layers report the same value
+zfs get -H -o value refquota rpool/data/subvol-<vmid>-disk-0
+pct exec <vmid> -- df -h /
+```
+
+**Detection signal**: `pct config <vmid>` reports the new size, but `df -h /` inside the CT reports the old size. The mismatch persists across `pct stop` / `pct start` cycles because `df` reflects the ZFS quota, which `pct set` does not touch.
+
+**Order of operations for shrink** (must be before quota change so `used > target` doesn't briefly violate the quota):
+
+1. `pct exec <vmid> -- bash -c 'cd /path/to/compose && docker compose down'` (clean stop)
+2. `pct stop <vmid>`
+3. `pct set <vmid> -rootfs <vol>,size=<N>G` (PVE config)
+4. `zfs set refquota=<N>G rpool/data/subvol-<vmid>-disk-0` (ZFS quota)
+5. `pct start <vmid>`
+6. Verify `df -h /` reports the new size
+
+For grow, the order is the same but the quota change is online-safe (CT can be running). Recovery from a too-small shrink is one-liner: `zfs set refquota=<larger>G rpool/data/subvol-<vmid>-disk-0` + sync `pct set` config. ZFS refquota grow takes effect immediately.
+
+This rule exists because the 2026-05-09 cognee disk shrink (32G → 8G) had `pct set -rootfs ...,size=8G` succeed silently, but `df -h /` inside CT 105 still showed 32G. `zfs get refquota` confirmed PVE only updated its own config, not the underlying ZFS dataset. The fleet-config alignment that motivated the shrink was incomplete until `zfs set refquota` was applied as a second step.
+
 ## `pct exec` from `ssh root@<pve-host>` is non-TTY — `STDIN.tty?` returns false
 
 `ssh root@<pve-host> 'pct exec <vmid> -- bash -lc "..."'` does NOT propagate a TTY into the LXC. `STDIN.tty?` inside the inner bash returns `false`, even though the outer ssh session might have one. Plans that assume `pct exec` "is" TTY-equivalent (and therefore that `cookbooks/functions/default.rb` `require_external_auth` will use its TTY-prompted retry path) are wrong.
@@ -143,3 +201,24 @@ If the LXC is privileged (no `unprivileged:` line) AND the unit status is `activ
 **When designing new fleet cookbooks that ship systemd units**: assume any LXC in the fleet might be privileged (today only CT 100 roon is, but the rule is "support both"). Skip the namespace-related hardening directives in the cookbook-managed unit; if defense-in-depth is needed for a specific deployment, add a drop-in (which, as noted, may not actually take effect on privileged LXCs — accept the limitation).
 
 This rule exists because setup PR #164 (2026-05-06) was required after Phase 3b apply on CT 100 left node-exporter cycling in `activating` state. CT 100 (roon) is the only privileged LXC in the home fleet (it predates the unprivileged-default convention). The hardening directives shipped fine on every other LXC; only privileged tripped over them.
+
+## PVE / LXC reachability — read the LAN IP from `devices.json`, do not guess FQDNs
+
+`contracts/devices.json` logical names (the JSON key, e.g. `pve-host`, `cognee`, `monitoring`) are identifiers, not hostnames. The routable address for SSH / API / `pct exec` access is the `lxc.ip` or top-level `ip` field of that entry — NOT `<key>.home.local`, `<key>.tailscale.ts.net`, or any other constructed FQDN. The logical name and the machine's `hostname` often diverge (e.g., `pve-host` in devices.json while the machine reports `hostname=pro` and listens on `192.168.1.10`).
+
+Probe before SSH / scp / curl:
+
+```bash
+jq -r '.devices["<logical-name>"] | .lxc.ip // .ip // .tailscale.ip // "not found"' \
+  ~/ManagedProjects/home-monitor/contracts/devices.json
+```
+
+If the result is `not found`, dump the entry's whole structure to find the correct field:
+
+```bash
+jq '.devices["<logical-name>"]' ~/ManagedProjects/home-monitor/contracts/devices.json
+```
+
+Construct an FQDN only when the entry has an explicit `fqdn` or `tailscale` field — never from the logical name alone. For PVE LXCs specifically, prefer `pct exec <ct_id>` from the PVE host over direct SSH, since LXCs may not have SSH keys provisioned for your user.
+
+This rule exists because the 2026-05-10 cognee leak diagnosis burned three SSH attempts on `pve-host.home.local`, `pve.home.local`, and other guessed FQDNs before discovering that `pve-host` (devices.json logical name) maps to the same machine as `pro` (the bare-metal Linux entry, IP `192.168.1.10`). The correct path was always `ssh root@192.168.1.10` — the IP was right there in `pve-host`'s sibling `pro` entry, not under a constructed FQDN.

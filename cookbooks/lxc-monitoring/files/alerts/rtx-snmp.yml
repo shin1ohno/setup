@@ -1,0 +1,34 @@
+groups:
+  - name: rtx-snmp
+    interval: 30s
+    rules:
+      # snmp_exporter polls each RTX (hnd .253 / itm .254) over SNMPv1. `up == 0`
+      # means the per-target scrape failed end-to-end — the most common cause is
+      # the RTX dropping its `snmp host any` / `snmpv2c host any` access-control
+      # line on a reboot (the line gates whether the daemon answers at all;
+      # symptom = `recvfrom: connection refused` in the snmp-exporter log). That
+      # ACL is now declared in home-monitor `rtx_snmp_server.<router>` (provider
+      # >= 0.15.0), so recovery is a `terraform apply -target=rtx_snmp_server.<r>`.
+      #
+      # `for: 10m` rides out a transient slow walk: the job is 30s interval /
+      # 25s timeout and a quiet-LAN RTX1210 walk takes ~7-16s, so an occasional
+      # single missed scrape must not page. 10m ≈ 20 cycles = a real, sustained
+      # outage, not a blip. This alert exists because the 2026-05-31 HND SNMP
+      # outage was silent — there was no snmp-rtx down alert at all.
+      - alert: RTXSnmpTargetDown
+        expr: up{job="snmp-rtx"} == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "RTX SNMP target {{ $labels.router }} ({{ $labels.instance }}) not responding"
+          description: |
+            snmp_exporter could not scrape RTX {{ $labels.router }} at
+            {{ $labels.instance }} for >10m — RTX observability (interface
+            counters, sysUpTime) is blind. Most likely the device lost its
+            `snmp host any` / `snmpv2c host any` ACL on a reboot. Check
+            `docker logs monitoring-snmp-exporter | grep {{ $labels.instance }}`
+            for `connection refused`, then reconcile with
+            `terraform apply -target=rtx_snmp_server.{{ $labels.router }}`
+            in home-monitor (provider writes the ACL to running config AND saves).

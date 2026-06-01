@@ -128,3 +128,92 @@ Why this works:
 **Detection while composing**: if the command body has any of `()`, `$()`, backticks, `*`, `!`, `<<`, or quotes nested >1 level deep, switch to the heredoc + `bash -s` form. The cost of switching is one extra line; the cost of debugging a layer-2 misinterpretation through three remote shells is several round-trips.
 
 This rule exists because the 2026-05-06 monitoring CT 111 bootstrap tried `ssh ... pct exec ... bash -c "echo === step 1.3: bin/setup (mitamae binary download) ==="` and failed with `bash: -c: line 12: syntax error near unexpected token '('`. Removing the parens worked but the trap is structural — the next session will hit it with a different metacharacter unless the heredoc + `bash -s` pattern is the default.
+
+**Same trap fires for direct (non-nested) `bash -c '...'` too**: any `()` inside the single-quoted body — typically commentary parentheses in `echo === foo (bar) ===` — is interpreted as subshell grouping by the inner bash. Both forms break:
+
+```
+bash -c 'echo === foo (bar) ==='
+# bash: -c: line 1: syntax error near unexpected token '('
+
+ssh host 'echo === foo (bar) ==='
+# Same error at the remote shell, before reaching anything else
+```
+
+Fix options (any work):
+
+- Drop the parens: `echo === foo bar ===`
+- Escape: `echo "=== foo (bar) ==="` (use double quotes outside, or escape `\(\)`)
+- Heredoc: `bash <<'EOF' ... EOF` (no -c argument)
+
+**Composition gate**: before writing any `bash -c '...'` or `ssh host '...'`, scan the inner body for the metacharacter set `()`, `$()`, backticks, `*`, `!`, `<<`, nested quotes. Any hit → switch shape before sending. Three repeats of the same `syntax error near unexpected token '('` in one session (2026-05-11 aws bootstrap session) traced to commentary parens inside `echo === ... ===` headers in probe blocks. The composition-time scan would have caught each instance in <1 sec.
+
+## Prefer sed/awk over `python3 -c` for inline filesystem edits
+
+When the task is "edit one line of an INI/JSON/YAML file" or "remove a section header", default to `sed`/`awk` over `python3 -c "..."`. The Python form has two recurring failure modes that don't apply to sed:
+
+1. **Multi-line `-c` payload is fragile in chat / prompt presentation**: when you present a multi-line `python3 -c "..."` block to the user, markdown wrapping / paste rendering frequently adds leading spaces to continuation lines. Python's significant indentation then surfaces as `IndentationError: unexpected indent` even though the source was syntactically valid before paste. sed/awk scripts are statement-per-line with no indentation semantics — wrap-resilient.
+
+2. **`python3 -c` with shell-quoted multi-line is hard to compose verbatim**: avoiding shell-side escape collisions for `'...'` inside `"..."` for inside `;`-chained statements gets messy fast. sed/awk's regex-and-action grammar is one shell-quote layer deep.
+
+**Concrete substitutions**:
+
+| Task | python3 -c (avoid) | sed/awk (prefer) |
+|---|---|---|
+| Remove INI section `[name]` and its body | `python3 -c "import configparser; c=configparser.ConfigParser(); c.read('f'); c.remove_section('name') if 'name' in c else None; c.write(open('f','w'))"` | `sed -i.bak '/^\[name\]$/,/^\[/{/^\[name\]$/d; /^\[/!d}' f` |
+| Replace value of `key = ...` in INI | `python3 -c "..."` (multi-line) | `sed -i 's/^key = .*/key = newvalue/' f` |
+| Filter JSON one key | (Python possible) | `jq '.key' f` (preferred over either) |
+| Edit YAML | (Python possible) | `yq` if available, else sed for simple cases |
+
+**When python IS the right tool**: when the edit needs Python-grade parsing (multi-line JSON edit with comments, complex schema migration, anything where regex fragility outweighs paste fragility). In those cases, `python3 < /tmp/script.py` with the script written via Write first — never `python3 -c` inline.
+
+This rule exists because the 2026-05-11 aws bootstrap session used `python3 -c "import configparser; ..."` to remove the `[sh1admn]` section from `~/.aws/credentials`. The presented multi-line command paste-broke with `IndentationError`, two retry shapes (heredoc + one-liner with `;`) both also paste-broke, and the user explicitly corrected with "Pythonやめて". One sed command worked first try.
+
+## awk Cross-platform Pitfalls (BWK vs gawk)
+
+`awk -v VAR=value` looks portable BUT **macOS BWK awk rejects literal newlines inside `-v` values**, while Linux gawk accepts them. CI runs on Linux → bug invisible. mitamae apply on Mac → `awk: newline in string` with exit 2.
+
+Trap (real, 2026-05-11 setup PR #330):
+
+```bash
+ES_HOSTS_YAML="    - https://es-0...
+    - https://es-1...
+    - https://es-2..."
+
+awk -v hosts="${ES_HOSTS_YAML}" '{ ... }'   # OK on Linux gawk, FAILS on macOS BWK
+```
+
+**Fixes** (pick by context):
+
+1. **Temp file pattern** (most portable, no escape traps):
+
+```bash
+HOSTS_FILE=$(mktemp)
+trap 'rm -f "${HOSTS_FILE}"' EXIT
+printf '%s\n' "${ES_HOSTS_YAML}" > "${HOSTS_FILE}"
+awk -v hosts_file="${HOSTS_FILE}" '
+{
+    if ($0 ~ /@@MARKER@@/) {
+        while ((getline line < hosts_file) > 0) print line
+        close(hosts_file)
+    } else { print }
+}' "$TEMPLATE"
+```
+
+2. **stdin via pipe** (when the value IS the awk input):
+
+```bash
+printf '%s\n' "${MULTI_LINE}" | awk '{ ... }'
+```
+
+3. **Replace newlines with a sentinel + split inside awk** (when the value is one of several `-v` inputs):
+
+```bash
+awk -v hosts="$(printf '%s' "${MULTI_LINE}" | tr '\n' '\036')" \
+    'BEGIN { n = split(hosts, a, "\036") } { ... }'
+```
+
+Default to the **temp file pattern**. Other approaches accumulate escape complexity. `-v` values with a single embedded newline can sometimes pass on Mac too — do not rely on this; treat any multi-line `-v` value as unsupported.
+
+**Plan-time detection**: any cookbook with a multi-line shell variable feeding `awk -v` must be tested with macOS BWK awk before merge. `bash -n` does not catch this; the failure surfaces only at runtime under mac awk. CI on Linux gawk is also blind to it.
+
+This rule exists because setup PR #330 (2026-05-11) fixed a 3-host `ES_HOSTS_YAML` -v failure in the elastic-agent cookbook. CI (Linux gawk) passed; macOS mitamae apply failed with `awk: newline in string` exit 2. Fix shipped as the temp file pattern in `cookbooks/elastic-agent/files/generate_config.sh`.

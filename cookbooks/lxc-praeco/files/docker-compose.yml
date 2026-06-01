@@ -1,0 +1,58 @@
+# praeco (ElastAlert 2 GUI) — PoC stack
+#
+# - elastalert-server (praecoapp/elastalert-server:20260324)
+#     ElastAlert 2 wrapper. REST API :3030, WebSocket :3333. Network
+#     alias `elastalert` because the praeco-shipped nginx config
+#     hard-codes `proxy_pass http://elastalert:3030/`.
+# - praeco (praecoapp/praeco:1.8.25)
+#     Vue.js SPA on nginx :8080. Frontend uses relative `/api/...` paths
+#     which the bundled praeco-nginx.conf proxies to the elastalert
+#     service. Without that proxy config the image's Debian nginx
+#     default returns 404 on every API call.
+
+services:
+  elastalert-server:
+    image: praecoapp/elastalert-server:20260324
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - elastalert
+    # Container netns has its own resolver; LXC /etc/hosts is invisible.
+    # Without these, `es_host: <hostname>` → Errno 101 Network unreachable.
+    extra_hosts:
+      - "es-0.home.local:192.168.1.77"
+      - "es-1.home.local:192.168.1.78"
+      - "es-2.home.local:192.168.1.79"
+    volumes:
+      # :rw — ElastAlert 2 rewrites config.yaml at startup.
+      - /root/deploy/praeco/config/elastalert.yaml:/opt/elastalert/config.yaml:rw
+      - /root/deploy/praeco/config/elastalert-server.json:/opt/elastalert-server/config/config.json:ro
+      - /root/deploy/praeco/certs/ca.crt:/opt/elastalert/certs/ca.crt:ro
+      - /data/praeco/rules:/opt/elastalert/rules:rw
+      - /data/praeco/rule_templates:/opt/elastalert/rule_templates:rw
+      - /data/praeco/server_data:/opt/elastalert/server_data:rw
+    env_file: /root/deploy/praeco/.env
+    expose:
+      - "3030"
+      - "3333"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3030/status || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  praeco:
+    image: praecoapp/praeco:1.8.25
+    restart: unless-stopped
+    depends_on:
+      elastalert-server:
+        condition: service_started
+    ports:
+      - "0.0.0.0:8080:8080"
+    volumes:
+      # Override the Debian nginx default with praeco's bundled reverse
+      # proxy config. Extracted from the praecoapp/praeco image at
+      # /tmp/nginx/praeco/nginx_config/default.conf — the entrypoint
+      # does NOT auto-install it.
+      - /root/deploy/praeco/config/praeco-nginx.conf:/etc/nginx/sites-enabled/default:ro

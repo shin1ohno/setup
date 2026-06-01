@@ -1,0 +1,31 @@
+# ElastAlert 2 config consumed by praecoapp/elastalert-server inside the
+# container at /opt/elastalert/config.yaml. PoC scope — narrow index
+# read set + sensible defaults; tune after first rule fires.
+#
+# Password is sed-substituted at cookbook converge time from
+# ${ELASTALERT_PASSWORD} in /root/deploy/praeco/.env (placeholder
+# @@ELASTALERT_PASSWORD@@). Mirrors lxc-monitoring snmp.yml pattern.
+
+rules_folder: /opt/elastalert/rules
+
+run_every:
+  minutes: 1
+
+buffer_time:
+  minutes: 15
+
+es_host: es-2.home.local
+es_port: 9200
+
+use_ssl: true
+verify_certs: true
+ca_certs: /opt/elastalert/certs/ca.crt
+
+es_username: elastalert_writer
+es_password: "@@ELASTALERT_PASSWORD@@"
+
+writeback_index: elastalert_status
+writeback_alias: elastalert_alerts
+
+alert_time_limit:
+  days: 2

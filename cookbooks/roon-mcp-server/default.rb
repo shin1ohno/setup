@@ -29,7 +29,7 @@ return if node[:platform] == "darwin"
 
 include_cookbook "docker-engine"
 
-version     = node.dig(:roon_mcp_server, :version)     || "0.5.4"
+version     = node.dig(:roon_mcp_server, :version)     || "0.5.6"
 http_port   = node.dig(:roon_mcp_server, :http_port)   || 8080
 # core_host default is the direct IP rather than `roon-lxc.home.local`
 # because the container DNS (Docker's embedded resolver, even with RTX
@@ -53,6 +53,10 @@ audience    = node.dig(:roon_mcp_server, :audience)    || "https://mcp.ohno.be/r
 # before serving the response. Going direct cuts the steady-state JWKS
 # refetch cost from ~4.2s to <0.5s.
 jwks_url    = node.dig(:roon_mcp_server, :jwks_url)    || "http://192.168.1.71:4444/.well-known/jwks.json"
+
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
+aws_profile = ssh_keys_config["aws_profile"]
+aws_region  = ssh_keys_config["aws_region"]
 
 user = node[:setup][:user]
 home = node[:setup][:home]
@@ -96,6 +100,18 @@ end
 
 deploy_dir = "#{home}/deploy/roon-mcp"
 
+# Phase 4 APM env: apm.env holds the OTLP ApiKey for
+# apm-server.home.local:8200. Fetched from SSM
+# /monitoring/apm/api-keys/roon-mcp (per-service rotation isolated).
+# Format = single bare KEY=VALUE per docker-compose env_file spec.
+apm_env_path = "#{deploy_dir}/apm.env"
+# Phase 4 APM CA: apm.env doesn't ship the CA bundle, but the OTel gRPC
+# TLS handshake needs to trust es_ca (not in OS roots). Mount this
+# cookbook-fetched copy of /monitoring/apm/ca/cert into the container
+# at /etc/ssl/apm-ca.crt (docker-compose volumes:) and point
+# OTEL_EXPORTER_OTLP_CERTIFICATE at it.
+apm_ca_path = "#{deploy_dir}/apm-ca.crt"
+
 directory deploy_dir do
   owner user
   mode "755"
@@ -125,6 +141,19 @@ file "#{deploy_dir}/docker-compose.yml" do
         image: roon-mcp:#{version}
         container_name: roon-mcp
         restart: unless-stopped
+        # Container netns has its own resolver; LXC /etc/hosts is invisible.
+        # OTLP exporter targets apm-server.home.local — without this, LAN
+        # DNS outage (RTX SERVFAIL on home.local, see PR #390) breaks the
+        # exporter at startup. Defense-in-depth alongside Tailscale split-DNS.
+        # IP from contracts/devices.json apm-server entry (CT 116, IP .81).
+        extra_hosts:
+          - "apm-server.home.local:192.168.1.81"
+        env_file:
+          # Phase 4 APM env: OTEL_EXPORTER_OTLP_HEADERS holds the
+          # roon-mcp-scoped ApiKey fetched from SSM at apply time
+          # (mode 0600). Endpoint + service-name + deployment-env are
+          # in plaintext under `environment:` below.
+          - ./apm.env
         # Debug-level logging on the auth path so token validation
         # rejections (audience / issuer / signature mismatch) surface in
         # `docker logs roon-mcp`. Default INFO suppresses the reason and
@@ -136,6 +165,14 @@ file "#{deploy_dir}/docker-compose.yml" do
           # container. Pinning to /data routes state writes into the
           # bind-mounted host path /var/lib/roon-mcp/state (owner UID 1000).
           XDG_CONFIG_HOME: "/data"
+          OTEL_EXPORTER_OTLP_ENDPOINT: https://apm-server.home.local:8200
+          # Mount + reference the home APM Server CA cert so tonic's
+          # gRPC TLS handshake verifies against es_ca (not in OS roots).
+          # Without this the SDK silently drops every batch with
+          # "TLS handshake error: EOF" visible only in apm-server logs.
+          OTEL_EXPORTER_OTLP_CERTIFICATE: /etc/ssl/apm-ca.crt
+          OTEL_SERVICE_NAME: roon-mcp
+          DEPLOYMENT_ENVIRONMENT: home
         ports:
           - "#{http_port}:#{http_port}"
         user: "${UID}:${GID}"
@@ -149,6 +186,7 @@ file "#{deploy_dir}/docker-compose.yml" do
           - 1.1.1.1
         volumes:
           - #{state_dir}:/data:rw
+          - ./apm-ca.crt:/etc/ssl/apm-ca.crt:ro
         command:
           - --transport
           - http
@@ -169,6 +207,44 @@ file "#{deploy_dir}/docker-compose.yml" do
           - --require-auth
   COMPOSE
   notifies :run, "execute[restart roon-mcp]"
+end
+
+require_external_auth(
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/apm/* SSM params",
+  check_command: "aws ssm get-parameter --name /monitoring/apm/api-keys/roon-mcp " \
+                 "--with-decryption --profile #{aws_profile} --region #{aws_region} " \
+                 "> /dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
+                "/monitoring/apm/* in #{aws_region}. " \
+                "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
+  # Skip when env file AND CA cert already exist. SSM regen on every
+  # apply would rotate the .env mtime + force-recreate the container;
+  # we want that only when the key/CA itself changes (manual rotation
+  # via bin/issue-apm-api-keys.sh or es_ca regen).
+  skip_if: -> { File.exist?(apm_env_path) && File.exist?(apm_ca_path) },
+) do
+  execute "generate roon-mcp APM env" do
+    command <<~SH.strip
+      umask 077 && key=$(aws ssm get-parameter \
+        --name /monitoring/apm/api-keys/roon-mcp \
+        --with-decryption \
+        --profile #{aws_profile} --region #{aws_region} \
+        --query Parameter.Value --output text) && \
+        printf 'OTEL_EXPORTER_OTLP_HEADERS=authorization=ApiKey %s\n' "$key" > #{apm_env_path} && \
+        chmod 0600 #{apm_env_path}
+    SH
+    user user
+    notifies :run, "execute[restart roon-mcp]"
+  end
+
+  execute "fetch apm-server CA cert for roon-mcp" do
+    command "aws ssm get-parameter --name /monitoring/apm/ca/cert " \
+            "--profile #{aws_profile} --region #{aws_region} " \
+            "--query Parameter.Value --output text > #{apm_ca_path} && " \
+            "chmod 0644 #{apm_ca_path}"
+    user user
+    notifies :run, "execute[restart roon-mcp]"
+  end
 end
 
 # Compose orchestration via the compose_service DSL. buildkit: false

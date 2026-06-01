@@ -86,6 +86,31 @@ directory state_dir do
   mode "755"
 end
 
+# Vector state directory (ADR 0005 Phase 4). Holds disk-buffer storage
+# for the loki + elasticsearch sinks (vector.toml `data_dir =
+# "/var/lib/vector"`) and the SSM-distributed Elasticsearch CA cert
+# (bind-mounted into /etc/vector/elastic-ca.crt).
+#
+# Vector container runs as root (network_mode: host, no user: directive).
+# In the unprivileged LXC, container UID 0 maps to host UID 100000.
+# The cookbook runs INSIDE the container, so address the in-container view:
+# `owner "0"` chowns to container root, which surfaces on the host as
+# UID 100000 via the namespace mapping. Writing `owner "100000"` would try
+# to set UID 100000 inside the container — outside the 0-65535 mapping
+# range — and fails with `chown: Invalid argument`. Mode 755 is sufficient
+# because no other container reads this directory.
+directory "#{state_dir}/vector" do
+  owner "0"
+  group "0"
+  mode "755"
+end
+
+directory "#{state_dir}/vector/buffer" do
+  owner "0"
+  group "0"
+  mode "755"
+end
+
 # Per-service state subdirs. Each container runs as its own non-root UID
 # and writes sqlite WAL / lock / journal files INTO the parent dir (not
 # just inside subdirs the container creates) — so the dir itself must be
@@ -257,6 +282,49 @@ remote_file "#{deploy_dir}/alerts/pve-host.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
+remote_file "#{deploy_dir}/alerts/auto-mitamae.yml" do
+  source "files/alerts/auto-mitamae.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
+# LAN DNS resolver (CT 118 / .61) health — fed by the PVE host's
+# unbound-watchdog node_exporter textfile metrics (cookbooks/unbound-watchdog).
+remote_file "#{deploy_dir}/alerts/unbound.yml" do
+  source "files/alerts/unbound.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
+# RTX SNMP scrape health (hnd .253 / itm .254). `up{job="snmp-rtx"} == 0`
+# means snmp_exporter cannot poll the router — most often the device lost its
+# `snmp host any` / `snmpv2c host any` ACL on a reboot. The ACL is declared in
+# home-monitor rtx_snmp_server.<router> (provider >= 0.15.0); recovery is a
+# `terraform apply -target=rtx_snmp_server.<router>`. Added after the
+# 2026-05-31 silent HND SNMP outage (no down alert existed).
+remote_file "#{deploy_dir}/alerts/rtx-snmp.yml" do
+  source "files/alerts/rtx-snmp.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
+# Elasticsearch cluster health (RED/YELLOW/unreachable/stale). Fed by
+# elasticsearch_cluster_status{color=...} from each es node's node_exporter
+# textfile (cookbooks/lxc-elasticsearch es-cluster-health.timer).
+remote_file "#{deploy_dir}/alerts/elasticsearch.yml" do
+  source "files/alerts/elasticsearch.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # Vector (RTX syslog → Elasticsearch). Replaces the prior Promtail syslog
 # target: RTX1210/RTX830 firmware emits non-standard syslog (`<PRI>tag msg`
 # with no TIMESTAMP/HOSTNAME) that neither RFC5424 nor RFC3164 strict
@@ -329,12 +397,14 @@ env_temp_path = "#{generated_dir}/monitoring.env"
 env_output_path = "#{deploy_dir}/.env"
 
 require_external_auth(
-  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/grafana-admin-password",
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for monitoring SSM secrets",
   check_command: "aws ssm get-parameter --name /monitoring/grafana-admin-password " \
                  "--with-decryption --profile #{aws_profile} --region #{aws_region} " \
                  "> /dev/null 2>&1",
-  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
-                "/monitoring/grafana-admin-password in #{aws_region}. " \
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on /monitoring/* in " \
+                "#{aws_region}. generate_env.sh fetches: grafana-admin-password, " \
+                "pve-exporter-token, rtx-snmp-community, elastic/vector-password " \
+                "(ADR 0005 Phase 4 — write-only role for [sinks.elasticsearch]). " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
   skip_if: -> { File.exist?(env_output_path) },
 ) do
@@ -360,6 +430,59 @@ end
 file env_temp_path do
   action :delete
   only_if "test -f #{env_temp_path}"
+end
+
+# Elasticsearch CA cert (ADR 0005 Phase 4). Stored as a plain PEM string
+# in SSM /monitoring/elastic/ca/cert (Terraform-generated CA, validity
+# 2 years per ADR 0005 §認証). Distributed to /data/monitoring/vector/
+# elastic-ca.crt because docker-compose.yml bind-mounts that path
+# read-only into vector at /etc/vector/elastic-ca.crt — the path Vector's
+# [sinks.elasticsearch].tls.ca_file references.
+#
+# Mode 0644 root:root: the cert is public material (no key), readable by
+# any process. Owner is host root (NOT 100000) because container Vector
+# only needs RO access via the bind-mount; the file does not need to be
+# owned by container-root.
+#
+# Fetched into a staging file then `install`-ed atomically so a partial
+# fetch doesn't leave a half-written cert that breaks Vector startup.
+elastic_ca_temp   = "#{generated_dir}/elastic-ca.crt"
+elastic_ca_target = "#{state_dir}/vector/elastic-ca.crt"
+
+require_external_auth(
+  tool_name: "AWS CLI for /monitoring/elastic/ca/cert SSM param",
+  check_command: "aws ssm get-parameter --name /monitoring/elastic/ca/cert " \
+                 "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1",
+  instructions: "ES cluster (Phase 1b/3) must be provisioned first — Terraform " \
+                "writes the CA cert to /monitoring/elastic/ca/cert. Then this " \
+                "cookbook can fetch it.",
+  skip_if: -> { File.exist?(elastic_ca_target) },
+) do
+  execute "fetch elastic CA cert from SSM" do
+    command <<~SH.strip
+      set -euo pipefail
+      aws ssm get-parameter \\
+        --name /monitoring/elastic/ca/cert \\
+        --query "Parameter.Value" \\
+        --output text \\
+        --profile #{aws_profile} \\
+        --region #{aws_region} > #{elastic_ca_temp}.new
+      mv #{elastic_ca_temp}.new #{elastic_ca_temp}
+      chmod 644 #{elastic_ca_temp}
+    SH
+    user user
+  end
+end
+
+execute "install elastic CA cert" do
+  command "sudo install -m 644 -o root -g root #{elastic_ca_temp} #{elastic_ca_target}"
+  only_if "test -f #{elastic_ca_temp}"
+  notifies :run, "execute[restart monitoring]"
+end
+
+execute "delete elastic CA cert staging file" do
+  command "rm -f #{elastic_ca_temp}"
+  only_if "test -f #{elastic_ca_temp}"
 end
 
 # Generate snmp.yml from snmp.yml.tmpl by substituting the community
@@ -410,15 +533,18 @@ project_name = File.basename(deploy_dir)
 execute "ensure monitoring running" do
   command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d"
   user user
-  # Gate on BOTH .env (for grafana/pve-exporter env vars) AND snmp.yml
+  # Gate on .env (grafana/pve-exporter/elastic env vars), snmp.yml
   # (bind-mounted into snmp-exporter — Docker creates a directory if the
   # source path is missing, leaving the container in a crash-loop with
-  # `open /etc/snmp_exporter/snmp.yml: is a directory`). Both files come
-  # from the SSM-gated bootstrap path so both must exist before compose
-  # is allowed to start the stack.
+  # `open /etc/snmp_exporter/snmp.yml: is a directory`), AND elastic-ca.crt
+  # (bind-mounted into vector — same Docker auto-mkdir trap; absence
+  # would crash Vector at startup because [sinks.elasticsearch].tls.ca_file
+  # would point at a directory). All three come from SSM-gated bootstrap
+  # paths so all must exist before compose is allowed to start the stack.
   only_if <<~SH.tr("\n", " ").strip
     test -f #{env_output_path} || exit 1;
     test -f #{snmp_yml_path} || exit 1;
+    test -f #{elastic_ca_target} || exit 1;
     expected=$(docker compose -f #{compose_path} config --services 2>/dev/null | sort | tr '\\n' ' ');
     [ -n "$expected" ] || exit 1;
     running=$(docker ps --filter "label=com.docker.compose.project=#{project_name}"
@@ -447,170 +573,18 @@ execute "restart monitoring" do
   command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --force-recreate --remove-orphans"
   user user
   action :nothing
-  # Skip when .env was not generated OR snmp.yml hasn't been rendered
-  # (SSM auth absent / non-interactive bootstrap). Restart with empty
-  # admin password would leave Grafana unmanageable; missing snmp.yml
-  # would leave snmp-exporter crash-looping. Same guard pattern as
-  # cookbooks/cognee.
-  only_if "test -f #{env_output_path} && test -f #{snmp_yml_path}"
+  # Skip when .env was not generated, snmp.yml hasn't been rendered, or
+  # elastic-ca.crt hasn't been fetched (SSM auth absent / non-interactive
+  # bootstrap, OR ES cluster not yet provisioned in Phase 1b/3). Restart
+  # with empty admin password would leave Grafana unmanageable; missing
+  # snmp.yml would leave snmp-exporter crash-looping; missing
+  # elastic-ca.crt would leave Vector crash-looping with tls.ca_file
+  # pointing at a directory. Same guard pattern as cookbooks/cognee.
+  only_if "test -f #{env_output_path} && test -f #{snmp_yml_path} && test -f #{elastic_ca_target}"
 end
 
-# === MCP Fleet Health Monitoring ===
-#
-# Three layers of MCP observability stacked on the existing fleet stack:
-#
-#   1. blackbox_exporter (HTTP/TCP probes) — sibling docker-compose service
-#      defined in docker-compose.yml. Targets defined in prometheus.yml's
-#      `mcp-blackbox-{external,oidc,oauth-meta,internal}` jobs.
-#
-#   2. alerts/mcp.yml (Prometheus rules) — bind-mounted into the prometheus
-#      container at /etc/prometheus/alerts/. Loaded via rule_files in
-#      prometheus.yml.
-#
-#   3. mcp-probe.{service,timer} + /usr/local/bin/mcp-probe.py — system
-#      systemd timer that runs the MCP-protocol prober (OAuth ->
-#      initialize -> tools/list) once per minute. Output lands in the
-#      node_exporter textfile collector dir, picked up by the existing
-#      `node-monitoring` scrape job.
-#
-# All three are gated on the same SSM auth as the rest of the cookbook
-# (require_external_auth pattern). The MCP-protocol prober additionally
-# depends on the Hydra `monitoring-prober` client being registered first
-# (see cookbooks/hydra-server/default.rb); the env-fetch step skips
-# gracefully when SSM doesn't have the credentials yet, and the timer
-# enable step waits for /etc/mcp-probe/probe.env to exist.
-
-# Layer 1 (blackbox.yml) + Layer 2 (alerts/mcp.yml) bind-mounted configs
-# are declared earlier in this file (right after the dashboards loop) so
-# they exist before `execute "ensure monitoring running"` runs `docker
-# compose up -d`. Mitamae converges resources top-to-bottom; the early
-# placement is converge-time meaningful even though every individual
-# remote_file is independent.
-
-# Layer 3: MCP-protocol prober.
-
-mcp_probe_staging = "#{node[:setup][:root]}/lxc-monitoring/mcp-probe"
-directory mcp_probe_staging do
-  owner user
-  group group
-  mode "755"
-end
-
-remote_file "#{mcp_probe_staging}/probe.py" do
-  source "files/mcp-probe/probe.py"
-  owner user
-  group group
-  mode "0755"
-end
-
-remote_file "#{mcp_probe_staging}/fetch-secrets.sh" do
-  source "files/mcp-probe/fetch-secrets.sh"
-  owner user
-  group group
-  mode "0755"
-end
-
-%w[mcp-probe.service mcp-probe.timer].each do |unit|
-  remote_file "#{mcp_probe_staging}/#{unit}" do
-    source "files/systemd/#{unit}"
-    owner user
-    group group
-    mode "0644"
-  end
-end
-
-# Install the python script into a system PATH location.
-execute "install /usr/local/bin/mcp-probe.py" do
-  command "sudo install -m 755 -o root -g root " \
-          "#{mcp_probe_staging}/probe.py /usr/local/bin/mcp-probe.py"
-  not_if "diff -q #{mcp_probe_staging}/probe.py /usr/local/bin/mcp-probe.py 2>/dev/null"
-  notifies :run, "execute[restart mcp-probe.timer]"
-end
-
-# /etc/mcp-probe/ holds the EnvironmentFile consumed by mcp-probe.service.
-execute "ensure /etc/mcp-probe directory" do
-  command "sudo install -d -m 755 -o root -g root /etc/mcp-probe"
-  not_if "test -d /etc/mcp-probe"
-end
-
-# /var/lib/node_exporter/textfile — node_exporter scrapes this dir
-# (matches `--collector.textfile.directory` in node-exporter cookbook's
-# unit file at cookbooks/node-exporter/files/node-exporter.service).
-# Defensive ensure-exists — a no-op when the node-exporter cookbook has
-# already converged on this host.
-execute "ensure node_exporter textfile directory" do
-  command "sudo install -d -m 755 -o root -g root " \
-          "/var/lib/node_exporter/textfile"
-  not_if "test -d /var/lib/node_exporter/textfile"
-end
-
-# Install systemd unit + timer.
-%w[mcp-probe.service mcp-probe.timer].each do |unit|
-  execute "install /etc/systemd/system/#{unit}" do
-    command "sudo install -m 644 -o root -g root " \
-            "#{mcp_probe_staging}/#{unit} /etc/systemd/system/#{unit}"
-    not_if "diff -q #{mcp_probe_staging}/#{unit} /etc/systemd/system/#{unit} 2>/dev/null"
-    notifies :run, "execute[mcp-probe systemctl daemon-reload]"
-  end
-end
-
-execute "mcp-probe systemctl daemon-reload" do
-  command "sudo systemctl daemon-reload"
-  action :nothing
-end
-
-# Generate /etc/mcp-probe/probe.env from SSM. Same compile-vs-converge
-# pattern as the .env block above (CLAUDE.md ruby.md "Mitamae evaluation
-# model — top-level Ruby is compile-time"): stage in setup_root/generated,
-# then install with `only_if test -f` so the converge-time presence check
-# matches the converge-time creation.
-probe_env_temp   = "#{generated_dir}/mcp-probe.env"
-probe_env_system = "/etc/mcp-probe/probe.env"
-probe_env_script = "#{mcp_probe_staging}/fetch-secrets.sh"
-
-require_external_auth(
-  tool_name: "AWS CLI for /monitoring/mcp-prober-{client-id,client-secret} SSM params",
-  check_command: "aws ssm get-parameter --name /monitoring/mcp-prober-client-id " \
-                 "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1",
-  instructions: "Run cookbooks/hydra-server first (on the Hydra LXC, CT 106) — " \
-                "it registers the monitoring-prober Hydra client and writes " \
-                "client-id/secret to SSM. Then this cookbook can fetch them.",
-  skip_if: -> { File.exist?(probe_env_system) },
-) do
-  execute "generate mcp-probe env" do
-    command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
-            "bash #{probe_env_script} #{probe_env_temp}"
-    user user
-  end
-end
-
-# Install at converge time when the temp env was successfully generated.
-execute "install /etc/mcp-probe/probe.env" do
-  command "sudo install -m 600 -o root -g root #{probe_env_temp} #{probe_env_system}"
-  only_if "test -f #{probe_env_temp}"
-  notifies :run, "execute[restart mcp-probe.timer]"
-end
-
-execute "delete mcp-probe staging env" do
-  command "rm -f #{probe_env_temp}"
-  only_if "test -f #{probe_env_temp}"
-end
-
-# Enable the timer once the env file is in place. The unit's
-# EnvironmentFile= directive blocks startup if probe.env is absent,
-# so gating the enable on that file presence avoids start failures
-# on a fresh host where SSM auth hasn't been configured yet.
-execute "enable mcp-probe.timer" do
-  command "sudo systemctl enable --now mcp-probe.timer"
-  only_if "test -f #{probe_env_system}"
-  not_if "systemctl is-enabled --quiet mcp-probe.timer 2>/dev/null && " \
-         "systemctl is-active --quiet mcp-probe.timer 2>/dev/null"
-end
-
-execute "restart mcp-probe.timer" do
-  command "sudo systemctl restart mcp-probe.timer"
-  action :nothing
-  # Skip when systemd unit was not yet installed (e.g. fresh host where
-  # the install step is still pending or SSM-gated bootstrap is incomplete).
-  only_if "systemctl list-unit-files mcp-probe.timer 2>/dev/null | grep -q mcp-probe.timer"
-end
+# MCP fleet health monitoring — extracted to its own cookbook in Phase 7
+# (mcp-probe systemd timer + python prober is logically distinct from the
+# docker observability stack above). The cookbook handles its own SSM
+# auth, env generation, and systemd unit lifecycle.
+include_cookbook "mcp-probe"

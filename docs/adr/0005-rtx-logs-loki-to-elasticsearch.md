@@ -115,7 +115,7 @@ ES 8.x security plugin で 5 ロール: `elastic` (built-in superuser, 緊急復
 | 4 | Vector dual-write (Loki + ES) + VRL に geo_point / port integer 化 | 1 | 未着手 |
 | 5 | Kibana saved objects (dashboard / Lens visualization / Discover saved search / Maps) | 1 | 未着手 |
 | 6 | Cutover (Grafana の Loki dashboard を hidden、2 週間運用観察、Loki sink + container 廃止) | 1 | 未着手 |
-| 7 (任意) | HTTP TLS + S3 snapshot policy | 1 | 未着手 |
+| 7 (任意) | HTTP TLS + S3 snapshot policy | 2 (#303, #307) | **完了 (2026-05-12)** |
 
 各 Phase は独立して merge / rollback 可能。Phase 4 cutover まで Loki と ES に二重保持されるため、移行中のデータ loss なし。
 

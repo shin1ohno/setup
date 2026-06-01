@@ -38,10 +38,25 @@ prepend_path(
 
 add_profile "pyenv" do
   bash_content <<~EOS
+    # Lazy-load pyenv + pipx argcomplete: shims on PATH so python/pip work
+    # immediately; `pyenv init` and the argcomplete eval run only when
+    # pyenv or pipx is first invoked. Saves ~100-150ms at shell start.
     export PYENV_ROOT="$HOME/.pyenv"
-    command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"
-    eval `register-python-argcomplete pipx`
+    export PATH="$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH"
+    pyenv() {
+      unset -f pyenv
+      eval "$(pyenv init -)"
+      pyenv "$@"
+    }
+    pipx() {
+      unset -f pipx
+      # register-python-argcomplete emits bash-style `complete -F`, which
+      # requires bashcompinit. Load both here so 10-dot-zsh can keep
+      # bashcompinit out of the eager startup path.
+      autoload -U bashcompinit && bashcompinit
+      eval "$(register-python-argcomplete pipx)"
+      command pipx "$@"
+    }
   EOS
 end
 

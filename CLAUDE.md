@@ -15,10 +15,10 @@ This repository configures:
 | Bare-metal Linux workstation | `pro` | `linux.rb` (refuses to apply inside any container — guarded by `systemd-detect-virt -c`; bypass with `MITAMAE_FORCE_BARE_METAL=1`) |
 | Proxmox VE host | the host that runs the LXCs | `pve/pve-host.rb` |
 | Developer workstation LXC | `pro-dev` (CT 104), future `*-dev` | `pve/lxc-pro-dev.rb` (delegates to the `lxc-dev-workstation` cookbook; future LXCs reuse the cookbook with their own `node[:lxc_dev][:*]` overrides) |
-| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-monitoring`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router` | matching `pve/lxc-<service>.rb` (apply all in parallel via `bin/apply-pve-lxcs`) |
+| Service LXC | `lxc-cognee`, `lxc-hydra`, `lxc-memory`, `lxc-monitoring`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router`, `lxc-es-0/1/2` (Elasticsearch cluster), `lxc-kibana`, `lxc-apm-server` | matching `pve/lxc-<service>.rb` (apply all in parallel via `bin/apply-pve-lxcs`) |
 | macOS | `air`, `ohnos-macbook` | `darwin.rb` |
 
-`linux.rb` is bare-metal-only. MCP servers (cognee, ai-memory, hydra, hydra-consent) and Roon Server / MCP have migrated to dedicated LXCs and are NOT installed on bare-metal pro.
+`linux.rb` is bare-metal-only. MCP servers (cognee, ai-memory, hydra, hydra-consent), Roon Server / MCP, and the Elastic stack (Elasticsearch / Kibana / APM Server — see `docs/adr/0005-rtx-logs-loki-to-elasticsearch.md`) have all migrated to dedicated LXCs and are NOT installed on bare-metal pro.
 
 This repository does NOT configure:
 
@@ -44,7 +44,7 @@ This repository does NOT configure:
 - `roles/extras/` - Specialized development tools (terraform, neovim, docker)
 - `roles/manage/` - Managed projects setup from JSON configuration
 - `roles/server/` - Server-specific setup (Linux only, deploy directory)
-- `roles/mcp-server/` - Self-hosted MCP servers (Linux only)
+- `roles/lxc-core/` - Shared base for every `pve/lxc-*.rb` + `pve-host.rb`: bundles `node-exporter` (Prometheus scrape on :9100) + `auto-mitamae-target` (forced-command authorized_keys for orchestrator-pushed mitamae apply)
 
 **Implementation Pattern:**
 
@@ -120,7 +120,12 @@ Auto-mitamae: `cookbooks/auto-mitamae-target` installs a systemd timer on each L
 ## Important Notes
 
 - Always test cookbook changes with `--dry-run` first
-- Project hooks in `.claude/hooks/`: `guard-mitamae-dry-run.rb` blocks `mitamae` without `--dry-run` for Claude (apply runs are user-only — present them as `! ./bin/mitamae local <platform>.rb`); `remind-cookbook-dry-run.rb` reminds Claude to run dry-run after cookbook edits
+- Project hooks in `.claude/hooks/`: `guard-mitamae-dry-run.rb` blocks **`sudo mitamae`** without `--dry-run` for Claude. Bare `./bin/mitamae local <recipe>.rb` (no outer sudo) is allowed even without `--dry-run` — cookbooks elevate per-resource via `execute "sudo ..."`, which still hits the user's sudo prompt for each privileged step. Add `--dry-run` whenever the apply must NOT be allowed to actually run, even without sudo. `remind-cookbook-dry-run.rb` reminds Claude to run dry-run after cookbook edits
+- **sudo context by host type**: `cookbooks/` resources use `execute "sudo install …"` for system paths and `mitamae runs without sudo` per `~/.claude/rules/ruby.md` — but this rule applies to the OUTER mitamae invocation differently per host:
+  - **Bare-metal Linux + macOS** (`pro`, `air`, `ohnos-macbook`): run `./bin/mitamae local <platform>.rb` as the regular user. Do NOT prepend `sudo` — it changes `$HOME` to `/root` and breaks rbenv/mise/pyenv PATH resolution (recipes that compute paths from `ENV["HOME"]` end up with `/root/.rbenv` etc., then later resources try to write there as the regular user and fail)
+  - **Service LXCs** (`pve/lxc-*.rb`): the LXC's only user IS root. Run `./bin/mitamae local pve/lxc-<name>.rb` from inside the CT — no sudo prefix needed (already root)
+  - When presenting apply commands as `!` to the user, infer host type from the recipe path: `pve/lxc-*.rb` → no sudo, anything else → no sudo. The rare exception is `pve/pve-host.rb` which runs on the bare-metal PVE host as root anyway. The recipe path is the reliable signal — never default to `sudo` "to be safe"
+  - This rule exists because the 2026-05-09 retro session's `sudo ./bin/mitamae local pve/lxc-pro-dev.rb` invocation (added "to be safe") confused rbenv path resolution and required diagnosing the recipe failure before realising sudo was the cause
 - Use `run_command("command", error: false)` for status code checking
 - Profile scripts are loaded from `~/.setup_shin1ohno/profile.d/` with priority ordering
 - Linux includes hardware-coupled cookbooks directly in `linux.rb` (bluez, broadcom-wifi, zeroconf, edge-agent). Roon Server / MCP and the rest of the MCP server stack run in dedicated LXCs and are no longer pulled into `linux.rb`

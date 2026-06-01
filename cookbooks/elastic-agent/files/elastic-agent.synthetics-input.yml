@@ -1,0 +1,309 @@
+  # Synthetics integration — only enabled on hosts where
+  # node[:elastic_agent][:enable_synthetics_integration] == true. Today
+  # that is CT 111 (lxc-monitoring) only — same probe-host topology as
+  # the Prometheus federation integration. Populates the
+  # `synthetics-http-default` and `synthetics-tcp-default` data streams,
+  # which back the Kibana Observability "Uptime" app
+  # (https://kibana.home.local:5601/app/uptime).
+  #
+  # Probe topology rationale (centralized): single host probes all 14
+  # endpoints. Distributed probing (every host probes itself) was
+  # rejected — generates per-host endpoint lists that drift from
+  # cookbook source, and DNS-resolution failures become per-host noise.
+  # Single probe host = Uptime blind spot if CT 111 is down, but CT 111
+  # itself is monitored via Prometheus alertmanager (independent path),
+  # so the blind spot is detectable.
+  #
+  # Endpoint inventory (v1):
+  #   HTTP probes (10):  cognee:8001/health, cognee:8767/health,
+  #                      memory:8765/docs, memory:8766/health,
+  #                      roon-mcp:8080/health (401 expected),
+  #                      weave:3001/, hydra:4444/health/ready,
+  #                      hydra:4445/health/alive, consent:9020/,
+  #                      monitoring:3000/api/health
+  #   TCP probes (5):    es-0/1/2:9200, kibana:5601, weave:1883 (MQTT)
+  #
+  # Phase 2 candidates (out of scope for v1):
+  #   - HTTP probe of ES/Kibana with basic auth (creds injection)
+  #   - ICMP probes
+  #   - Roon-MCP /health with proper bearer token
+  #   - External dependency probes (Roon Cloud, GitHub API)
+
+  # ===== HTTP probes =====
+
+  - type: synthetics/http
+    id: synthetics-cognee-api
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: cognee-api-health
+        name: Cognee API health
+        enabled: true
+        schedule: "@every 60s"
+        urls: ["http://cognee.home.local:8001/health"]
+        timeout: 10s
+        tags: [cognee, lan-internal]
+
+  - type: synthetics/http
+    id: synthetics-cognee-authproxy
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: cognee-authproxy-health
+        name: Cognee auth-proxy health
+        enabled: true
+        schedule: "@every 60s"
+        urls: ["http://cognee.home.local:8767/health"]
+        timeout: 10s
+        tags: [cognee, auth-proxy, lan-internal]
+
+  # synthetics-memory-api removed: openmemory-api on memory:8765 binds to
+  # 127.0.0.1 only (LAN-internal access goes through the auth-proxy on
+  # :8766 which is the only publicly-bound port). The auth-proxy /health
+  # probe (synthetics-memory-authproxy below) covers the memory stack
+  # liveness — if the upstream openmemory-api is down, auth-proxy's
+  # /health forwarding would surface it.
+
+  - type: synthetics/http
+    id: synthetics-memory-authproxy
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: memory-authproxy-health
+        name: Memory auth-proxy health
+        enabled: true
+        schedule: "@every 60s"
+        urls: ["http://memory.home.local:8766/health"]
+        timeout: 10s
+        tags: [memory, auth-proxy, lan-internal]
+
+  - type: synthetics/http
+    id: synthetics-roon-mcp
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: roon-mcp-health
+        name: Roon MCP health (bearer required, 4xx == reachable)
+        enabled: true
+        schedule: "@every 60s"
+        urls: ["http://roon-mcp.home.local:8080/health"]
+        timeout: 10s
+        # Bearer token not injected; service responds 403 (or 401 in
+        # other configs) which still proves the listener is up. Treat
+        # both as "up" via response status filter.
+        check.response.status: [200, 401, 403]
+        tags: [roon-mcp, bearer-required, lan-internal]
+
+  - type: synthetics/http
+    id: synthetics-weave-api
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: weave-api-root
+        name: Weave API server
+        enabled: true
+        schedule: "@every 60s"
+        # weave HTTP API is on :3000 (returns 200 at /). :3001 is a
+        # different service with no root path (returns 404 by design).
+        urls: ["http://weave.home.local:3000/"]
+        timeout: 10s
+        tags: [weave, lan-internal]
+
+  - type: synthetics/http
+    id: synthetics-hydra-public
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: hydra-public-ready
+        name: Hydra public OIDC ready
+        enabled: true
+        schedule: "@every 60s"
+        urls: ["http://hydra.home.local:4444/health/ready"]
+        timeout: 10s
+        tags: [hydra, oidc, lan-internal]
+
+  - type: synthetics/http
+    id: synthetics-hydra-admin
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: hydra-admin-alive
+        name: Hydra admin API alive
+        enabled: true
+        schedule: "@every 60s"
+        urls: ["http://hydra.home.local:4445/health/alive"]
+        timeout: 10s
+        tags: [hydra, oidc, lan-internal]
+
+  - type: synthetics/tcp
+    id: synthetics-consent-tcp
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: tcp
+        type: tcp
+        id: consent-tcp-9020
+        name: Hydra consent UI TCP 9020
+        enabled: true
+        schedule: "@every 60s"
+        # HTTP probe was removed: hydra-consent's UI requires the
+        # `login_challenge` query param (issued by hydra at OAuth flow
+        # start) to render anything — every plain URL returns 404 by
+        # design. TCP port-open verifies the listener is alive without
+        # needing a valid OAuth challenge token.
+        hosts: ["consent.home.local:9020"]
+        timeout: 10s
+        tags: [consent, hydra, lan-internal]
+
+  - type: synthetics/http
+    id: synthetics-monitoring-grafana
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: monitoring-grafana-health
+        name: Grafana API health
+        enabled: true
+        schedule: "@every 60s"
+        urls: ["http://monitoring.home.local:3000/api/health"]
+        timeout: 10s
+        tags: [monitoring, grafana, lan-internal]
+
+  # ===== TCP port-open probes =====
+
+  - type: synthetics/tcp
+    id: synthetics-es-0-tcp
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: tcp
+        type: tcp
+        id: es-0-tcp-9200
+        name: Elasticsearch es-0 TCP 9200
+        enabled: true
+        schedule: "@every 60s"
+        hosts: ["es-0.home.local:9200"]
+        timeout: 10s
+        tags: [elasticsearch, es-0, lan-internal]
+
+  - type: synthetics/tcp
+    id: synthetics-es-1-tcp
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: tcp
+        type: tcp
+        id: es-1-tcp-9200
+        name: Elasticsearch es-1 TCP 9200
+        enabled: true
+        schedule: "@every 60s"
+        hosts: ["es-1.home.local:9200"]
+        timeout: 10s
+        tags: [elasticsearch, es-1, lan-internal]
+
+  - type: synthetics/tcp
+    id: synthetics-es-2-tcp
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: tcp
+        type: tcp
+        id: es-2-tcp-9200
+        name: Elasticsearch es-2 TCP 9200
+        enabled: true
+        schedule: "@every 60s"
+        hosts: ["es-2.home.local:9200"]
+        timeout: 10s
+        tags: [elasticsearch, es-2, lan-internal]
+
+  - type: synthetics/tcp
+    id: synthetics-kibana-tcp
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: tcp
+        type: tcp
+        id: kibana-tcp-5601
+        name: Kibana TCP 5601
+        enabled: true
+        schedule: "@every 60s"
+        hosts: ["kibana.home.local:5601"]
+        timeout: 10s
+        tags: [kibana, lan-internal]
+
+  - type: synthetics/tcp
+    id: synthetics-weave-mqtt
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: tcp
+        type: tcp
+        id: weave-mqtt-1883
+        name: Weave MQTT broker TCP 1883
+        enabled: true
+        schedule: "@every 60s"
+        hosts: ["weave.home.local:1883"]
+        timeout: 10s
+        tags: [weave, mqtt, lan-internal]
+
+  # ===== External HTTPS probes (TLS expiry coverage) =====
+  #
+  # mcp.ohno.be is the public OAuth-protected MCP gateway (cognee /
+  # roon-mcp / openmemory backends accessed by claude.ai). HTTPS probe
+  # populates the synthetics-http-default `tls.*` fields, which the
+  # Synthetics TLS rule (Phase 2 setup-alerting.sh) watches for cert
+  # expiry within 30 days.
+  #
+  # Service requires Bearer token at `/`; treat 401 / 403 as "reachable"
+  # — the goal here is liveness + TLS, not auth verification.
+
+  - type: synthetics/http
+    id: synthetics-mcp-ohno-be
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: mcp-ohno-be-oauth-metadata
+        name: MCP gateway (mcp.ohno.be) OAuth metadata
+        enabled: true
+        schedule: "@every 60s"
+        # /.well-known/oauth-authorization-server is the OAuth 2.1
+        # discovery endpoint that the MCP gateway must publicly expose
+        # for claude.ai client discovery. Unauth, returns 200 with the
+        # JSON metadata document. Probed live 2026-05-10: 0.1s response.
+        # Bare / and other paths return TLS unexpected EOF on
+        # unauthenticated GET (gateway closes the connection).
+        urls: ["https://mcp.ohno.be/.well-known/oauth-authorization-server"]
+        timeout: 15s
+        tags: [mcp, external, https, tls]

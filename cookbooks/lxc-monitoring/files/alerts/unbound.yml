@@ -1,0 +1,52 @@
+groups:
+  - name: unbound-resolver
+    interval: 30s
+    rules:
+      # The PVE host's unbound-watchdog timer probes CT 118 (.61) over the LAN
+      # every 60s and exports these via node_exporter textfile. `up == 0` means
+      # the resolver did not answer the canary AND a restart failed to fix it
+      # (the watchdog retries once before reporting 0) — a real LAN DNS outage.
+      - alert: UnboundResolverDown
+        expr: unbound_watchdog_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: dns
+        annotations:
+          summary: "LAN DNS resolver (CT 118 / {{ $labels.target }}) is down"
+          description: |
+            unbound-watchdog on the PVE host could not resolve its canary via
+            {{ $labels.target }} and a restart did not recover it. The whole LAN
+            (DHCP DNS + every LXC) loses name resolution. Check `pct exec 118 --
+            systemctl status unbound` and the unbound-watchdog journal on pro.
+
+      # The watchdog auto-recovers wedges, so a single restart is "handled" — but
+      # a recurring restart means something keeps wedging unbound (query storm,
+      # deployed-but-not-reloaded loop). Surface it so the auto-heal doesn't mask
+      # a chronic problem.
+      - alert: UnboundResolverFlapping
+        expr: increase(unbound_watchdog_restart_total[30m]) >= 2
+        for: 1m
+        labels:
+          severity: warning
+          component: dns
+        annotations:
+          summary: "unbound-watchdog restarted CT 118 resolver >=2x in 30m"
+          description: |
+            The watchdog auto-recovered unbound {{ $value }} times in 30m — it is
+            healing but something keeps wedging it. Investigate the home.local
+            forward path / query storm (cf. 2026-05-31 incident).
+
+      # The watchdog itself going silent (timer dead, PVE node-exporter down)
+      # would hide both alerts above. Treat a stale textfile as suspicious.
+      - alert: UnboundWatchdogStale
+        expr: time() - unbound_watchdog_last_check_timestamp_seconds > 600
+        for: 5m
+        labels:
+          severity: warning
+          component: dns
+        annotations:
+          summary: "unbound-watchdog has not reported in >10m"
+          description: |
+            No fresh unbound-watchdog probe on the PVE host for >10m — the timer
+            or PVE node-exporter may be down, blinding the resolver health alerts.

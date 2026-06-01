@@ -46,6 +46,17 @@ Do NOT attempt `terraform apply` from a feature branch — permission gates ofte
 
 This rule exists because the 2026-04-25 session attempted `terraform apply` from an unmerged feature branch in home-monitor; the permission layer correctly denied it, surfacing that the proper flow is merge-first-then-apply.
 
+**Post-apply sanity check**: after `terraform apply` returns, run `terraform validate` (or a no-op `terraform plan -refresh-only`) to confirm the working tree's config files are still self-consistent. Mid-session edits, stash/pop interactions, or manual reverts can leave the tf file syntactically intact (no parse error) but resource-name-duplicated — the error surfaces only on the next operation, often hours later.
+
+```bash
+terraform apply -target=... -auto-approve
+terraform validate   # → "Success! The configuration is valid."
+```
+
+If validate reports `Duplicate ... configuration`, the most common cause is a stash/pop or manual edit that re-introduced an already-committed block into the working tree. `git diff HEAD -- <file>.tf` will show the duplicate hunk. Recovery: `git checkout HEAD -- <file>.tf` if the only WIP was the unintended duplication, or surgical removal of the duplicate hunk if there are other legitimate WIP changes.
+
+This second rule exists because 2026-05-11 RDS RI apply (home-monitor PR #65) was followed by `terraform output` failing with `Duplicate data "aws_rds_reserved_instance_offering" configuration` — the working tree had the RI block twice due to a stash-pop merge. `git checkout HEAD -- rds.tf` cleaned it, but a `terraform validate` immediately post-apply would have caught it in the same minute instead of surfacing on the next `terraform output` minutes later.
+
 ## AWS SSM Parameter Path Constraints
 
 Before writing any `aws_ssm_parameter` Terraform resource or `aws ssm put-parameter` cookbook call, validate the planned path is not in a reserved namespace. AWS blocks any path starting with `/aws` or `/AWS` at the API level (`AccessDeniedException: No access to reserved parameter name: ...`) — the error fires at apply time, not at plan time, and Terraform does not surface it as a plan diff.
@@ -100,6 +111,31 @@ Pre-batch checklist:
 
 This rule exists because the 2026-05-04 PVE-migration session burned 4 separate refresh-and-re-SCP cycles when the token expired mid-batch. Each cycle required pausing apply, re-fetching, re-distributing, then resuming — a ~3-min loss per cycle that is fully preventable by pre-batch validation + instance profiles for steady-state.
 
+## Multi-profile auth chain — enumerate every profile's IAM scope at design time
+
+Before designing any flow that chains "admin profile auths → fetch service-profile keys from SSM → service profile reads downstream paths", enumerate the **real SSM-path-level permission** of every profile in the chain on a representative path the downstream cookbook will actually read.
+
+`aws sts get-caller-identity` is insufficient — it succeeds for any valid identity regardless of SSM scope. The probe must hit the downstream-targeted path:
+
+```bash
+# For each profile in the chain (bootstrap + service):
+aws ssm get-parameter \
+  --name "<actual-path-cookbook-will-read>" \
+  --profile "<profile>" \
+  --region "<region>" \
+  > /dev/null 2>&1 && echo "OK" || echo "DENY"
+```
+
+If the service profile returns `DENY` for a path the downstream cookbook needs, the chain is structurally broken regardless of how reliably the upstream admin auth works. Either:
+
+1. Expand the service profile's IAM policy to include the missing paths (home-monitor TF change), OR
+2. Switch the downstream cookbook to use a different profile that has the access, OR
+3. Abandon the design — the cookbook's existing `skip_if: File.exist?(env_output_path)` may already cover the gap on warm re-runs
+
+This applies equally to **`kms:Decrypt`** chains for SSM SecureString (see the `EncryptionContext` rule below — even with sts identity working and ssm:GetParameter granted, missing `kms:Decrypt` on the parameter's KMS context still returns AccessDeniedException at fetch time).
+
+This rule exists because the 2026-05-11 PR #339+#340 designed a two-stage `aws login --remote → aws-credentials fetches pve-bootstrap-ssm` flow that was structurally moot: `pve-bootstrap-ssm` has `/ssh-keys/*` only, not `/cognee/*`, so even a perfectly-working sh1admn admin auth couldn't fix `aws ssm get-parameter --name /cognee/llm-endpoint --profile pve-bootstrap-ssm`. The 30-second per-profile probe at design time would have caught this. Reverted via PR #343.
+
 ## IAM principal that cannot self-rotate — design `bootstrap_profile` chain accordingly
 
 A common security posture for fleet-deployed IAM principals (e.g., `pve-bootstrap-ssm` in home-monitor) is **least-privilege at runtime + cannot read its own credential SSM parameters**. This intentional asymmetry blocks credential-leak escalation: even with the leaked key, the attacker cannot read future rotated keys from SSM.
@@ -144,3 +180,307 @@ git grep -nE 'bootstrap_profile.*pve-bootstrap-ssm|aws sts get-caller-identity.*
 Any fleet-host cookbook using its OWN runtime IAM identity as `bootstrap_profile` is a candidate to verify against the home-monitor IAM policy.
 
 This rule exists because setup PR #166 (2026-05-07, aws-credentials systematic-化) included `aws-credentials` in `auto-mitamae-target` with `bootstrap_profile=pve-bootstrap-ssm`. The cookbook's `aws sts get-caller-identity` probe passed; the actual `aws ssm get-parameter` then failed with `AccessDeniedException` on `/home-monitor/iam/pve-bootstrap-ssm/access-key-id`. Recovery required revert PR #167 + manual re-apply on CT 111. The IAM policy denial is intentional — `pve-bootstrap-ssm` cannot read its own credential paths to prevent self-rotation as a privilege-escalation surface. The cookbook now uses the external `bin/bootstrap-lxc-creds` script as the systematic-化 channel instead.
+
+## kms:Decrypt with EncryptionContext — wildcard `*` denies silently
+
+When granting `kms:Decrypt` to a role that needs to read SSM SecureString
+parameters, AWS encrypts the parameter value with a KMS data key bound
+to an `EncryptionContext` of the form:
+
+```json
+{ "PARAMETER_ARN": "arn:aws:ssm:<region>:<account>:parameter/<name>" }
+```
+
+The IAM `Condition` block on `kms:Decrypt` MUST match this context with
+the **explicit account ID**. A wildcard like
+`"arn:aws:ssm:*:*:parameter/<name>"` looks reasonable but is rejected by
+KMS's StringLike evaluator — every Decrypt call returns
+`AccessDeniedException: ciphertext refers to a customer master key that
+does not exist, does not exist in this region, or you are not allowed
+to access`. The error message **does not name the missing condition** —
+the failure looks like a missing key reference rather than an unmet
+condition.
+
+**Wrong** (wildcard, silently denies every Decrypt):
+
+```hcl
+condition {
+  test     = "StringLike"
+  variable = "kms:EncryptionContext:PARAMETER_ARN"
+  values = [
+    "arn:aws:ssm:*:*:parameter/home-monitor/secrets/tailscale-oauth-client-id",
+    "arn:aws:ssm:*:*:parameter/home-monitor/secrets/tailscale-oauth-client-secret",
+    "arn:aws:ssm:*:*:parameter/tailscale/auth-key",
+  ]
+}
+```
+
+**Right** (explicit account ID, derived from `data.aws_caller_identity`):
+
+```hcl
+data "aws_caller_identity" "current" {}
+
+condition {
+  test     = "StringLike"
+  variable = "kms:EncryptionContext:PARAMETER_ARN"
+  values = [
+    "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/home-monitor/secrets/tailscale-oauth-client-id",
+    "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/home-monitor/secrets/tailscale-oauth-client-secret",
+    "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/tailscale/auth-key",
+  ]
+}
+```
+
+**Why wildcards fail**: KMS evaluates the EncryptionContext condition
+as exact-match on each entry; the StringLike pattern is treated as a
+literal pattern that never matches a real ARN unless the wildcard
+positions align with the actual ARN structure. Even when they "could"
+align, KMS's policy engine specifically rejects wildcarded account IDs
+in EncryptionContext conditions for the SSM SecureString integration —
+the documented behavior is that the context must be an **exact** ARN,
+and `StringLike` provides forward-compat for SSM internal evolution,
+not for caller-side abbreviation.
+
+**Detection signal**: an IAM role that *should* have `kms:Decrypt` is
+denied on every SSM SecureString GetParameter call with `--with-decryption`,
+returning the misleading "ciphertext refers to a CMK that does not
+exist" error. Probe with `aws iam get-role-policy ... --query
+'PolicyDocument.Statement[?contains(Action, kms:Decrypt)]'` and look
+for `*:*:parameter/...` ARNs in the EncryptionContext condition.
+
+**Fix shape**: always use `${var.aws_region}` (already known at TF
+parse time) + `${data.aws_caller_identity.current.account_id}`
+(authoritative). If you need to grant Decrypt across multiple regions,
+enumerate each region explicitly — never wildcard the region either,
+same evaluator restriction.
+
+This rule exists because home-monitor PR #57 (2026-05-10, KMS Decrypt
+for Tailscale rotation script) shipped wildcarded ARNs in the
+EncryptionContext condition. The on-EC2 systemd-timer rotation script
+hit `AccessDeniedException` on every SSM `GetParameter`, with no clue
+in the error message that the EncryptionContext condition was the
+cause. PR #58 replaced the wildcards with `data.aws_caller_identity.current.account_id`
+and the next timer fire (`[2026-05-10T17:32:48+00:00] Tailscale auth
+key rotated`) succeeded. The diagnostic arc cost one PR + one re-apply
++ one wakeup wait for timer fire — all preventable by writing the
+explicit account ID at PR design time.
+
+## Tailscale OAuth client scope — UI/API divergence requires API-side verification
+
+Tailscale's admin UI for OAuth client editing (`/admin/settings/oauth/<id>/edit`)
+sometimes shows scope checkboxes (e.g. `Auth Keys: Read ✓ Write ✓`)
+in a state that does NOT match what the API enforces. The Save banner
+appearing is not authoritative — the API call still rejects key-mint
+attempts with `requested tags '<list>' invalid or not permitted (400)`,
+even though the tag list is correctly enumerated and the UI shows the
+required scope as granted.
+
+Empirical signature of this divergence:
+
+- UI shows checkbox state X for scope Y
+- `POST /api/v2/oauth/token` succeeds (the client itself is valid)
+- `POST /api/v2/tailnet/-/keys` with the minted token fails with 400
+  `tags ... invalid or not permitted` regardless of which valid tag
+  combination is passed
+
+**Mandatory verification** before treating any OAuth client as functional:
+
+```bash
+CLIENT_ID=$(aws ssm get-parameter --name <id-path> --with-decryption \
+  --query 'Parameter.Value' --output text --profile <profile>)
+CLIENT_SECRET=$(aws ssm get-parameter --name <secret-path> --with-decryption \
+  --query 'Parameter.Value' --output text --profile <profile>)
+TOKEN=$(curl -s -X POST -d "client_id=$CLIENT_ID" -d "client_secret=$CLIENT_SECRET" \
+  https://api.tailscale.com/api/v2/oauth/token | jq -r '.access_token')
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  https://api.tailscale.com/api/v2/tailnet/-/keys \
+  -d '{"capabilities":{"devices":{"create":{"reusable":true,"ephemeral":true,"preauthorized":true,"tags":["<your-tag-list>"]}}}}' \
+  | jq '.key // .message'
+```
+
+Expected: `"tskey-auth-..."`. If `"... invalid or not permitted"`
+appears, the OAuth client is broken and the only known recovery is to
+**create a fresh OAuth client** in the admin UI (not edit the existing
+one) and update the SSM parameters. Editing the existing client and
+re-saving has been observed to leave the API state unchanged.
+
+**When this matters**:
+
+- Adding a new tailscale_tailnet_key resource referencing this OAuth
+  client → `terraform apply` will fail at create-time
+- The on-EC2 60-day rotation timer for the auth key → silent timer
+  failure, SSM `/tailscale/auth-key` slowly drifts toward expiry
+- EC2 replacement → first boot `tailscale up --auth-key` rejects the
+  stale SSM key → user_data Phase 01 fail → no nginx, no cert, public
+  endpoints DOWN
+
+**Don't trust the UI state**. Always run the API verification curl
+chain before merging any TF / cookbook change that depends on the
+OAuth client minting a key. Five seconds at PR time prevents a
+multi-hour incident at apply / boot time.
+
+This rule exists because the 2026-05-10 home-monitor incident traced
+to OAuth client `kLoCzbwNyn11CNTRL` whose admin UI showed `Auth Keys:
+Read ✓ Write ✓` while the API returned `tags ... invalid or not
+permitted` for every tag combination. Recovery required generating a
+brand-new OAuth client `kBiQ8wcpEB21CNTRL`, updating SSM, and verifying
+via the curl chain above. The runbook for this failure mode is at
+`~/ManagedProjects/home-monitor/docs/runbooks/tailscale-key.md`.
+
+### Scope-to-endpoint reference — probe the RIGHT endpoint for each scope
+
+Tailscale's UI scope categories do NOT map 1-to-1 to API endpoint families. Notably,
+**Routes is a sibling top-level scope, NOT a sub-scope of Devices Core** — the
+`/api/v2/device/<id>/routes` endpoint requires `Routes`, even though it lives under
+the `/device/<id>/` URL prefix. Probing `devices:core:write` via the routes endpoint
+returns 403 even when the scope IS granted, leading to false "scope didn't propagate"
+conclusions.
+
+When verifying an OAuth client's scopes, probe each UI scope category with its actual
+representative endpoint:
+
+| UI scope label        | Representative probe                                                                  | Pass signal               |
+|-----------------------|---------------------------------------------------------------------------------------|---------------------------|
+| Devices Core: Read    | `GET /api/v2/tailnet/-/devices`                                                       | HTTP 200 + devices array  |
+| Devices Core: Write   | `POST /api/v2/device/<id>/tags` body `{"tags":["tag:foo"]}`                           | HTTP 200                  |
+| Routes: Read          | `GET /api/v2/device/<id>/routes`                                                      | HTTP 200 + routes object  |
+| Routes: Write         | `POST /api/v2/device/<id>/routes` body `{"routes":[...]}` (idempotent re-write OK)    | HTTP 200                  |
+| DNS: Read             | `GET /api/v2/tailnet/-/dns/split-dns`                                                 | HTTP 200                  |
+| DNS: Write            | `POST /api/v2/tailnet/-/dns/split-dns/<domain>` body `{"nameservers":[...]}`          | HTTP 200                  |
+| Auth Keys: Write      | `POST /api/v2/tailnet/-/keys` (body per existing rule)                                | HTTP 200 + `tskey-auth-`  |
+
+When the actual terraform resource is `tailscale_device_subnet_routes`, the missing
+scope is **Routes**, not `Devices Core: Write`. When the resource is
+`tailscale_dns_split_nameservers`, the missing scope is **DNS**. Match the probe to
+the scope you're verifying — not to a guess about which scope category the endpoint
+URL appears to belong to.
+
+### Same error on a freshly-created client = hypothesis is wrong, not drift
+
+The "create a fresh OAuth client" workaround above is the recovery for genuine UI/API
+divergence. It is NOT the recovery for "I configured the wrong scope". If a
+brand-new client (never edited) returns the **same 403** as the prior client on the
+**same endpoint** with **all UI-visible scopes checked**, the configuration mental
+model is wrong — not the persistence.
+
+Action gate when a fresh client reproduces the failure:
+
+1. Stop reaching for "UI/API drift" or "tag scope mismatch" explanations
+2. Probe other write endpoints under the scope you THINK should cover this call
+   (e.g. `POST /device/<id>/tags` to verify `Devices Core: Write` independently of
+   the failing endpoint)
+3. If the sibling probe returns 200, the scope IS granted — the failing endpoint
+   requires a different scope. Consult the scope-to-endpoint table above.
+4. If the sibling probe also returns 403, then the scope itself is not granted —
+   re-check the UI checkbox state, and only then suspect drift
+
+This rule exists because the 2026-05-11 home-monitor session created a fresh
+OAuth client (`koFXKg78P311CNTRL`) with all 4 ticked scopes after the prior client
+(`kBiQ8wcpEB21CNTRL`) returned 403 on `/device/<id>/routes`. The fresh client
+returned identical 403s. I interpreted this as a tag-scope mismatch (`hnd-subnet-router`
+has only `tag:home-router`, not in the OAuth client's tag list) and burned 2-3
+round-trips before probing `POST /device/<id>/tags` and getting 200 — proving
+`Devices Core: Write` was fine and the actual missing scope was **Routes**, a
+separate top-level UI category. Two-fresh-clients-same-result was a sufficient
+signal at iteration 2 to pivot the hypothesis away from drift.
+
+## Reusable Tailscale auth keys for ephemeral compute
+
+When provisioning a Tailscale tailnet key (`tailscale_tailnet_key`
+resource) for an EC2 / Auto Scaling Group / similar replaceable
+compute instance, set `reusable = true` unless there's a documented
+reason to enforce single-use. Single-use (`reusable = false`) breaks
+EC2 replacement workflows in a non-obvious way:
+
+- AWS auto-recovery, AMI bumps, `terraform taint`, or any
+  `user_data_replace_on_change` trigger destroys the instance
+- The new instance boots, runs user_data, fetches the same SSM key,
+  calls `tailscale up --auth-key=<key>` → rejected with `invalid key:
+  API key <id> not valid` because the prior boot consumed it
+- All downstream user_data phases (TLS, Docker, nginx) skip → public
+  endpoints DOWN until manual intervention
+
+`reusable = true` allows the same SSM-stored key to authenticate
+unlimited boots. The key still expires (90-day default), so pair with
+a rotation timer (on-EC2 systemd timer minting fresh keys via the
+OAuth client) to keep the SSM value valid indefinitely.
+
+```hcl
+resource "tailscale_tailnet_key" "subnet_router" {
+  reusable      = true              # MUST for ASG/replaceable EC2
+  ephemeral     = false
+  preauthorized = true
+  expiry        = local.tailscale_key_expiry_seconds  # 90 days
+  description   = "AWS VPC subnet router for home monitoring"
+  tags          = ["tag:subnet-router", "tag:aws", "tag:home-monitoring"]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+```
+
+**Don't pair this with `single_use = true`** on the rotated key either
+— the rotation script writes a fresh key to SSM, but if the next EC2
+boot races with a manual rotation, the boot's fetch and the rotate's
+put may conflict and leave a single-use key already-consumed before
+the boot's `tailscale up` runs.
+
+The complete pattern (reusable key + 60-day rotation timer + KMS
+Decrypt with explicit account ID) is documented in
+`~/ManagedProjects/home-monitor/docs/runbooks/tailscale-key.md`.
+
+This rule exists because home-monitor's `tailscale_tailnet_key` was
+originally `reusable = false` for a defensive single-use posture
+(2025 design). The 2026-05-10 EC2 auto-recovery cycle terminated the
+running EC2 mid-incident, the new EC2 booted, and `tailscale up`
+rejected the consumed SSM key. mcp.ohno.be went DOWN for the duration
+of the recovery (~30 min including OAuth-scope-drift discovery). PR
+#56 changed to `reusable = true` and PR #57+#58 added the timer +
+Decrypt grants for the long-term fix.
+
+## Cost Table Labeling Conventions
+
+When presenting AWS cost breakdowns to the user, use **explicit category labels** instead of generic 「小計」/「合計」. The mismatch between recurring base cost and annual spikes is a frequent source of misunderstanding — a single line "subtotal $X" mixing recurring + annual + spike cannot tell the reader whether $X is a typical month, a worst-case month, or includes one-off charges.
+
+**Required label categories**:
+
+| Label | Meaning |
+|---|---|
+| `月次固定 (recurring)` | Every month, predictable baseline |
+| `年次スパイク (annual)` | Charges that occur once per year (domain renewal, RI upfront, audit etc.) |
+| `削減後ベース (post-action)` | Projected month-end after a fix lands (after RI / feature off / migration) |
+| `当月実績 (MTD actual)` | Cost Explorer reported amount for the partial month |
+
+**Anti-pattern**:
+
+```
+| Service       | 小計  |
+| RDS           | $20   |
+| Route53       | $1.66 |
+| ...           | ...   |
+| 合計          | $48   |
+```
+
+What does $48 cover? Recurring? With or without the annual Registrar charge? Post or pre RI? The user has to ask.
+
+**Correct shape**:
+
+```
+| Service       | 月次固定 | 年次スパイク         | 削減後ベース       |
+| RDS           | $20.00  | $0                  | $13.42 (post-RI)  |
+| Route53       | $1.66   | $11 (Registrar 4月) | $1.66             |
+| ...           |         |                     |                   |
+| **Subtotal**  | $X      | $Y (next: 4月)      | $Z                |
+```
+
+When the totals would mix categories, split the totals row by category — never a single ambiguous 「合計」.
+
+**For RI-related accounting, label both**:
+
+- **UnblendedCost** (実支払額 — RI upfront lands in the purchase month as a $-spike)
+- **AmortizedCost** (実態の月次負担 — RI cost spread over the commitment period)
+
+When discussing a month where RI was purchased, present both views side by side. UnblendedCost without context looks like a cost explosion; AmortizedCost reflects the true monthly burden.
+
+This rule exists because the 2026-05-11 cost-analysis session presented 「小計 (RDS 以外) ~$20/月」 while the actual 4月 total for that group was $47.64 (containing Registrar $11 annual + ELB/WAF residue from discontinued services + Tax). The user had to ask 「これは何？」 to surface the missing context; the 5月 projection was actually $27/月 due to the annual Registrar not recurring. The vague 「小計」 label hid the discontinuity entirely.

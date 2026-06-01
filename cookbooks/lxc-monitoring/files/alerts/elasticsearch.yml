@@ -1,0 +1,106 @@
+# Elasticsearch cluster health alerts.
+#
+# Fed by elasticsearch_cluster_status{color=...} written to each es node's
+# node_exporter textfile by cookbooks/lxc-elasticsearch/files/es-cluster-health.sh
+# (es-cluster-health.timer, ~60s). The metric is cluster-wide and reported by
+# all 3 nodes, so aggregations use max()/min() across the node-es-* series and
+# stay correct when a single node's node_exporter is down.
+#
+# Origin: the 2026-05 corrupt-shard RED cluster (.ds-metrics-prometheus
+# backing index) went undetected because ES cluster health was not scraped;
+# it surfaced only indirectly as auto-mitamae es-* apply failures + a frozen
+# auto-mitamae.prom.
+groups:
+  - name: elasticsearch
+    rules:
+      - alert: ESClusterStatusRed
+        expr: max(elasticsearch_cluster_status{color="red"}) == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Elasticsearch cluster es-home-monitor is RED (2m+)"
+          description: >
+            At least one PRIMARY shard is unassigned — some index/data stream is
+            unavailable. Common cause: irrecoverable shard corruption (cf. the
+            2026-05 .ds-metrics-prometheus.collector corruption) or all replicas
+            of a primary lost.
+            Runbook: ssh root@192.168.1.10 'pct exec 114 -- bash -lc "set -a; . /etc/elasticsearch/elasticsearch-secrets.env; set +a; curl -sk --cacert /etc/elasticsearch/certs/ca.crt -u elastic:$ELASTIC_PASSWORD https://192.168.1.79:9200/_cluster/allocation/explain?pretty"'
+
+      - alert: ESClusterStatusYellow
+        expr: max(elasticsearch_cluster_status{color="yellow"}) == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elasticsearch cluster es-home-monitor is YELLOW (15m+)"
+          description: >
+            Replica shards have been unassigned for 15m+. Often transient during
+            shard recovery / a node restart; sustained yellow means a replica
+            cannot be placed (disk watermark, a node down, or replicas > nodes).
+
+      - alert: ESClusterUnreachable
+        # Every reporting node's probe returned `unknown` — ES is down or
+        # unauthenticated cluster-wide (distinct from a single node being down,
+        # where the surviving nodes still report green/yellow/red).
+        expr: min(elasticsearch_cluster_status{color="unknown"}) == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Elasticsearch cluster health unknown from all nodes (5m+)"
+          description: >
+            es-cluster-health.sh could not determine cluster status from any
+            es node for 5m+ (ES down, TLS/CA problem, or es_monitor auth broken).
+            Runbook: ssh root@192.168.1.10 'pct exec 112 -- systemctl status elasticsearch es-cluster-health.timer'
+
+      - alert: ESClusterHealthStale
+        # The textfile timestamp stopped advancing while the metric is still
+        # present — es-cluster-health.timer stopped firing but node_exporter
+        # is up. (Total metric disappearance is caught by ESClusterHealthAbsent
+        # below, since a (time() - max(absent)) expression yields empty.)
+        expr: (time() - max(elasticsearch_cluster_health_scrape_timestamp_seconds)) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ES cluster-health probe stale (5m+)"
+          description: >
+            elasticsearch_cluster_health_scrape_timestamp_seconds has not
+            advanced in 5m+ — es-cluster-health.timer is not firing on any es
+            node, so the RED/YELLOW cluster alerts cannot fire.
+            Runbook: ssh root@192.168.1.10 'pct exec 112 -- bash -lc "systemctl status es-cluster-health.timer; systemctl show es-cluster-health.timer -p Trigger"'
+
+      - alert: ESClusterHealthAbsent
+        # Belt-and-suspenders for the absent-metric gap the staleness alert
+        # cannot see: the metric is gone from ALL es nodes (every node_exporter
+        # down, or the textfile never written) → no ES health signal at all.
+        expr: absent(elasticsearch_cluster_status)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ES cluster-health metric absent from all es nodes (5m+)"
+          description: >
+            elasticsearch_cluster_status is absent across the whole fleet — all
+            three es nodes' node_exporter is down, or es-cluster-health.sh has
+            never produced a textfile. The RED/YELLOW/stale alerts are all blind.
+            Runbook: ssh root@192.168.1.10 'for c in 112 113 114; do pct exec $c -- systemctl is-active node-exporter es-cluster-health.timer; done'
+
+      - alert: ESSnapshotStale
+        # No successful SLM snapshot in >36h (daily policy fires 01:30), OR SLM
+        # is unreadable/never-succeeded (age=-1). This is the backup that makes a
+        # corrupt index recoverable — the 2026-05 incident had ~11 of 20 days
+        # with no snapshot and ZERO operator signal. for:1h debounces a single
+        # in-progress run.
+        expr: max(elasticsearch_slm_last_success_age_seconds) > 129600 or max(elasticsearch_slm_last_success_age_seconds) == -1
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "ES SLM snapshot stale (>36h) or unreadable"
+          description: >
+            No successful daily-snapshot in 36h+ (or SLM status unreadable from
+            the es_monitor probe). The off-host S3 backup — the only recovery
+            path for a hardware-induced corrupt index — is not running.
+            Runbook: ssh root@192.168.1.10 'pct exec 112 -- bash -lc "set -a; . /etc/elasticsearch/elasticsearch-secrets.env; set +a; curl -sk --cacert /etc/elasticsearch/certs/ca.crt -u elastic:\$ELASTIC_PASSWORD https://192.168.1.77:9200/_slm/policy/daily-snapshot?pretty"'

@@ -309,6 +309,58 @@ After all hosts have migrated, simplify the guard back to `test -f` in a follow-
 
 This rule exists because setup PR #130 (2026-05-05) migrated edge-agent's `config_server_url` from `192.168.1.20:3101` (pre-PVE weave-server on pro) to `weave.home.local:8888` (PVE CT 109). The cookbook had `not_if "test -f #{config}"`, which would have left neo / air pinned to the dead endpoint forever despite the cookbook source being correct. The migration-specific grep guard solved this without changing semantics for new-host installs.
 
+## SSM-sourced `.env` generator: file-existence skip_if drops new KEY=VALUE lines silently
+
+When a cookbook uses `require_external_auth(skip_if: -> { File.exist?(env_output_path) })` (or `not_if "test -f #{env_path}"` on the `execute "generate ... .env"` resource) to avoid re-fetching from SSM on every apply, ADDING a new key to the underlying `generate_env.sh` script does NOT take effect on existing hosts. The skip_if returns true (`.env` already exists), the generate execute is skipped, no new content is produced, and the running container's `env_file` continues to load the OLD `.env` that lacks the new key. Cookbook apply reports success; the container's env is silently incomplete.
+
+The trap is invisible at code-review time (the generator change is correct) and at dry-run time (no resource fails). It surfaces only at functional verification — `docker exec <container> env | grep NEW_KEY` is empty even after a green apply.
+
+**Default for static credentials**: file-existence skip_if is fine when the generator's output shape is stable (e.g., `.env` holds only `LLM_API_KEY` + `DB_PASSWORD` and that set never grows). Saves redundant SSM round-trips on re-apply.
+
+**When generator content drifts** — adding a new SSM-sourced key, restructuring lines — use a content-aware guard that checks for the expected new key:
+
+```ruby
+require_external_auth(
+  tool_name: "AWS CLI for /<service>/* SSM params",
+  check_command: "aws ssm get-parameter --name /<service>/<probe-key> ...",
+  # Skip only when .env exists AND already contains every key generate_env.sh
+  # writes. Adding a new line to the generator → File.read mismatch →
+  # block fires → fresh fetch.
+  skip_if: -> {
+    File.exist?(env_output_path) &&
+      File.read(env_output_path).include?("OTEL_EXPORTER_OTLP_HEADERS=") &&
+      File.read(env_output_path).include?("APM_API_KEY=")
+  },
+) do
+  execute "generate <service> .env" do
+    command "AWS_PROFILE=... bash #{generate_env_script} #{env_temp_path}"
+  end
+end
+```
+
+For the simple case (one canonical key per generator change), single-key check is enough. For multi-key generators, list every key the generator writes — adding a key to the list when adding to the script is the discipline that keeps drift detection accurate.
+
+**Alternative — drop skip_if + let mitamae's `remote_file` diff handle no-ops**: regenerate `.env` to a temp path on every apply, then `remote_file env_output_path source env_temp_path`. mitamae's remote_file already content-diffs — same `.env` → no notify, no restart. Cost: every apply pays the SSM round-trip (1-5s per key); benefit: zero drift class.
+
+**Detection grep** for reviewing other cookbooks:
+
+```bash
+git grep -B2 -A1 'skip_if.*File.exist' cookbooks/ | grep -B2 'env_output_path\|\.env'
+```
+
+Any hit that doesn't check additional content beyond file existence is a candidate, especially if the cookbook's `generate_env.sh` fetches more than one SSM key.
+
+**Recovery procedure** on affected hosts (existing `.env` predates the new key):
+
+```bash
+# Per affected host (CT 105 / 107 in the originating incident).
+pct exec <ct> -- bash -c 'mv /root/deploy/<service>/.env /root/deploy/<service>/.env.bak-pre-<feature>-$(date +%F)'
+pct exec <ct> -- bash -lc 'cd /root/setup && ./bin/mitamae local pve/lxc-<service>.rb'
+# Verify: docker exec <container> env | grep <NEW_KEY> must show the value.
+```
+
+This rule exists because the 2026-05-12 APM Phase 5 rollout's cookbook PRs (setup #337 cognee, #333 ai-memory) added `OTEL_EXPORTER_OTLP_HEADERS=...` to `generate_env.sh` for both services, but `require_external_auth(skip_if: -> { File.exist?(env_output_path) })` made the generator a no-op on hosts whose `.env` predated the change. The container env had OTEL_SERVICE_NAME / ENDPOINT / CERTIFICATE (from docker-compose `environment:` block) but NOT OTEL_EXPORTER_OTLP_HEADERS (the one from env_file), so OTLP exports went out without auth → apm-server rejected them silently → service.name absent from `traces-apm-default`. Recovery required manual `.env` rename + reapply on every affected host. The content-aware skip_if would have re-fetched on the first apply post-merge.
+
 ## mitamae directory/file `owner`/`group` MUST be String, not Integer
 
 mitamae's `directory` and `file` resources accept `owner` / `group` as a **String** only — Integer literals raise `MItamae::Resource::InvalidTypeError: owner attribute should be String` at converge time. The error fires per-resource at apply on the target host, NOT at compile or `mitamae --dry-run` time, so the typo survives `ruby -c`, CI's syntax-check job, and even the cookbook's own dry-run gate.
@@ -433,4 +485,37 @@ end
 Run before any apt repo addition, any zip extraction, or any package install that came in via custom apt sources.
 
 This rule exists because PRs #108-#110 in setup were three sequential apply cycles to fix the same class of bug — each cookbook (docker-engine, rclone, awscli) was missing the bootstrap-deps guard and failing on a different downstream step of the same root cause. A single cookbook-side check at the beginning of the PVE-LXC entry recipes would have collapsed all three PRs into zero.
+
+## IP literal must come from contracts/devices.json (plan-phase probe)
+
+Before writing any IP literal into a cookbook (`execute` command, `template` substitution, Prometheus scrape target, `discovery.seed_hosts`, healthcheck URL), probe the source of truth and confirm the match:
+
+```bash
+jq -r '.devices | to_entries[] | select(.value.kind=="lxc") | "\(.key) ip=\(.value.lxc.ip // "?") ct_id=\(.value.lxc.ct_id // "?")"' \
+  ~/ManagedProjects/home-monitor/contracts/devices.json
+```
+
+This catches the **CT-ID-shaped IP confusion**: hardcoded `192.168.1.{112,113,114}` matches CT IDs visually but the real LXC IPs are `.77/.78/.79`. The two are visually similar but only the real values route — ARP `ip neigh show` reports `INCOMPLETE` for the wrong ones, ES discovery throws `connect_exception: No route to host` from Java/Netty, and `pct exec` ICMP ping confusingly succeeds (kernel kept the L2 path) so the bug looks like an ES configuration issue.
+
+Hardcoded IPs are a **plan-completeness failure**, not a post-apply diagnosis. The probe is a 2-second plan-phase step.
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 3b session lost ~3 hours debugging cluster discovery failures rooted in two cookbook files (`elasticsearch.yml.tmpl` seed_hosts + `pve/lxc-es-{0,1,2}.rb` `transport_host`) hardcoding CT-ID-shaped IPs. PRs #247 and #248 fixed both. `contracts/devices.json` had the correct `.77/.78/.79` values the entire session — never consulted at plan time.
+
+## Cookbook converge fail — diagnose all remaining resources before first fix PR
+
+When `mitamae apply` (or `docker compose up + bootstrap script`) fails on a target host, **DO NOT** open a fix PR for the first error. Instead:
+
+1. Let the apply complete (or kill it cleanly)
+2. Probe the full state:
+   ```
+   ssh root@<vmid> 'systemctl --failed; docker ps -a; docker logs <container> --tail 80 2>&1 | grep -iE "ERROR|FATAL|denied"; ls -la /data/<service>/ 2>&1'
+   ```
+3. Collect every fail signal (resource state mismatches, container exit codes, log error patterns, file permission issues)
+4. Open one fix PR addressing all of them
+
+Why batched: each fix-PR-CI-merge-redeploy cycle takes 5-10 min. Sequential fix PRs for diagnosable-in-one-pass bugs multiply waste.
+
+**Exception**: bug B is genuinely unobservable until bug A is fixed (e.g., container won't start until cert ownership fixed → can't probe ES auth until container running). Batching the related-bug-cluster is correct, but the dependency must be genuine — not "I noticed A first so let me ship A".
+
+This rule exists because the 2026-05-09 ADR-0005 Phase 3b session shipped 6 sequential fix PRs (#242 → #243 → #244 → #245 → #247 → #248), ~30-60 min of avoidable cycle time. Bugs #5/#6 (the IP confusion above) were diagnosable from the first ES log line "No route to host" via `pct exec <vmid> -- ip neigh show` (would have shown `INCOMPLETE` immediately). Bugs #7/#8 (cert ownership + healthcheck quoting) surfaced later but were independent and could have been in the same batch as the network bugs.
 
