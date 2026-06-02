@@ -32,8 +32,9 @@ include_cookbook "docker-engine"
 version     = node.dig(:roon_mcp_server, :version)     || "0.5.6"
 http_port   = node.dig(:roon_mcp_server, :http_port)   || 8080
 # core_host default is the direct IP rather than `roon-lxc.home.local`
-# because the container DNS (Docker's embedded resolver, even with RTX
-# 192.168.1.253 upstream) returns NAT64-mapped IPv6 addresses (e.g.
+# because the container DNS (Docker's embedded resolver, historically
+# with the old RTX 192.168.1.253 upstream) returned NAT64-mapped IPv6
+# addresses (e.g.
 # 64:ff9b::c0a8:114) for *.home.local A-record lookups in some
 # configurations, and the Roon binary's tokio TCP connect chokes on the
 # IPv6 form. Direct IPv4 sidesteps the resolver entirely. Override via
@@ -177,12 +178,13 @@ file "#{deploy_dir}/docker-compose.yml" do
           - "#{http_port}:#{http_port}"
         user: "${UID}:${GID}"
         # Default container DNS does not include the LAN's home.local
-        # zone (RTX-served), so home.local hostnames fail to resolve
-        # inside the container. Pin Cloudflare for general internet +
-        # the LAN's RTX (192.168.1.253) for *.home.local. The RTX entry
-        # keeps this working even if DHCP-served DNS changes.
+        # zone, so home.local hostnames fail to resolve inside the
+        # container. Point at the unbound resolver (CT118, 192.168.1.61)
+        # for *.home.local (forwarded to VPC Route53) + Cloudflare for
+        # general internet. unbound returns real A records, avoiding the
+        # NAT64-mapped IPv6 the old RTX (192.168.1.253) DNS path produced.
         dns:
-          - 192.168.1.253
+          - 192.168.1.61
           - 1.1.1.1
         volumes:
           - #{state_dir}:/data:rw
