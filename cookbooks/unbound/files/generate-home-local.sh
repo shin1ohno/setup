@@ -62,9 +62,12 @@ else
          "restore VPC-independent local resolution." >&2
 fi
 
-# Splice the generated block at the marker line (whole marker line is replaced).
+# Splice the generated block at the marker line. Match ONLY a comment line that
+# is exactly the marker (leading whitespace + "#" + marker), so prose elsewhere
+# that happens to mention the marker token is NOT also replaced — otherwise the
+# block would be spliced twice (once before `server:`, breaking the config).
 awk -v gen_file="${gen_file}" -v marker="${MARKER}" '
-    index($0, marker) > 0 {
+    $0 ~ ("^[[:space:]]*#[[:space:]]*" marker "[[:space:]]*$") {
         while ((getline line < gen_file) > 0) print line
         close(gen_file)
         next
