@@ -1,11 +1,15 @@
 # /etc/unbound/unbound.conf.d/home-monitor.conf
 # Managed by mitamae (cookbooks/unbound). DO NOT EDIT BY HAND.
+# Rendered from this template by cookbooks/unbound/files/generate-home-local.sh
+# (the @@HOME_LOCAL_LOCAL_DATA@@ marker is replaced with home.local local-data).
 #
 # LAN DNS resolver for 192.168.1.0/24, replacing the RTX1210 forwarder which
 # does not serve TCP/53 (RFC 7766 TCP-fallback on truncated responses fails
 # there, breaking Linux name resolution on large/DNSSEC/long-TXT answers).
-#   home.local + 1.168.192.in-addr.arpa -> VPC Route53 resolver (10.33.128.2)
-#   everything else                     -> Cloudflare DoT (1.1.1.1@853 / 1.0.0.1@853)
+#   home.local              -> served LOCALLY from local-data (see marker below);
+#                              unknown names fall through to VPC Route53 (10.33.128.2)
+#   1.168.192.in-addr.arpa  -> VPC Route53 resolver (10.33.128.2)
+#   everything else         -> Cloudflare DoT (1.1.1.1@853 / 1.0.0.1@853)
 
 server:
     interface: 0.0.0.0@53
@@ -38,30 +42,26 @@ server:
     domain-insecure: "home.local."
     domain-insecure: "1.168.192.in-addr.arpa."
 
-    # --- home.local resolution tuning for the ELK fleet ---
-    # The authoritative home.local zone (AWS Route53, home-monitor devices.tf)
-    # DOES serve es-N.home.local, but every forward to the VPC Route53 resolver
-    # (10.33.128.2, reached over the Tailscale subnet route) costs ~90ms. Under a
-    # burst of fleet lookups (ELK inter-node + Kibana + ~130 elastic-agent /
-    # agentbeat procs) those 90ms forwards serialise (see num-threads below) and
-    # the requestlist backs up, so LAN clients see intermittent multi-second DNS
-    # timeouts (observed 2026-05-31 from pro-dev). Two mitigations:
-    #
-    # 1. Answer the hot es-N.home.local names locally so they never enter the
-    #    90ms forward path. Redundant with AWS for correctness, load-shedding for
-    #    latency. IPs match contracts/devices.json / home-monitor devices.tf.
-    local-zone: "es-0.home.local." static
-    local-data: "es-0.home.local. 3600 IN A 192.168.1.77"
-    local-zone: "es-1.home.local." static
-    local-data: "es-1.home.local. 3600 IN A 192.168.1.78"
-    local-zone: "es-2.home.local." static
-    local-data: "es-2.home.local. 3600 IN A 192.168.1.79"
+    # --- home.local served LOCALLY (VPC-independent), rendered from SSM ---
+    # ALL home.local A records (home-monitor local.private_dns_forward, published
+    # to SSM /host-registry/home-local-records) are served as local-data here, so
+    # home.local resolution does NOT depend on the VPC Route53 forward path
+    # (10.33.128.2 over the Tailscale subnet route). That forward path is
+    # wedge-prone: a transient VPC outage pushes the forwarder RTO to the 120000ms
+    # cap and unbound SERVFAILs home.local until restarted (observed 2026-05-31 /
+    # 2026-06-02). Serving locally mirrors what the RTX rtx_dns_server "hosts"
+    # block did (now retired) and also load-sheds the ELK fleet's burst lookups
+    # off the ~90ms forward path. The block below is rendered at deploy time by
+    # cookbooks/unbound/files/generate-home-local.sh from the SSM map; names NOT
+    # in the registry still fall through to the forward-zone (Route53). If the SSM
+    # fetch fails, the marker renders empty and home.local degrades to forward-only.
+    # @@HOME_LOCAL_LOCAL_DATA@@
 
-    # 2. Search-domain doubling guard. Clients with a high ndots query the doubled
-    #    name <name>.home.local.home.local FIRST; those are always bogus but were
-    #    forwarded to 10.33.128.2 and SERVFAIL'd — the bulk of the original storm.
-    #    Answer NXDOMAIN locally so the client instantly falls through to the real
-    #    <name>.home.local.
+    # Search-domain doubling guard. Clients with a high ndots query the doubled
+    # name <name>.home.local.home.local FIRST; those are always bogus but were
+    # forwarded to 10.33.128.2 and SERVFAIL'd — the bulk of the original storm.
+    # Answer NXDOMAIN locally so the client instantly falls through to the real
+    # <name>.home.local.
     local-zone: "home.local.home.local." always_nxdomain
 
     # Watchdog canary. The off-box unbound-watchdog (PVE host timer,
@@ -93,7 +93,9 @@ server:
     verbosity: 1
     use-syslog: yes
 
-# Internal zones -> VPC Route53 Resolver (plain DNS over the LAN static route)
+# Internal zones -> VPC Route53 Resolver (plain DNS over the LAN static route).
+# home.local is also served from local-data above; this forward-zone is the
+# fallback for any home.local name not in the SSM registry, plus reverse PTR.
 forward-zone:
     name: "home.local."
     forward-addr: 10.33.128.2

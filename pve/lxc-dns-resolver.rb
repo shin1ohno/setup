@@ -26,11 +26,12 @@ node.reverse_merge!(
   }
 )
 
-include_cookbook "unbound"
-# awscli before lxc-core/elastic-agent: their SSM-gated blocks
-# (auto-mitamae-target orchestrator key, elastic-agent enrollment secrets)
-# need the `aws` CLI on PATH, else they silently skip under non-TTY apply.
+# awscli before unbound/lxc-core/elastic-agent: their SSM-gated blocks
+# (unbound home.local local-data fetch, auto-mitamae-target orchestrator key,
+# elastic-agent enrollment secrets) need the `aws` CLI on PATH, else they
+# silently skip / fall back under non-TTY apply.
 include_cookbook "awscli"
+include_cookbook "unbound"
 include_role "lxc-core"
 
 node.reverse_merge!(elastic_agent: { tags: ["lxc", "dns-resolver"] })
