@@ -33,3 +33,32 @@ Fix: give each such column a per-column Lens `filter` (`"prometheus.labels.X: *"
 - Import order: data view → lenses → dashboard (so references resolve). `cookbooks/lxc-kibana/files/import-saved-objects.sh` uses an explicit ordered array — register new files THERE (it is not wired into default.rb; run it manually on the Kibana CT).
 
 Origin: 2026-06-01 RTX SNMP dashboard (PRs #413/#414). Basic license + no browser meant two panels shipped with bugs the user caught visually (counter_rate terms-ordering; last_value null on fragmented docs).
+
+## Manual Kibana edits must be exported back to the repo
+
+A saved object created or edited directly in live Kibana (a new lens, a dashboard panel, a saved search) that is NOT exported to NDJSON is invisible to a fresh `_import` — a rebuilt CT renders the dashboard with a broken / missing panel reference. After any manual Kibana edit, export it back and commit:
+
+```
+curl -s -u "elastic:$PW" "http://<kibana-ip>:5601/api/saved_objects/_export" \
+  -H 'kbn-xsrf: true' -H 'Content-Type: application/json' \
+  -d '{"objects":[{"type":"lens","id":"<id>"}],"includeReferencesDeep":true}' \
+  > cookbooks/lxc-kibana/files/saved-objects/<name>.ndjson
+```
+
+Register the file in `import-saved-objects.sh`'s ordered array (before the dashboard).
+
+**Pre-merge check** for any dashboard saved-object PR: every `id` in each dashboard's `references` array must resolve to a committed source file AND appear in the import order. A reference with no file = a panel that breaks on fresh import. To find a live-only `id`, query `.kibana*` for it (`{"query":{"ids":{"values":["lens:<id>"]}}}`, count==1) and confirm it has no matching repo file.
+
+Origin: 2026-06-01 PR #421 — rtx-overview-v2 referenced rtx-lens-events-over-time which existed only in live Kibana (manually created, never exported). A fresh import would have shown a broken "Events over time" panel; recovered via the `_export` API.
+
+## match_only_text fields are not aggregatable — use a Discover saved-search, not a Lens
+
+Fields mapped `match_only_text` (ECS `message`, parsed syslog event keywords like `ike_event`) cannot be aggregated — Lens `terms` / `top values` / split-series on them fail at render (`match_only_text fields do not support sorting and aggregations`). Check the mapping first:
+
+```
+GET <index>/_mapping/field/<field>   # "keyword" → aggregatable; "match_only_text" → NOT
+```
+
+For a panel that lists log lines keyed by such a field (IKE/IPsec events, firewall deny lines, DHCP leases), use a **Discover saved-search** panel (`type: "search"`, KQL `<field>: *` as an exists filter), mirroring the Grafana log-stream panel it replaces — NOT a Lens. Reference it in the dashboard as `type: "search"` (ref name `"<idx>:panel_<idx>"`). Only `keyword` fields support Lens `terms` (e.g. `action`, `router`, `severity`).
+
+Origin: 2026-06-01 PR #421 — ike_event is match_only_text; the IKE/IPsec VPN panel had to be a Discover saved-search, not a Lens.
