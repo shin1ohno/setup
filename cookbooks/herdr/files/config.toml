@@ -18,11 +18,17 @@ split_horizontal = "prefix+\\"
 # reload config  (tmux: bind R source-file) — matches herdr default prefix+shift+r
 reload_config = "prefix+shift+r"
 
-# pane focus = vim-style hjkl (replaces vim-tmux-navigator plugin)
-focus_pane_left = "prefix+h"
-focus_pane_down = "prefix+j"
-focus_pane_up = "prefix+k"
-focus_pane_right = "prefix+l"
+# pane focus = prefix-less Ctrl+hjkl, matching the tmux + smart-splits.nvim
+# muscle memory (tmux used vim-tmux-navigator's bare Ctrl-hjkl).
+# CAVEAT: herdr is NOT a smart-splits.nvim multiplexer target (it supports
+# tmux/wezterm/kitty/zellij only), so seamless vim-split <-> pane transit does
+# NOT work — inside neovim, smart-splits intercepts Ctrl+hjkl and stops at the
+# window edge instead of crossing into the next herdr pane. These bindings move
+# between herdr panes only outside neovim.
+focus_pane_left = "ctrl+h"
+focus_pane_down = "ctrl+j"
+focus_pane_up = "ctrl+k"
+focus_pane_right = "ctrl+l"
 
 [theme]
 # tmux: arcticicestudio/nord-tmux
