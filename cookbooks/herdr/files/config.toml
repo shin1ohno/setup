@@ -1,0 +1,42 @@
+onboarding = false
+
+# ── Converted from ~/.tmux.conf (verified against herdr 0.6.6) ───────────────
+
+[keys]
+# prefix C-a  (tmux: set-option -g prefix C-a)
+prefix = "ctrl+a"
+
+# copy mode  (tmux: bind v copy-mode) — default was prefix+[
+copy_mode = "prefix+v"
+
+# splits — faithful to tmux muscle memory:
+#   tmux `bind | split-window -h`  → side-by-side (vertical divider)
+#   tmux `bind \ split-window -v`  → stacked      (horizontal divider)
+split_vertical = "prefix+|"
+split_horizontal = "prefix+\\"
+
+# reload config  (tmux: bind R source-file) — matches herdr default prefix+shift+r
+reload_config = "prefix+shift+r"
+
+# pane focus = vim-style hjkl (replaces vim-tmux-navigator plugin)
+focus_pane_left = "prefix+h"
+focus_pane_down = "prefix+j"
+focus_pane_up = "prefix+k"
+focus_pane_right = "prefix+l"
+
+[theme]
+# tmux: arcticicestudio/nord-tmux
+name = "nord"
+
+[ui]
+# tmux: set -g mouse on  (herdr default is already true; explicit for clarity)
+mouse_capture = true
+
+[advanced]
+# tmux: set -g history-limit 50000  (NOTE: herdr counts BYTES, not lines) → ~20 MB
+scrollback_limit_bytes = 20971520
+
+[session]
+# tmux: tmux-continuum @continuum-restore 'on' — herdr resumes Claude/Codex/etc.
+# native agent sessions after a server restart.
+resume_agents_on_restore = true
