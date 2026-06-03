@@ -127,20 +127,10 @@ services:
     ports:
       - "127.0.0.1:9116:9116"
 
-  # Loki: log aggregation backend for RTX syslog (Phase B). Filesystem
-  # storage at /data/monitoring/loki, 30d retention. Single-instance mode
-  # (auth_enabled=false) — only the sibling Promtail and Grafana hit it
-  # over the docker-compose default network.
-  loki:
-    image: grafana/loki:3.6.10
-    container_name: monitoring-loki
-    restart: unless-stopped
-    command: -config.file=/etc/loki/loki-config.yaml
-    ports:
-      - "127.0.0.1:3100:3100"
-    volumes:
-      - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
-      - /data/monitoring/loki:/loki
+  # Phase 6 (ADR 0005): Loki container removed. Elasticsearch (sibling
+  # lxc-elasticsearch CT) is the sole sink for parsed RTX events; Kibana
+  # provides the analyst UI. /data/monitoring/loki is cleaned up by the
+  # cookbook's idempotent `directory ... action :delete` resource.
 
   # Vector: RTX syslog receiver + parser + GeoIP enricher (replaces Promtail).
   # Listens UDP 514 LAN-wide for RTX syslog. GeoIP database is dbip-city-lite
@@ -153,7 +143,7 @@ services:
   # is unreliable in unprivileged-LXC + docker stack. With host networking,
   # Vector binds the LXC's eth0 directly and sees real RTX source IPs in
   # the .host field of the socket source, which the VRL transform maps to
-  # the router (hnd/itm) Loki label. Loki is reachable as 127.0.0.1:3100.
+  # the router (hnd/itm) field used as a keyword in the ES document.
   #
   # Side effects: `ports:` block is removed (incompatible with host net).
   # The container also exposes :9598 for Vector self-metrics scraped by
@@ -167,8 +157,6 @@ services:
     container_name: monitoring-vector
     restart: unless-stopped
     command: ["--config", "/etc/vector/vector.toml"]
-    depends_on:
-      - loki
     network_mode: host
     # ELASTIC_VECTOR_PASSWORD: SSM-fetched basic-auth password for the
     # vector_writer ES role. Substituted into [sinks.elasticsearch].auth
@@ -179,8 +167,9 @@ services:
     volumes:
       - ./vector.toml:/etc/vector/vector.toml:ro
       - ./geoip:/etc/vector/geoip:ro
-      # Disk-buffer storage for [sinks.loki] (500 MB) + [sinks.elasticsearch]
-      # (1 GB). Single mount point — Vector creates per-sink subdirectories
+      # Disk-buffer storage for [sinks.elasticsearch] (1 GB). Phase 6 (ADR
+      # 0005) removed the [sinks.loki] 500 MB buffer with the Loki sink.
+      # Single mount point — Vector creates per-sink subdirectories
       # under /var/lib/vector/buffer/v2/<sink_id>/ at startup. Bind-mount
       # is read-write because Vector writes buffer pages.
       - /data/monitoring/vector:/var/lib/vector:rw
