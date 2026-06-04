@@ -25,6 +25,11 @@ node.reverse_merge!(
   },
 )
 
+# Cut sudo prompts FIRST so every sudo-using resource below shares one auth.
+# (macOS tty_tickets re-prompts per specinfra subshell; mac-sudo switches the
+# apply user to a global timestamp + enables Touch ID.)
+include_cookbook "mac-sudo"
+
 # Include modular roles
 include_role "core"
 include_role "programming"
