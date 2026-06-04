@@ -156,6 +156,21 @@ file env_temp_path do
   only_if "test -f #{env_temp_path}"
 end
 
+# Docker Desktop is the daemon for the compose stack below. On a laptop it is
+# often closed; start it and wait for the daemon (cold start ~30-90s) so the
+# apply doesn't fail with "Cannot connect to the Docker daemon" when Docker
+# happens to be off. `open -a Docker` must run as the GUI user (Aqua session),
+# which the cookbook's `user` already is. The trailing `docker info` makes the
+# resource fail loudly if the daemon never comes up rather than letting the
+# compose step below hit the same connect error.
+execute "ensure Docker Desktop running" do
+  command "open -a Docker && " \
+          "for _ in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done; " \
+          "docker info >/dev/null 2>&1"
+  user user
+  not_if "docker info >/dev/null 2>&1"
+end
+
 # --- compose orchestration (cookbooks/functions/default.rb DSL) ---
 # build_flag false: every service uses a pulled image (no local Dockerfile).
 # wait true + 180s: cognee first-boot alembic migration (slower under arm64
