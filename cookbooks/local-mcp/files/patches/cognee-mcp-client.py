@@ -6,6 +6,7 @@ This module provides a unified interface for interacting with Cognee, supporting
 - API mode: Makes HTTP requests to a running Cognee FastAPI server
 """
 
+import os
 import sys
 from typing import Optional, Any, List, Dict
 from uuid import UUID
@@ -35,6 +36,14 @@ class CogneeClient:
         self.api_token = api_token
         self.use_api = bool(api_url)
 
+        # JWT auth: cognee 0.5.8 enforces fastapi-users on /api/v1/* even with
+        # ENABLE_BACKEND_ACCESS_CONTROL=false, so X-API-Key alone yields 401.
+        # We log in with the default user (loopback-only deployment) and cache
+        # the bearer token, re-logging in on expiry. Creds overridable via env.
+        self._login_email = os.getenv("DEFAULT_USER_EMAIL", "default_user@example.com")
+        self._login_password = os.getenv("DEFAULT_USER_PASSWORD", "default_password")
+        self._jwt: Optional[str] = None
+
         if self.use_api:
             logger.info(f"Cognee client initialized in API mode: {self.api_url}")
             self.client = httpx.AsyncClient(timeout=300.0)  # 5 minute timeout for long operations
@@ -45,19 +54,38 @@ class CogneeClient:
 
             self.cognee = _cognee
 
-    def _get_headers(self) -> Dict[str, str]:
-        """Get headers for API requests.
+    async def _login(self) -> str:
+        """Authenticate against cognee's fastapi-users login and cache the JWT."""
+        response = await self.client.post(
+            f"{self.api_url}/api/v1/auth/login",
+            data={"username": self._login_email, "password": self._login_password},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response.raise_for_status()
+        self._jwt = response.json()["access_token"]
+        return self._jwt
 
-        Cognee accepts two auth schemes:
-        - JWT in `Authorization: Bearer <jwt>` (short-lived, from /auth/login)
-        - API key in `X-API-Key: <key>` (long-lived, from /auth/api-keys)
-        We send via X-API-Key so a stable key from SSM keeps working past
-        any JWT expiry window.
+    async def _request(
+        self, method: str, endpoint: str, *, extra_headers: Optional[Dict[str, str]] = None, **kwargs
+    ) -> httpx.Response:
+        """Authenticated API request with one transparent re-login on 401.
+
+        httpx sets Content-Type automatically for `json=` and multipart for
+        `files=`, so callers only pass the payload; auth is handled here.
         """
-        headers = {"Content-Type": "application/json"}
-        if self.api_token:
-            headers["X-API-Key"] = self.api_token
-        return headers
+        for attempt in range(2):
+            if self._jwt is None:
+                await self._login()
+            headers = dict(extra_headers or {})
+            headers["Authorization"] = f"Bearer {self._jwt}"
+            response = await self.client.request(method, endpoint, headers=headers, **kwargs)
+            if response.status_code == 401 and attempt == 0:
+                self._jwt = None  # token expired/invalid — force a fresh login and retry once
+                continue
+            response.raise_for_status()
+            return response
+        response.raise_for_status()
+        return response
 
     async def add(
         self, data: Any, dataset_name: str = "main_dataset", node_set: Optional[List[str]] = None
@@ -91,13 +119,7 @@ class CogneeClient:
             if node_set is not None:
                 form_data["node_set"] = json.dumps(node_set)
 
-            response = await self.client.post(
-                endpoint,
-                files=files,
-                data=form_data,
-                headers={"X-API-Key": self.api_token} if self.api_token else {},
-            )
-            response.raise_for_status()
+            response = await self._request("POST", endpoint, files=files, data=form_data)
             return response.json()
         else:
             with redirect_stdout(sys.stderr):
@@ -137,8 +159,7 @@ class CogneeClient:
             if custom_prompt:
                 payload["custom_prompt"] = custom_prompt
 
-            response = await self.client.post(endpoint, json=payload, headers=self._get_headers())
-            response.raise_for_status()
+            response = await self._request("POST", endpoint, json=payload)
             return response.json()
         else:
             # Direct mode: Call cognee directly
@@ -192,8 +213,7 @@ class CogneeClient:
             if system_prompt:
                 payload["system_prompt"] = system_prompt
 
-            response = await self.client.post(endpoint, json=payload, headers=self._get_headers())
-            response.raise_for_status()
+            response = await self._request("POST", endpoint, json=payload)
             return response.json()
         else:
             # Direct mode: Call cognee directly
@@ -228,10 +248,7 @@ class CogneeClient:
             endpoint = f"{self.api_url}/api/v1/delete"
             params = {"data_id": str(data_id), "dataset_id": str(dataset_id), "mode": mode}
 
-            response = await self.client.delete(
-                endpoint, params=params, headers=self._get_headers()
-            )
-            response.raise_for_status()
+            response = await self._request("DELETE", endpoint, params=params)
             return response.json()
         else:
             # Direct mode: Call cognee directly
@@ -325,8 +342,7 @@ class CogneeClient:
         if self.use_api:
             # API mode: Make HTTP request
             endpoint = f"{self.api_url}/api/v1/datasets"
-            response = await self.client.get(endpoint, headers=self._get_headers())
-            response.raise_for_status()
+            response = await self._request("GET", endpoint)
             return response.json()
         else:
             # Direct mode: Call cognee directly
