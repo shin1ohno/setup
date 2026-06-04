@@ -41,11 +41,23 @@ user  = node[:setup][:user]
 group = node[:setup][:group]
 home  = node[:setup][:home]
 
-# Same AWS profile/region convention as cookbooks/ssh-keys + cognee + ai-memory
-# so the require_external_auth check_command and the .env generator target the
-# same IAM principal (per CLAUDE.md "auth-check gate must match invocation").
+# Region follows the shared bootstrap config (cookbooks/ssh-keys aws-config.json).
+#
+# Profile DIVERGES from the fleet convention on purpose. The shared bootstrap
+# profile (pve-bootstrap-ssm) is a least-privilege fleet-LXC principal whose IAM
+# policy grants ssm:GetParameter on /ssh-keys/* only — NOT /cognee/* or /mcp/*.
+# On the home LXCs (cognee CT 105, ai-memory CT 107) the per-service IAM grant
+# covers those paths, so the convention works there. But local-mcp runs ONLY on
+# Air (a Mac), where pve-bootstrap-ssm's keys are genuinely scoped to /ssh-keys/*
+# and every /cognee/* + /mcp/openai-api-key read returns AccessDeniedException —
+# the require_external_auth gate then loops forever because re-running
+# `aws configure` cannot add an IAM permission.
+#
+# Air reads these admin-scoped secrets with the Mac admin profile instead. Keep
+# the gate's check_command and the .env generator on the same principal (per
+# CLAUDE.md "auth-check gate must match invocation").
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
-aws_profile = ssh_keys_config["aws_profile"]
+aws_profile = "sh1admn"
 aws_region  = ssh_keys_config["aws_region"]
 
 deploy_dir       = "#{home}/deploy/local-mcp"
