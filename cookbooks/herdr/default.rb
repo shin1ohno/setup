@@ -78,3 +78,25 @@ remote_file "#{node[:setup][:home]}/.config/herdr/config.toml" do
   mode "644"
   source "files/config.toml"
 end
+
+# `hd` — fzf-powered session switcher, the herdr analog of `tm` (cookbooks/fzf
+# `fzf-advanced`). herdr is client/server, so there is no tmux switch-client vs
+# attach-session split — a single `--session` / `session attach` works whether
+# or not a client is already running.
+#   hd <name>  → create-or-attach the named session (`herdr --session <name>`)
+#   hd         → fzf-pick an existing session and attach; fall back to the
+#                default session (`herdr`) when none is picked or none exist.
+# Names are parsed from the tabular `session list` (skip header), mirroring the
+# no-json-parser style of `tm`.
+add_profile "herdr-hd" do
+  bash_content <<~'EOS'
+  hd() {
+    if [ -n "$1" ]; then
+      herdr --session "$1"
+      return
+    fi
+    session=$(herdr session list 2>/dev/null | awk 'NR>1 {print $1}' | fzf --exit-0) \
+      && herdr session attach "$session" || herdr
+  }
+  EOS
+end
