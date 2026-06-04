@@ -55,31 +55,48 @@ HOSTNAME_SHORT=$(hostname -s)
 # Use a temp file then atomic rename so partial writes never reach OUTPUT.
 TMP_OUTPUT="${OUTPUT}.tmp.$$"
 
-# Stage ES_HOSTS_YAML to a temp file rather than passing it via `awk -v`.
-# macOS BWK awk forbids literal newlines in -v values ("awk: newline in
-# string"); gawk on Linux tolerates them, hiding this bug from CI. Reading
-# the YAML fragment from a file at marker-substitution time works on both.
+# Stage ES_HOSTS_YAML and ES_PASSWORD to temp files rather than passing
+# them via `awk -v`. Two reasons:
+#
+#   1. macOS BWK awk forbids literal newlines in -v values ("awk: newline
+#      in string"); gawk on Linux tolerates them. ES_HOSTS_YAML is
+#      multi-line, so file-based read is mandatory for cross-platform.
+#
+#   2. awk's -v flag performs string-literal escape processing on the
+#      value: `\&` in the bash value is consumed by -v to `&`, which
+#      awk's gsub replacement then treats as "the matched text"
+#      (re-emitting `@@ES_PASSWORD@@` into the rendered yml). Passing
+#      the password via file + `getline` bypasses -v processing
+#      entirely; only the gsub-replacement escape level remains.
+#
+# Per-level escapes for the password:
+#   - `\` must become `\\` (awk gsub replacement: `\` is the escape char)
+#   - `&` must become `\&` (awk gsub replacement: `&` = matched text)
+#
 HOSTS_FILE="$(mktemp)"
-trap 'rm -f "${TMP_OUTPUT}" "${HOSTS_FILE}"' EXIT
+PASSWORD_FILE="$(mktemp)"
+trap 'rm -f "${TMP_OUTPUT}" "${HOSTS_FILE}" "${PASSWORD_FILE}"' EXIT
+chmod 0600 "${PASSWORD_FILE}"
 printf '%s\n' "${ES_HOSTS_YAML}" > "${HOSTS_FILE}"
-
-# awk-based substitution avoids sed's headaches with passwords containing
-# `/`, `&`, or `\`. Single-line markers go through -v; the multi-line
-# @@ES_HOSTS_YAML@@ block is streamed in via the staged file.
-# Pre-process the password: awk's gsub replacement string treats `&` as
-# the matched text. SSM-stored passwords commonly contain `&`, which
-# would otherwise expand back to `@@ES_PASSWORD@@` in the rendered yml
-# (the literal marker survives — auth fails or the next gsub double-
-# substitutes). Escape every `&` to `\&` so awk emits a literal `&`.
-ES_PASSWORD_ESCAPED="${ES_PASSWORD//&/\\&}"
+printf '%s' "${ES_PASSWORD}" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g' > "${PASSWORD_FILE}"
 
 awk \
     -v username="${ES_USERNAME}" \
-    -v password="${ES_PASSWORD_ESCAPED}" \
     -v variant="${VARIANT}" \
     -v hostname="${HOSTNAME_SHORT}" \
     -v hosts_file="${HOSTS_FILE}" \
+    -v password_file="${PASSWORD_FILE}" \
     '
+    BEGIN {
+        # Read pre-escaped password once. getline does not run the
+        # awk string-literal escape pass that -v does, so the gsub
+        # replacement sees the bytes exactly as written to the file.
+        if ((getline password < password_file) <= 0) {
+            print "generate_config.sh: failed to read password file" > "/dev/stderr"
+            exit 1
+        }
+        close(password_file)
+    }
     # Skip comment lines so @@MARKER@@ documentation in the template
     # header is not mistaken for a substitution site. Without this,
     # the comment `#   @@ES_HOSTS_YAML@@    multi-line YAML array of

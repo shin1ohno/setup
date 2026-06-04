@@ -9,7 +9,11 @@
 #   @@ES_HOSTS_YAML@@    multi-line YAML array of ES URLs
 
 agent:
-  id: "${@@VARIANT@@}-macos"
+  # NOT "${@@VARIANT@@}-macos": Elastic Agent reads ${...} as a variable
+  # reference, so the rendered `${air}-macos` left `air` undefined and the
+  # whole `agent` section failed to unpack ("missing field accessing 'agent'").
+  # The discriminator is a render-time constant, not a runtime variable.
+  id: "@@VARIANT@@-macos"
   monitoring:
     enabled: true
     use_output: default
