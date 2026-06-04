@@ -147,15 +147,25 @@ if node[:platform] == "darwin"
                      "grep -q 'elastic-agent[[:space:]]\\+#{ea_version}'"
   ea_check_loaded  = "sudo launchctl list co.elastic.elastic-agent >/dev/null 2>&1"
 
-  # Purge partial-install state. When /Library/Elastic/Agent/ exists
-  # but launchctl has no co.elastic.elastic-agent entry, a prior
-  # install was interrupted before Fleet enrollment. The leftover
-  # elastic-agent.yml lacks `agent.id`, so the next `install --force`
-  # — which uninstalls the existing copy first — aborts with
-  # `error loading agent config: missing field accessing 'agent.id'`
-  # and the install never proceeds. Clean up so --force sees a
-  # fresh-host state. No-op on healthy installs (launchctl entry
-  # present) and on first-time installs (directory absent).
+  # Purge partial / broken-install state so the next `install --force` — which
+  # uninstalls the existing copy first — always operates on a clean slate.
+  #
+  # Two failure shapes hit this:
+  #   (a) install interrupted before enrollment, no launchctl entry. The leftover
+  #       elastic-agent.yml lacks `agent.id`, so `uninstall` aborts with
+  #       `missing field accessing 'agent'` and the reinstall never proceeds.
+  #   (b) a launchctl entry IS present but the daemon is dead (socket gone) and
+  #       the config is still partial — `install --force`'s uninstall step then
+  #       fails the same way (or on a stuck watcher: `FillPidMetrics ... sysctl:
+  #       input/output error`).
+  #
+  # The old guard only caught (a) (launchctl entry absent), so (b) slipped
+  # through and aborted the apply. Trigger on the FUNCTIONAL signal instead:
+  # the agent dir exists but `elastic-agent status` can't reach a healthy
+  # daemon. That covers both shapes. No-op on healthy installs (status → 0)
+  # and on first-time installs (directory absent).
+  ea_healthy = "sudo #{ea_installed_path} status >/dev/null 2>&1"
+
   execute "purge partial elastic-agent install" do
     command "sudo launchctl unload " \
               "/Library/LaunchDaemons/co.elastic.elastic-agent.plist " \
@@ -164,8 +174,7 @@ if node[:platform] == "darwin"
                       "/usr/local/bin/elastic-agent && " \
             "sudo rm -rf /Library/Elastic/Agent"
     user "root"
-    only_if "sudo test -d /Library/Elastic/Agent && " \
-            "! sudo launchctl list co.elastic.elastic-agent >/dev/null 2>&1"
+    only_if "sudo test -d /Library/Elastic/Agent && ! #{ea_healthy}"
   end
 
   execute "sudo install elastic-agent #{ea_version}" do
