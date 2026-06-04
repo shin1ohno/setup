@@ -79,18 +79,30 @@ remote_file "#{node[:setup][:home]}/.config/herdr/config.toml" do
   source "files/config.toml"
 end
 
-# `hd` — fzf-powered session switcher, the herdr analog of `tm` (cookbooks/fzf
+# `hr` — fzf-powered session switcher, the herdr analog of `tm` (cookbooks/fzf
 # `fzf-advanced`). herdr is client/server, so there is no tmux switch-client vs
 # attach-session split — a single `--session` / `session attach` works whether
 # or not a client is already running.
-#   hd <name>  → create-or-attach the named session (`herdr --session <name>`)
-#   hd         → fzf-pick an existing session and attach; fall back to the
+#   hr <name>  → create-or-attach the named session (`herdr --session <name>`)
+#   hr         → fzf-pick an existing session and attach; fall back to the
 #                default session (`herdr`) when none is picked or none exist.
+# Named `hr` (not `hd`) because `hd` collides with util-linux's hexdump alias
+# (/usr/bin/hd) on Linux.
 # Names are parsed from the tabular `session list` (skip header), mirroring the
 # no-json-parser style of `tm`.
-add_profile "herdr-hd" do
+#
+# Remove the orphaned `hd` profile script left on machines that applied the
+# pre-rename cookbook (PR #425). Without this, `50-herdr-hd.sh` lingers and
+# keeps the old colliding `hd()` function defined alongside the new `hr()`.
+["sh", "fish"].each do |ext|
+  file "#{node[:setup][:root]}/profile.d/50-herdr-hd.#{ext}" do
+    action :delete
+  end
+end
+
+add_profile "herdr-hr" do
   bash_content <<~'EOS'
-  hd() {
+  hr() {
     if [ -n "$1" ]; then
       herdr --session "$1"
       return
