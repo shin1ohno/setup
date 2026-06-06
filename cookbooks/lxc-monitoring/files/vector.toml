@@ -210,19 +210,26 @@ source = '''
   # optional <CODE> capture handle both. The RTX stages above never match
   # AP messages (different format), so they leave AP events untouched.
   if .device_type == "ap" {
-    .message = strip_whitespace(.message)
+    # `.message` is typed `string | null` (set from m.rest above), so calling
+    # strip_whitespace/match/parse_regex on it directly is a fallible
+    # assignment (VRL E103) and the running vector rejects the config — note
+    # `vector validate --no-environment` does NOT build the topology and so
+    # silently passes it. Coerce to a definite string ONCE so every downstream
+    # use is infallible.
+    msg = strip_whitespace(to_string(.message))
+    .message = msg
 
     # Drop high-volume / low-value lines (kernel node mgmt, driver debug,
     # roaming RSSI comparisons).
-    if match(.message, r'(node_cleanup|_ieee80211_free_node|ieee80211_sta_leave|_ieee80211_node_leave|station free|wmi_unified_|net_ratelimit|own address as source|\[0:I:ANY\])') {
+    if match(msg, r'(node_cleanup|_ieee80211_free_node|ieee80211_sta_leave|_ieee80211_node_leave|station free|wmi_unified_|net_ratelimit|own address as source|\[0:I:ANY\])') {
       abort
     }
-    if starts_with(.message, "[ROAMING_ASSIST]") {
+    if starts_with(msg, "[ROAMING_ASSIST]") {
       abort
     }
 
     # Module = first [..] bracket; optional numeric <CODE> after it.
-    mm = parse_regex(.message, r'^\[(?P<module>[^\]]+)\]\s*(?P<after>.*)') ?? null
+    mm = parse_regex(msg, r'^\[(?P<module>[^\]]+)\]\s*(?P<after>.*)') ?? null
     if !is_null(mm) {
       .module = mm.module
       cm = parse_regex(mm.after, r'^<(?P<code>\d+)>') ?? null
@@ -232,34 +239,36 @@ source = '''
     }
 
     # STA MAC: "STA (xx:..)" / "(xx:..)" or disconnect summary "(xx:..:auth=..)".
-    sta_m = parse_regex(.message, r'\((?P<sta>[0-9A-Fa-f:]{17})\)') ?? null
+    # WLX MACs are already lowercase on the wire, so assign directly (downcase
+    # on a string|null capture would be fallible).
+    sta_m = parse_regex(msg, r'\((?P<sta>[0-9A-Fa-f:]{17})\)') ?? null
     if !is_null(sta_m) {
-      .sta = downcase(sta_m.sta)
+      .sta = sta_m.sta
     } else {
-      sta_s = parse_regex(.message, r'\((?P<sta>[0-9A-Fa-f:]{17}):auth=') ?? null
+      sta_s = parse_regex(msg, r'\((?P<sta>[0-9A-Fa-f:]{17}):auth=') ?? null
       if !is_null(sta_s) {
-        .sta = downcase(sta_s.sta)
+        .sta = sta_s.sta
       }
     }
 
     # AP BSSID: "| AP <xx:..>".
-    ap_m = parse_regex(.message, r'\| AP <(?P<ap>[0-9A-Fa-f:]{17})>') ?? null
+    ap_m = parse_regex(msg, r'\| AP <(?P<ap>[0-9A-Fa-f:]{17})>') ?? null
     if !is_null(ap_m) {
-      .ap = downcase(ap_m.ap)
+      .ap = ap_m.ap
     }
 
     # Disassoc reason code.
-    rc = parse_regex(.message, r'Reason Code: (?P<reason_code>\d+)') ?? null
+    rc = parse_regex(msg, r'Reason Code: (?P<reason_code>\d+)') ?? null
     if !is_null(rc) {
       .reason_code = to_int(rc.reason_code) ?? null
     }
 
     # DHCP ([MON]): CLT:{mac} + YIP:{ip}.
-    cmc = parse_regex(.message, r'CLT:\s*\{(?P<client_mac>[0-9A-Fa-f:]{17})\}') ?? null
+    cmc = parse_regex(msg, r'CLT:\s*\{(?P<client_mac>[0-9A-Fa-f:]{17})\}') ?? null
     if !is_null(cmc) {
-      .client_mac = downcase(cmc.client_mac)
+      .client_mac = cmc.client_mac
     }
-    yip = parse_regex(.message, r'YIP:\s*\{(?P<client_ip>[\d.]+)\}') ?? null
+    yip = parse_regex(msg, r'YIP:\s*\{(?P<client_ip>[\d.]+)\}') ?? null
     if !is_null(yip) {
       .client_ip = yip.client_ip
     }
