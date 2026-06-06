@@ -345,6 +345,8 @@ end
 %w[
   ilm-policy-rtx-7d.json
   index-template-rtx.json
+  ilm-policy-wlx-7d.json
+  index-template-wlx.json
   bootstrap-roles.json
 ].each do |f|
   remote_file "#{files_dir}/#{f}" do
@@ -355,7 +357,7 @@ end
   end
 end
 
-%w[logs-rtx-mappings.json logs-rtx-settings.json].each do |f|
+%w[logs-rtx-mappings.json logs-rtx-settings.json logs-wlx-mappings.json logs-wlx-settings.json].each do |f|
   remote_file "#{files_dir}/component-templates/#{f}" do
     source "files/component-templates/#{f}"
     owner user
