@@ -1,0 +1,15 @@
+{
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": "1",
+        "number_of_replicas": "1",
+        "codec": "best_compression",
+        "lifecycle": {
+          "name": "logs-wlx-7d"
+        },
+        "refresh_interval": "10s"
+      }
+    }
+  }
+}
