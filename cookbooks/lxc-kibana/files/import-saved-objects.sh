@@ -146,6 +146,10 @@ ordered=(
     "${SAVED_OBJECTS_DIR}/rtx-snmp-status-table.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-snmp-iface-table.ndjson"
     "${SAVED_OBJECTS_DIR}/rtx-snmp-routers.ndjson"
+    # WLX WiFi AP syslog (logs-wlx-default) — data view + recent-events
+    # Discover saved search. Single file declares both (index-pattern first,
+    # search second) so references resolve within the one import.
+    "${SAVED_OBJECTS_DIR}/wlx-discover.ndjson"
 )
 
 failures=0
