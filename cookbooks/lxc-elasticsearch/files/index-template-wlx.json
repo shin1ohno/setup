@@ -1,0 +1,9 @@
+{
+  "index_patterns": ["logs-wlx-*"],
+  "data_stream": {},
+  "composed_of": ["logs-wlx-mappings", "logs-wlx-settings"],
+  "priority": 200,
+  "_meta": {
+    "description": "YAMAHA WLX (WLX402/WLX323) WiFi AP syslog data stream — managed by lxc-elasticsearch cookbook"
+  }
+}

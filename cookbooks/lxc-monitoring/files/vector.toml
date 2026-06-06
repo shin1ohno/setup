@@ -98,14 +98,24 @@ source = '''
   # stages match against the RTX payload only.
   .message = m.rest
 
-  # Map sender IP → router label. RTX hnd is .253, itm is .254. Drop
-  # everything else defensively (random LAN devices mis-pointing syslog
-  # at this listener should not produce labelled streams).
+  # Map sender IP → device label + device_type. RTX routers: hnd .253 /
+  # itm .254. WLX WiFi APs: wlx402 .5 / wlx323 .41. Drop everything else
+  # defensively (random LAN devices mis-pointing syslog at this listener
+  # should not produce labelled streams). device_type splits the two ES
+  # sinks downstream (logs-rtx vs logs-wlx) and is del()'d before each sink.
   src_ip = .host
   if src_ip == "192.168.1.253" {
     .router = "hnd"
+    .device_type = "router"
   } else if src_ip == "192.168.1.254" {
     .router = "itm"
+    .device_type = "router"
+  } else if src_ip == "192.168.1.5" {
+    .device = "wlx402"
+    .device_type = "ap"
+  } else if src_ip == "192.168.1.41" {
+    .device = "wlx323"
+    .device_type = "ap"
   } else {
     abort
   }
@@ -190,6 +200,70 @@ source = '''
       }
     }
   }
+
+  # ---------------------------------------------------------------------
+  # WLX WiFi AP (WLX402 .5 / WLX323 .41) parsing. App-events-only per the
+  # 2026-06-06 capture/cost decision: the kernel node-management churn and
+  # the ROAMING_ASSIST RSSI spam are dropped. Both APs are Qualcomm-based;
+  # .5 emits `<PRI>[MODULE] msg` (no space after PRI), .41 emits
+  # `<PRI> [MODULE] <CODE> msg` (leading space) — strip_whitespace + the
+  # optional <CODE> capture handle both. The RTX stages above never match
+  # AP messages (different format), so they leave AP events untouched.
+  if .device_type == "ap" {
+    .message = strip_whitespace(.message)
+
+    # Drop high-volume / low-value lines (kernel node mgmt, driver debug,
+    # roaming RSSI comparisons).
+    if match(.message, r'(node_cleanup|_ieee80211_free_node|ieee80211_sta_leave|_ieee80211_node_leave|station free|wmi_unified_|net_ratelimit|own address as source|\[0:I:ANY\])') {
+      abort
+    }
+    if starts_with(.message, "[ROAMING_ASSIST]") {
+      abort
+    }
+
+    # Module = first [..] bracket; optional numeric <CODE> after it.
+    mm = parse_regex(.message, r'^\[(?P<module>[^\]]+)\]\s*(?P<after>.*)') ?? null
+    if !is_null(mm) {
+      .module = mm.module
+      cm = parse_regex(mm.after, r'^<(?P<code>\d+)>') ?? null
+      if !is_null(cm) {
+        .code = cm.code
+      }
+    }
+
+    # STA MAC: "STA (xx:..)" / "(xx:..)" or disconnect summary "(xx:..:auth=..)".
+    sta_m = parse_regex(.message, r'\((?P<sta>[0-9A-Fa-f:]{17})\)') ?? null
+    if !is_null(sta_m) {
+      .sta = downcase(sta_m.sta)
+    } else {
+      sta_s = parse_regex(.message, r'\((?P<sta>[0-9A-Fa-f:]{17}):auth=') ?? null
+      if !is_null(sta_s) {
+        .sta = downcase(sta_s.sta)
+      }
+    }
+
+    # AP BSSID: "| AP <xx:..>".
+    ap_m = parse_regex(.message, r'\| AP <(?P<ap>[0-9A-Fa-f:]{17})>') ?? null
+    if !is_null(ap_m) {
+      .ap = downcase(ap_m.ap)
+    }
+
+    # Disassoc reason code.
+    rc = parse_regex(.message, r'Reason Code: (?P<reason_code>\d+)') ?? null
+    if !is_null(rc) {
+      .reason_code = to_int(rc.reason_code) ?? null
+    }
+
+    # DHCP ([MON]): CLT:{mac} + YIP:{ip}.
+    cmc = parse_regex(.message, r'CLT:\s*\{(?P<client_mac>[0-9A-Fa-f:]{17})\}') ?? null
+    if !is_null(cmc) {
+      .client_mac = downcase(cmc.client_mac)
+    }
+    yip = parse_regex(.message, r'YIP:\s*\{(?P<client_ip>[\d.]+)\}') ?? null
+    if !is_null(yip) {
+      .client_ip = yip.client_ip
+    }
+  }
 '''
 
 # Elasticsearch-specific reshaping. Loki accepts everything as strings via
@@ -205,6 +279,15 @@ source = '''
 type = "remap"
 inputs = ["parse"]
 source = '''
+  # Only RTX router events belong in logs-rtx; WLX AP events are routed to
+  # the wlx sink instead. (2026-06-06)
+  if .device_type != "router" {
+    abort
+  }
+  # device_type is a routing helper, not part of the logs-rtx strict
+  # mapping — drop it before the sink or the doc is rejected.
+  del(.device_type)
+
   # Convert port fields to integer. Each is best-effort: when the field
   # is absent the to_int! call would error, so we gate on existence.
   # Use ?? null to keep events flowing on conversion failure rather than
@@ -231,6 +314,21 @@ source = '''
       .geoip_location = { "lat": lat, "lon": lon }
     }
   }
+'''
+
+# Shape WLX AP events for the logs-wlx-default strict mapping. Branches off
+# `parse` (same as parsed_rtx_for_es) so the two ES sinks are independent.
+# (2026-06-06)
+[transforms.parsed_wlx_for_es]
+type = "remap"
+inputs = ["parse"]
+source = '''
+  # Only WLX AP events belong in logs-wlx; RTX router events go elsewhere.
+  if .device_type != "ap" {
+    abort
+  }
+  # Routing helper — not in the logs-wlx strict mapping.
+  del(.device_type)
 '''
 
 # -----------------------------------------------------------------------------
@@ -285,6 +383,24 @@ auth = { strategy = "basic", user = "vector_writer", password = "${ELASTIC_VECTO
 # Phase 7-tls: HTTPS to ES cluster. CA cert bind-mounted into the
 # vector container at /etc/vector/elastic-ca.crt (cookbook fetches
 # from SSM /monitoring/elastic/ca/cert).
+tls = { ca_file = "/etc/vector/elastic-ca.crt", verify_certificate = true, verify_hostname = true }
+buffer = { type = "disk", max_size = 1073741824, when_full = "drop_newest" }
+
+# WLX WiFi AP syslog sink → logs-wlx-default data stream. Same ES cluster,
+# same vector_writer credential (its role now grants write on logs-wlx-* too),
+# same CA/TLS + disk buffer as the RTX sink. Separate data stream keeps the AP
+# assoc/auth/roaming schema isolated from the RTX router schema. (2026-06-06)
+[sinks.elasticsearch_wlx]
+type = "elasticsearch"
+inputs = ["parsed_wlx_for_es"]
+endpoints = [
+  "https://es-0.home.local:9200",
+  "https://es-1.home.local:9200",
+  "https://es-2.home.local:9200",
+]
+mode = "data_stream"
+data_stream = { type = "logs", dataset = "wlx", namespace = "default" }
+auth = { strategy = "basic", user = "vector_writer", password = "${ELASTIC_VECTOR_PASSWORD}" }
 tls = { ca_file = "/etc/vector/elastic-ca.crt", verify_certificate = true, verify_hostname = true }
 buffer = { type = "disk", max_size = 1073741824, when_full = "drop_newest" }
 

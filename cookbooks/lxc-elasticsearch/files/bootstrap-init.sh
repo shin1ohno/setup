@@ -151,16 +151,18 @@ wait_cluster_ready() {
 # --- Step 2: ILM policy --------------------------------------------------
 
 put_ilm_policy() {
+  local name="$1"
+  local file="$2"
   local body
-  body=$(cat "${FILES_DIR}/ilm-policy-rtx-7d.json")
+  body=$(cat "${FILES_DIR}/${file}")
   es_curl -H 'Content-Type: application/json' \
-    -X PUT "${ES_URL}/_ilm/policy/logs-rtx-7d" \
+    -X PUT "${ES_URL}/_ilm/policy/${name}" \
     -d "${body}" \
     | grep -q '"acknowledged":true' || {
-      echo "[bootstrap] ILM policy PUT failed" >&2
+      echo "[bootstrap] ILM policy ${name} PUT failed" >&2
       return 1
     }
-  echo "[bootstrap] ILM policy logs-rtx-7d ensured"
+  echo "[bootstrap] ILM policy ${name} ensured"
 }
 
 # --- Step 3: component templates ----------------------------------------
@@ -183,16 +185,18 @@ put_component_template() {
 # --- Step 4: index template ----------------------------------------------
 
 put_index_template() {
+  local name="$1"
+  local file="$2"
   local body
-  body=$(cat "${FILES_DIR}/index-template-rtx.json")
+  body=$(cat "${FILES_DIR}/${file}")
   es_curl -H 'Content-Type: application/json' \
-    -X PUT "${ES_URL}/_index_template/logs-rtx" \
+    -X PUT "${ES_URL}/_index_template/${name}" \
     -d "${body}" \
     | grep -q '"acknowledged":true' || {
-      echo "[bootstrap] index_template PUT failed" >&2
+      echo "[bootstrap] index_template ${name} PUT failed" >&2
       return 1
     }
-  echo "[bootstrap] index_template logs-rtx ensured"
+  echo "[bootstrap] index_template ${name} ensured"
 }
 
 # --- Step 5: data stream -------------------------------------------------
@@ -203,22 +207,23 @@ put_index_template() {
 # data stream that already exists returns 400 — so check existence first.
 
 ensure_data_stream() {
+  local ds="$1"
   local code
-  code=$(es_curl -o /dev/null -w '%{http_code}' "${ES_URL}/_data_stream/logs-rtx-default")
+  code=$(es_curl -o /dev/null -w '%{http_code}' "${ES_URL}/_data_stream/${ds}")
   case "${code}" in
     200)
-      echo "[bootstrap] data stream logs-rtx-default already exists"
+      echo "[bootstrap] data stream ${ds} already exists"
       ;;
     404)
-      es_curl -X PUT "${ES_URL}/_data_stream/logs-rtx-default" \
+      es_curl -X PUT "${ES_URL}/_data_stream/${ds}" \
         | grep -q '"acknowledged":true' || {
-          echo "[bootstrap] data stream PUT failed" >&2
+          echo "[bootstrap] data stream ${ds} PUT failed" >&2
           return 1
         }
-      echo "[bootstrap] data stream logs-rtx-default created"
+      echo "[bootstrap] data stream ${ds} created"
       ;;
     *)
-      echo "[bootstrap] unexpected HTTP ${code} probing data stream" >&2
+      echo "[bootstrap] unexpected HTTP ${code} probing data stream ${ds}" >&2
       return 1
       ;;
   esac
@@ -336,13 +341,23 @@ main() {
 
   # Idempotent infrastructure setup. Order matters: ILM → component →
   # index template → data stream (Adversarial #8).
-  put_ilm_policy
+  put_ilm_policy "logs-rtx-7d" "ilm-policy-rtx-7d.json"
   put_component_template "logs-rtx-mappings" \
     "${FILES_DIR}/component-templates/logs-rtx-mappings.json"
   put_component_template "logs-rtx-settings" \
     "${FILES_DIR}/component-templates/logs-rtx-settings.json"
-  put_index_template
-  ensure_data_stream
+  put_index_template "logs-rtx" "index-template-rtx.json"
+  ensure_data_stream "logs-rtx-default"
+
+  # WLX WiFi AP syslog (WLX402/WLX323) — same shape, separate data stream so
+  # the AP schema (assoc/auth/roaming) stays isolated from the RTX router schema.
+  put_ilm_policy "logs-wlx-7d" "ilm-policy-wlx-7d.json"
+  put_component_template "logs-wlx-mappings" \
+    "${FILES_DIR}/component-templates/logs-wlx-mappings.json"
+  put_component_template "logs-wlx-settings" \
+    "${FILES_DIR}/component-templates/logs-wlx-settings.json"
+  put_index_template "logs-wlx" "index-template-wlx.json"
+  ensure_data_stream "logs-wlx-default"
 
   # Roles for application users.
   put_role "vector_writer"
