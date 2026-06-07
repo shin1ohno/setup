@@ -1,8 +1,10 @@
 #!/usr/sbin/nft -f
 # Hydra admin API (tcp/4445) source guard. The Ory Hydra admin port is
-# UNAUTHENTICATED; only the consent LXC (CT110) and the hydra host itself
-# may reach it. Public port 4444, SSH, and all other traffic are unaffected
-# (policy accept; this table only adds drops scoped to dport 4445).
+# UNAUTHENTICATED; only the consent LXC (CT110), the monitoring LXC (CT111,
+# Kibana Uptime synthetics prober reaching /health/alive), and the hydra
+# host itself may reach it. Public port 4444, SSH, and all other traffic
+# are unaffected (policy accept; this table only adds drops scoped to
+# dport 4445).
 # IP source of truth: home-monitor/contracts/devices.tf.
 add table inet hydra_admin_guard
 flush table inet hydra_admin_guard
@@ -12,6 +14,7 @@ table inet hydra_admin_guard {
         iif "lo" accept
         tcp dport 4445 ip saddr __CONSENT_IP__ accept
         tcp dport 4445 ip saddr __HYDRA_SELF_IP__ accept
+        tcp dport 4445 ip saddr __MONITORING_IP__ accept
         tcp dport 4445 drop
     }
 }
