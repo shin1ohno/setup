@@ -49,7 +49,10 @@ if node[:platform] == "darwin"
   # until AWS auth is in place — interactive pause + re-check loop.
   require_external_auth(
     tool_name: "AWS CLI (for MCP server SSM params)",
-    check_command: "aws sts get-caller-identity",
+    # Probe the ACTUAL SSM path the generator reads (/mcp/obsidian-api-key) so the
+    # gate fails when this identity lacks SSM access. `aws sts get-caller-identity`
+    # was a false gate — it passes for any valid identity regardless of SSM scope.
+    check_command: "aws ssm get-parameter --name /mcp/obsidian-api-key --with-decryption --query Parameter.Value --output text --region ${AWS_REGION:-ap-northeast-1} >/dev/null 2>&1",
     instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
   ) do
     # Generate config to temporary location in setup root
@@ -74,7 +77,8 @@ if node[:platform] == "darwin"
       merged["mcpServers"] = merged_servers
 
       File.open(output_path, "w") { |f| f.write(JSON.pretty_generate(merged) + "\n") }
-      File.chmod(0o644, output_path)
+      # 0o600: merged file holds plaintext MCP API keys (matches every other secret file in this repo).
+      File.chmod(0o600, output_path)
       File.delete(temp_path)
     end
     only_if { File.exist?(temp_path) }
