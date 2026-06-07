@@ -60,7 +60,7 @@ end
 # upstream openmemory image rejects pgvector with
 # `TypeError: 'check_same_thread' is an invalid keyword argument for
 # this function`. Mount target referenced from
-# cookbooks/ai-memory/files/docker-compose.yml.
+# cookbooks/lxc-memory/files/docker-compose.yml.
 patches_dir = "#{deploy_dir}/patches"
 directory patches_dir do
   owner node[:setup][:user]

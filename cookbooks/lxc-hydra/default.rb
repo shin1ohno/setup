@@ -91,7 +91,7 @@ execute "create #{HYDRA_HOME}" do
   not_if "test -d #{HYDRA_HOME}"
 end
 
-# 4. Hydra config file — rendered from cookbooks/hydra-server/files/hydra.yml
+# 4. Hydra config file — rendered from cookbooks/lxc-hydra/files/hydra.yml
 # with admin bind host substitution. Full MCP-required sections (JWT,
 # DCR, CORS, PKCE) live in the file resource itself.
 hydra_config_staging = "#{node[:setup][:root]}/hydra-server/hydra.yml"

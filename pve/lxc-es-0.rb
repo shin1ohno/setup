@@ -20,10 +20,16 @@ end
 
 include_recipe "../cookbooks/functions/default"
 
+# transport_host == this node's own LAN IP, resolved once by
+# cookbooks/host-profile from its offline FLEET table (canonical source:
+# home-monitor contracts/devices.json). Fail fast if the hostname didn't
+# match a FLEET es-* entry rather than binding ES transport to nil.
+es_ip = node[:profile][:ip]
+raise "lxc-es-0: node[:profile][:ip] nil for hostname '#{node[:profile][:hostname]}' — add an es-0 entry to cookbooks/host-profile FLEET" unless es_ip
 node.reverse_merge!(
   elasticsearch: {
     node_name: "es-0",
-    transport_host: "192.168.1.77",
+    transport_host: es_ip,
   }
 )
 

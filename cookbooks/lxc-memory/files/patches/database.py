@@ -10,7 +10,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./openmemory.db")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set in environment")
 
-# Patched (cookbooks/ai-memory): check_same_thread is a SQLite-only option
+# Patched (cookbooks/lxc-memory): check_same_thread is a SQLite-only option
 # and PostgreSQL drivers reject it. The upstream image's database.py
 # unconditionally passes connect_args={"check_same_thread": False} which
 # breaks pgvector deployments. Apply only when DATABASE_URL points at
