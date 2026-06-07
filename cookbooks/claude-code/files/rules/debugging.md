@@ -33,6 +33,15 @@ NOT evidence: code compiled/ran without errors; function returned `Ok(())`; "suc
 
 ARE evidence: observable system state on the receiving end (zone status, file exists, DB record present, queue length changed); test output exercising the changed path against real inputs; log output from the *receiving* system; status-query command returning the expected state after the fix.
 
+## Auth Gate Changes — Live Token Step Required
+
+For a change to an authentication / authorization gate on a RUNNING system (JWT validator, nginx `auth_request`, bearer / API-key check, session-cookie validator, mTLS peer check), a source-level adversarial PASS is necessary but NOT sufficient evidence. Verification MUST include a live token round-trip:
+
+1. Decode a real token from the actual live issuer (not a synthetic one) and confirm the new check passes for its real claim values.
+2. After deploy, round-trip a real client request and observe accept/reject on the receiving system.
+
+Synthetic-token tests encode your assumption about the token shape — the exact thing an auth tightening puts at risk. See the design-time counterpart in `~/.claude/rules/adversarial-review.md` "Live Token Round-Trip Gate". Origin: 2026-06-07 — an MCP auth-proxy audience fix passed synthetic verification but the real token carried `aud=[]`; only a live probe caught that enforcement would break production.
+
 ## When to Add Observation Tooling Proactively
 
 Add a status/observe command *as part of the feature*, not as a follow-up, when:
