@@ -50,9 +50,9 @@ include_cookbook "dot-tmux"
 include_cookbook "herdr"
 include_cookbook "fonts"
 include_cookbook "dot-config-alacritty"
-include_cookbook "dot-config-ghostty"
+include_cookbook "dot-config-ghostty" if node[:platform] == "darwin"
 include_cookbook "fastfetch"
-include_cookbook "pbcopy" # OSC 52 clipboard for Linux
+include_cookbook "pbcopy" unless node[:platform] == "darwin" # OSC 52 clipboard, Linux-only
 
 # Security and encryption
 include_cookbook "gnupg"

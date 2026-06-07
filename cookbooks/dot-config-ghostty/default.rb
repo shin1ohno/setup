@@ -1,6 +1,6 @@
 # frozen_string_literal: true
-
-return if node[:platform] != "darwin"
+#
+# OS gate now lives at the include site (roles/core, darwin-only).
 
 directory "#{node[:setup][:home]}/.config/ghostty" do
   owner node[:setup][:user]

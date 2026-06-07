@@ -22,10 +22,9 @@
 # RTX root-cause fix is tracked in TODO.md "Fix RTX1210 DNS proxy AAAA
 # NODATA" — once RTX returns NODATA quickly, this cookbook can be removed.
 #
-# Linux-only: macOS uses a different resolver stack; the symptom hasn't
-# been observed there.
-
-return if node[:platform] == "darwin"
+# Linux-only (macOS uses a different resolver stack; the symptom hasn't been
+# observed there); OS gate now lives at the include sites
+# (roles/lxc-core + linux.rb).
 
 execute "append no-aaaa option to /etc/resolv.conf" do
   command "printf 'options no-aaaa\\n' >> /etc/resolv.conf"

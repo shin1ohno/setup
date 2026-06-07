@@ -38,7 +38,7 @@ include_role "server" # Server-specific setup
 # (lxc-{cognee,hydra,memory,roon,roon-mcp}); bare-metal pro now hosts
 # only physical-hardware-coupled cookbooks.
 include_cookbook "arp-flux"
-include_cookbook "dns-prefer-ipv4"
+include_cookbook "dns-prefer-ipv4" unless node[:platform] == "darwin"
 include_cookbook "bluez"
 include_cookbook "zeroconf"
 include_cookbook "broadcom-wifi"
