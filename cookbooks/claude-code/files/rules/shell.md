@@ -145,7 +145,7 @@ Fix options (any work):
 - Escape: `echo "=== foo (bar) ==="` (use double quotes outside, or escape `\(\)`)
 - Heredoc: `bash <<'EOF' ... EOF` (no -c argument)
 
-**Composition gate**: before writing any `bash -c '...'` or `ssh host '...'`, scan the inner body for the metacharacter set `()`, `$()`, backticks, `*`, `!`, `<<`, nested quotes. Any hit → switch shape before sending. Three repeats of the same `syntax error near unexpected token '('` in one session (2026-05-11 aws bootstrap session) traced to commentary parens inside `echo === ... ===` headers in probe blocks. The composition-time scan would have caught each instance in <1 sec.
+**Composition gate**: before writing any `bash -c '...'`, `ssh host '...'`, or `ssh host 'pct exec <vmid> -- bash -c/-s ...'`, scan the inner body for the metacharacter set `()`, `$()`, backticks, `*`, `!`, `<<`, nested quotes — **commentary parentheses in `echo` statements count** (e.g. `echo (already paused)`). Any hit → switch shape (single-quoted `bash -s` heredoc) before sending. Three repeats of the same `syntax error near unexpected token '('` in one session (2026-05-11 aws bootstrap session) traced to commentary parens inside `echo === ... ===` headers in probe blocks. Recurred 2026-06-07 (setup security audit): `echo (already paused or missing)` inside an `ssh ... pct exec ... bash -c` orchestrator-pause command broke with the same error; the single-quoted `bash -s` heredoc form fixed it. The composition-time scan would have caught each instance in <1 sec.
 
 ## Prefer sed/awk over `python3 -c` for inline filesystem edits
 
