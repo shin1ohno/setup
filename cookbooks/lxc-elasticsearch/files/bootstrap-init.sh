@@ -376,7 +376,13 @@ main() {
   put_or_reset_user "grafana_reader"       "${GRAFANA_PASSWORD}"       '["grafana_reader"]'
   put_or_reset_user "rtx_analyst"          "${ANALYST_PASSWORD}"       '["rtx_analyst"]'
   put_or_reset_user "es_monitor"           "${MONITOR_PASSWORD}"       '["monitoring_user","cluster_health_monitor"]'
-  put_or_reset_user "elastic_agent_writer" "${ELASTIC_AGENT_PASSWORD}" '["elastic_agent_writer"]'
+  # elastic_agent_writer also carries the two built-in stack-monitoring
+  # roles so the standalone agent on CT 111 can collect Stack Monitoring
+  # data: remote_monitoring_collector (ES _nodes/stats, cluster_stats,
+  # index/shard stats) + monitoring_user (Kibana /api/stats + /api/status,
+  # and read access to the Stack Monitoring UI data). See
+  # cookbooks/elastic-agent/files/elastic-agent.stack-monitoring-input.yml.
+  put_or_reset_user "elastic_agent_writer" "${ELASTIC_AGENT_PASSWORD}" '["elastic_agent_writer","remote_monitoring_collector","monitoring_user"]'
   put_or_reset_user "apm_server_writer"    "${APM_SERVER_PASSWORD}"    '["apm_server_writer"]'
   put_or_reset_user "elastalert_writer"    "${ELASTALERT_PASSWORD}"    '["elastalert_writer"]'
 
