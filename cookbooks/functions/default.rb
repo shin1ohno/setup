@@ -22,6 +22,30 @@ module RecipeHelper
     end
   end
 
+  # Collapse the LXC entry-recipe tail trio into one call:
+  #   include_role "lxc-core"
+  #   node.reverse_merge!(elastic_agent: { tags: tags, **extra })
+  #   include_cookbook "elastic-agent"
+  #
+  # lxc-core bundles node-exporter + auto-mitamae-target; elastic-agent ships
+  # the host's logs/metrics to the ES cluster tagged with `tags`. reverse_merge!
+  # is first-wins, so a recipe that pre-sets node[:elastic_agent] keeps its value
+  # (matches the prior inline form exactly).
+  #
+  # `elastic_agent_extra` carries per-host elastic-agent keys beyond tags (e.g.
+  # monitoring's enable_prometheus_integration). pve/lxc-apm-server.rb opts out
+  # (no lxc-core/elastic tail, not in the auto-mitamae hosts.json) by simply not
+  # calling this.
+  #
+  # Usage:
+  #   lxc_entry(tags: ["lxc", "cognee"])
+  #   lxc_entry(tags: ["lxc", "monitoring"], elastic_agent_extra: { enable_prometheus_integration: true })
+  def lxc_entry(tags:, elastic_agent_extra: {})
+    include_role "lxc-core"
+    node.reverse_merge!(elastic_agent: { tags: tags }.merge(elastic_agent_extra))
+    include_cookbook "elastic-agent"
+  end
+
   # Gate a block of cookbook resources behind an external prerequisite
   # (AWS auth, GitHub SSH, etc.). Pauses mitamae and prompts the user to
   # configure the prerequisite, then runs the block.

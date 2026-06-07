@@ -15,19 +15,6 @@
 
 include_recipe "../cookbooks/functions/default"
 
-user = ENV["USER"]
-group = `id -gn`.strip
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: group,
-    system_user: "root",
-    system_group: "root",
-  }
-)
-
 # Per-host attribute overrides. The pve-host cookbook defaults assume
 # generic systemd predictable interface names; the `pro` Mac Pro 5,1
 # install exposes the onboard Intel NIC pair as `nic0` (UP, used by the
@@ -59,16 +46,15 @@ include_cookbook "ssh-keys"
 # path on vmbr1 misconfigure is via console / IPMI; ZFS snapshot of
 # rpool/ROOT/pve-1 before the first apply is the operator's pre-flight
 # (zfs snapshot rpool/ROOT/pve-1@phase-3c-pre).
-include_role "lxc-core"
+# Standalone Elastic Agent — ships PVE host syslog + system metrics to the
+# 3-node ES cluster, tagged `pve-host` so Kibana isolates the hypervisor
+# from the LXC fleet. lxc-core (node-exporter + auto-mitamae-target) runs
+# first inside lxc_entry, then elastic-agent.
+lxc_entry(tags: ["pve-host", "hypervisor"])
 
 # Off-box self-heal for the CT 118 unbound LAN resolver (.61). Lives on the PVE
 # host because the "active but zero replies on eth0" wedge (2026-05-31) is
 # invisible to a CT-local probe; the host probes .61 over the LAN and restarts
-# unbound via `pct exec`. Depends on node-exporter's textfile dir (lxc-core).
+# unbound via `pct exec`. Depends on node-exporter's textfile dir (lxc-core),
+# so it runs AFTER lxc_entry.
 include_cookbook "unbound-watchdog"
-
-# Standalone Elastic Agent — ships PVE host syslog + system metrics to the
-# 3-node ES cluster. Tag with `pve-host` so Kibana queries can isolate the
-# hypervisor from the LXC fleet.
-node.reverse_merge!(elastic_agent: { tags: ["pve-host", "hypervisor"] })
-include_cookbook "elastic-agent"

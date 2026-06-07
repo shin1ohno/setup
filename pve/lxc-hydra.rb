@@ -11,19 +11,6 @@
 
 include_recipe "../cookbooks/functions/default"
 
-user = ENV["USER"]
-group = `id -gn`.strip
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: group,
-    system_user: "root",
-    system_group: "root",
-  }
-)
-
 # Bind hydra admin API on all interfaces so the consent LXC (CT 110)
 # can reach it cross-LXC for the OAuth login/consent flow. The default
 # in cookbooks/hydra-server is 127.0.0.1 (loopback-only); that breaks
@@ -49,7 +36,4 @@ node.reverse_merge!(
 )
 
 include_cookbook "hydra-server"
-include_role "lxc-core"
-
-node.reverse_merge!(elastic_agent: { tags: ["lxc", "hydra"] })
-include_cookbook "elastic-agent"
+lxc_entry(tags: ["lxc", "hydra"])
