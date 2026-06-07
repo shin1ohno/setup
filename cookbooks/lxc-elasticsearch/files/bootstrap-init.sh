@@ -318,6 +318,27 @@ reset_kibana_system_password() {
   echo "[bootstrap] kibana_system password reset"
 }
 
+# --- Stack Monitoring cluster settings -----------------------------------
+
+put_monitoring_collection_settings() {
+  # Required for Kibana's Stack Monitoring UI to display data:
+  #   xpack.monitoring.collection.enabled=true  is the master switch the UI
+  #     checks; without it the UI shows no data even when agent-collected
+  #     metrics-*.stack_monitoring.* data streams exist.
+  #   xpack.monitoring.elasticsearch.collection.enabled=false  stops ES's own
+  #     legacy self-collection (.monitoring-es-*) — the standalone
+  #     elastic-agent (per ES node, scope: node) is the sole collector.
+  # Idempotent: PUT _cluster/settings is declarative.
+  es_curl -H 'Content-Type: application/json' \
+    -X PUT "${ES_URL}/_cluster/settings" \
+    -d '{"persistent":{"xpack.monitoring.collection.enabled":true,"xpack.monitoring.elasticsearch.collection.enabled":false}}' \
+    | grep -q '"acknowledged":true' || {
+      echo "[bootstrap] monitoring collection settings PUT failed" >&2
+      return 1
+    }
+  echo "[bootstrap] Stack Monitoring collection settings ensured"
+}
+
 # --- main ----------------------------------------------------------------
 
 main() {
@@ -388,6 +409,10 @@ main() {
 
   # Built-in kibana_system — only password can be set.
   reset_kibana_system_password
+
+  # Stack Monitoring master switch (UI display gate) + disable ES legacy
+  # self-collection (agent is the collector).
+  put_monitoring_collection_settings
 
   echo "[bootstrap] complete"
 }
