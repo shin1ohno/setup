@@ -1,6 +1,6 @@
 services:
   cognee:
-    image: cognee/cognee:0.5.8
+    image: cognee/cognee:1.0.9
     restart: unless-stopped
     ports:
       - "8001:8000"
@@ -14,6 +14,9 @@ services:
       - CORS_ALLOWED_ORIGINS=*
       - ENABLE_BACKEND_ACCESS_CONTROL=false
       - COGNEE_SKIP_CONNECTION_TEST=true
+      # cognee 1.0.0 enabled session memory (CACHING) by default. We do not
+      # use it; disable to preserve 0.5.8 behavior and avoid extra writes.
+      - CACHING=false
       - GUNICORN_WORKERS=1
       - POOL_ARGS={"pool_size":30,"max_overflow":20,"pool_recycle":300,"pool_timeout":30,"pool_pre_ping":true}
       # Relational metadata + vector store on shared RDS Postgres (mem0).
