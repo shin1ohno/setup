@@ -19,4 +19,10 @@ node.reverse_merge!(
 )
 
 include_cookbook "lxc-elasticsearch"
-lxc_entry(tags: ["lxc", "elasticsearch", "es-2"])
+# enable_es_node_monitoring_integration: this node's elastic-agent collects
+# its OWN node + node_stats (scope: node) for Kibana Stack Monitoring. The
+# cluster-level ES metricsets + Kibana are collected centrally on CT 111.
+lxc_entry(
+  tags: ["lxc", "elasticsearch", "es-2"],
+  elastic_agent_extra: { enable_es_node_monitoring_integration: true },
+)

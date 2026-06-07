@@ -1,0 +1,51 @@
+  # Elasticsearch PER-NODE Stack Monitoring — enabled on each ES node
+  # (es-0/1/2) via node[:elastic_agent][:enable_es_node_monitoring_integration].
+  #
+  # WHY per-node (scope: node) instead of one cluster-scope collector on CT 111:
+  # Kibana's Stack Monitoring marks an ES node "Online" iff the node's UUID is a
+  # key in the latest cluster_stats doc's cluster_state.nodes map AND its
+  # node_stats originate with that node's own identity
+  # (map_nodes_info.ts: isOnline = !isUndefined(clusterState.nodes[uuid])).
+  # A single `scope: cluster` agent polling all nodes through one endpoint
+  # collapses per-node identity (same service.address for every node — Elastic
+  # staff confirmed, discuss.elastic.co/t/342413) and leaves nodes flagged
+  # Offline. Elastic's supported topology is `scope: node` with ONE agent per
+  # ES node hitting its OWN node. Each ES node already runs elastic-agent
+  # (roles/lxc-core), so node + node_stats are collected here; the cluster-level
+  # metricsets + Kibana stay on CT 111 (elastic-agent.stack-monitoring-input.yml).
+  #
+  # Host is the node's own FQDN (@@HOSTNAME@@ → es-0/es-1/es-2, substituted by
+  # the cookbook) — NOT localhost: ES binds the transport_host FQDN, and the
+  # node http cert SAN covers es-N.home.local but not localhost.
+  #
+  # Collect BOTH `node` and `node_stats` — Elastic docs: turning off either
+  # yields incomplete/missing Stack Monitoring visualizations.
+
+  - type: elasticsearch/metrics
+    id: elasticsearch-node-monitoring
+    use_output: default
+    streams:
+      - metricsets: [node]
+        hosts: ["https://@@HOSTNAME@@.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: node
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.node
+      - metricsets: [node_stats]
+        hosts: ["https://@@HOSTNAME@@.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: node
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.node_stats
