@@ -19,18 +19,8 @@ unless ENV["MITAMAE_FORCE_BARE_METAL"] == "1"
   end
 end
 
-user = ENV["USER"]
-group = `id -gn`.strip
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: group,
-    system_user: "root",
-    system_group: "root",
-  }
-)
+# node[:setup] is resolved once by cookbooks/host-profile (included via
+# functions/default above) — no per-entry reverse_merge needed.
 
 # Include modular roles
 include_role "core"

@@ -2,28 +2,8 @@
 
 include_recipe "cookbooks/functions/default"
 
-machine = nil
-if node[:platform] == "darwin"
-  machine = run_command("uname -m").stdout.strip
-end
-
-user = ENV["USER"]
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: "staff",
-    system_user: "root",
-    system_group: "wheel",
-  },
-  homebrew: {
-    # Set prefix to /opt/homebrew on M1 Mac because Homebrew has changed the default prefix to /opt/homebrew on M1 Mac.
-    # https://github.com/Homebrew/install/blob/b62804e014a2d31216e074398411069688517a79/install.sh#L30-L32
-    prefix: machine == "arm64" ? "/opt/homebrew" : "/opt/brew",
-    machine: machine,
-  },
-)
+# node[:setup] / node[:homebrew] are resolved once by cookbooks/host-profile
+# (included via functions/default above) — no per-entry reverse_merge needed.
 
 # Cut sudo prompts FIRST so every sudo-using resource below shares one auth.
 # (macOS tty_tickets re-prompts per specinfra subshell; mac-sudo switches the
