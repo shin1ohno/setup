@@ -22,15 +22,13 @@
 
 return unless node[:platform] == "darwin"
 
-HOSTNAME_TO_HOST = {
-  "xmhtm6qvqx" => "air", # MacBook Air
-}.freeze
-
-current_host = run_command("hostname -s").stdout.strip.downcase
-if HOSTNAME_TO_HOST[current_host].nil?
+# Identity is resolved once by cookbooks/host-profile (node[:profile][:label]).
+# local-mcp converges only on Air.
+unless node[:profile][:label] == "air"
   MItamae.logger.warn(
-    "local-mcp: hostname '#{current_host}' is not Air — no local MCP stack deployed. " \
-    "This cookbook only converges on Air (xmhtm6qvqx).",
+    "local-mcp: host '#{node[:profile][:hostname]}' is not Air " \
+    "(node[:profile][:label]=#{node[:profile][:label].inspect}) — no local MCP stack " \
+    "deployed. This cookbook only converges on Air.",
   )
   return
 end
