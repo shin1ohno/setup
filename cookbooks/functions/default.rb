@@ -188,6 +188,13 @@ MItamae::ResourceContext.send(:include, RecipeHelper)
 # distinguish the two distros can read /etc/os-release directly.
 node[:platform] = "ubuntu" if node[:platform] == "debian"
 
+# Resolve host facts (setup paths, homebrew, identity) ONCE here, after the
+# platform is normalized. Because functions is the universal first include of
+# every entry recipe, this propagates node[:setup] / node[:homebrew] /
+# node[:profile] to darwin.rb / linux.rb / pve/*.rb without each re-deriving
+# them. See cookbooks/host-profile/default.rb.
+include_cookbook "host-profile"
+
 define :install_package, darwin: nil, ubuntu: nil, arch: nil do
   platform = node[:platform]
   pkgs = params[platform.to_sym]
