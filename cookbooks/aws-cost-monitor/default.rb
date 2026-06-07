@@ -22,8 +22,8 @@
 #   ~/.config/aws-cost-monitor/cognee-password (mode 0600, contains password)
 #
 
-# Linux-only: systemd-user timer not applicable on macOS
-return if node[:platform] == "darwin"
+# Linux-only (systemd-user timer not applicable on macOS); OS gate now
+# lives at the include site (roles/server).
 
 setup_root = node[:setup][:root]
 user = node[:setup][:user]

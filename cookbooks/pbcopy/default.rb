@@ -2,8 +2,7 @@
 
 # OSC 52 clipboard support for Linux (pbcopy/pbpaste compatible)
 # Works over SSH and in headless environments when terminal supports OSC 52
-
-return unless node[:platform] != "darwin"
+# OS gate now lives at the include site (roles/core, Linux-only).
 
 add_profile "pbcopy" do
   bash_content <<-'BASH'

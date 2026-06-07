@@ -13,8 +13,7 @@
 # Skipped on tailnet nodes (pro-router): they reach the VPC via tailscale0
 # directly, and routing 10.33/18 via .60 from .60 would loop. The
 # `! ip link show tailscale0` guard excludes them at converge time.
-
-return if node[:platform] == "darwin"
+# OS gate now lives at the include site (roles/lxc-core, Linux-only).
 
 tailnet_guard = "! ip link show tailscale0 > /dev/null 2>&1"
 staging_dir = "#{node[:setup][:root]}/lan-vpc-route"
