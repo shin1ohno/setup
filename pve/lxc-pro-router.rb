@@ -26,19 +26,6 @@
 
 include_recipe "../cookbooks/functions/default"
 
-user = ENV["USER"]
-group = `id -gn`.strip
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: group,
-    system_user: "root",
-    system_group: "root",
-  }
-)
-
 # Phase B-4: read AWS profile/region from the ssh-keys cookbook's
 # bootstrap config so this recipe can fetch /host-registry/outputs/*
 # at converge time (see hint block below). Same convention as
@@ -234,7 +221,4 @@ local_ruby_block "log lxc-pro-router tailscale up hint" do
   end
 end
 
-include_role "lxc-core"
-
-node.reverse_merge!(elastic_agent: { tags: ["lxc", "pro-router", "tailscale"] })
-include_cookbook "elastic-agent"
+lxc_entry(tags: ["lxc", "pro-router", "tailscale"])

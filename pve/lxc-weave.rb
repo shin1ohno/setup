@@ -19,16 +19,6 @@ include_recipe "../cookbooks/functions/default"
 
 user = ENV["USER"]
 group = `id -gn`.strip
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: group,
-    system_user: "root",
-    system_group: "root",
-  }
-)
 
 include_cookbook "docker-engine"
 include_cookbook "awscli"
@@ -291,7 +281,4 @@ compose_service "weave" do
   deploy_dir deploy_dir
 end
 
-include_role "lxc-core"
-
-node.reverse_merge!(elastic_agent: { tags: ["lxc", "weave"] })
-include_cookbook "elastic-agent"
+lxc_entry(tags: ["lxc", "weave"])

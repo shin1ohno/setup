@@ -12,19 +12,6 @@
 
 include_recipe "../cookbooks/functions/default"
 
-user = ENV["USER"]
-group = `id -gn`.strip
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: group,
-    system_user: "root",
-    system_group: "root",
-  }
-)
-
 # OpenMemory MCP via docker compose (cookbooks/ai-memory →
 # ghcr.io/mem0ai/openmemory-mcp). The native systemd path
 # (cookbooks/memory-server) was attempted first but openmemory-mcp on
@@ -35,7 +22,4 @@ node.reverse_merge!(
 # ships a CLI binary.
 include_cookbook "docker-engine"
 include_cookbook "ai-memory"
-include_role "lxc-core"
-
-node.reverse_merge!(elastic_agent: { tags: ["lxc", "memory"] })
-include_cookbook "elastic-agent"
+lxc_entry(tags: ["lxc", "memory"])

@@ -26,19 +26,6 @@
 
 include_recipe "../cookbooks/functions/default"
 
-user = ENV["USER"]
-group = `id -gn`.strip
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: group,
-    system_user: "root",
-    system_group: "root",
-  }
-)
-
 # pro-dev specifics. Skip ollama (CPU-only LXC, install.sh 404s, no local
 # LLM runtime in scope). Pin tailscale identity to /tailscale/pro-dev-auth-key.
 node.reverse_merge!(
@@ -189,7 +176,4 @@ execute "reload + enable pro-dev tailnet-routes timer" do
   action :nothing
 end
 
-include_role "lxc-core"
-
-node.reverse_merge!(elastic_agent: { tags: ["lxc", "pro-dev", "dev-workstation"] })
-include_cookbook "elastic-agent"
+lxc_entry(tags: ["lxc", "pro-dev", "dev-workstation"])

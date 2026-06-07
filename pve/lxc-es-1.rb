@@ -11,19 +11,6 @@ end
 
 include_recipe "../cookbooks/functions/default"
 
-user = ENV["USER"]
-group = `id -gn`.strip
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: group,
-    system_user: "root",
-    system_group: "root",
-  }
-)
-
 node.reverse_merge!(
   elasticsearch: {
     node_name: "es-1",
@@ -32,7 +19,4 @@ node.reverse_merge!(
 )
 
 include_cookbook "lxc-elasticsearch"
-include_role "lxc-core"
-
-node.reverse_merge!(elastic_agent: { tags: ["lxc", "elasticsearch", "es-1"] })
-include_cookbook "elastic-agent"
+lxc_entry(tags: ["lxc", "elasticsearch", "es-1"])
