@@ -10,6 +10,6 @@
 
 include_recipe "../cookbooks/functions/default"
 
-include_cookbook "roon-server"
+include_cookbook "lxc-roon"
 include_cookbook "lxc-systemd-hardening-fix"
 lxc_entry(tags: ["lxc", "roon", "privileged"])

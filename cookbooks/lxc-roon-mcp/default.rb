@@ -39,7 +39,7 @@ http_port   = node.dig(:roon_mcp_server, :http_port)   || 8080
 # configurations, and the Roon binary's tokio TCP connect chokes on the
 # IPv6 form. Direct IPv4 sidesteps the resolver entirely. Override via
 # node[:roon_mcp_server][:core_host] when LAN DNS returns a clean A
-# record. Same rationale as cookbooks/cognee + pve/lxc-weave (PR #126).
+# record. Same rationale as cookbooks/lxc-cognee + pve/lxc-weave (PR #126).
 core_host   = node.dig(:roon_mcp_server, :core_host)   || "192.168.1.20"
 core_port   = node.dig(:roon_mcp_server, :core_port)   || 9330
 public_host = node.dig(:roon_mcp_server, :public_host) || "mcp.ohno.be"

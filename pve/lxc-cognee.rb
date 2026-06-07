@@ -12,5 +12,5 @@
 include_recipe "../cookbooks/functions/default"
 
 include_cookbook "docker-engine"
-include_cookbook "cognee"
+include_cookbook "lxc-cognee"
 lxc_entry(tags: ["lxc", "cognee"])

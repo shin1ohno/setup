@@ -11,5 +11,5 @@
 
 include_recipe "../cookbooks/functions/default"
 
-include_cookbook "roon-mcp-server"
+include_cookbook "lxc-roon-mcp"
 lxc_entry(tags: ["lxc", "roon-mcp"])

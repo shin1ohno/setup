@@ -47,7 +47,7 @@ fail() { log "ERROR: $*"; exit 1; }
 # 1. Verify Hydra is reachable on CT_106.
 log "checking Hydra admin API on CT $HYDRA_CTID..."
 if ! ssh -n root@"$PVE_HOST" "pct exec $HYDRA_CTID -- curl -fsS http://127.0.0.1:4445/health/ready" >/dev/null 2>&1; then
-  fail "Hydra admin API at http://127.0.0.1:4445/health/ready (inside CT $HYDRA_CTID) is not ready. Apply cookbooks/hydra-server first and ensure systemd hydra.service is active."
+  fail "Hydra admin API at http://127.0.0.1:4445/health/ready (inside CT $HYDRA_CTID) is not ready. Apply cookbooks/lxc-hydra first and ensure systemd hydra.service is active."
 fi
 log "Hydra admin API ready."
 

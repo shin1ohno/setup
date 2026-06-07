@@ -10,5 +10,5 @@
 
 include_recipe "../cookbooks/functions/default"
 
-include_cookbook "samba-server"
+include_cookbook "lxc-samba"
 lxc_entry(tags: ["lxc", "samba"])
