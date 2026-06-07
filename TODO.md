@@ -1,5 +1,23 @@
 # TODO
 
+## H2: enforce JWT audience in cognee + ai-memory auth-proxies (log-first)
+
+- Vuln (confirmed live 2026-06-07): the cognee + ai-memory auth-proxies pass
+  `options={"verify_aud": False}` — no resource isolation. `cognee/mcp`
+  accepts a `roon-mcp`-audience token (HTTP 200). Files:
+  `cookbooks/{cognee,ai-memory}/files/auth-proxy/proxy.py`.
+- A strict full-URL fix (`audience=https://mcp.ohno.be/cognee`) is preserved
+  on git tag `h2-audience-fix`, but deploying it as-is would 401 real
+  tokens: this system mints **bare** audiences (`aud=["cognee"]`,
+  `["roon-mcp"]`); hydra rejects a full-URL audience request for the prober
+  client; `roon-mcp` nominally enforces the full URL yet accepts a bare-aud
+  token. The `aud` a real claude.ai token carries is unconfirmed.
+- First step: add aud-LOGGING only (no enforcement) to the cognee proxy's
+  TokenVerifier.verify(), deploy to cognee (CT105), trigger one real
+  claude.ai cognee request, read the logged `aud`. Then enforce that
+  observed value (bare vs full-URL) and repeat for memory (CT107, currently
+  down). Delete this entry in the enforcing commit.
+
 ## Fix RTX1210 DNS proxy AAAA NODATA
 
 - Host: 192.168.1.253 (RTX1210)

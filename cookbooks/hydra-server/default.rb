@@ -31,10 +31,21 @@ HYDRA_HOME    = "/etc/hydra"
 # Admin port bind host. Default 127.0.0.1 keeps the unauthenticated admin
 # API off the LAN. For lxc-consent (CT 110) cross-LXC access, override
 # via node[:hydra_server][:admin_bind_host] = vmbr1 IP of lxc-hydra
-# (typically 192.168.1.33). Out of scope: nftables rule restricting
-# source to lxc-consent IP — recommended hardening if admin is exposed
-# beyond loopback.
+# (typically 192.168.1.33).
+#
+# When admin is bound beyond loopback (0.0.0.0 for cross-LXC consent
+# reach), the unauthenticated admin port is firewalled by the
+# hydra-admin-guard nftables ruleset below: only the consent LXC (CT110),
+# the hydra host itself, and loopback may reach tcp/4445. The bind host is
+# NOT the access control — the nftables source guard is.
 admin_bind_host = node.dig(:hydra_server, :admin_bind_host) || "127.0.0.1"
+
+# Source IPs allowed to reach the unauthenticated admin port (tcp/4445).
+# Source of truth: home-monitor/contracts/devices.tf —
+#   hydra (CT106)   = 192.168.1.71  (self)
+#   consent (CT110) = 192.168.1.75  (cross-LXC consent flow)
+consent_ip    = node.dig(:hydra_server, :consent_ip) || "192.168.1.75"
+hydra_self_ip = node.dig(:hydra_server, :self_ip)    || "192.168.1.71"
 
 # 1. System user
 execute "create hydra system user" do
@@ -215,4 +226,77 @@ execute "restart hydra" do
   # (.env not generated; SSM-gated bootstrap pending). Restart would
   # otherwise fail with "Unit hydra.service not found".
   only_if "systemctl list-unit-files hydra.service 2>/dev/null | grep -q hydra.service"
+end
+
+# 8. nftables source guard for the unauthenticated admin API (tcp/4445).
+#
+# The admin API is bound on 0.0.0.0 (see admin_bind_host) so the consent
+# LXC (CT110) can reach it cross-LXC. The bind is NOT the access control;
+# this nftables ruleset is. It adds a dedicated `inet hydra_admin_guard`
+# table whose policy is `accept` and that ONLY drops tcp/4445 from
+# non-allowed sources — SSH (22), the public Hydra port (4444), and every
+# other flow are untouched, so there is no lockout risk. Allowed sources:
+# loopback, the consent LXC, and the hydra host itself.
+nft_guard_dir     = "/etc/nftables.d"
+nft_guard_staging = "#{node[:setup][:root]}/hydra-server/hydra-admin-guard.nft"
+nft_guard_system  = "#{nft_guard_dir}/hydra-admin-guard.nft"
+nft_conf          = "/etc/nftables.conf"
+nft_guard_template = File.read(
+  File.expand_path("files/hydra-admin-guard.nft", File.dirname(__FILE__))
+)
+
+# Ensure nftables is installed (Debian/Ubuntu LXC base may omit it).
+execute "install nftables" do
+  command "sudo apt-get install -y nftables"
+  not_if "dpkg -s nftables >/dev/null 2>&1"
+end
+
+# Drop-in directory consumed by /etc/nftables.conf.
+execute "create #{nft_guard_dir}" do
+  command "sudo install -d -m 755 -o root -g root #{nft_guard_dir}"
+  not_if "test -d #{nft_guard_dir}"
+end
+
+# Render the guard ruleset with the allowed source IPs substituted, staged
+# in user space (no sudo chown on the file resource per repo ruby rules).
+file nft_guard_staging do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "0644"
+  content nft_guard_template
+          .gsub("__CONSENT_IP__", consent_ip)
+          .gsub("__HYDRA_SELF_IP__", hydra_self_ip)
+end
+
+execute "install hydra-admin-guard.nft" do
+  command "sudo install -m 644 -o root -g root #{nft_guard_staging} #{nft_guard_system}"
+  not_if "diff -q #{nft_guard_staging} #{nft_guard_system} 2>/dev/null"
+  notifies :run, "execute[load hydra-admin-guard]"
+end
+
+# Ensure /etc/nftables.conf sources the drop-in dir so the guard persists
+# across reboot (nftables.service loads /etc/nftables.conf at start).
+execute "include nftables.d drop-ins in #{nft_conf}" do
+  command <<~SH
+    set -e
+    if [ ! -f #{nft_conf} ]; then
+      printf '#!/usr/sbin/nft -f\\n' | sudo tee #{nft_conf} >/dev/null
+    fi
+    printf 'include "/etc/nftables.d/*.nft"\\n' | sudo tee -a #{nft_conf} >/dev/null
+  SH
+  not_if "grep -qF 'include \"/etc/nftables.d/*.nft\"' #{nft_conf} 2>/dev/null"
+end
+
+# Persist the firewall across reboot.
+execute "enable nftables.service" do
+  command "sudo systemctl enable --now nftables.service"
+  not_if "systemctl is-enabled nftables.service 2>/dev/null | grep -q '^enabled$' && systemctl is-active --quiet nftables.service"
+end
+
+# Load the guard immediately. The add/flush/table preamble in the .nft
+# makes re-runs idempotent (the table is recreated from scratch each load).
+execute "load hydra-admin-guard" do
+  command "sudo nft -f #{nft_guard_system}"
+  action :nothing
+  only_if "test -f #{nft_guard_system}"
 end

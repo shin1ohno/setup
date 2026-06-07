@@ -3,6 +3,8 @@
 # Usage: generate_config.sh <servers.yml> <output.json>
 
 set -euo pipefail
+# Restrict perms on the temp output file we write (holds plaintext MCP API keys).
+umask 077
 
 YAML_FILE="$1"
 OUTPUT_FILE="$2"
@@ -11,10 +13,13 @@ HOME_DIR="${HOME}"
 # Default AWS region for SSM
 AWS_REGION="${AWS_REGION:-ap-northeast-1}"
 
-# Helper function to fetch SSM parameter
+# Helper function to fetch SSM parameter.
+# Thin wrapper: no error swallowing, no literal fallback string. A failed fetch
+# propagates its non-zero exit to the call site, which fails loud (no poisoned
+# config written). Empty/None rejection is also handled at the call site.
 fetch_ssm() {
   local param_path="$1"
-  aws ssm get-parameter --name "${param_path}" --with-decryption --query "Parameter.Value" --output text --region "${AWS_REGION}" 2>/dev/null || echo "SSM_FETCH_FAILED:${param_path}"
+  aws ssm get-parameter --name "${param_path}" --with-decryption --query "Parameter.Value" --output text --region "${AWS_REGION}"
 }
 
 # Convert YAML to JSON
@@ -65,7 +70,11 @@ for name in $server_names; do
       # Check if value is an SSM reference
       if echo "$server" | jq -e ".env[\"$key\"].ssm" > /dev/null 2>&1; then
         ssm_path=$(echo "$server" | jq -r ".env[\"$key\"].ssm")
-        value=$(fetch_ssm "$ssm_path")
+        value=$(fetch_ssm "$ssm_path") || { echo "ERROR: SSM fetch failed for $ssm_path" >&2; exit 1; }
+        if [ -z "$value" ] || [ "$value" = "None" ]; then
+          echo "ERROR: empty SSM value for $ssm_path" >&2
+          exit 1
+        fi
       else
         # Expand ${HOME}
         value=$(echo "$value" | sed "s|\${HOME}|${HOME_DIR}|g")
