@@ -68,3 +68,14 @@ logging.root.level: info
 
 # Telemetry off — LAN-only personal deployment.
 telemetry.enabled: false
+
+# Stack Monitoring: single self-monitoring cluster, no dedicated monitoring
+# cluster. The default `monitoring.ui.ccs.enabled: true` makes the Stack
+# Monitoring app issue Cross Cluster Search queries (cluster:.monitoring-*),
+# which fail because the ES nodes have roles [master,data,ingest] only — no
+# `remote_cluster_client` — surfacing as a misleading "Access Denied / not
+# authorized to access Monitoring" page even for the elastic superuser.
+# Disabling CCS makes the app query the LOCAL cluster, where the
+# elastic-agent-collected metrics-{elasticsearch,kibana}.stack_monitoring.*
+# data streams live.
+monitoring.ui.ccs.enabled: false

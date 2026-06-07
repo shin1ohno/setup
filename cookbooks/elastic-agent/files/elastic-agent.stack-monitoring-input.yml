@@ -1,0 +1,120 @@
+  # Stack Monitoring integration — only enabled on hosts where
+  # node[:elastic_agent][:enable_stack_monitoring_integration] == true.
+  # Today that is CT 111 (lxc-monitoring) only — same centralized
+  # collector-host topology as the Prometheus federation + Synthetics
+  # integrations. A single standalone agent polls the whole ES cluster
+  # (scope: cluster) plus Kibana, populating the
+  # metrics-elasticsearch.stack_monitoring.* and
+  # metrics-kibana.stack_monitoring.* data streams that back Kibana's
+  # Stack Monitoring UI.
+  #
+  # REQUIRES kibana.yml `monitoring.ui.ccs.enabled: false` (set in
+  # cookbooks/lxc-kibana/files/kibana.yml.tmpl) — the default `true` makes
+  # the UI issue Cross Cluster Search queries that fail on this single
+  # self-monitoring cluster (nodes lack remote_cluster_client), surfacing
+  # as "Access Denied" even for the elastic superuser.
+  #
+  # AUTH: elastic_agent_writer carries the built-in remote_monitoring_collector
+  # (ES _nodes/stats etc.) + monitoring_user (Kibana /api/stats, /api/status)
+  # roles — granted in cookbooks/lxc-elasticsearch/files/bootstrap-init.sh.
+  #
+  # The agent-native equivalent of metricbeat's `xpack.enabled: true` is the
+  # per-stream `data_stream.dataset: <pkg>.stack_monitoring.<metricset>`
+  # routing — do NOT add a literal `xpack.enabled` key here. Dataset names
+  # and the per-input/per-stream nesting are taken verbatim from the
+  # elastic/integrations package templates (elasticsearch/ + kibana/).
+  #
+  # Verification note: if data lands in metrics-elasticsearch.stack_monitoring.*
+  # but the Stack Monitoring UI stays empty, re-check the dataset routing.
+
+  - type: elasticsearch/metrics
+    id: elasticsearch-stack-monitoring
+    use_output: default
+    hosts:
+      - https://es-0.home.local:9200
+      - https://es-1.home.local:9200
+      - https://es-2.home.local:9200
+    username: elastic_agent_writer
+    password: ${ELASTIC_AGENT_PASSWORD}
+    scope: cluster
+    period: 10s
+    ssl:
+      certificate_authorities:
+        - /etc/elastic-agent/certs/ca.crt
+      verification_mode: full
+    streams:
+      - metricsets: [cluster_stats]
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.cluster_stats
+      - metricsets: [node_stats]
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.node_stats
+      - metricsets: [index]
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.index
+      - metricsets: [index_summary]
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.index_summary
+      - metricsets: [index_recovery]
+        index_recovery.active_only: true
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.index_recovery
+      - metricsets: [shard]
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.shard
+      - metricsets: [ml_job]
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.ml_job
+      - metricsets: [enrich]
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.enrich
+      - metricsets: [ccr]
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.ccr
+      - metricsets: [pending_tasks]
+        data_stream:
+          type: metrics
+          dataset: elasticsearch.stack_monitoring.pending_tasks
+
+  - type: kibana/metrics
+    id: kibana-stack-monitoring
+    use_output: default
+    hosts:
+      - http://kibana.home.local:5601
+    username: elastic_agent_writer
+    password: ${ELASTIC_AGENT_PASSWORD}
+    period: 10s
+    streams:
+      - metricsets: [stats]
+        data_stream:
+          type: metrics
+          dataset: kibana.stack_monitoring.stats
+      - metricsets: [status]
+        data_stream:
+          type: metrics
+          dataset: kibana.stack_monitoring.status
+      - metricsets: [cluster_actions]
+        data_stream:
+          type: metrics
+          dataset: kibana.stack_monitoring.cluster_actions
+      - metricsets: [cluster_rules]
+        data_stream:
+          type: metrics
+          dataset: kibana.stack_monitoring.cluster_rules
+      - metricsets: [node_actions]
+        data_stream:
+          type: metrics
+          dataset: kibana.stack_monitoring.node_actions
+      - metricsets: [node_rules]
+        data_stream:
+          type: metrics
+          dataset: kibana.stack_monitoring.node_rules
