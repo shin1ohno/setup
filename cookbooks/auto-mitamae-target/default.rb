@@ -21,8 +21,8 @@
 # the new /ssh-keys/orchestrator/public + /ssh-keys/break-glass/public
 # parameters. The matching IAM policy expansion ships in the home-monitor
 # sibling PR.
-
-return if node[:platform] == "darwin"
+#
+# OS gate now lives at the include site (roles/lxc-core, Linux-only).
 
 include_cookbook "awscli"
 

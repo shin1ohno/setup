@@ -35,8 +35,9 @@
 #     all LXCs is simpler than keeping per-LXC postfix configs.
 #
 # References: ~/.claude/rules/pve-lxc.md, PR #363 (sibling cookbook).
-
-return if node[:platform] == "darwin"
+#
+# OS gate (darwin skip) now lives at the include site (roles/lxc-core).
+# The container guard below is a SEPARATE concern and stays here.
 
 # Only run inside an LXC container. lxc-core role (which includes this
 # cookbook) is shared with the bare-metal PVE host (pve/pve-host.rb)

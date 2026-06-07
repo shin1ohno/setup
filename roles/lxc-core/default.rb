@@ -22,9 +22,16 @@
 # Host-specific primitives (docker-engine, awscli, tailscale, ssh-keys)
 # stay in pve/lxc-X.rb or pve/pve-host.rb.
 
-include_cookbook "node-exporter"
-include_cookbook "auto-mitamae-target"
-include_cookbook "lxc-mask-unsupported-units"
-include_cookbook "dns-prefer-ipv4"
-include_cookbook "lan-vpc-route"
+# These primitives are Linux-only — their cookbooks were previously
+# self-guarded with `return if node[:platform] == "darwin"`; the OS gate now
+# lives here at the include site. lxc-core only runs on Linux LXCs + the
+# bare-metal PVE host, so the guard is defensive (never darwin in practice).
+unless node[:platform] == "darwin"
+  include_cookbook "node-exporter"
+  include_cookbook "auto-mitamae-target"
+  include_cookbook "lxc-mask-unsupported-units"
+  include_cookbook "dns-prefer-ipv4"
+  include_cookbook "lan-vpc-route"
+end
+
 include_cookbook "timezone"

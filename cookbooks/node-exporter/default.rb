@@ -19,8 +19,8 @@
 # References for the asset URL + hash:
 #   gh api repos/prometheus/node_exporter/releases/tags/v1.11.1 --jq '.assets[].name'
 #   curl -fsSL https://github.com/prometheus/node_exporter/releases/download/v1.11.1/sha256sums.txt
-
-return if node[:platform] == "darwin"
+#
+# OS gate now lives at the include site (roles/lxc-core, Linux-only).
 
 NODE_EXPORTER_VERSION = "1.11.1"
 NODE_EXPORTER_BINARY  = "/usr/local/bin/node_exporter"
