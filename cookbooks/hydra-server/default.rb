@@ -42,10 +42,12 @@ admin_bind_host = node.dig(:hydra_server, :admin_bind_host) || "127.0.0.1"
 
 # Source IPs allowed to reach the unauthenticated admin port (tcp/4445).
 # Source of truth: home-monitor/contracts/devices.tf —
-#   hydra (CT106)   = 192.168.1.71  (self)
-#   consent (CT110) = 192.168.1.75  (cross-LXC consent flow)
-consent_ip    = node.dig(:hydra_server, :consent_ip) || "192.168.1.75"
-hydra_self_ip = node.dig(:hydra_server, :self_ip)    || "192.168.1.71"
+#   hydra (CT106)      = 192.168.1.71  (self)
+#   consent (CT110)    = 192.168.1.75  (cross-LXC consent flow)
+#   monitoring (CT111) = 192.168.1.76  (Kibana Uptime synthetics /health/alive prober)
+consent_ip    = node.dig(:hydra_server, :consent_ip)    || "192.168.1.75"
+hydra_self_ip = node.dig(:hydra_server, :self_ip)       || "192.168.1.71"
+monitoring_ip = node.dig(:hydra_server, :monitoring_ip) || "192.168.1.76"
 
 # 1. System user
 execute "create hydra system user" do
@@ -236,7 +238,8 @@ end
 # table whose policy is `accept` and that ONLY drops tcp/4445 from
 # non-allowed sources — SSH (22), the public Hydra port (4444), and every
 # other flow are untouched, so there is no lockout risk. Allowed sources:
-# loopback, the consent LXC, and the hydra host itself.
+# loopback, the consent LXC, the monitoring LXC (Kibana Uptime synthetics
+# /health/alive prober), and the hydra host itself.
 nft_guard_dir     = "/etc/nftables.d"
 nft_guard_staging = "#{node[:setup][:root]}/hydra-server/hydra-admin-guard.nft"
 nft_guard_system  = "#{nft_guard_dir}/hydra-admin-guard.nft"
@@ -266,6 +269,7 @@ file nft_guard_staging do
   content nft_guard_template
           .gsub("__CONSENT_IP__", consent_ip)
           .gsub("__HYDRA_SELF_IP__", hydra_self_ip)
+          .gsub("__MONITORING_IP__", monitoring_ip)
 end
 
 execute "install hydra-admin-guard.nft" do

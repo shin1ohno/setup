@@ -34,14 +34,17 @@ node.reverse_merge!(
 # to the LAN: the hydra-server cookbook installs an nftables source guard
 # (cookbooks/hydra-server/files/hydra-admin-guard.nft) that drops tcp/4445
 # from every source except the consent LXC (CT110, 192.168.1.75), the
-# hydra host itself (CT106, 192.168.1.71), and loopback. The 0.0.0.0 bind
-# is the reachability mechanism; the nftables rule is the access control.
+# monitoring LXC (CT111, 192.168.1.76, Kibana Uptime synthetics prober
+# reaching /health/alive), the hydra host itself (CT106, 192.168.1.71),
+# and loopback. The 0.0.0.0 bind is the reachability mechanism; the
+# nftables rule is the access control.
 # IP source of truth: home-monitor/contracts/devices.tf.
 node.reverse_merge!(
   hydra_server: {
     admin_bind_host: "0.0.0.0",
     consent_ip: "192.168.1.75",
     self_ip: "192.168.1.71",
+    monitoring_ip: "192.168.1.76",
   },
 )
 
