@@ -148,6 +148,11 @@ services:
       - TRANSPORT_MODE=http
       - MCP_LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
+      # cognee-mcp 1.0.9 enforces MCP Host-header (DNS-rebinding) validation
+      # by default, allowing only localhost. The auth-proxy reaches us as
+      # Host "cognee-mcp:8000", which would 421. Disable the check: the MCP is
+      # not directly exposed (auth-proxy SAGE-JWT in front + 127.0.0.1 bind).
+      - MCP_DISABLE_DNS_REBINDING_PROTECTION=true
       - API_URL=http://cognee:8000
       - API_TOKEN=${COGNEE_MCP_API_TOKEN}
       # Relational metadata DB on shared RDS Postgres (mem0). Without these,
