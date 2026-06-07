@@ -1,22 +1,44 @@
 # TODO
 
-## H2: enforce JWT audience in cognee + ai-memory auth-proxies (log-first)
+## H2: MCP auth-proxy resource isolation (HELD — audience enforcement infeasible)
 
-- Vuln (confirmed live 2026-06-07): the cognee + ai-memory auth-proxies pass
-  `options={"verify_aud": False}` — no resource isolation. `cognee/mcp`
-  accepts a `roon-mcp`-audience token (HTTP 200). Files:
+Status 2026-06-07: investigated via live log-first observation; **audience
+enforcement is NOT viable** with current token issuance. Held as Low-risk
+known-limitation in this single-user deployment. Re-evaluate if the
+deployment ever becomes multi-tenant.
+
+- Vuln: the cognee + ai-memory auth-proxies pass `options={"verify_aud":
+  False}` — no resource isolation. Confirmed live: `cognee/mcp` accepts a
+  `roon-mcp`-audience token (HTTP 200). Files:
   `cookbooks/{cognee,ai-memory}/files/auth-proxy/proxy.py`.
-- A strict full-URL fix (`audience=https://mcp.ohno.be/cognee`) is preserved
-  on git tag `h2-audience-fix`, but deploying it as-is would 401 real
-  tokens: this system mints **bare** audiences (`aud=["cognee"]`,
-  `["roon-mcp"]`); hydra rejects a full-URL audience request for the prober
-  client; `roon-mcp` nominally enforces the full URL yet accepts a bare-aud
-  token. The `aud` a real claude.ai token carries is unconfirmed.
-- First step: add aud-LOGGING only (no enforcement) to the cognee proxy's
-  TokenVerifier.verify(), deploy to cognee (CT105), trigger one real
-  claude.ai cognee request, read the logged `aud`. Then enforce that
-  observed value (bare vs full-URL) and repeat for memory (CT107, currently
-  down). Delete this entry in the enforcing commit.
+- WHY ENFORCEMENT IS INFEASIBLE (log-first observation, aud-logging temped
+  into the cognee proxy then reverted): the real claude.ai token carries an
+  **empty** aud — `Authenticated POST /mcp (sub=sh1@mercari.com aud=[])`.
+  The monitoring prober (client_credentials) carries `aud=["cognee"]`
+  (bare). PyJWT `jwt.decode(audience=X)` requires the aud claim present and
+  containing X, so ANY enforced value (full-URL OR bare) raises
+  MissingRequiredClaim → 401 → breaks the user's cognee/memory MCP access.
+  The strict full-URL fix is preserved on git tag `h2-audience-fix` but must
+  NOT be deployed.
+- WHY LOW NOW: only `sh1@mercari.com` passes the consent ALLOWED_EMAILS
+  gate, so the cross-resource-reuse gap (a cognee token also works on
+  memory) requires a token leak AND a second principal to isolate from —
+  the latter does not exist. Defense-in-depth gap, not a multi-tenant
+  isolation failure.
+- OPTIONS to actually close it (pick when revisiting; each needs design):
+  1. RFC-8707: make claude.ai send `resource=https://mcp.ohno.be/<svc>` and
+     hydra/consent populate aud from `grant_access_token_audience`, THEN
+     enforce `audience` in the proxies. Correct but largest scope.
+  2. Scope-based isolation (mint/enforce a per-resource scope claim) — first
+     confirm what `scope` a real claude.ai token carries.
+  3. Keep as documented known-limitation (current choice).
+- First step when revisiting: re-run the log-first probe to confirm aud is
+  still empty, then pursue option 1 or 2. Probe recipe: on CT111 source
+  `/etc/mcp-probe/probe.env`, mint via client_credentials, base64-decode the
+  JWT middle segment; for a REAL token, temp-add aud logging to the cognee
+  proxy `handle()` Authenticated log line and trigger one claude.ai request.
+- Note (separate, pre-existing): memory MCP (CT107) was observed DOWN
+  (HTTP 000 at /memory/mcp) during this session — unrelated to H2.
 
 ## Fix RTX1210 DNS proxy AAAA NODATA
 
