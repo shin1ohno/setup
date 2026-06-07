@@ -60,5 +60,13 @@ node.reverse_merge!(elastic_agent: {
   # app. See cookbooks/elastic-agent/files/elastic-agent.synthetics-input.yml
   # for the endpoint inventory.
   enable_synthetics_integration: true,
+  # Enable Stack Monitoring collection — CT 111 runs a single standalone
+  # agent that collects ES + Kibana stack-monitoring metrics over the
+  # network (es-0/1/2:9200, kibana:5601) into the
+  # metrics-{elasticsearch,kibana}.stack_monitoring.* data streams that
+  # back Kibana's Stack Monitoring UI. Pairs with monitoring.ui.ccs.enabled:
+  # false in lxc-kibana's kibana.yml. See
+  # cookbooks/elastic-agent/files/elastic-agent.stack-monitoring-input.yml.
+  enable_stack_monitoring_integration: true,
 })
 include_cookbook "elastic-agent"

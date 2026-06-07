@@ -283,6 +283,8 @@ enable_prom_input = node[:elastic_agent] &&
                     node[:elastic_agent][:enable_prometheus_integration]
 enable_synth_input = node[:elastic_agent] &&
                      node[:elastic_agent][:enable_synthetics_integration]
+enable_stack_input = node[:elastic_agent] &&
+                     node[:elastic_agent][:enable_stack_monitoring_integration]
 
 # Defensive directory bootstrap
 directory node[:setup][:root] do
@@ -356,6 +358,7 @@ end
   elastic-agent.service.override.conf
   elastic-agent.prometheus-input.yml
   elastic-agent.synthetics-input.yml
+  elastic-agent.stack-monitoring-input.yml
 ].each do |f|
   remote_file "#{files_dir}/#{f}" do
     source "files/#{f}"
@@ -471,6 +474,14 @@ synth_sed_clause = if enable_synth_input
                      "-e '/@@SYNTHETICS_INPUT@@/d'"
                    end
 
+stack_input_path = "#{files_dir}/elastic-agent.stack-monitoring-input.yml"
+stack_sed_clause = if enable_stack_input
+                     "-e '/@@STACK_MONITORING_INPUT@@/r #{stack_input_path}' " \
+                     "-e '/@@STACK_MONITORING_INPUT@@/d'"
+                   else
+                     "-e '/@@STACK_MONITORING_INPUT@@/d'"
+                   end
+
 execute "render elastic-agent.yml" do
   # Stage in user-writable /tmp then sudo install. mitamae on dev-workstation
   # LXCs (e.g. pro-dev CT 104) runs as the regular user — direct write to
@@ -483,6 +494,7 @@ execute "render elastic-agent.yml" do
         -e 's|@@TAGS@@|#{tags_json}|g' \\
         #{prom_sed_clause} \\
         #{synth_sed_clause} \\
+        #{stack_sed_clause} \\
       #{config_tmpl} > #{staging}
     sudo install -m 0640 -o root -g root #{staging} #{config_path}
     rm -f #{staging}
@@ -499,6 +511,7 @@ execute "render elastic-agent.yml" do
          "-e 's|@@TAGS@@|#{tags_json}|g' " \
          "#{prom_sed_clause} " \
          "#{synth_sed_clause} " \
+         "#{stack_sed_clause} " \
          "#{config_tmpl} > \"$rendered\" && " \
          "diff -q \"$rendered\" #{config_path}; " \
          "ret=$?; rm -f \"$rendered\"; exit $ret"
