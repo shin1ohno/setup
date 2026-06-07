@@ -147,6 +147,15 @@ services:
       - PYTHONUNBUFFERED=1
       - API_URL=http://cognee:8000
       - API_TOKEN=${COGNEE_MCP_API_TOKEN}
+      # Relational metadata DB on shared RDS Postgres (mem0). Without these,
+      # cognify_status falls back to SQLite at $HOME (/home/cognee, absent in
+      # this image) -> "unable to open database file". search/cognify are
+      # unaffected (forwarded to the cognee API container via API_URL).
+      # DB_HOST/DB_PASSWORD come from .env (env_file above).
+      - DB_PROVIDER=postgres
+      - DB_NAME=cognee
+      - DB_USERNAME=cognee
+      - DB_PORT=5432
     volumes:
       - ./patches/mcp-server.py:/app/src/server.py:ro
       - ./patches/mcp-cognee-client.py:/app/src/cognee_client.py:ro
