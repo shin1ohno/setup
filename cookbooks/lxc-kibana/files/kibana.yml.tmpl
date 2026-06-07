@@ -79,3 +79,16 @@ telemetry.enabled: false
 # elastic-agent-collected metrics-{elasticsearch,kibana}.stack_monitoring.*
 # data streams live.
 monitoring.ui.ccs.enabled: false
+
+# Disable Kibana's legacy self-monitoring collection. The standalone
+# elastic-agent on CT 111 (kibana/metrics input) now collects Kibana stack
+# monitoring data into metrics-kibana.stack_monitoring.*. Left at the default
+# `true`, Kibana keeps self-collecting via the legacy path, which makes the
+# Stack Monitoring UI's setup-mode detector report "internal collection
+# detected — Metricbeat monitoring is not enabled" and show a migration
+# prompt (the detector is hard-wired to legacy .monitoring-* / -mb- index
+# names and cannot recognize agent data streams — elastic/kibana#172435).
+# Turning self-collection off removes the migration prompt; the agent is
+# the sole collector so no Kibana monitoring data is lost. ES-side
+# xpack.monitoring.collection.enabled is already false (default).
+monitoring.kibana.collection.enabled: false
