@@ -60,17 +60,24 @@ fleet = {
   "pro" => {},
   "air" => { "hostname_override" => "xmhtm6qvqx" }, # MacBook Air factory serial
   "neo" => { "aliases" => ["ohnos-macbook"] },      # ohnos-macbook OS hostname
+  # ES cluster nodes — `ip` is the node's own LAN transport_host, sourced here
+  # so pve/lxc-es-{0,1,2}.rb stop hardcoding it. Canonical IP source remains
+  # home-monitor contracts/devices.json (es-{0,1,2} entries).
+  "es-0" => { "ip" => "192.168.1.77" },
+  "es-1" => { "ip" => "192.168.1.78" },
+  "es-2" => { "ip" => "192.168.1.79" },
 }
 
 current_hostname = run_command("hostname -s").stdout.strip.downcase
-label, _spec = fleet.find do |key, spec|
-  candidates = [spec["hostname_override"] || key, *(spec["aliases"] || [])]
+label, spec = fleet.find do |key, s|
+  candidates = [s["hostname_override"] || key, *(s["aliases"] || [])]
   candidates.any? { |c| c.downcase == current_hostname }
 end
 
 node.reverse_merge!(
   profile: {
-    label: label,             # "pro" / "air" / "neo"; nil if not a shared-entry host
+    label: label,             # "pro"/"air"/"neo"/"es-0".."es-2"; nil if not a fleet host
     hostname: current_hostname,
+    ip: spec && spec["ip"],   # LAN IP for FLEET entries that carry one (es-*); else nil
   },
 )

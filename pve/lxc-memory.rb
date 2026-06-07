@@ -2,7 +2,7 @@
 #
 # Entry recipe for the memory LXC (CT 107): OpenMemory MCP server (native
 # Python venv by default; set MEMORY_SERVER_DOCKER_FALLBACK=1 to switch to
-# the docker compose path via cookbooks/ai-memory).
+# the docker compose path via cookbooks/lxc-memory).
 #
 # Run inside the LXC after the Terraform layer has provisioned it:
 #   apt-get install -y git curl ca-certificates sudo
@@ -12,7 +12,7 @@
 
 include_recipe "../cookbooks/functions/default"
 
-# OpenMemory MCP via docker compose (cookbooks/ai-memory →
+# OpenMemory MCP via docker compose (cookbooks/lxc-memory →
 # ghcr.io/mem0ai/openmemory-mcp). The native systemd path
 # (cookbooks/memory-server) was attempted first but openmemory-mcp on
 # PyPI only ships an importable library — no console_scripts entry —
@@ -21,5 +21,5 @@ include_recipe "../cookbooks/functions/default"
 # Switch the includes below back to memory-server once openmemory-mcp
 # ships a CLI binary.
 include_cookbook "docker-engine"
-include_cookbook "ai-memory"
+include_cookbook "lxc-memory"
 lxc_entry(tags: ["lxc", "memory"])
