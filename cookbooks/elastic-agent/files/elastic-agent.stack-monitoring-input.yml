@@ -1,12 +1,19 @@
-  # Stack Monitoring integration — only enabled on hosts where
-  # node[:elastic_agent][:enable_stack_monitoring_integration] == true.
-  # Today that is CT 111 (lxc-monitoring) only — same centralized
-  # collector-host topology as the Prometheus federation + Synthetics
-  # integrations. A single standalone agent polls the whole ES cluster
-  # (scope: cluster) plus Kibana, populating the
-  # metrics-elasticsearch.stack_monitoring.* and
-  # metrics-kibana.stack_monitoring.* data streams that back Kibana's
-  # Stack Monitoring UI.
+  # Stack Monitoring integration — CLUSTER-LEVEL ES metricsets + Kibana.
+  # Enabled on hosts where
+  # node[:elastic_agent][:enable_stack_monitoring_integration] == true
+  # (CT 111 / lxc-monitoring). This collector handles the cluster-wide ES
+  # metricsets (cluster_stats, index, index_summary, index_recovery, shard,
+  # ml_job, enrich, ccr, pending_tasks) via scope: cluster, plus all Kibana
+  # metricsets. It populates metrics-elasticsearch.stack_monitoring.* and
+  # metrics-kibana.stack_monitoring.* data streams.
+  #
+  # The PER-NODE ES metricsets (node, node_stats) are NOT collected here —
+  # they live in elastic-agent.es-node-monitoring-input.yml, collected by
+  # one scope: node agent on EACH ES node. That split is required for
+  # Kibana to mark ES nodes "Online": a single scope: cluster agent
+  # collapses per-node identity and leaves nodes Offline (see that file's
+  # header + discuss.elastic.co/t/342413). node_stats was moved out of this
+  # file on 2026-06-07 for exactly that reason.
   #
   # REQUIRES kibana.yml `monitoring.ui.ccs.enabled: false` (set in
   # cookbooks/lxc-kibana/files/kibana.yml.tmpl) — the default `true` makes
@@ -50,18 +57,6 @@
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.cluster_stats
-      - metricsets: [node_stats]
-        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
-        username: elastic_agent_writer
-        password: ${ELASTIC_AGENT_PASSWORD}
-        scope: cluster
-        period: 10s
-        ssl:
-          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
-          verification_mode: full
-        data_stream:
-          type: metrics
-          dataset: elasticsearch.stack_monitoring.node_stats
       - metricsets: [index]
         hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
         username: elastic_agent_writer
