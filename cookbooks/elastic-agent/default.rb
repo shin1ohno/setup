@@ -43,20 +43,16 @@ if node[:platform] == "darwin"
   # macOS path: tarball install + launchd
   # ============================================================================
 
-  HOSTNAME_TO_VARIANT = {
-    "xmhtm6qvqx"    => "air",  # MacBook Air (factory hostname)
-    "neo"           => "neo",  # ohnos-macbook (devices.json conceptual name)
-    "ohnos-macbook" => "neo",
-  }.freeze
+  # Identity is resolved once by cookbooks/host-profile (node[:profile][:label]).
+  # The macOS Elastic Agent converges only on the Mac fleet (Air + neo); pro is
+  # bare-metal Linux and takes the Linux path below. variant == the label.
+  variant = node[:profile][:label]
 
-  current_host = run_command("hostname -s").stdout.strip.downcase
-  variant = HOSTNAME_TO_VARIANT[current_host]
-
-  if variant.nil?
+  unless ["air", "neo"].include?(variant)
     MItamae.logger.warn(
-      "elastic-agent: hostname '#{current_host}' not in HOSTNAME_TO_VARIANT — " \
-      "no Elastic Agent installed on this host. Add an entry to " \
-      "HOSTNAME_TO_VARIANT in cookbooks/elastic-agent/default.rb to enable."
+      "elastic-agent: host '#{node[:profile][:hostname]}' (node[:profile][:label]=" \
+      "#{variant.inspect}) is not in the macOS Elastic Agent fleet (air/neo) — " \
+      "no Elastic Agent installed on this host."
     )
     return
   end
