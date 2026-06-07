@@ -23,30 +23,13 @@ end
 
 include_recipe "../cookbooks/functions/default"
 
-user = ENV["USER"]
-group = `id -gn`.strip
-node.reverse_merge!(
-  setup: {
-    home: ENV["HOME"],
-    root: "#{ENV["HOME"]}/.setup_shin1ohno",
-    user: user,
-    group: group,
-    system_user: "root",
-    system_group: "root",
-  }
-)
-
 # Service LXCs do not include the ssh-keys cookbook — login keys are
 # injected at LXC provision time via the home-monitor terraform
 # `local.ssh_devices` for_each loop (matches pve/lxc-cognee.rb /
 # pve/lxc-weave.rb / pve/lxc-hydra.rb convention). Operator direct SSH
 # uses the SSM-stored private key for /ssh-keys/devices/monitoring/private.
 include_cookbook "lxc-monitoring"
-include_role "lxc-core"
-include_cookbook "auto-mitamae-orchestrator"
-
-node.reverse_merge!(elastic_agent: {
-  tags: ["lxc", "monitoring"],
+lxc_entry(tags: ["lxc", "monitoring"], elastic_agent_extra: {
   # Enable Prometheus federation input — CT 111 is the only host in the
   # fleet running Prometheus, so this is the only LXC where the
   # `prometheus/collector` integration makes sense. Streams U/V/W
@@ -69,4 +52,8 @@ node.reverse_merge!(elastic_agent: {
   # cookbooks/elastic-agent/files/elastic-agent.stack-monitoring-input.yml.
   enable_stack_monitoring_integration: true,
 })
-include_cookbook "elastic-agent"
+
+# auto-mitamae-orchestrator drives the SSH-push fleet apply. It writes
+# auto-mitamae.prom into node-exporter's textfile dir (created by lxc-core
+# via lxc_entry), so it must run AFTER lxc_entry.
+include_cookbook "auto-mitamae-orchestrator"
