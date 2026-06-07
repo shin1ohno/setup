@@ -18,11 +18,18 @@
   # (ES _nodes/stats etc.) + monitoring_user (Kibana /api/stats, /api/status)
   # roles — granted in cookbooks/lxc-elasticsearch/files/bootstrap-init.sh.
   #
+  # CONNECTION SETTINGS ARE PER-STREAM, NOT input-level. The standalone
+  # agent does NOT inherit input-level hosts/username/password/ssl into the
+  # metricbeat-style streams — an input-level-only `hosts:` yields
+  # "host parsing failed: error parsing URL: empty host" and the component
+  # goes FAILED/DEGRADED (observed 2026-06-07 first apply). The canonical
+  # elastic/integrations stream.yml.hbs templates render these keys inside
+  # each stream; mirror that here. Keep hosts/username/password/scope/
+  # period/ssl on every stream on any future edit.
+  #
   # The agent-native equivalent of metricbeat's `xpack.enabled: true` is the
   # per-stream `data_stream.dataset: <pkg>.stack_monitoring.<metricset>`
-  # routing — do NOT add a literal `xpack.enabled` key here. Dataset names
-  # and the per-input/per-stream nesting are taken verbatim from the
-  # elastic/integrations package templates (elasticsearch/ + kibana/).
+  # routing — do NOT add a literal `xpack.enabled` key here.
   #
   # Verification note: if data lands in metrics-elasticsearch.stack_monitoring.*
   # but the Stack Monitoring UI stays empty, re-check the dataset routing.
@@ -30,57 +37,125 @@
   - type: elasticsearch/metrics
     id: elasticsearch-stack-monitoring
     use_output: default
-    hosts:
-      - https://es-0.home.local:9200
-      - https://es-1.home.local:9200
-      - https://es-2.home.local:9200
-    username: elastic_agent_writer
-    password: ${ELASTIC_AGENT_PASSWORD}
-    scope: cluster
-    period: 10s
-    ssl:
-      certificate_authorities:
-        - /etc/elastic-agent/certs/ca.crt
-      verification_mode: full
     streams:
       - metricsets: [cluster_stats]
+        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: cluster
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.cluster_stats
       - metricsets: [node_stats]
+        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: cluster
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.node_stats
       - metricsets: [index]
+        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: cluster
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.index
       - metricsets: [index_summary]
+        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: cluster
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.index_summary
       - metricsets: [index_recovery]
         index_recovery.active_only: true
+        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: cluster
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.index_recovery
       - metricsets: [shard]
+        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: cluster
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.shard
       - metricsets: [ml_job]
+        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: cluster
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.ml_job
       - metricsets: [enrich]
+        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: cluster
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.enrich
       - metricsets: [ccr]
+        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: cluster
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.ccr
       - metricsets: [pending_tasks]
+        hosts: ["https://es-0.home.local:9200", "https://es-1.home.local:9200", "https://es-2.home.local:9200"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        scope: cluster
+        period: 10s
+        ssl:
+          certificate_authorities: ["/etc/elastic-agent/certs/ca.crt"]
+          verification_mode: full
         data_stream:
           type: metrics
           dataset: elasticsearch.stack_monitoring.pending_tasks
@@ -88,33 +163,52 @@
   - type: kibana/metrics
     id: kibana-stack-monitoring
     use_output: default
-    hosts:
-      - http://kibana.home.local:5601
-    username: elastic_agent_writer
-    password: ${ELASTIC_AGENT_PASSWORD}
-    period: 10s
     streams:
       - metricsets: [stats]
+        hosts: ["http://kibana.home.local:5601"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        period: 10s
         data_stream:
           type: metrics
           dataset: kibana.stack_monitoring.stats
       - metricsets: [status]
+        hosts: ["http://kibana.home.local:5601"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        period: 10s
         data_stream:
           type: metrics
           dataset: kibana.stack_monitoring.status
       - metricsets: [cluster_actions]
+        hosts: ["http://kibana.home.local:5601"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        period: 10s
         data_stream:
           type: metrics
           dataset: kibana.stack_monitoring.cluster_actions
       - metricsets: [cluster_rules]
+        hosts: ["http://kibana.home.local:5601"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        period: 10s
         data_stream:
           type: metrics
           dataset: kibana.stack_monitoring.cluster_rules
       - metricsets: [node_actions]
+        hosts: ["http://kibana.home.local:5601"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        period: 10s
         data_stream:
           type: metrics
           dataset: kibana.stack_monitoring.node_actions
       - metricsets: [node_rules]
+        hosts: ["http://kibana.home.local:5601"]
+        username: elastic_agent_writer
+        password: ${ELASTIC_AGENT_PASSWORD}
+        period: 10s
         data_stream:
           type: metrics
           dataset: kibana.stack_monitoring.node_rules
