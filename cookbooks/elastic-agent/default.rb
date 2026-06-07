@@ -285,6 +285,8 @@ enable_synth_input = node[:elastic_agent] &&
                      node[:elastic_agent][:enable_synthetics_integration]
 enable_stack_input = node[:elastic_agent] &&
                      node[:elastic_agent][:enable_stack_monitoring_integration]
+enable_es_node_input = node[:elastic_agent] &&
+                       node[:elastic_agent][:enable_es_node_monitoring_integration]
 
 # Defensive directory bootstrap
 directory node[:setup][:root] do
@@ -359,6 +361,7 @@ end
   elastic-agent.prometheus-input.yml
   elastic-agent.synthetics-input.yml
   elastic-agent.stack-monitoring-input.yml
+  elastic-agent.es-node-monitoring-input.yml
 ].each do |f|
   remote_file "#{files_dir}/#{f}" do
     source "files/#{f}"
@@ -482,20 +485,34 @@ stack_sed_clause = if enable_stack_input
                      "-e '/@@STACK_MONITORING_INPUT@@/d'"
                    end
 
+es_node_input_path = "#{files_dir}/elastic-agent.es-node-monitoring-input.yml"
+es_node_sed_clause = if enable_es_node_input
+                       "-e '/@@ES_NODE_MONITORING_INPUT@@/r #{es_node_input_path}' " \
+                       "-e '/@@ES_NODE_MONITORING_INPUT@@/d'"
+                     else
+                       "-e '/@@ES_NODE_MONITORING_INPUT@@/d'"
+                     end
+
 execute "render elastic-agent.yml" do
   # Stage in user-writable /tmp then sudo install. mitamae on dev-workstation
   # LXCs (e.g. pro-dev CT 104) runs as the regular user — direct write to
   # /etc/elastic-agent/ fails with EACCES. Service LXCs run mitamae as root
   # so sudo is a no-op there.
   staging = "/tmp/elastic-agent.yml.render.$$"
+  # Two-pass sed: pass 1 splices the per-integration input files in at their
+  # @@*_INPUT@@ placeholders (sed `r` appends file content AFTER the cycle, so
+  # it is NOT seen by an `s///` in the same invocation); pass 2 substitutes
+  # @@HOSTNAME@@/@@TAGS@@ over the FULLY assembled output so placeholders
+  # INSIDE a spliced input file (e.g. es-node-monitoring's per-node
+  # https://@@HOSTNAME@@.home.local:9200 host) are also resolved.
   command <<~SH.strip
     set -euo pipefail
-    sed -e "s|@@HOSTNAME@@|#{host_name}|g" \\
-        -e 's|@@TAGS@@|#{tags_json}|g' \\
-        #{prom_sed_clause} \\
+    sed #{prom_sed_clause} \\
         #{synth_sed_clause} \\
         #{stack_sed_clause} \\
-      #{config_tmpl} > #{staging}
+        #{es_node_sed_clause} \\
+      #{config_tmpl} \\
+      | sed -e "s|@@HOSTNAME@@|#{host_name}|g" -e 's|@@TAGS@@|#{tags_json}|g' > #{staging}
     sudo install -m 0640 -o root -g root #{staging} #{config_path}
     rm -f #{staging}
   SH
@@ -507,12 +524,13 @@ execute "render elastic-agent.yml" do
   # apply. Render to a temp file and use plain `diff` (POSIX-compatible).
   not_if "test -f #{config_path} && " \
          "rendered=$(mktemp) && " \
-         "sed -e 's|@@HOSTNAME@@|#{host_name}|g' " \
-         "-e 's|@@TAGS@@|#{tags_json}|g' " \
-         "#{prom_sed_clause} " \
+         "sed #{prom_sed_clause} " \
          "#{synth_sed_clause} " \
          "#{stack_sed_clause} " \
-         "#{config_tmpl} > \"$rendered\" && " \
+         "#{es_node_sed_clause} " \
+         "#{config_tmpl} " \
+         "| sed -e 's|@@HOSTNAME@@|#{host_name}|g' " \
+         "-e 's|@@TAGS@@|#{tags_json}|g' > \"$rendered\" && " \
          "diff -q \"$rendered\" #{config_path}; " \
          "ret=$?; rm -f \"$rendered\"; exit $ret"
   notifies :run, "execute[restart elastic-agent]"
