@@ -309,6 +309,7 @@ end
 
 setup_alerting_script = File.join(File.dirname(__FILE__), "files", "setup-alerting.sh")
 setup_process_alerts_script = File.join(File.dirname(__FILE__), "files", "setup-process-alerts.sh")
+monitoring_integrations_script = File.join(File.dirname(__FILE__), "files", "install-monitoring-integrations.sh")
 elastic_password_ssm = "/monitoring/elastic/elastic-password"
 
 require_external_auth(
@@ -351,6 +352,27 @@ require_external_auth(
       export KIBANA_USER=elastic
       export KIBANA_PASSWORD
       bash #{setup_process_alerts_script}
+    SH
+    user user
+    only_if "systemctl is-active kibana.service >/dev/null 2>&1"
+  end
+
+  # Install the Elasticsearch + Kibana integration packages so the
+  # agent-collected metrics-*.stack_monitoring.* data streams get the
+  # monitoring-UI field aliases (timestamp/cluster_uuid/source_node). Without
+  # this the Stack Monitoring UI can't find the cluster and ES nodes show
+  # Offline. Idempotent; rolls over pre-existing alias-less data streams.
+  execute "install Stack Monitoring integration packages (EPM)" do
+    command <<~SH.strip
+      set -euo pipefail
+      KIBANA_PASSWORD=$(aws ssm get-parameter \
+        --name #{elastic_password_ssm} \
+        --with-decryption \
+        --profile #{aws_profile} --region #{aws_region} \
+        --query 'Parameter.Value' --output text)
+      export KIBANA_USER=elastic
+      export KIBANA_PASSWORD
+      bash #{monitoring_integrations_script}
     SH
     user user
     only_if "systemctl is-active kibana.service >/dev/null 2>&1"
