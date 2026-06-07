@@ -22,19 +22,20 @@
 # Auto-upgrade: `mise install <spec>@latest` re-resolves @latest on every mitamae run
 # and installs the new version automatically when a newer release lands on crates.io.
 #
-# Hosts that aren't in HOSTNAME_TO_VARIANT are skipped — same pattern as ssh-keys.
+# Host identity is resolved once by cookbooks/host-profile (node[:profile][:label]
+# = "pro"/"air"/"neo", nil on non-fleet hosts; air matches via its factory-serial
+# hostname_override, neo via its ohnos-macbook alias). variant == the label, so the
+# per-host config-<variant>.toml selection below reads it directly instead of
+# re-deriving identity from `hostname -s` + a serial-hostname hash. Hosts not in
+# the host-profile FLEET table are skipped — same pattern as ssh-keys.
 
-HOSTNAME_TO_VARIANT = {
-  "pro" => "pro",
-  "xmhtm6qvqx" => "air", # MacBook Air,
-  "neo" => "neo"
-}.freeze
-
-current_host = run_command("hostname -s").stdout.strip.downcase
-variant = HOSTNAME_TO_VARIANT[current_host]
+variant = node[:profile][:label]
 
 if variant.nil?
-  MItamae.logger.info("edge-agent: hostname '#{current_host}' not in HOSTNAME_TO_VARIANT, skipping")
+  MItamae.logger.warn(
+    "edge-agent: host '#{node[:profile][:hostname]}' is not a host-profile FLEET " \
+    "host (node[:profile][:label] nil) — no edge-agent deployed.",
+  )
   return
 end
 

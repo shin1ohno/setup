@@ -24,24 +24,24 @@
 #   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.shin1ohno.macos-hub.plist
 # The bundle-ID-keyed grant survives future binary replacements via this cookbook.
 #
-# Hosts that aren't in HOSTNAME_TO_EDGE_ID are skipped — same pattern as edge-agent.
+# macos-hub converges only on Air. Identity is resolved once by
+# cookbooks/host-profile (node[:profile][:label]); edge_id == the label.
+# Hosts other than Air are skipped — same pattern as edge-agent.
 
 return unless node[:platform] == "darwin"
-
-HOSTNAME_TO_EDGE_ID = {
-  "xmhtm6qvqx" => "air", # MacBook Air
-}.freeze
 
 # MQTT broker host for all Macs. Pro.home.local is the Linux server on
 # the LAN that runs mosquitto + weave-server + edge-agent.
 MQTT_HOST = "pro.home.local"
 MQTT_PORT = 1883
 
-current_host = run_command("hostname -s").stdout.strip.downcase
-edge_id = HOSTNAME_TO_EDGE_ID[current_host]
+edge_id = node[:profile][:label]
 
-if edge_id.nil?
-  MItamae.logger.info("macos-hub: hostname '#{current_host}' not in HOSTNAME_TO_EDGE_ID, skipping")
+unless edge_id == "air"
+  MItamae.logger.warn(
+    "macos-hub: host '#{node[:profile][:hostname]}' is not Air " \
+    "(node[:profile][:label]=#{edge_id.inspect}) — macos-hub only converges on Air.",
+  )
   return
 end
 
