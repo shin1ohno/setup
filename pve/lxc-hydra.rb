@@ -26,14 +26,22 @@ node.reverse_merge!(
 
 # Bind hydra admin API on all interfaces so the consent LXC (CT 110)
 # can reach it cross-LXC for the OAuth login/consent flow. The default
-# in cookbooks/hydra-server is 127.0.0.1 (loopback-only) for safety;
-# that breaks `/consent/login` when the consent app's httpx client
-# hits hydra.home.local:4445 from a different LXC. The hydra LXC
-# itself sits on a private LAN (192.168.1.0/24, no public exposure)
-# so the loopback-only invariant isn't load-bearing here.
+# in cookbooks/hydra-server is 127.0.0.1 (loopback-only); that breaks
+# `/consent/login` when the consent app's httpx client hits
+# hydra.home.local:4445 from a different LXC.
+#
+# Keeping admin on 0.0.0.0 does NOT expose the unauthenticated admin port
+# to the LAN: the hydra-server cookbook installs an nftables source guard
+# (cookbooks/hydra-server/files/hydra-admin-guard.nft) that drops tcp/4445
+# from every source except the consent LXC (CT110, 192.168.1.75), the
+# hydra host itself (CT106, 192.168.1.71), and loopback. The 0.0.0.0 bind
+# is the reachability mechanism; the nftables rule is the access control.
+# IP source of truth: home-monitor/contracts/devices.tf.
 node.reverse_merge!(
   hydra_server: {
     admin_bind_host: "0.0.0.0",
+    consent_ip: "192.168.1.75",
+    self_ip: "192.168.1.71",
   },
 )
 
