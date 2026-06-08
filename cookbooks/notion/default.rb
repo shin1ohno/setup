@@ -2,8 +2,13 @@
 
 # Notion - note-taking and collaboration platform
 # This cookbook installs the Notion app, the ncli CLI wrapper for Notion's
-# Remote MCP, the Claude Code "notion" skill, and registers the official
-# hosted Notion MCP with Claude Code.
+# Remote MCP, and the Claude Code "notion" skill.
+#
+# The hosted Notion MCP is consumed via a claude.ai connector (configured in
+# the Claude.ai connectors UI), NOT a user-scope CLI server. This cookbook
+# therefore does NOT run `claude mcp add notion`: registering a user-scope
+# server only produced an unauthenticated duplicate sitting alongside the
+# already-working connector.
 
 include_cookbook "mise"
 
@@ -26,22 +31,12 @@ execute "$HOME/.local/bin/mise use --global npm:@sakasegawa/ncli@latest" do
   not_if "$HOME/.local/bin/mise list npm:@sakasegawa/ncli | grep -q '\\* '"
 end
 
-# Set up Notion MCP for Claude Code (official hosted version via OAuth)
-# This uses Notion's official MCP server at mcp.notion.com
-#
-# Each resource below uses `only_if "test -f #{claude_path}"` so the
-# claude-binary check happens at converge time — on a clean run the
+# The "notion" skill resources below use `only_if "test -f #{claude_path}"`
+# so the claude-binary check happens at converge time — on a clean run the
 # claude-code cookbook's mise install populates the binary before we get
-# here. A previous compile-time `if File.exist?(claude_path)` wrapper
-# evaluated before any execute had run, skipping the entire block on
-# clean runs.
+# here. A compile-time `if File.exist?(claude_path)` wrapper would evaluate
+# before any execute had run, skipping the block on clean runs.
 claude_path = "#{node[:setup][:home]}/.local/bin/claude"
-
-execute "setup notion mcp for claude code" do
-  command "#{claude_path} mcp add -s user --transport http notion https://mcp.notion.com/mcp"
-  only_if "test -f #{claude_path}"
-  not_if "#{claude_path} mcp list | grep -q notion"
-end
 
 # Deploy the upstream "notion" skill (vendored from
 # nyosegawa/notion-cli@a325ac7a, v0.3.3). The skill drives ncli usage from
