@@ -283,3 +283,57 @@ cd <compose-dir> && docker compose ps -a
 The misclassification cost is real: a reflex "retry on exit-1" can recreate already-running containers (interrupting in-flight requests) or, worse, trigger a `down → up` cycle when the actual deploy is fine.
 
 This rule exists because the 2026-05-10 cognee leak fix's mitamae apply ended with `Error response from daemon: No such container: d8c8f128f3ae...` and exit 1, but `docker compose ps -a` showed all 9 cognee containers freshly recreated, healthy, and serving — the auth-proxy patch was already live. The error was compose cleaning up a stale ID from the prior `down`. Treating the exit-1 as a failure and re-running mitamae would have re-recreated everything for nothing.
+
+## Throwaway-Preflight Pattern for Major Version Upgrades (native extensions + DB migrations)
+
+When upgrading a Python ML/data service that ships both a DB schema migration AND a native extension (lancedb, faiss, hnswlib, torch, sentencepiece), run a throwaway-environment preflight BEFORE touching the production database or container:
+
+1. Restore a `pg_dump` of the production DB into a throwaway Postgres container.
+2. Run the new image against the throwaway DB: migrations / setup.py / first-boot init.
+3. Probe native extensions at import time on the SAME CPU as production:
+   ```bash
+   docker exec <new-container> python3 -c "import lancedb; import cognee; print('OK')"
+   ```
+   SIGILL here = native code compiled for AVX2/AVX-512, absent on the production host. The image that passed CI on a modern cloud runner will crash on an Ivy Bridge Xeon at runtime.
+4. Inspect the migration diff and confirm reversibility before proceeding.
+
+**CPU-instruction-set detection** — check the production host before any upgrade involving lancedb, faiss, annoy, or similar ANN libraries:
+
+```bash
+grep -oE 'avx2|avx512|sse4_2' /proc/cpuinfo | sort -u
+```
+
+If `avx2` is absent and the library bumped its minimum target, the upgrade will SIGILL at import time regardless of what CI reports.
+
+**Detection signal**: `Illegal instruction` in container logs immediately after `import <library>`, not during inference. Always import-time.
+
+This rule exists because the 2026-06-08 cognee 0.5.8→1.0.9 upgrade caught a lancedb SIGILL on the Xeon E5-1650 v2 (Ivy Bridge, no AVX2) via a throwaway-postgres preflight (restored a live pg_dump, ran the 1.0.9 migrations + setup.py before touching RDS). Without it the SIGILL would have surfaced only after the production DB migration had already run. The runtime mitigation: `VECTOR_DB_PROVIDER=pgvector` + API mode keep lancedb's import off the boot path.
+
+## Verify Actual Installed Library Version Before Debugging
+
+When debugging a Python service running in a container, the image tag identifies the **wrapper/server package**, not the underlying library version. These diverge because:
+
+- The server package specifies a dependency range (`cognee>=1.0.0`), not a pin
+- `:latest` rebuilds when upstream wheels change, silently changing the library version
+- `uv.lock` may pin an older version than `pyproject.toml` intends if not regenerated at tag time
+
+**Before debugging any Python-library-based service**, verify the actual runtime version:
+
+```bash
+docker exec <container> python3 -c "import <library>; print(<library>.__version__)"
+# e.g.: docker exec cognee python3 -c "import cognee; print(cognee.__version__)"
+```
+
+If the version differs from your assumption (image tag, git tag, or last session), **all debug output from prior sessions may be non-reproducible** — API signatures, error messages, and behavior differ across library versions.
+
+**When building from a git tag**: confirm the lockfile version:
+
+```bash
+grep 'name = "<library>"' uv.lock -A2 | grep version
+```
+
+If it's older than `pyproject.toml` specifies, regenerate: `uv lock`.
+
+**Baseline invariant for multi-turn debug sessions**: record `<library>.__version__` at the start of each turn where library behavior is the subject. A different version from the previous turn means the container was rebuilt and prior observations no longer apply.
+
+This rule exists because the 2026-06-08 cognee upgrade session had three distinct `server.py` source generations under the same nominal cognee-mcp package version 0.5.4, and `cognee/cognee-mcp:latest` drifted from cognee 1.0.4 to 1.1.0 between sessions, making prior debug observations non-reproducible. A one-line `__version__` check at each debug turn would have surfaced this immediately.
