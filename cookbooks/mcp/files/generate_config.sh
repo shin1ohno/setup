@@ -47,10 +47,22 @@ for name in $server_names; do
 
   # Claude Desktop's claude_desktop_config.json only accepts stdio MCP
   # servers (command + args + env). HTTP/SSE entries are silently skipped
-  # by Claude Desktop with "not valid MCP server settings". For HTTP-type
-  # servers, configure them via Claude.ai's connectors UI instead — the
-  # cookbook does not duplicate them into the Desktop config.
+  # by Claude Desktop with "not valid MCP server settings".
+  #
+  # Default for HTTP servers: skip (configure them as account-level Custom
+  # Connectors in the app instead). EXCEPTION: a server marked
+  # `desktop: mcp-remote` in servers.yml is bridged into the Desktop config as
+  # a local stdio entry via `npx -y mcp-remote <url>` (the langmem-mcp
+  # pattern), making it usable in Desktop Chat WITHOUT an account connector.
+  # Such bridged servers are Desktop-Chat-only — NOT visible in Cowork /
+  # claude.ai, which only see account-synced Custom Connectors.
   if [ "$server_type" = "http" ]; then
+    desktop_mode=$(echo "$server" | jq -r '.desktop // empty')
+    if [ "$desktop_mode" = "mcp-remote" ]; then
+      url=$(echo "$server" | jq -r '.url' | sed "s|\${HOME}|${HOME_DIR}|g")
+      bridge_config=$(jq -n --arg url "$url" '{command: "npx", args: ["-y", "mcp-remote", $url]}')
+      mcp_servers=$(echo "$mcp_servers" | jq --arg name "$name" --argjson config "$bridge_config" '. + {($name): $config}')
+    fi
     continue
   fi
 

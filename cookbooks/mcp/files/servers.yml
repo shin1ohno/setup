@@ -11,6 +11,16 @@
 #
 # Variables:
 #   - ${HOME} will be expanded to the user's home directory
+#
+# Desktop delivery of HTTP/SSE servers:
+#   Claude Desktop's claude_desktop_config.json is stdio-only, so type:http
+#   servers are NOT written there by default. Mark a server `desktop: mcp-remote`
+#   to bridge it into the Desktop config as a local stdio entry
+#   (`npx -y mcp-remote <url>`), making it usable in Desktop Chat WITHOUT an
+#   account-level Custom Connector. Caveat: mcp-remote-bridged servers are
+#   Desktop-Chat-only and are NOT visible in Cowork / claude.ai — those surfaces
+#   only see account-synced Custom Connectors. Codex CLI always receives http
+#   servers natively (type=http in config.toml), independent of this flag.
 
 mcp_servers:
   obsidian-mcp-tools:
@@ -25,27 +35,34 @@ mcp_servers:
     type: http
     transport: http
     url: "https://mcp.notion.com/mcp"
-    # OAuth authentication via Notion
+    # OAuth authentication via Notion.
+    # No `desktop:` flag — used as an account-level Custom Connector in Claude
+    # Desktop, so it is intentionally NOT bridged into claude_desktop_config.json.
 
   ai-memory:
     type: http
     transport: sse
     url: "https://mcp.ohno.be/memory/mcp/claude/sse/shin1ohno"
+    desktop: mcp-remote
 
   roon:
     type: http
     transport: sse
     url: "https://mcp.ohno.be/roon/sse"
+    desktop: mcp-remote
 
   cognee:
     type: http
     transport: sse
     url: "https://mcp.ohno.be/cognee/sse"
+    desktop: mcp-remote
 
   sage:
     type: http
     transport: http
     url: "https://mcp.ohno.be/mcp"
+    # No `desktop:` flag — endpoint currently returns empty replies (unrouted /
+    # down). Re-enable by adding `desktop: mcp-remote` once it serves MCP.
 
   langmem-mcp:
     command: "npx"
@@ -57,5 +74,3 @@ mcp_servers:
       - "X-Mercari-MCP-name:langmem-mcp"
       - "--header"
       - "X-Mercari-MCP-Session-Id:yGMM21ZWwxjj1-3BeEWicXhtFmJj44pBHTlPXqObs6k"
-
-
