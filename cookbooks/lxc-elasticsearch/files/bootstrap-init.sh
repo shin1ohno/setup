@@ -339,6 +339,30 @@ put_monitoring_collection_settings() {
   echo "[bootstrap] Stack Monitoring collection settings ensured"
 }
 
+# --- self-heal-state index -----------------------------------------------
+
+put_self_heal_state_index() {
+  # Durable memory for the self-healing observability loop: one doc per issue
+  # identity (dedup, lifecycle counters, fix linkage). A regular index (NOT a
+  # data stream) so docs are upserted by deterministic _id. Created only when
+  # absent — PUT on an existing index errors. Included in the SLM snapshot via
+  # snapshot-bootstrap.sh (losing it would re-fire every open issue as NEW).
+  local code
+  code=$(es_curl -o /dev/null -w '%{http_code}' "${ES_URL}/self-heal-state")
+  if [[ "${code}" == "200" ]]; then
+    echo "[bootstrap] self-heal-state index already exists"
+    return 0
+  fi
+  es_curl -H 'Content-Type: application/json' \
+    -X PUT "${ES_URL}/self-heal-state" \
+    -d "$(cat "${FILES_DIR}/self-heal-state-index.json")" \
+    | grep -q '"acknowledged":true' || {
+      echo "[bootstrap] self-heal-state index PUT failed" >&2
+      return 1
+    }
+  echo "[bootstrap] self-heal-state index created"
+}
+
 # --- main ----------------------------------------------------------------
 
 main() {
@@ -413,6 +437,9 @@ main() {
   # Stack Monitoring master switch (UI display gate) + disable ES legacy
   # self-collection (agent is the collector).
   put_monitoring_collection_settings
+
+  # Self-healing observability loop state store.
+  put_self_heal_state_index
 
   echo "[bootstrap] complete"
 }
