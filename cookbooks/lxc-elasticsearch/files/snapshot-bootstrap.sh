@@ -85,6 +85,10 @@ cmd_keystore_add() {
 
   if [[ -f "${SENTINEL}" ]] && [[ "$(cat "${SENTINEL}")" == "${hash}" ]]; then
     echo "[s3-snapshot] keystore in sync (hash matches sentinel) — skipping"
+    # Bump the sentinel mtime so it doubles as a "last reconciled" marker:
+    # the cookbook's skip_if uses its age to skip this block (and its SSM
+    # fetch) on warm orchestrator applies.
+    touch "${SENTINEL}"
     return 0
   fi
 
