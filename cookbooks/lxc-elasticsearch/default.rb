@@ -601,18 +601,12 @@ require_external_auth(
                 "/monitoring/elastic/s3-snapshot/* in #{aws_region}. " \
                 "home-monitor PR #43 creates these SSM parameters; ensure " \
                 "that branch is merged + applied before this cookbook runs.",
-  # Skip on warm nodes: the S3 creds are long-lived IAM keys, so once the
-  # keystore is in sync (sentinel present + touched on each reconcile by
-  # snapshot-bootstrap.sh), re-running this block re-fetches 2 SecureStrings
-  # from SSM (= 2 kms:Decrypt) on EVERY ~5-min orchestrator apply, for no
-  # change. Skip while the sentinel is younger than 7 days; the weekly
-  # re-run still reconciles a rotation. Force an immediate refresh with
-  # `rm /var/lib/elasticsearch/.s3-keystore-hash`.
-  skip_if: -> {
-    sentinel = "/var/lib/elasticsearch/.s3-keystore-hash"
-    !File.exist?(s3_snapshot_script) ||
-      (File.exist?(sentinel) && (Time.now - File.mtime(sentinel)) < 604_800)
-  },
+  # The TTL guard that actually cuts the per-apply kms:Decrypt lives in
+  # snapshot-bootstrap.sh's keystore-add (it short-circuits the SSM fetch
+  # when the sentinel is fresh). It can't live here: mitamae runs on mruby,
+  # which has no File.mtime. This skip_if only covers the not-yet-deployed
+  # case.
+  skip_if: -> { !File.exist?(s3_snapshot_script) },
 ) do
   execute "elasticsearch-snapshot: fetch + keystore add" do
     command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \

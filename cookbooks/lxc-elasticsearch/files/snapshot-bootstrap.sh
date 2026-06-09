@@ -76,6 +76,20 @@ ks_add() {
 cmd_keystore_add() {
   local access_key secret_key bucket combined hash
 
+  # Skip the SSM fetch (2 kms:Decrypt) on warm runs: the sentinel's mtime is
+  # bumped on every reconcile below, so while it is younger than the
+  # revalidate window the long-lived S3 IAM creds are assumed unchanged. The
+  # ~5-min orchestrator re-applies would otherwise re-fetch every cycle just
+  # to hash-compare. Weekly revalidation still catches a rotation; force an
+  # immediate refresh with `rm ${SENTINEL}`.
+  if [[ -f "${SENTINEL}" ]]; then
+    local age=$(( $(date +%s) - $(stat -c %Y "${SENTINEL}") ))
+    if (( age < ${KEYSTORE_REVALIDATE_S:-604800} )); then
+      echo "[s3-snapshot] sentinel fresh (${age}s) — skipping SSM fetch + keystore reconcile"
+      return 0
+    fi
+  fi
+
   access_key=$(ssm_get "${SSM_ACCESS_KEY_PATH}")
   secret_key=$(ssm_get "${SSM_SECRET_KEY_PATH}")
   bucket=$(ssm_get "${SSM_BUCKET_PATH}")
@@ -85,9 +99,8 @@ cmd_keystore_add() {
 
   if [[ -f "${SENTINEL}" ]] && [[ "$(cat "${SENTINEL}")" == "${hash}" ]]; then
     echo "[s3-snapshot] keystore in sync (hash matches sentinel) — skipping"
-    # Bump the sentinel mtime so it doubles as a "last reconciled" marker:
-    # the cookbook's skip_if uses its age to skip this block (and its SSM
-    # fetch) on warm orchestrator applies.
+    # Bump the sentinel mtime so it doubles as a "last reconciled" marker
+    # for the age short-circuit at the top of this function.
     touch "${SENTINEL}"
     return 0
   fi
