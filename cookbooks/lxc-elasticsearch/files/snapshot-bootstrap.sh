@@ -182,7 +182,7 @@ cmd_register_slm() {
   "name": "<daily-snap-{now/d}>",
   "repository": "s3-home-monitor",
   "config": {
-    "indices": ["logs-*", "metrics-*", "synthetics-*", "traces-*"],
+    "indices": ["logs-*", "metrics-*", "synthetics-*", "traces-*", "self-heal-state"],
     "include_global_state": true,
     "ignore_unavailable": true
   },

@@ -1,0 +1,41 @@
+{
+  "settings": {
+    "number_of_replicas": 1,
+    "number_of_shards": 1
+  },
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "id":                       { "type": "keyword" },
+      "schema_version":           { "type": "integer" },
+      "detected_at":              { "type": "date" },
+      "source":                   { "type": "keyword" },
+      "severity":                 { "type": "keyword" },
+      "service":                  { "type": "keyword" },
+      "host":                     { "type": "keyword" },
+      "signal":                   { "type": "keyword" },
+      "observed_value":           { "type": "text", "fields": { "raw": { "type": "keyword", "ignore_above": 1024 } } },
+      "detection_query":          { "type": "keyword", "index": false },
+      "probe_vantage":            { "type": "keyword" },
+      "functional_probe_result":  { "type": "keyword" },
+      "first_seen":               { "type": "date" },
+      "last_seen":                { "type": "date" },
+      "consecutive_real_cycles":  { "type": "integer" },
+      "consecutive_green_cycles": { "type": "integer" },
+      "flap_count":               { "type": "integer" },
+      "occurrences":              { "type": "integer" },
+      "dedup_key":                { "type": "keyword" },
+      "classification":           { "type": "keyword" },
+      "status":                   { "type": "keyword" },
+      "persistence_layer":        { "type": "keyword" },
+      "auto_remediation_allowed": { "type": "boolean" },
+      "fix_pr":                   { "type": "keyword" },
+      "fix_commit":               { "type": "keyword" },
+      "fixer_run_id":             { "type": "keyword" },
+      "claimed_at":               { "type": "date" },
+      "escalation_count":         { "type": "integer" },
+      "mute_until":               { "type": "date" },
+      "resolved_at":              { "type": "date" }
+    }
+  }
+}
