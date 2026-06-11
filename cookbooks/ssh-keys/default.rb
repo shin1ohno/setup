@@ -289,11 +289,21 @@ end
 # `github_user_ssh_key.device[*]` Terraform resource. Without this stanza,
 # `ssh git@github.com` falls through to the default identity files
 # (~/.ssh/id_ed25519 etc.) which don't exist on a fresh machine.
+#
+# AddKeysToAgent yes: load the key into ssh-agent on first OpenSSH use.
+# Tools that link libgit2/libssh2 (e.g. sheldon) authenticate to github
+# ONLY via ssh-agent — they do not read ~/.ssh/config IdentityFile nor any
+# default key path. With the global `url."git@github.com:".insteadOf` rewrite
+# in ~/.gitconfig, sheldon's https plugin URLs become SSH; if the key isn't
+# in the agent the libgit2 clone hangs (no socket, threads in cond_wait) and
+# `sheldon source` stalls on every shell startup. Any git op to github warms
+# the agent so subsequent `sheldon lock`/plugin updates work.
 config_entries << "Host github.com"
 config_entries << "    HostName github.com"
 config_entries << "    User git"
 config_entries << "    IdentityFile #{ssh_dir}/#{current_device['ssh']['key_file']}"
 config_entries << "    IdentitiesOnly yes"
+config_entries << "    AddKeysToAgent yes"
 config_entries << ""
 
 file "#{ssh_dir}/config.d/ssh-keys" do
