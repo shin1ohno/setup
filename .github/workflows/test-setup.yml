@@ -70,6 +70,19 @@ jobs:
         sudo chmod 777 /tmp
         ./bin/mitamae local darwin.rb --dry-run
 
+    - name: Preserve GITHUB_TOKEN across sudo (mise installs run under sudo -u runner)
+      if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        # Cookbooks run mise via `execute ... user "..."`, which mitamae wraps in
+        # `sudo -H -u <user>`. sudo resets the environment and strips the job-level
+        # GITHUB_TOKEN, so mise (ubi AND vfox backends) makes UNAUTHENTICATED GitHub
+        # API requests and hits the 60 req/hr limit (HTTP 403 — e.g. `mise install
+        # neovim` via vfox: "Failed to fetch release ... HTTP 403"). Add GITHUB_TOKEN
+        # to sudo's env_keep so it survives the sudo wrap and mise authenticates
+        # (5000 req/hr). Pairs with the job-level GITHUB_TOKEN env.
+        echo 'Defaults env_keep += "GITHUB_TOKEN"' | sudo tee /etc/sudoers.d/mise_github_token >/dev/null
+        sudo chmod 0440 /etc/sudoers.d/mise_github_token
+
     - name: Test core tools installation
       if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -102,9 +115,15 @@ jobs:
         # (fzf-git.sh, fzf-tab, oh-my-zsh, ...) fail with "Permission denied
         # (publickey)". Rewrite SSH GitHub URLs to anonymous HTTPS so these public
         # clones work keyless in CI. Placed AFTER core-tools (whose git cookbook
-        # rewrites ~/.gitconfig); git applies insteadOf once, so this coexists with
-        # the cookbook's https->git@ rule. Private shin1ohno repos in the full
-        # darwin.rb step still require a token — out of scope for this level.
+        # rewrites ~/.gitconfig). The cookbook's gitconfig ships the OPPOSITE rule
+        # (https -> git@, so sheldon's https plugin URLs use SSH + agent on real
+        # machines); in keyless CI that rule breaks any https clone — e.g. pyenv's
+        # installer clones https://github.com/pyenv/pyenv.git and the rewrite sends
+        # it to SSH ("Permission denied (publickey)"). Drop that rule first, then
+        # route git@ -> https so ALL public GitHub clones resolve to anonymous
+        # HTTPS. Private shin1ohno repos in the full darwin.rb step still require
+        # a token — out of scope for this level.
+        git config --global --unset-all 'url.git@github.com:.insteadof' || true
         git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Test essential cookbooks
@@ -141,6 +160,15 @@ jobs:
         sudo chmod 777 /tmp
         cat > test_languages.rb << 'EOF'
         include_recipe "cookbooks/functions/default.rb"
+        # roles/programming sets these versions before the language cookbooks in
+        # production; this synthetic recipe must too, or nodejs/golang read
+        # node[:nodejs][:versions] / node[:go][:versions] = nil and crash with
+        # "undefined method '[]'".
+        node.reverse_merge!(
+          go: { versions: %w(1.22.3 1.21.8) },
+          nodejs: { versions: %w(lts 18 20 21) },
+          python: { versions: %w(3.12.2 3.11.8) },
+        )
         include_cookbook "nodejs"
         include_cookbook "python"
         include_cookbook "golang"
@@ -341,6 +369,15 @@ jobs:
         export USER=runner
         cat > test_languages.rb << 'EOF'
         include_recipe "cookbooks/functions/default.rb"
+        # roles/programming sets these versions before the language cookbooks in
+        # production; this synthetic recipe must too, or nodejs/golang read
+        # node[:nodejs][:versions] / node[:go][:versions] = nil and crash with
+        # "undefined method '[]'".
+        node.reverse_merge!(
+          go: { versions: %w(1.22.3 1.21.8) },
+          nodejs: { versions: %w(lts 18 20 21) },
+          python: { versions: %w(3.12.2 3.11.8) },
+        )
         include_cookbook "nodejs"
         include_cookbook "python"
         include_cookbook "golang"
