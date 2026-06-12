@@ -154,6 +154,15 @@ jobs:
         sudo chmod 777 /tmp
         cat > test_languages.rb << 'EOF'
         include_recipe "cookbooks/functions/default.rb"
+        # roles/programming sets these versions before the language cookbooks in
+        # production; this synthetic recipe must too, or nodejs/golang read
+        # node[:nodejs][:versions] / node[:go][:versions] = nil and crash with
+        # "undefined method '[]'".
+        node.reverse_merge!(
+          go: { versions: %w(1.22.3 1.21.8) },
+          nodejs: { versions: %w(lts 18 20 21) },
+          python: { versions: %w(3.12.2 3.11.8) },
+        )
         include_cookbook "nodejs"
         include_cookbook "python"
         include_cookbook "golang"
@@ -354,6 +363,15 @@ jobs:
         export USER=runner
         cat > test_languages.rb << 'EOF'
         include_recipe "cookbooks/functions/default.rb"
+        # roles/programming sets these versions before the language cookbooks in
+        # production; this synthetic recipe must too, or nodejs/golang read
+        # node[:nodejs][:versions] / node[:go][:versions] = nil and crash with
+        # "undefined method '[]'".
+        node.reverse_merge!(
+          go: { versions: %w(1.22.3 1.21.8) },
+          nodejs: { versions: %w(lts 18 20 21) },
+          python: { versions: %w(3.12.2 3.11.8) },
+        )
         include_cookbook "nodejs"
         include_cookbook "python"
         include_cookbook "golang"
