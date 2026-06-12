@@ -115,9 +115,15 @@ jobs:
         # (fzf-git.sh, fzf-tab, oh-my-zsh, ...) fail with "Permission denied
         # (publickey)". Rewrite SSH GitHub URLs to anonymous HTTPS so these public
         # clones work keyless in CI. Placed AFTER core-tools (whose git cookbook
-        # rewrites ~/.gitconfig); git applies insteadOf once, so this coexists with
-        # the cookbook's https->git@ rule. Private shin1ohno repos in the full
-        # darwin.rb step still require a token — out of scope for this level.
+        # rewrites ~/.gitconfig). The cookbook's gitconfig ships the OPPOSITE rule
+        # (https -> git@, so sheldon's https plugin URLs use SSH + agent on real
+        # machines); in keyless CI that rule breaks any https clone — e.g. pyenv's
+        # installer clones https://github.com/pyenv/pyenv.git and the rewrite sends
+        # it to SSH ("Permission denied (publickey)"). Drop that rule first, then
+        # route git@ -> https so ALL public GitHub clones resolve to anonymous
+        # HTTPS. Private shin1ohno repos in the full darwin.rb step still require
+        # a token — out of scope for this level.
+        git config --global --unset-all 'url.git@github.com:.insteadof' || true
         git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Test essential cookbooks
