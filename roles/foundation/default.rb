@@ -25,21 +25,9 @@
 #   - gnupg / build-essential / ruby-python stacks are NOT auth prerequisites
 #     and stay in core/programming — do not pull them forward.
 
-# Directory + profile bootstrap (moved from roles/core). Everything that writes
-# to profile.d / node[:setup][:root] depends on these existing — homebrew first.
-[
-  node[:setup][:root],
-  "#{node[:setup][:root]}/profile.d",
-  "#{node[:setup][:root]}/bin",
-].each do |dir|
-  directory dir do
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "755"
-    action :create
-  end
-end
-
+# node[:setup][:root] / profile.d / bin are created by cookbooks/functions/default
+# (the universal first include — runs before this role), so they already exist
+# here. We only render the profile template, which concatenates profile.d/*.sh.
 template "#{node[:setup][:root]}/profile" do
   owner node[:setup][:user]
   group node[:setup][:group]

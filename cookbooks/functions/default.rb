@@ -252,6 +252,27 @@ node[:platform] = "ubuntu" if node[:platform] == "debian"
 # them. See cookbooks/host-profile/default.rb.
 include_cookbook "host-profile"
 
+# Universal setup-dir bootstrap. functions/default is the FIRST include of every
+# recipe (entry recipes, roles, and à-la-carte cookbook includes such as the CI
+# synthetic test recipes), so creating these here guarantees node[:setup][:root]
+# and profile.d exist before ANY cookbook writes under them — e.g. homebrew's
+# `remote_file .../homebrew-install.sh` or `add_profile` entries. Previously only
+# roles/foundation (formerly roles/core) created them, so a recipe that included a
+# cookbook directly without the role bootstrap failed at the first write
+# (`cp: .../homebrew-install.sh: No such file or directory`). Declared right after
+# host-profile so node[:setup] is resolved; runs before any later include.
+[
+  node[:setup][:root],
+  "#{node[:setup][:root]}/profile.d",
+  "#{node[:setup][:root]}/bin",
+].each do |dir|
+  directory dir do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+  end
+end
+
 define :install_package, darwin: nil, ubuntu: nil, arch: nil do
   platform = node[:platform]
   pkgs = params[platform.to_sym]
