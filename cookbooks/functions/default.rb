@@ -70,6 +70,12 @@ module RecipeHelper
   #     would have been no-op'd by their own `not_if`, but skipping
   #     entirely also avoids a needless auth prompt on warm re-runs where
   #     auth happens to be unconfigured.
+  #   - `tool_binary` (optional String): the CLI the check depends on (e.g.
+  #     "aws"). If it isn't on PATH yet — or `check_command` exits 127 —
+  #     the gate skips gracefully instead of looping, because this gate runs
+  #     at COMPILE time while the tool's installer converges later. Looping
+  #     would be a dead loop on a fresh machine. The installer still runs this
+  #     converge; re-run mitamae to complete the gated work.
   #   - If `check_command` exits 0, the block runs immediately — no prompt.
   #   - Else logs instructions and blocks on STDIN.gets, then re-checks.
   #   - After 5 failed attempts, offers a "skip" escape: if the user types
@@ -88,7 +94,7 @@ module RecipeHelper
   # auth. Downstream cookbooks that depend on the block's side effects
   # (e.g. .env files) should guard their consumers with `only_if "test
   # -f <path>"`.
-  def require_external_auth(tool_name:, check_command:, instructions:, skip_if: nil)
+  def require_external_auth(tool_name:, check_command:, instructions:, skip_if: nil, tool_binary: nil)
     if skip_if && skip_if.call
       return
     end
@@ -97,6 +103,33 @@ module RecipeHelper
     result = run_command(check_command, error: false)
     if result.exit_status == 0
       yield if block_given?
+      return
+    end
+
+    # Prerequisite tool not installed yet → do NOT enter the prompt loop.
+    # This gate runs during the COMPILE phase (it is a top-level recipe call),
+    # but the cookbook that installs the tool (e.g. awscli via
+    # `include_cookbook "awscli"`) only converges AFTER compile. So on a fresh
+    # machine the binary cannot exist yet, and looping on STDIN.gets here is a
+    # dead loop — pressing Enter re-runs the same check while still in the
+    # compile phase, so the tool never appears (5 attempts later the procedural
+    # "skip" raises and aborts the whole run). Detect this via exit 127
+    # (command not found) or an explicit `tool_binary` that is not on PATH, and
+    # skip gracefully: the installer resource still converges THIS run, and a
+    # re-run completes the auth-gated work. This is distinct from "tool present
+    # but auth unconfigured" (e.g. aws installed, profile missing), which still
+    # loops so the user can `aws configure` and press Enter. See
+    # ~/.claude/rules/ruby.md "Mitamae evaluation model — top-level Ruby is
+    # compile-time".
+    tool_missing =
+      (tool_binary && run_command("command -v #{tool_binary} >/dev/null 2>&1", error: false).exit_status != 0) ||
+      result.exit_status == 127
+    if tool_missing
+      named = tool_binary ? " '#{tool_binary}'" : ""
+      MItamae.logger.warn("=" * 60)
+      MItamae.logger.warn("[bootstrap] #{tool_name}: prerequisite tool#{named} not installed yet — skipping auth-gated work this run.")
+      MItamae.logger.warn("The installer converges during this run; re-run mitamae to complete the gated work.")
+      MItamae.logger.warn("=" * 60)
       return
     end
 

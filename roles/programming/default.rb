@@ -52,5 +52,5 @@ include_cookbook "mise"
 include_cookbook "jdk"
 
 # Cloud development tools
-include_cookbook "awscli"
+# awscli moved to roles/foundation (ssh-keys depends on it; foundation runs first).
 include_cookbook "gcloud-cli"
