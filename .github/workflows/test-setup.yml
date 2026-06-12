@@ -32,6 +32,14 @@ on:
 jobs:
   test-macos:
     runs-on: macos-latest
+    env:
+      # mise/ubi install tools from GitHub releases via the GitHub API.
+      # Unauthenticated requests hit the 60 req/hr limit and fail with 403
+      # ("mise WARN GitHub rate limit exceeded ... GITHUB_TOKEN is not set"),
+      # which broke `mise use -g usage` during real-install test levels. The
+      # auto-provided token raises the limit to 5000 req/hr. (Scoped to this
+      # repo — does not grant access to private cross-repo clones.)
+      GITHUB_TOKEN: ${{ github.token }}
     if: ${{ github.event.inputs.platform != 'linux-only' }}
     steps:
     - uses: actions/checkout@v4
@@ -84,6 +92,20 @@ jobs:
         which tree && tree --version
         which wget && wget --version
         which brew && brew --version
+
+    - name: Route public GitHub SSH clones to anonymous HTTPS (CI has no SSH key)
+      if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        # The cookbook fleet clones GitHub repos via `git@github.com:` (SSH),
+        # relying on the device key the ssh-keys cookbook places on real machines.
+        # GitHub-hosted runners have no such key, so public-repo clones
+        # (fzf-git.sh, fzf-tab, oh-my-zsh, ...) fail with "Permission denied
+        # (publickey)". Rewrite SSH GitHub URLs to anonymous HTTPS so these public
+        # clones work keyless in CI. Placed AFTER core-tools (whose git cookbook
+        # rewrites ~/.gitconfig); git applies insteadOf once, so this coexists with
+        # the cookbook's https->git@ rule. Private shin1ohno repos in the full
+        # darwin.rb step still require a token — out of scope for this level.
+        git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Test essential cookbooks
       if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
