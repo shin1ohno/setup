@@ -12,9 +12,15 @@
 
 include_cookbook "mise"
 
-# Install Notion app via Homebrew Cask (macOS only)
+# Install Notion app via Homebrew Cask (macOS only).
+# `install --cask --adopt` (not `reinstall`): on a Mac where Notion was
+# installed manually, /Applications/Notion.app already exists and is NOT
+# brew-managed, so the `brew list | fgrep -q notion` guard does not skip and
+# `brew reinstall` aborts with "It seems there is already an App at
+# '/Applications/Notion.app'". `--adopt` brings the existing app under brew
+# management without re-downloading; on a clean Mac it installs normally.
 if node[:platform] == "darwin"
-  execute "brew reinstall --cask notion" do
+  execute "brew install --cask --adopt notion" do
     not_if "brew list | fgrep -q notion"
   end
 end
