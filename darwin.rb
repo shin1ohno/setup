@@ -10,6 +10,10 @@ include_recipe "cookbooks/functions/default"
 # apply user to a global timestamp + enables Touch ID.)
 include_cookbook "mac-sudo"
 
+# Foundation: ssh keys / AWS / gh credentials FIRST, before heavy installs.
+# (dirs/profile bootstrap + homebrew + git + ssh + awscli + ssh-keys)
+include_role "foundation"
+
 # Include modular roles
 include_role "core"
 include_role "programming"

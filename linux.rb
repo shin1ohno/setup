@@ -23,6 +23,9 @@ end
 # functions/default above) — no per-entry reverse_merge needed.
 
 # Include modular roles
+# Foundation: ssh keys / AWS / gh credentials FIRST, before heavy installs.
+# (dirs/profile bootstrap + git + ssh + awscli + ssh-keys; homebrew is darwin-only)
+include_role "foundation"
 include_role "core"
 include_role "programming"
 include_role "llm"

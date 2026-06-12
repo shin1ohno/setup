@@ -38,6 +38,7 @@ host_registry_check = "aws ssm get-parameter --name /host-registry/devices " \
                       "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1"
 require_external_auth(
   tool_name: "AWS SSM access (profile=#{aws_profile}, region=#{aws_region})",
+  tool_binary: "aws",
   check_command: host_registry_check,
   instructions: "Configure the '#{aws_profile}' profile with credentials that have " \
                 "ssm:GetParameter on /host-registry/devices and /ssh-keys/devices/* " \
@@ -298,7 +299,17 @@ end
 # in the agent the libgit2 clone hangs (no socket, threads in cond_wait) and
 # `sheldon source` stalls on every shell startup. Any git op to github warms
 # the agent so subsequent `sheldon lock`/plugin updates work.
-config_entries << "Host github.com"
+# Scoped to `user git` (not a bare `Host github.com`) so this personal-key
+# stanza does NOT also capture org-cert connections made as
+# `org-<id>@github.com` (GitHub SSH certificate authorities — e.g. Mercari's
+# kouzoh org, configured out-of-band in ~/.ssh/config.d/00-mercari-github).
+# A bare `Host github.com` adds this device IdentityFile for EVERY github.com
+# user, and because IdentityFile is additive and explicit IdentityFiles are
+# offered before agent-only certificates, the personal key shadows the org
+# cert — org clones then fail with a SAML SSO authorization error. Limiting to
+# `user git` lets `org-*` fall through to the org agent's certificate while
+# personal `git@github.com` still uses the device key.
+config_entries << "Match host github.com user git"
 config_entries << "    HostName github.com"
 config_entries << "    User git"
 config_entries << "    IdentityFile #{ssh_dir}/#{current_device['ssh']['key_file']}"

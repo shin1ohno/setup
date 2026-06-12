@@ -3,36 +3,14 @@
 # Core role: Essential command-line tools and basic system setup
 # This role provides fundamental tools needed for command-line operations
 
-# Basic directory setup
-[
-  node[:setup][:root],
-  "#{node[:setup][:root]}/profile.d",
-  "#{node[:setup][:root]}/bin",
-].each do |dir|
-  directory dir do
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "755"
-    action :create
-  end
-end
-
-template "#{node[:setup][:root]}/profile" do
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "644"
-  source "templates/profile"
-end
-
-# Package manager
-include_cookbook "homebrew" if node[:platform] == "darwin"
+# NOTE: the directory/profile bootstrap, homebrew, and the auth-critical
+# cookbooks (git, ssh, ssh-keys) moved to roles/foundation, which runs BEFORE
+# this role (see roles/foundation/default.rb and darwin.rb / linux.rb). By the
+# time core runs, node[:setup][:root]/profile.d and git/ssh are already in place.
 
 # Essential system tools
 include_cookbook "tree"
 include_cookbook "zsh"
-include_cookbook "git"
-include_cookbook "ssh"
-include_cookbook "ssh-keys"
 include_cookbook "wget"
 
 # Modern CLI enhancement tools
