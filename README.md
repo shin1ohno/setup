@@ -43,7 +43,7 @@ The new device's public key must already be registered to https://github.com/shi
 
 **Pause points during the run:**
 
-- **AWS CLI auth** (gates `ssh-keys` and the SSM-fetching cookbooks: `mcp`, `codex-cli`, `ingest-drop`, `edge-agent`, `elastic-agent`. `cognee` / `hydra` / `ai-memory` / `roon-mcp` have migrated to their own LXCs and gate auth there)
+- **AWS CLI auth** (gates `ssh-keys` and the SSM-fetching cookbooks: `mcp`, `codex-cli`, `edge-agent`, `elastic-agent`. `cognee` / `hydra` / `ai-memory` / `roon-mcp` have migrated to their own LXCs and gate auth there)
   ```
   aws configure                              # default profile
   # OR

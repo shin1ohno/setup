@@ -20,9 +20,6 @@ include_cookbook "tfmcp"
 include_cookbook "bun"
 include_cookbook "notion"
 
-# Shared ingest drop folder via S3 (feeds cognee knowledge graph)
-include_cookbook "ingest-drop"
-
 # Remove mise shim for claude after all mise operations are done.
 # Any `mise use` call regenerates shims for binaries found under
 # mise-managed node globals, so this must run last.
