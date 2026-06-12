@@ -145,7 +145,7 @@ lxc-praeco:28 / auto-mitamae-target:30 を踏襲）。bare の execute はそれ
 consent の bare↔bare は規約違反ではなく、profile 統一は案 B として Phase 2 の lxc-hydra/lxc-consent
 migrate に統合する）:
 
-- [ ] PR 0-2: ガードレール一式
+- [x] PR 0-2: ガードレール一式（branch `refactor/phase0-guardrails`）
   - `bin/audit-cookbook-reachability`（Ruby）: include グラフ BFS で未参照 cookbook を fail。
     allowlist 初期値 = 上の Dead 8 件（Phase 1 で空にする）
   - `bin/lint-cookbooks`（Ruby）: 検査群
@@ -287,3 +287,17 @@ canary 実行中: （なし）
   `pve-bootstrap-ssm` で読めなければ home-monitor の IAM policy 変更（cross-repo PR）が派生する可能性。
 - **本セッションの環境制約**: このセッションから `ssh root@192.168.1.10` が `Host key verification failed`。
   CT 110 等の実機 probe は親/ユーザーが `!` で実行する必要がある。
+- **2026-06-13 Phase 0 で確定**: `consent-app` は dead ではなく file-store cookbook
+  （`include_cookbook` されず `pve/lxc-consent.rb:58` が `File.read(cookbooks/consent-app/files/…)` で消費）。
+  `bin/audit-cookbook-reachability` は file-store エッジ（非コメント行の `cookbooks/X/files` 参照）で
+  真に reachable 化し allowlist しない。
+- **2026-06-13 Phase 0 発見（要トリアージ）**: `cookbooks/self-heal/` は git 追跡 0・空ディレクトリ＝
+  ローカル cruft（git に存在しない）。リポジトリへの影響なし。気になればローカルで `rmdir` のみ。
+- **2026-06-13 Phase 0 実測でスコープ修正（Phase 2 G2 に影響）**: 手書き docker-compose `up -d` クラスタは
+  実測 **2 件**（`lxc-monitoring` / `lxc-praeco`）で plan 概算「10」と乖離。`compose_service` DSL は既に
+  6 recipe（lxc-cognee/lxc-memory/lxc-roon-mcp/local-mcp/pve/lxc-weave/pve/lxc-consent）が採用済み。
+  systemd 4 ステップ手書きも `daemon-reload` proxy で実測 **17**（概算 24）。詳細 `docs/refactoring/baseline.md`。
+- **2026-06-13 Phase 0 adversarial audit で修正済み**: reachability の初版は `def lxc_entry` 本体の
+  `include_role "lxc-core"` / `include_cookbook "elastic-agent"` を偽エッジ化していた（`def` 行のみ skip）。
+  lxc_entry 撤去時に subtree が orphan でも CI が green になる latent risk。def 本体全体を skip するよう修正し、
+  lxc-core/elastic-agent は実 `lxc_entry()` 呼び出し経由のみ reachable に。HEAD は 19 個の実呼び出しで 137/8 維持。

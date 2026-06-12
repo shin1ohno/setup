@@ -526,6 +526,15 @@ jobs:
         # Check functions helper exists
         test -f cookbooks/functions/default.rb
 
+    - name: Cookbook guardrails (reachability + lint)
+      run: |
+        # Phase 0 of docs/refactoring/plan.md. Fail CI on dead/unreachable
+        # cookbooks and on the mitamae footguns in ~/.claude/rules/ruby.md
+        # (compile-time File.exist?, Integer owner/group, auth-gate profile
+        # mismatch, notify-driven compose without --force-recreate).
+        ./bin/audit-cookbook-reachability
+        ./bin/lint-cookbooks
+
     - name: Validate JSON files
       run: |
         # Check if any JSON files exist and validate them

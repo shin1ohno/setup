@@ -1,0 +1,169 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# Guardrail (Phase 0 of docs/refactoring/plan.md): fail when a cookbook under
+# cookbooks/ is unreachable from any apply entry point via the include graph.
+#
+# Entry roots:  darwin.rb, linux.rb, test-cookbook.rb, pve/*.rb
+# Graph edges:  include_role "X"            -> roles/X/default.rb
+#               include_cookbook "X"        -> cookbooks/X/default.rb
+#               include_recipe "[../]cookbooks/X/..."  -> cookbook X
+#               include_recipe "bare"       -> <same-dir>/bare.rb (intra-cookbook,
+#                                              NOT a new cookbook node; e.g.
+#                                              homebrew -> "environment")
+#               lxc_entry(...)              -> include_role "lxc-core"
+#                                              + include_cookbook "elastic-agent"
+#                                              (see cookbooks/functions/default.rb
+#                                               #lxc_entry)
+#
+# A cookbook in ALLOWLIST is permitted to be unreachable (Phase 1 deletes the
+# dead cookbooks and empties this list). Any OTHER unreachable cookbook fails CI.
+#
+# Usage:  bin/audit-cookbook-reachability   # exit 1 on unexpected unreachable
+#
+# This is a static approximation: variable / node-driven includes
+# (e.g. test-cookbook.rb's `include_cookbook ENV["COOKBOOK"]`) cannot be
+# resolved and contribute no edges. If a real cookbook is reachable only via
+# such a dynamic include, add it to ALLOWLIST with a comment.
+
+require "set"
+
+REPO_ROOT = File.expand_path("..", __dir__)
+Dir.chdir(REPO_ROOT)
+
+# Cookbooks intentionally allowed to be unreachable. Phase 1 empties this.
+ALLOWLIST = %w[
+  ruby
+  openssl
+  autoconf
+  disable-ipv6
+  im-select
+  memory-server
+  oh-my-zsh
+  typewritten
+].freeze
+
+# lxc_entry(...) expands to these (functions/default.rb#lxc_entry).
+LXC_ENTRY_ROLE     = "lxc-core"
+LXC_ENTRY_COOKBOOK = "elastic-agent"
+
+ENTRY_FILES = (["darwin.rb", "linux.rb", "test-cookbook.rb"] + Dir["pve/*.rb"]).select { |f| File.file?(f) }
+
+# A cookbook is a directory under cookbooks/ that has a default.rb.
+all_cookbooks = Dir["cookbooks/*/default.rb"].map { |p| p.split("/")[1] }.to_set
+
+reached_cookbooks = Set.new
+visited_files     = Set.new
+queue             = []
+
+def enqueue(path, queue, visited_files)
+  return unless path && File.file?(path)
+  return if visited_files.include?(path)
+  visited_files << path
+  queue << path
+end
+
+ENTRY_FILES.each { |f| enqueue(f, queue, visited_files) }
+
+until queue.empty?
+  file = queue.shift
+  dir  = File.dirname(file)
+  # Skip the BODY of every method definition, not just the `def` line: a
+  # helper like `def lxc_entry` (functions/default.rb) contains literal
+  # include_role/include_cookbook calls that are NOT real top-level edges —
+  # they fire only when the method is CALLED. Real lxc_entry() call sites are
+  # picked up by the `lxc_entry\s*\(` branch below. Without this, every entry
+  # recipe (all include functions/default.rb) force-marks lxc-core +
+  # elastic-agent reachable even if no recipe actually calls lxc_entry.
+  def_stack = []
+  File.foreach(file) do |raw|
+    indent = raw[/\A */].length
+    if raw =~ /\A\s*def\b/
+      def_stack.push(indent)
+      next
+    end
+    if raw =~ /\A\s*end\b/ && !def_stack.empty? && indent == def_stack.last
+      def_stack.pop
+      next
+    end
+    next unless def_stack.empty? # inside a method body — not a real include
+    next if raw =~ /\A\s*#/      # skip comment-only lines
+    line = raw
+
+    line.scan(/\binclude_cookbook\s+"([^"]+)"/) do |m|
+      cb = m[0].split("::").first
+      reached_cookbooks << cb
+      parts = m[0].split("::")
+      parts << "default" if parts.length == 1
+      enqueue(File.join("cookbooks", *parts) + ".rb", queue, visited_files)
+    end
+
+    line.scan(/\binclude_role\s+"([^"]+)"/) do |m|
+      parts = m[0].split("::")
+      parts << "default" if parts.length == 1
+      enqueue(File.join("roles", *parts) + ".rb", queue, visited_files)
+    end
+
+    line.scan(/\binclude_recipe\s+"([^"]+)"/) do |m|
+      target = m[0]
+      if target =~ %r{(?:\.\./)?cookbooks/([^/]+)/}
+        reached_cookbooks << Regexp.last_match(1)
+      end
+      # Resolve to an actual file for transitive parsing.
+      path =
+        if target.start_with?("../")
+          File.expand_path(target, dir)
+        elsif target.include?("/")
+          File.join(REPO_ROOT, target)
+        else
+          File.join(dir, target) # bare intra-cookbook recipe
+        end
+      path += ".rb" unless path.end_with?(".rb")
+      enqueue(path, queue, visited_files)
+    end
+
+    if line =~ /\blxc_entry\s*\(/
+      reached_cookbooks << LXC_ENTRY_COOKBOOK
+      enqueue(File.join("cookbooks", LXC_ENTRY_COOKBOOK, "default.rb"), queue, visited_files)
+      enqueue(File.join("roles", LXC_ENTRY_ROLE, "default.rb"), queue, visited_files)
+    end
+
+    # File-store cookbooks: a recipe that reads cookbooks/<name>/files/... by
+    # path (File.read / File.expand_path) keeps that cookbook alive without an
+    # include_cookbook edge. e.g. pve/lxc-consent.rb reads
+    # cookbooks/consent-app/files/ directly (consent-app is a static source
+    # store, intentionally not include'd — see cookbooks/consent-app/default.rb).
+    line.scan(%r{\bcookbooks/([a-z0-9_-]+)/files}) do |m|
+      reached_cookbooks << m[0]
+    end
+  end
+end
+
+unreachable      = (all_cookbooks - reached_cookbooks).sort
+unexpected       = unreachable - ALLOWLIST
+stale_allowlist  = ALLOWLIST.select { |c| reached_cookbooks.include?(c) }
+
+puts "cookbook reachability audit"
+puts "  cookbooks total : #{all_cookbooks.size}"
+puts "  reachable       : #{reached_cookbooks.size}"
+puts "  unreachable     : #{unreachable.size} (#{unreachable.join(", ")})" unless unreachable.empty?
+puts "  allowlisted     : #{ALLOWLIST.size}"
+
+unless stale_allowlist.empty?
+  warn ""
+  warn "WARNING: allowlisted cookbooks that are actually reachable (remove from ALLOWLIST):"
+  stale_allowlist.each { |c| warn "  - #{c}" }
+end
+
+if unexpected.empty?
+  puts "OK: every cookbook is reachable or allowlisted."
+  exit 0
+else
+  warn ""
+  warn "FAIL: #{unexpected.size} cookbook(s) unreachable and NOT allowlisted:"
+  unexpected.each { |c| warn "  - cookbooks/#{c}" }
+  warn ""
+  warn "Either wire it into an entry recipe / role, delete it, or add it to"
+  warn "ALLOWLIST in bin/audit-cookbook-reachability with a justifying comment."
+  exit 1
+end
