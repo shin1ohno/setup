@@ -51,7 +51,7 @@ execute "copy authorized_keys to #{username}" do
 end
 
 # Enable systemd lingering for both root and the provisioned user. Several
-# downstream cookbooks (s3-backup, obsidian_file_sync, ingest-drop,
+# downstream cookbooks (s3-backup, obsidian_file_sync,
 # aws-cost-monitor) install user-level systemd units that must start at
 # boot without an interactive login. Without lingering the user manager
 # stops between logins and the timers/services don't fire.
