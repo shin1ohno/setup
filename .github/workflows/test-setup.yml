@@ -70,6 +70,19 @@ jobs:
         sudo chmod 777 /tmp
         ./bin/mitamae local darwin.rb --dry-run
 
+    - name: Preserve GITHUB_TOKEN across sudo (mise installs run under sudo -u runner)
+      if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
+      run: |
+        # Cookbooks run mise via `execute ... user "..."`, which mitamae wraps in
+        # `sudo -H -u <user>`. sudo resets the environment and strips the job-level
+        # GITHUB_TOKEN, so mise (ubi AND vfox backends) makes UNAUTHENTICATED GitHub
+        # API requests and hits the 60 req/hr limit (HTTP 403 — e.g. `mise install
+        # neovim` via vfox: "Failed to fetch release ... HTTP 403"). Add GITHUB_TOKEN
+        # to sudo's env_keep so it survives the sudo wrap and mise authenticates
+        # (5000 req/hr). Pairs with the job-level GITHUB_TOKEN env.
+        echo 'Defaults env_keep += "GITHUB_TOKEN"' | sudo tee /etc/sudoers.d/mise_github_token >/dev/null
+        sudo chmod 0440 /etc/sudoers.d/mise_github_token
+
     - name: Test core tools installation
       if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
