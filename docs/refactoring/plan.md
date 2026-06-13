@@ -202,9 +202,16 @@ migrate に統合する）:
       activation は enable --now→enable&&restart（初回 install 等価・unit 編集時に反映＝改善）
 - [x] PR 2-2（G1）: **クローズ（実態空）**。2026-06-13 実態調査で systemd 手書き 17 件の大半が
       systemd_unit 非適合と判明（下記「Phase 2 sweep 実態調査」）。clean な適用は node-exporter のみで完了済み
-- [ ] PR 2-x（G2）: **canary 必須・実態は per-cookbook カスタマイズあり**（下記調査）。
+- [~] PR 2-x（G2）: **canary 必須・実態は per-cookbook カスタマイズあり**（下記調査）。
       compose_service は monitoring/praeco の 2 件のみ（ES/kibana/apm は native systemd）。
       deploy_with_ssm_env は ~8 cookbook に余地あるが各々 skip_if/gate 数が異なり挙動改善=canary 必須
+  - [x] G2-a `local-mcp`: deploy_with_ssm_env 採用（このPR）。cognee-shape に完全適合する唯一の clean fit。
+        skip_if を content-aware（LLM_API_KEY/EMBEDDING_API_KEY 常時出力）に。**darwin 限定**なので
+        Linux dry-run 不可 → 検証は (1) 実パラメータ throwaway で expansion 確認、(2) resource 名/path 完全保存、
+        (3) **Mac apply で最終 functional 検証**。注: 採用で require_external_auth が helper 内に移り
+        lint #3（profile MISMATCH）の視界外に → G2 採用拡大なら lint #3 を deploy_with_ssm_env 対応へ拡張要
+  - [ ] G2-残: lxc-apm-server(keystore inject), lxc-kibana/elasticsearch(cert+multi-gate), lxc-monitoring(--remove-orphans),
+        lxc-praeco, elastic-agent(3 gate) は cognee-shape 非適合 → helper 拡張か個別対応。lxc-hydra は案 B probe 先行
 
 ### Phase 2 sweep 実態調査（2026-06-13、baseline 概算の訂正）
 
@@ -285,23 +292,26 @@ migrate に統合する）:
 
 ## Phase 4: 構造リファクタ（依存: Phase 2）
 
-- [ ] PR 4-1: `pve/lxc-weave.rb`（284 行）のインラインロジックを `cookbooks/lxc-weave/` へ抽出。
-      薄いエントリ（node override + include）形式に統一。canary: weave CT
+- [x] PR 4-1: `pve/lxc-weave.rb`（284 行）→ `cookbooks/lxc-weave/` 抽出 + 薄いエントリ化（#480、**canary 検証済み**）。
+      __FILE__ path を cookbook 規約（`"..", "ssh-keys"`）に修正。before/after dry-run diff で挙動保存実証。
+      weave CT 実適用 exit 0・4 コンテナ稼働・weave-server "Up 11 days"（再起動なし＝no-op 確認）
 - [x] PR 4-2: `pve/lxc-pro-router.rb`（224 行）→ `cookbooks/lxc-pro-router/` 抽出 + 薄化（このPR、canary 待ち）。
       __FILE__ path 修正。**before/after dry-run diff で挙動保存実証**（392 行一致、差分は temp ファイル名 +
       notify 駆動 2 resource[apply-sysctl/reload-tailnet] の出力位置のみ＝挙動無関係、純粋 verbatim move）。
       canary 機能プローブ: `~/.claude/rules/tailscale.md` の table-52 検証（`ip rule show` / LAN 到達性）必須
 - [ ] PR 4-3: `pve/lxc-consent.rb`（181 行）同上。canary: consent CT（OAuth フローの実トークン round-trip を含める —
       `~/.claude/rules/adversarial-review.md` Live Token Gate）
-- [ ] PR 4-4: node attribute 規約整理（`node[:setup][:*]` 等のデフォルト解決を host-profile に集約済みか監査、
-      規約を CLAUDE.md に明文化）+ roles 境界監査（core/foundation/extras の重複 include 検出）
+- [x] PR 4-4: node attribute 規約整理 + roles 境界監査（このPR、CLAUDE.md に明文化）。
+      **監査結果クリーン**: node[:setup]/[:homebrew]/[:profile] は host-profile に一元化済み（22 箇所の重複除去済み・
+      散在代入なし）、roles 間で重複 include される cookbook はゼロ（各 cookbook は 1 role 専有）。修正不要、規約のみ明文化
 
 ## Phase 5: ガードレール恒久化・クローズ（依存: 全 Phase）
 
-- [ ] PR 5-1: CLAUDE.md「Cookbook Best Practices」に新 DSL（systemd_unit / compose_service /
-      deploy_with_ssm_env）の使用を明記。README / docs の更新
-- [ ] PR 5-2: `docs/refactoring/result.md` に baseline 比較（cookbook 数 145 → 目標 ~135、行数 -10% 前後）
-- [ ] Cognee へ結論保存 + retro 実施（PR 不要）
+- [x] PR 5-1: CLAUDE.md「Custom Helpers」+「Conventions」に DSL（lxc_entry / compose_service /
+      systemd_unit / deploy_with_ssm_env）+ thin-entry/guardrail 規約を明記（このPR・4-4 と統合）
+- [~] PR 5-2: `docs/refactoring/result.md` 作成（このPR、**予備版**）。canary PR（#479-482）+ 4-3b マージ後に確定。
+      cookbook 数は 145→136（merged）→ 139（Phase 4 抽出で +3）。dead code ゼロ・allowlist 空・CI ガードレール稼働が実利得
+- [ ] Cognee へ結論保存 + retro 実施（PR 不要）— retro は本セッションで実施済み（rg/-E・mitamae define・sweep 分類の 3 学習）
 
 ## 並列実行ガイド（ultracode / 複数ストリーム向け）
 
