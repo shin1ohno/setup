@@ -1,6 +1,6 @@
 # Setup リポジトリ全面リファクタリング計画（2026-06）
 
-Status: **Phase 0 着手前**。本ファイルが進捗台帳の正本。各 PR のマージ時にチェックボックスを更新し、完了 Phase はマージコミットへのリンクを残すこと。
+Status: **Phase 1 完了（#470 Phase0 / #471 #472 + 本PR Phase1）。Phase 2 着手可（Phase 3 並列可）**。本ファイルが進捗台帳の正本。各 PR のマージ時にチェックボックスを更新し、完了 Phase はマージコミットへのリンクを残すこと。
 
 ## 決定事項ログ
 
@@ -163,13 +163,14 @@ migrate に統合する）:
 
 ## Phase 1: Dead code / 残骸削除（依存: Phase 0）
 
-- [ ] PR 1-1: dead 5 cookbook 削除（ruby, openssl, autoconf, disable-ipv6, im-select）
-      + reachability allowlist から除去
-- [ ] PR 1-2: 休眠 3 cookbook 削除（memory-server, oh-my-zsh, typewritten）
+- [x] PR 1-1: dead 5 cookbook 削除（ruby, openssl, autoconf, disable-ipv6, im-select）（#471）
+      + reachability allowlist から除去（8 → 3）
+- [x] PR 1-2: 休眠 3 cookbook 削除（memory-server, oh-my-zsh, typewritten）（#472）
       + 参照コメントの掃除（`pve/lxc-memory.rb` の switch-back コメント、`cookbooks/dot-zsh/default.rb` 冒頭コメント）
-      + allowlist を空にする
-- [ ] PR 1-3: `docs/adr/0005-impl/` 削除（ADR 0005 本体は残す。`.patch` 2 ファイルも削除）
-      + `docs/HANDOFF.md` 鮮度監査（stale なら削除 or 更新）
+      + allowlist を空にする（reachability: 137 total = 137 reachable, 0 allowlisted）
+- [x] PR 1-3: `docs/adr/0005-impl/` 削除（ADR 0005 本体は残す。`.patch` 2 ファイルも削除）（このPR）
+      + `docs/HANDOFF.md` 削除（中身ゼロのテンプレ、5/8 以降未使用 = stale）
+      + `.patch` 参照していた `cookbooks/lxc-elasticsearch` の provenance コメント 2 箇所を git 履歴/ADR 参照へ更新（dangling 回避・comment-only）
 
 検証: dry-run diff ゼロ（対象はそもそも実行されていない）。リスク最低。
 
