@@ -145,7 +145,7 @@ lxc-praeco:28 / auto-mitamae-target:30 を踏襲）。bare の execute はそれ
 consent の bare↔bare は規約違反ではなく、profile 統一は案 B として Phase 2 の lxc-hydra/lxc-consent
 migrate に統合する）:
 
-- [x] PR 0-2: ガードレール一式（branch `refactor/phase0-guardrails`）
+- [x] PR 0-2: ガードレール一式（#470）
   - `bin/audit-cookbook-reachability`（Ruby）: include グラフ BFS で未参照 cookbook を fail。
     allowlist 初期値 = 上の Dead 8 件（Phase 1 で空にする）
   - `bin/lint-cookbooks`（Ruby）: 検査群
