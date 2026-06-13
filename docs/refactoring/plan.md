@@ -292,8 +292,10 @@ migrate に統合する）:
 
 ## Phase 4: 構造リファクタ（依存: Phase 2）
 
-- [ ] PR 4-1: `pve/lxc-weave.rb`（284 行）のインラインロジックを `cookbooks/lxc-weave/` へ抽出。
-      薄いエントリ（node override + include）形式に統一。canary: weave CT
+- [x] PR 4-1: `pve/lxc-weave.rb`（284 行）→ `cookbooks/lxc-weave/` 抽出 + 薄いエントリ化（このPR、canary 待ち）。
+      __FILE__ path を cookbook 規約（`"..", "ssh-keys"`）に修正。**before/after dry-run diff で挙動保存を実証**
+      （resource セット完全同一・差分は内部 temp ファイル名と notify 駆動 restart weave の出力位置のみ＝挙動無関係）。
+      canary: weave CT で `docker compose ps` 健全 + 4 コンテナ稼働確認
 - [ ] PR 4-2: `pve/lxc-pro-router.rb`（224 行）同上。canary 必須 +
       機能プローブに `~/.claude/rules/tailscale.md` の table-52 検証（`ip rule show` / LAN 到達性）を含める
 - [ ] PR 4-3: `pve/lxc-consent.rb`（181 行）同上。canary: consent CT（OAuth フローの実トークン round-trip を含める —
