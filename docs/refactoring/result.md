@@ -20,7 +20,7 @@ Baseline measured on `main` @ `2ee9f1b` (see baseline.md).
 | 2 G2 | local-mcp adopted deploy_with_ssm_env (canary/Mac-apply pending); other G2 cookbooks have per-cookbook flows (keystore/cert/multi-gate) that don't fit the helper | #479 |
 | 3 install | ruby 3.3 unified; mise survey → opportunity exhausted (defer); python/rust → keep pyenv/rustup | #475 #476 |
 | 4 structure | lxc-weave / lxc-pro-router / lxc-consent inline logic extracted to cookbooks (canary pending); node[:setup] + roles boundary audited clean | #480 #481 #482 |
-| 5 close | CLAUDE.md conventions + DSL docs (this PR); Cognee save + retro pending |  |
+| 5 close | CLAUDE.md conventions + DSL docs; Cognee save (verified via CHUNKS); session-retrospective done → 2 rules promoted (progress-ledger stale-fact re-probe → CLAUDE.md; `pct exec` `bash -lc` + IAM 60s eventual-consistency → rules/pve-lxc.md), dual-managed | #483 + retro-rules PR |
 
 ## Metrics
 
