@@ -15,7 +15,12 @@ set -euo pipefail
 
 OUTPUT_FILE="$1"
 AWS_REGION="${AWS_REGION:-ap-northeast-1}"
-AWS_PROFILE="${AWS_PROFILE:-pve-bootstrap-ssm}"
+# AWS_PROFILE is intentionally NOT defaulted. The cookbook's require_external_auth
+# auto-discovery selects a profile that can read /cognee/* and exports AWS_PROFILE;
+# aws picks it up from the environment. Defaulting to pve-bootstrap-ssm (the old
+# value) would force the least-privilege fleet profile, which cannot read /cognee/*
+# or /mcp/* (AccessDenied). When unset, aws falls back to the ambient/default
+# profile (or the operator-exported keys path below).
 
 # --- local static DB credentials (keep in sync with 01-databases.sql) ---
 PG_SUPER_PASSWORD="postgres_local_dev"
@@ -30,7 +35,6 @@ fetch_ssm() {
     --with-decryption \
     --query "Parameter.Value" \
     --output text \
-    --profile "${AWS_PROFILE}" \
     --region "${AWS_REGION}" 2>/dev/null \
     || return 1
 }
