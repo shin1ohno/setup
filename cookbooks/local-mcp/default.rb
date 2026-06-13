@@ -41,21 +41,17 @@ home  = node[:setup][:home]
 
 # Region follows the shared bootstrap config (cookbooks/ssh-keys aws-config.json).
 #
-# Profile DIVERGES from the fleet convention on purpose. The shared bootstrap
-# profile (pve-bootstrap-ssm) is a least-privilege fleet-LXC principal whose IAM
-# policy grants ssm:GetParameter on /ssh-keys/* only — NOT /cognee/* or /mcp/*.
-# On the home LXCs (cognee CT 105, ai-memory CT 107) the per-service IAM grant
-# covers those paths, so the convention works there. But local-mcp runs ONLY on
-# Air (a Mac), where pve-bootstrap-ssm's keys are genuinely scoped to /ssh-keys/*
-# and every /cognee/* + /mcp/openai-api-key read returns AccessDeniedException —
-# the require_external_auth gate then loops forever because re-running
-# `aws configure` cannot add an IAM permission.
-#
-# Air reads these admin-scoped secrets with the Mac admin profile instead. Keep
-# the gate's check_command and the .env generator on the same principal (per
-# CLAUDE.md "auth-check gate must match invocation").
+# Profile is NOT pinned here (was hardcoded `aws_profile = "sh1admn"`). local-mcp
+# reads admin-scoped secrets (/cognee/* + /mcp/openai-api-key) that the
+# least-privilege fleet profile (pve-bootstrap-ssm, scoped to /ssh-keys/*) cannot
+# read. Rather than hardcode a specific Mac admin profile name — brittle across
+# SSO / renamed / multi-account / work-Mac setups — the gate below is left BARE
+# (no --profile) so require_external_auth's profile auto-discovery probes every
+# configured profile and selects whichever one actually reads /cognee/*, exporting
+# AWS_PROFILE for the rest of the run (the generator inherits it). Same effect on
+# Air (it picks the admin profile) but robust to naming, and it surfaces a
+# per-profile failure reason when none qualifies instead of looping. (Pattern B.)
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
-aws_profile = "sh1admn"
 aws_region  = ssh_keys_config["aws_region"]
 
 deploy_dir       = "#{home}/deploy/local-mcp"
@@ -124,17 +120,18 @@ env_output_path = "#{deploy_dir}/.env"
 # generate_env.local.sh) so a future generator key addition re-fetches instead
 # of no-op'ing on a stale .env, replacing the prior File.exist? skip.
 deploy_with_ssm_env "local-mcp" do
-  tool_name "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /cognee/* + /mcp/openai-api-key SSM params"
+  tool_name "AWS CLI (region=#{aws_region}, profile auto-discovered) for /cognee/* + /mcp/openai-api-key SSM params"
   check_command "aws ssm get-parameter --name /cognee/llm-endpoint " \
-                "--profile #{aws_profile} --region #{aws_region} " \
+                "--region #{aws_region} " \
                 "> /dev/null 2>&1"
-  instructions "Configure '#{aws_profile}' with ssm:GetParameter on /cognee/* and " \
-               "/mcp/openai-api-key in #{aws_region} (aws configure --profile #{aws_profile}), " \
+  instructions "Configure ANY AWS profile that can ssm:GetParameter on /cognee/* and " \
+               "/mcp/openai-api-key in #{aws_region} (e.g. aws configure, or aws configure sso) — " \
+               "auto-discovery will select it, no specific profile name required. " \
                "OR skip SSM and run the generator manually with exported keys:\n" \
                "  COGNEE_LLM_API_KEY=sk-... OPENAI_API_KEY=sk-... " \
                "bash #{generate_env_script} #{env_output_path}\n" \
                "Then press Enter."
-  generate_command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+  generate_command "AWS_REGION=#{aws_region} " \
                    "bash #{generate_env_script} #{env_temp_path}"
   temp_path env_temp_path
   output_path env_output_path
