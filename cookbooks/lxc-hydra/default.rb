@@ -122,16 +122,28 @@ end
 env_temp_path   = "#{generated_dir}/hydra-server.env"
 env_system_path = "#{HYDRA_HOME}/.env"
 
+# Case B completion (W1, setup AWS-profile review 2026-06): pin the SSM gate +
+# generator to the fleet profile (pve-bootstrap-ssm) instead of the ambient/
+# default profile. home-monitor now grants pve-bootstrap-ssm read on /memory/*
+# + /hydra/* (the gate path /memory/aurora-endpoint + the .env's /hydra/*
+# secrets, with aws/ssm kms:Decrypt), so the pinned gate is non-TTY-deterministic
+# on a fresh/rotated LXC. The prior bare form (no --profile) relied on an
+# ambient profile that does not exist on the unattended fleet.
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
+aws_profile = ssh_keys_config["aws_profile"]
+aws_region  = ssh_keys_config["aws_region"]
+
 require_external_auth(
-  tool_name: "AWS CLI (for /memory/aurora-* + /hydra/* SSM params)",
-  check_command: "aws ssm get-parameter --name /memory/aurora-endpoint --query Parameter.Value --output text >/dev/null 2>&1",
-  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  tool_name: "AWS CLI (profile=#{aws_profile}) for /memory/aurora-* + /hydra/* SSM params",
+  check_command: "aws ssm get-parameter --name /memory/aurora-endpoint --profile #{aws_profile} --region #{aws_region} --query Parameter.Value --output text >/dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on /memory/* + /hydra/* + aws/ssm kms:Decrypt in #{aws_region} (home-monitor pve-bootstrap-ssm policy). On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter to retry.",
   skip_if: -> { File.exist?(env_system_path) },
 ) do
   execute "generate hydra-server .env" do
     command <<~SH
       set -e
       umask 077
+      export AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region}
       AURORA_ENDPOINT=$(aws ssm get-parameter --name /memory/aurora-endpoint --query Parameter.Value --output text)
       HYDRA_PASSWORD=$(aws ssm get-parameter --name /hydra/aurora-password --with-decryption --query Parameter.Value --output text)
       SECRETS_SYSTEM=$(aws ssm get-parameter --name /hydra/system-secret --with-decryption --query Parameter.Value --output text)
