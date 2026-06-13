@@ -222,3 +222,50 @@ jq '.devices["<logical-name>"]' ~/ManagedProjects/home-monitor/contracts/devices
 Construct an FQDN only when the entry has an explicit `fqdn` or `tailscale` field — never from the logical name alone. For PVE LXCs specifically, prefer `pct exec <ct_id>` from the PVE host over direct SSH, since LXCs may not have SSH keys provisioned for your user.
 
 This rule exists because the 2026-05-10 cognee leak diagnosis burned three SSH attempts on `pve-host.home.local`, `pve.home.local`, and other guessed FQDNs before discovering that `pve-host` (devices.json logical name) maps to the same machine as `pro` (the bare-metal Linux entry, IP `192.168.1.10`). The correct path was always `ssh root@192.168.1.10` — the IP was right there in `pve-host`'s sibling `pro` entry, not under a constructed FQDN.
+
+## `pct exec` spawns a non-login shell — use `bash -lc` for profile.d tools
+
+`pct exec <vmid> -- aws ssm get-parameter ...` (or any tool installed via
+profile.d — mise, pyenv, cargo, the awscli binary in `/usr/local/bin`) fails
+with `Failed to exec <tool>` because `pct exec` spawns `/bin/sh` WITHOUT sourcing
+login profiles, so `/usr/local/bin` and the user's shim dirs are not on PATH.
+
+Fix — wrap the command in a login shell:
+
+```bash
+pct exec <vmid> -- bash -lc "aws ssm get-parameter --name /path ... --profile X"
+```
+
+`bash -l` sources `/etc/profile` + `/etc/profile.d/*.sh`, which populates PATH
+for the installed tools. Without `-l` only the base OS PATH is visible.
+
+This is PATH-only, NOT a TTY — it does not interact with the separate
+`STDIN.tty?`-returns-false behavior documented above (`-l` grants PATH, not a
+terminal).
+
+This rule exists because the 2026-06-13 setup case-B SSM probe ran
+`pct exec 110 -- aws ssm get-parameter ...` and got `Failed to exec aws`; the
+identical command under `bash -lc` resolved `aws` from `/usr/local/bin` and ran.
+
+## IAM policy attachment — ~60s eventual consistency before the first probe
+
+After `aws iam attach-user-policy` / `put-user-policy` / `put-role-policy` (or a
+`terraform apply` that adds an IAM grant) returns success, wait ~60s before the
+first call that depends on the new permission. Probing immediately returns
+`AccessDeniedException` even though the attachment succeeded — IAM propagation
+is eventually consistent.
+
+```bash
+aws iam attach-user-policy --user-name X --policy-arn arn:...
+sleep 65   # IAM eventual consistency — do NOT diagnose the AccessDenied yet
+pct exec <vmid> -- bash -lc "aws ssm get-parameter --name /path --profile X"
+```
+
+If the policy ARN / region / principal are correct, an immediate `AccessDenied`
+is a timing artifact — the fix is to wait, not to change the policy. Re-diagnose
+only if it persists past ~2 min.
+
+This rule exists because the 2026-06-13 case-B home-monitor IAM grant
+(pve-bootstrap-ssm → /hydra/* + aws/ssm `kms:Decrypt`) returned `AccessDenied`
+on the live decrypt probe immediately after `terraform apply`; the identical
+probe succeeded ~60s later (DECRYPT_OK on CT 110).
