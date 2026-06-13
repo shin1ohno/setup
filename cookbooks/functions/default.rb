@@ -177,7 +177,7 @@ module RecipeHelper
       MItamae.logger.warn("Verify (paste to debug): #{_strip_redirect(check_command)}")
       MItamae.logger.warn(instructions)
       menu = "Options: [Enter]=re-check  s=skip this block  Ctrl-C=abort"
-      menu += "  c=run 'aws configure' here  l=run 'aws sso login' here" if aws
+      menu += "  c=aws configure (static IAM keys)  l=SSO (login, or first-time setup)" if aws
       MItamae.logger.warn(menu)
       MItamae.logger.warn("=" * 60)
 
@@ -210,10 +210,25 @@ module RecipeHelper
         next
       end
 
-      result = run_command(check_command, error: false)
-      if result.exit_status == 0
-        yield if block_given?
-        return
+      # Plain re-check (Enter). For AWS, re-run profile auto-discovery so a
+      # profile the operator just configured in ANOTHER terminal is picked up —
+      # a bare check_command re-run would only see the unchanged ambient env.
+      if aws
+        found = _auto_select_aws_profile(check_command)
+        if found
+          unless found == "__ambient__"
+            ENV["AWS_PROFILE"] = found
+            MItamae.logger.info("[bootstrap] #{tool_name}: auto-selected AWS profile '#{found}' on re-check — AWS_PROFILE set for the rest of this run.")
+          end
+          yield if block_given?
+          return
+        end
+      else
+        result = run_command(check_command, error: false)
+        if result.exit_status == 0
+          yield if block_given?
+          return
+        end
       end
     end
   end
@@ -238,9 +253,10 @@ module RecipeHelper
       MItamae.logger.info("[bootstrap]   trying AWS profile '#{profile}'...")
       # Explicit --profile in check_command wins over AWS_PROFILE, so this is a
       # no-op (same result) for already-profiled checks — harmless to try.
-      if run_command("AWS_PROFILE=#{profile} #{check_command}", error: false).exit_status == 0
-        return profile
-      end
+      # Capture merged output (2>&1) so a failure reports WHY this profile failed.
+      res = run_command("AWS_PROFILE=#{profile} #{_strip_redirect(check_command)} 2>&1", error: false)
+      return profile if res.exit_status == 0
+      MItamae.logger.info("[bootstrap]     '#{profile}' failed: #{_classify_short(res.stdout)}")
     end
     MItamae.logger.info("[bootstrap] no configured AWS profile satisfies the check — prompting for setup.")
     nil
@@ -305,11 +321,37 @@ module RecipeHelper
   def _run_aws_setup(mode)
     MItamae.logger.warn("Profile name (blank = default): ")
     name = (STDIN.gets || "").strip
-    base = (mode == :sso) ? "aws sso login" : "aws configure"
-    cmd = name.empty? ? base : "#{base} --profile #{name}"
-    MItamae.logger.warn("Launching: #{cmd}")
-    system(cmd)
+    prof = name.empty? ? "" : " --profile #{name}"
+    if mode == :sso
+      # `aws sso login` only REFRESHES an already-SSO-configured profile; on a
+      # profile with no sso_start_url (first-time setup) it errors with
+      # "Missing ... sso_start_url". mruby `system` only exposes the exit status
+      # (it inherits the terminal, so the message isn't readable here), so on
+      # ANY non-zero exit fall back to `aws configure sso` — the interactive
+      # first-time setup, which also logs in at the end.
+      MItamae.logger.warn("Launching: aws sso login#{prof}")
+      ok = system("aws sso login#{prof}")
+      unless ok
+        MItamae.logger.warn("'aws sso login' did not succeed (profile may not be SSO-configured yet) — launching 'aws configure sso#{prof}' for first-time SSO setup.")
+        system("aws configure sso#{prof}")
+      end
+    else
+      MItamae.logger.warn("Launching: aws configure#{prof}")
+      system("aws configure#{prof}")
+    end
     ENV["AWS_PROFILE"] = name unless name.empty?
+  end
+
+  # Short, classified reason a single profile's auth check failed — for the
+  # per-profile auto-discovery log. Input is merged stdout+stderr.
+  def _classify_short(out)
+    s = out.to_s
+    return "no credentials (run 'aws configure' / 'aws configure sso')" if s.include?("Unable to locate credentials")
+    return "SSO not configured (run 'aws configure sso')" if s.include?("sso_start_url") || s.include?("configure sso")
+    return "token expired (run 'aws sso login')" if s.include?("ExpiredToken") || s.downcase.include?("expired")
+    return "access denied (lacks ssm:GetParameter + kms:Decrypt)" if s.include?("AccessDenied") || s.include?("not authorized")
+    return "parameter not found" if s.include?("ParameterNotFound")
+    _first_line(s)
   end
 
   # Prepend dirs to mitamae's running ENV['PATH'] so subsequent execute
