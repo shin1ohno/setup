@@ -178,12 +178,14 @@ migrate に統合する）:
 
 ### 2-0: DSL 追加（先行 PR、functions を触るのはこの PR だけ）
 
-- [ ] PR 2-0: `cookbooks/functions/` に 2 ヘルパーを追加（**適用はしない**。定義のみ + コメントで使用例）
-  - `systemd_unit`: staging → `sudo install` → daemon-reload → enable → **restart timer/service**
-    の定型を 1 定義に。`~/.claude/rules/infrastructure.md` の "systemd Timer Verification Gate"
-    （enable --now では更新が反映されない / `Trigger:` 検証）の知見を実装に焼き込む
-  - `deploy_with_ssm_env`: `require_external_auth` + generate_env.sh 実行 + remote_file 配置 +
-    temp 削除の定型。**content-aware skip_if**（期待キーの存在チェック）を標準にする
+- [x] PR 2-0: `cookbooks/functions/` に 2 ヘルパーを追加（適用はしない。定義のみ + 使用例コメント）（このPR）
+  - `systemd_unit`: install + daemon-reload + enable + **restart/start** を 1 定義に。.service は
+    `enable --now` でなく `restart`（編集が稼働中サービスに反映）、.timer は enable+restart timer+start
+    companion service（"systemd Timer Verification Gate" の知見）。**staging は呼び出し元が行う** —
+    define 内 `remote_file source "files/..."` は定義元 functions/ 基準で解決される mitamae の罠を回避
+  - `deploy_with_ssm_env`: `require_external_auth` + generate 実行 + remote_file 配置 + temp 削除を
+    1 定義に。**content-aware skip_if**（`expected_keys` の全キー存在チェック）を標準化
+  - throwaway cookbook の dry-run で両 define の展開を検証（exit 0・install→activate 配線・auth skip 確認）
 
 ### 2-1〜: 適用 sweep（cookbook 単位で完結、並列可）
 
