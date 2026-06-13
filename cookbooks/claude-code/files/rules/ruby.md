@@ -519,3 +519,36 @@ Why batched: each fix-PR-CI-merge-redeploy cycle takes 5-10 min. Sequential fix 
 
 This rule exists because the 2026-05-09 ADR-0005 Phase 3b session shipped 6 sequential fix PRs (#242 → #243 → #244 → #245 → #247 → #248), ~30-60 min of avoidable cycle time. Bugs #5/#6 (the IP confusion above) were diagnosable from the first ES log line "No route to host" via `pct exec <vmid> -- ip neigh show` (would have shown `INCOMPLETE` immediately). Bugs #7/#8 (cert ownership + healthcheck quoting) surfaced later but were independent and could have been in the same batch as the network bugs.
 
+## mruby API constraints — File.mtime / File.stat not available
+
+mitamae runs on **mruby**, not CRuby. The `File` class in mruby is a strict subset:
+
+- **Available**: `File.exist?`, `File.read`, `File.join`, `File.dirname`, `File.basename`, `File.expand_path`
+- **NOT available**: `File.mtime`, `File.stat`, `File.size`, `File.birthtime`, any `File::Stat` methods
+
+CI syntax-check jobs run CRuby (`ruby -c`), which has all of these. A cookbook using `File.mtime` or `File.stat` inside a `skip_if` / `not_if` Proc passes CI, passes `ruby -c`, and aborts at converge time on every real target with `undefined method 'mtime' (NoMethodError)`.
+
+**Rule**: any time/age/size logic in a `skip_if` / `not_if` / `only_if` guard MUST be expressed as a shell command (string form), not a Ruby Proc:
+
+```ruby
+# WRONG — File.mtime is CRuby only; NoMethodError on mruby
+skip_if: -> { File.exist?(sentinel) && (Time.now - File.mtime(sentinel)) < 86400 }
+
+# RIGHT — delegate time/age logic to bash
+skip_if: "test -f #{sentinel} && find #{sentinel} -mmin -1440 | grep -q ."
+```
+
+**Trigger**: any `not_if` / `only_if` / `skip_if` that references `File.mtime`, `File.stat`, `File.size`, or any `File::Stat` method.
+
+**Detection**:
+
+```bash
+git grep -nE 'File\.(mtime|stat|size|birthtime|ctime|atime)' cookbooks/
+```
+
+Any hit inside a Proc is a mruby NoMethodError waiting to fire.
+
+**Why CI cannot catch this**: the syntax-check job uses the system Ruby (CRuby). Only running `mitamae local <role>.rb` under the real mruby binary (or `mitamae --dry-run`) on a target host exposes the missing method. `mitamae --dry-run` on the dev box also uses mruby, so a dry-run on any LXC is a faster feedback loop than waiting for a production apply failure.
+
+This rule exists because setup PR #459 (2026-06-10, KMS-reduction ES snapshot cookbook) wrote `skip_if: -> { File.exist?(sentinel) && (Time.now - File.mtime(sentinel)) < 86400 }`. CI green. Every ES-node mitamae apply in production aborted with `NoMethodError: undefined method 'mtime'`. PR #460 replaced the Proc with a `find -mmin` shell guard. CI-passing yet production-failing: the mruby runtime is the only gate that counts.
+
