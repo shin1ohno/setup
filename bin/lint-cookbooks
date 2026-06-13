@@ -21,6 +21,11 @@
 #      never take effect ("Notify-Driven Restart Requires --force-recreate").
 #      Only flags `action :nothing` execs (the notify path); `ensure running`
 #      execs with `only_if` correctly use plain `up -d`.
+#   5. fully-BARE require_external_auth gate (no --profile/AWS_PROFILE) — profile
+#      auto-discovery is TTY-only, so a bare gate is non-deterministic on the
+#      unattended NON-TTY fleet (the cognee/memory/hydra silent .env-skip class).
+#      Fleet cookbooks must pin an explicit --profile; darwin auto-discovery
+#      cookbooks are listed in BARE_OK. allowlist: see BARE_OK (+ ALLOW3).
 #
 # Usage:  bin/lint-cookbooks   # exit 1 on any violation
 
@@ -49,6 +54,17 @@ ALLOW1 = {
 ALLOW3 = %w[
   cookbooks/mcp/default.rb
   cookbooks/codex-cli/default.rb
+].to_set
+
+# Check 5: cookbooks whose FULLY-BARE auth gate (no --profile/AWS_PROFILE) is
+# intentional — darwin-only stacks that rely on require_external_auth's profile
+# AUTO-DISCOVERY (which is TTY-only). A bare gate is unsafe on the unattended
+# NON-TTY fleet: auto-discovery never runs there, so the bare check falls through
+# to a non-deterministic ambient profile (the cognee/memory/hydra silent-.env-skip
+# class). Everything NOT listed here (and not in ALLOW3, which is skipped wholesale)
+# must pin an explicit --profile. mcp/codex-cli are already covered by ALLOW3.
+BARE_OK = %w[
+  cookbooks/local-mcp/default.rb
 ].to_set
 
 # --- file discovery --------------------------------------------------------
@@ -309,6 +325,49 @@ recipe_files.each do |file|
       next
     end
     i += 1
+  end
+end
+
+# --- check 5: fully-bare auth gate (require_external_auth OR deploy_with_ssm_env) ---
+#
+# A gate whose check_command carries NO profile (no --profile / no AWS_PROFILE=)
+# relies on require_external_auth's profile auto-discovery, which is TTY-only. On
+# the unattended NON-TTY fleet auto-discovery never runs, so a bare gate falls
+# through to a non-deterministic ambient profile — the cognee/memory/hydra silent
+# .env-skip class. Fleet cookbooks must pin an explicit --profile; darwin
+# auto-discovery cookbooks are listed in BARE_OK (mcp/codex-cli via ALLOW3).
+# Covers BOTH gate forms: `require_external_auth(check_command: "...")` and the
+# `deploy_with_ssm_env "..." do; check_command "..."; end` DSL setter.
+
+recipe_files.each do |file|
+  next if ALLOW3.include?(file) || BARE_OK.include?(file)
+  text = File.read(file)
+  next unless text.include?("require_external_auth") || text.include?("deploy_with_ssm_env")
+  lines = text.lines.map(&:chomp)
+  flagged = false
+  lines.each_with_index do |l, idx|
+    break if flagged
+    next if l =~ /\A\s*#/
+    next unless l =~ /\A\s*check_command[:\s]/
+    blob, = join_continuation(lines, idx)
+    blob = blob.sub(/\A\s*check_command:?\s*/, "")
+    cmd =
+      if blob =~ /\A([a-z_]\w*)\s*,?\s*\z/ # bare identifier -> variable
+        resolve_var(Regexp.last_match(1), lines) || ""
+      else
+        quoted_concat(blob)
+      end
+    next if cmd.empty?
+    next unless profile_of(cmd) == :bare
+    add(violations, file, idx + 1,
+        "fully-BARE auth gate check_command (no --profile/AWS_PROFILE). " \
+        "require_external_auth profile auto-discovery is TTY-only, so a bare gate " \
+        "is non-deterministic on the unattended (non-TTY) fleet — it falls through " \
+        "to whatever ambient profile exists (the cognee/memory/hydra silent " \
+        ".env-skip class). Pin an explicit --profile (fleet cookbook), or add this " \
+        "file to bin/lint-cookbooks BARE_OK if it is a darwin-only auto-discovery " \
+        "cookbook.")
+    flagged = true
   end
 end
 
