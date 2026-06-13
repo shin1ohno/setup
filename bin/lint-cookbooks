@@ -1,0 +1,326 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# Guardrail (Phase 0 of docs/refactoring/plan.md): static checks for the
+# mitamae footguns codified in ~/.claude/rules/ruby.md. Runs over every recipe
+# (.rb under cookbooks/ roles/ pve/ + the root entry recipes), skipping
+# cookbooks/*/files/** (those are shipped artifacts, not recipes).
+#
+# Checks:
+#   1. top-level `if/unless File.exist?`  — compile-time eval reads pre-converge
+#      state ("Mitamae evaluation model — top-level Ruby is compile-time").
+#      Code inside a `def` is exempt (runs at call time). allowlist: see ALLOW1.
+#   2. Integer `owner`/`group`            — mitamae requires String ("owner
+#      attribute should be String"). `owner "1000"` ok, `owner 1000` fails.
+#   3. check_command profile MISMATCH     — the require_external_auth gate's
+#      profile must match the profiles used by the gated cookbook's actual aws
+#      operations ("Auth-check gate must match the cookbook's actual invocation
+#      profile"). bare<->bare is consistent and passes. allowlist: see ALLOW3.
+#   4. notify-driven `docker compose up -d` missing `--force-recreate` — a bare
+#      `up -d` is a no-op on running containers, so bind-mounted config edits
+#      never take effect ("Notify-Driven Restart Requires --force-recreate").
+#      Only flags `action :nothing` execs (the notify path); `ensure running`
+#      execs with `only_if` correctly use plain `up -d`.
+#
+# Usage:  bin/lint-cookbooks   # exit 1 on any violation
+
+require "set"
+
+REPO_ROOT = File.expand_path("..", __dir__)
+Dir.chdir(REPO_ROOT)
+
+# --- allowlists ------------------------------------------------------------
+
+# Check 1: top-level File.exist? that is intentionally compile-time safe.
+ALLOW1 = {
+  # Reads a user-managed local override, not a resource side effect.
+  "roles/manage/default.rb" => [14],
+  # Fail-fast diagnostic: `exit 1` if brew is installed (prefix dir exists) but
+  # not on PATH, using the prior-run profile.d fragment as the "PATH already
+  # wired" signal. NOT the resource-declaration footgun — it aborts loudly, it
+  # does not silently skip resources based on a file a converge step creates
+  # this run.
+  "cookbooks/homebrew/default.rb" => [3],
+}.freeze
+
+# Check 3: cookbooks whose bare/STS auth gate is correct by design.
+#   mcp / codex-cli run on darwin where `aws login`'s DEFAULT profile is the
+#   right credential — adding --profile would break Mac MCP auth (case B, D5).
+ALLOW3 = %w[
+  cookbooks/mcp/default.rb
+  cookbooks/codex-cli/default.rb
+].to_set
+
+# --- file discovery --------------------------------------------------------
+
+recipe_files =
+  (Dir["cookbooks/**/*.rb"] + Dir["roles/**/*.rb"] + Dir["pve/*.rb"] +
+   ["darwin.rb", "linux.rb", "test-cookbook.rb"])
+  .reject { |p| p.include?("/files/") }
+  .select { |p| File.file?(p) }
+  .sort
+  .uniq
+
+violations = []
+
+def add(violations, file, lineno, msg)
+  violations << "#{file}:#{lineno}: #{msg}"
+end
+
+# --- check 1: top-level File.exist? ----------------------------------------
+
+# Flag File.exist? inside a top-level `if`/`unless` CONDITION, including
+# multi-line conditions (e.g. `if a && \n  b && \n  File.exist?(...)`). Code
+# inside a `def` body is exempt (runs at call time, not compile time).
+CONT = /(?:&&|\|\||\\|\band\b|\bor\b)\z/ # line continues the condition
+
+recipe_files.each do |file|
+  lines = File.readlines(file).map { |l| l.chomp }
+  def_stack = [] # indentation columns of open `def`s
+  i = 0
+  while i < lines.length
+    raw = lines[i]
+    indent = raw[/\A */].length
+    if raw =~ /\A\s*def\b/
+      def_stack.push(indent); i += 1; next
+    end
+    if raw =~ /\A\s*end\b/ && !def_stack.empty? && indent == def_stack.last
+      def_stack.pop; i += 1; next
+    end
+    if def_stack.empty? && raw =~ /\A\s*(if|unless)\b/
+      kw = Regexp.last_match(1)
+      cond = [raw]
+      j = i
+      while lines[j] && lines[j].rstrip =~ CONT
+        j += 1
+        cond << lines[j] if lines[j]
+      end
+      if cond.join("\n") =~ /File\.exist/ && !(ALLOW1[file]&.include?(i + 1))
+        add(violations, file, i + 1,
+            "top-level `#{kw} ... File.exist?` runs at compile time (pre-converge " \
+            "state). Use a resource-level only_if/not_if, or allowlist in " \
+            "bin/lint-cookbooks ALLOW1 with justification.")
+      end
+      i = j + 1
+      next
+    end
+    i += 1
+  end
+end
+
+# --- check 2: Integer owner/group ------------------------------------------
+
+recipe_files.each do |file|
+  File.foreach(file).with_index(1) do |raw, lineno|
+    next if raw =~ /\A\s*#/
+    next unless raw =~ /\A\s*(owner|group)\s+(\d)/
+    add(violations, file, lineno,
+        "Integer `#{Regexp.last_match(1)}` — mitamae requires a String " \
+        "(e.g. owner \"1000\", not owner 1000).")
+  end
+end
+
+# --- check 3: check_command profile MISMATCH -------------------------------
+#
+# Scope limits (sound on this repo, documented so a future change is reviewed):
+#  - per-file profile union: assumes one cookbook gates a single profile. A
+#    cookbook legitimately using two distinct named profiles would need this
+#    relaxed (none does today).
+#  - a bare aws op is only counted when the file has NO profile token anywhere
+#    in its op region (otherwise bare-looking calls are assumed to inherit a
+#    file-level AWS_PROFILE=).
+#  - STS-only gates and non-line-start `check_command:` keywords are not
+#    compared (none exist outside the ALLOW3 darwin cookbooks).
+
+# Classify a command string by the AWS profile it uses.
+def profile_of(cmd)
+  return :sts if cmd =~ /\baws\s+sts\b/
+  if cmd =~ /--profile\s+(\S+)/ || cmd =~ /AWS_PROFILE=(\S+)/
+    return Regexp.last_match(1).gsub(/['"]/, "").sub(/[,)]+\z/, "")
+  end
+  :bare
+end
+
+# Join a logical (possibly backslash-continued) statement starting at `lines[i]`
+# and return [joined_text, next_index].
+def join_continuation(lines, i)
+  buf = []
+  j = i
+  loop do
+    line = lines[j]
+    buf << line
+    break unless line.rstrip.end_with?("\\")
+    j += 1
+    break if j >= lines.length
+  end
+  [buf.join("\n"), j]
+end
+
+# Concatenate all double-quoted segments in a blob (Ruby adjacent-string concat).
+def quoted_concat(blob)
+  blob.scan(/"((?:[^"\\]|\\.)*)"/).map { |m| m[0] }.join
+end
+
+# Resolve a scalar `var = "..."` (with continuation / concat) from file lines.
+def resolve_var(var, lines)
+  lines.each_with_index do |line, i|
+    next unless line =~ /\A\s*#{Regexp.escape(var)}\s*=\s*/
+    blob, = join_continuation(lines, i)
+    blob = blob.sub(/\A\s*#{Regexp.escape(var)}\s*=\s*/, "")
+    return quoted_concat(blob)
+  end
+  nil
+end
+
+recipe_files.each do |file|
+  next if ALLOW3.include?(file)
+  text  = File.read(file)
+  next unless text.include?("require_external_auth")
+  lines = text.lines.map(&:chomp)
+
+  arg_line_idx = Set.new # 0-based line indices inside a require_external_auth(...) arg list
+  gate_profiles = Set.new
+
+  i = 0
+  while i < lines.length
+    line = lines[i]
+    if line !~ /\A\s*#/ && line =~ /\brequire_external_auth\s*\(/
+      # Walk paren depth from this line to the matching close.
+      depth = 0
+      started = false
+      j = i
+      check_lines = []
+      while j < lines.length
+        l = lines[j]
+        arg_line_idx << j
+        check_lines << l
+        l.each_char do |c|
+          if c == "("
+            depth += 1; started = true
+          elsif c == ")"
+            depth -= 1
+          end
+        end
+        break if started && depth <= 0
+        j += 1
+      end
+      # Extract check_command value from the captured arg lines.
+      ci = check_lines.index { |l| l =~ /\A\s*check_command:/ }
+      if ci
+        blob, = join_continuation(check_lines, ci)
+        blob = blob.sub(/\A\s*check_command:\s*/, "")
+        cmd =
+          if blob =~ /\A([a-z_]\w*)\s*,?\s*\z/ # bare identifier -> variable
+            resolve_var(Regexp.last_match(1), lines) || ""
+          else
+            quoted_concat(blob)
+          end
+        gate_profiles << profile_of(cmd) unless cmd.empty?
+      end
+      i = j + 1
+      next
+    end
+    i += 1
+  end
+
+  next if gate_profiles.empty?
+
+  # Operation profiles: scan everything OUTSIDE the gate arg-lists for the aws
+  # profiles the cookbook actually uses (--profile / AWS_PROFILE=), and whether
+  # any bare `aws ssm|sts` op exists.
+  op_profiles = Set.new
+  op_has_bare = false
+  lines.each_with_index do |line, idx|
+    next if arg_line_idx.include?(idx)
+    next if line =~ /\A\s*#/
+    line.scan(/--profile\s+(\S+)/) { |m| op_profiles << m[0].gsub(/['"]/, "").sub(/[,)]+\z/, "") }
+    line.scan(/AWS_PROFILE=(\S+)/)  { |m| op_profiles << m[0].gsub(/['"]/, "").sub(/[,)]+\z/, "") }
+  end
+  # bare op = an aws ssm/sts invocation in op-region with no profile anywhere in
+  # the file's op-region (if the file sets AWS_PROFILE= somewhere, bare-looking
+  # aws calls are assumed to inherit it).
+  if op_profiles.empty?
+    lines.each_with_index do |line, idx|
+      next if arg_line_idx.include?(idx)
+      next if line =~ /\A\s*#/
+      if line =~ /\baws\s+(?:ssm|sts)\b/
+        op_has_bare = true
+        break
+      end
+    end
+  end
+
+  # Reduce the gate to a single representative profile.
+  concrete = gate_profiles.reject { |p| p == :sts }
+  next if concrete.empty? # STS-only gate (allowlisted styles) — nothing to compare
+
+  if concrete == [:bare]
+    unless op_profiles.empty?
+      add(violations, file, 1,
+          "auth gate uses a BARE check_command but the cookbook's aws operations " \
+          "use profile(s) #{op_profiles.to_a.inspect}. Gate and operations must " \
+          "use the same profile (~/.claude/rules/ruby.md auth-check gate rule).")
+    end
+  else
+    gp = concrete.reject { |p| p == :bare }
+    extra = op_profiles - gp.to_set
+    if !extra.empty?
+      add(violations, file, 1,
+          "auth gate uses profile(s) #{gp.inspect} but aws operations also use " \
+          "#{extra.to_a.inspect}. Make check_command and the gated aws calls use " \
+          "the same --profile/AWS_PROFILE.")
+    elsif op_has_bare
+      add(violations, file, 1,
+          "auth gate uses profile(s) #{gp.inspect} but the cookbook has BARE aws " \
+          "operations (no --profile/AWS_PROFILE). Add the same profile to every " \
+          "aws ssm/sts call in the gated block.")
+    end
+  end
+end
+
+# --- check 4: notify-driven compose up -d without --force-recreate ---------
+
+recipe_files.each do |file|
+  lines = File.readlines(file)
+  i = 0
+  while i < lines.length
+    line = lines[i]
+    if line =~ /\A(\s*)execute\b.*\bdo\b/
+      indent = Regexp.last_match(1).length
+      block = [line]
+      start = i
+      j = i + 1
+      while j < lines.length
+        block << lines[j]
+        break if lines[j] =~ /\A {#{indent}}end\b/ || lines[j] =~ /\A\t*end\b/ && lines[j][/\A */].length == indent
+        j += 1
+      end
+      body = block.join
+      compose = body =~ /docker[- ]compose\b.*\bup -d/m
+      forced  = body.include?("--force-recreate")
+      notify_driven = body =~ /\baction\s+:nothing\b/
+      if compose && !forced && notify_driven
+        add(violations, file, start + 1,
+            "notify-driven `docker compose up -d` is missing --force-recreate " \
+            "(bare up -d is a no-op on running containers, so config edits are " \
+            "silently dropped). See ~/.claude/rules/docker-compose.md.")
+      end
+      i = j + 1
+      next
+    end
+    i += 1
+  end
+end
+
+# --- report ----------------------------------------------------------------
+
+puts "cookbook lint (#{recipe_files.size} recipes scanned)"
+if violations.empty?
+  puts "OK: no violations."
+  exit 0
+else
+  warn ""
+  warn "FAIL: #{violations.size} violation(s):"
+  violations.sort.each { |v| warn "  #{v}" }
+  exit 1
+end
