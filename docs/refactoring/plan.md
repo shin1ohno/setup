@@ -195,8 +195,11 @@ migrate に統合する）:
 （systemd_unit / compose_service / deploy_with_ssm_env）を同一 PR 系列で適用する。
 パターン横断 sweep で同一ファイルを複数ストリームが触ることを禁止。
 
-- [ ] PR 2-1: canary 検証 PR — `node-exporter`（systemd_unit の初適用）を canary CT で機能検証
-      （`systemctl show --property=Trigger` / :9100 scrape 確認）。fix shape をここで確定
+- [~] PR 2-1: canary 検証 PR — `node-exporter`（systemd_unit の初適用）。**コード準備済み（#477）・canary 待ち**。
+      node-exporter は .service なので機能検証は `systemctl is-active node-exporter` = active +
+      `curl -sf localhost:9100/metrics | head -1` でメトリクス取得確認（Trigger は timer 用なので非該当）。
+      pro(converged) で before/after dry-run diff ゼロ＝挙動保存を確認済み。activation は enable --now→enable&&restart
+      （初回 install 等価・unit 編集時に反映＝改善）。**canary 手順は本セッション handoff で `!` 提示**
 - [ ] PR 2-2〜: グループ G1（systemd 単純系）: s3-backup, unbound-watchdog ほか systemd 手書き 24 cookbook の残り。
       2-4 cookbook ずつ機械 sweep
 - [ ] PR 2-x: グループ G2（LXC サービス系、compose + ssm env + systemd 混在）:

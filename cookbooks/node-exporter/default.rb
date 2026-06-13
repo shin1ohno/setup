@@ -102,11 +102,13 @@ execute "create #{NODE_EXPORTER_TEXTFILE_DIR} as root" do
          "test \"$(stat -c '%U:%G:%a' #{NODE_EXPORTER_TEXTFILE_DIR})\" = 'root:root:755'"
 end
 
-# Stage + install the systemd unit. The pattern mirrors lxc-pro-router's unit
-# install: stage in user space, install via sudo, daemon-reload + enable on
-# change.
+# Stage the unit, then install + activate it via the systemd_unit helper
+# (Phase 2-1: first adoption of the helper). The caller stages so that
+# `source "files/..."` resolves to THIS cookbook; the helper owns install +
+# activation. Activation now ends in `restart` (not the prior `enable --now`),
+# so an edit to node-exporter.service takes effect on an already-running unit
+# instead of being silently ignored until the next reboot.
 unit_staging_path = "#{node[:setup][:root]}/node-exporter/node-exporter.service"
-unit_system_path  = "/etc/systemd/system/node-exporter.service"
 
 remote_file unit_staging_path do
   source "files/node-exporter.service"
@@ -115,13 +117,6 @@ remote_file unit_staging_path do
   mode "644"
 end
 
-execute "install node-exporter.service" do
-  command "sudo install -m 644 -o root -g root #{unit_staging_path} #{unit_system_path}"
-  not_if "diff -q #{unit_staging_path} #{unit_system_path} 2>/dev/null"
-  notifies :run, "execute[node-exporter daemon-reload + enable]"
-end
-
-execute "node-exporter daemon-reload + enable" do
-  command "sudo systemctl daemon-reload && sudo systemctl enable --now node-exporter.service"
-  action :nothing
+systemd_unit "node-exporter.service" do
+  staging_path unit_staging_path
 end
