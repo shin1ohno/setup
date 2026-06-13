@@ -29,7 +29,11 @@ yaml_to_json() {
 # Helper function to fetch SSM parameter
 fetch_ssm() {
   local param_path="$1"
-  aws ssm get-parameter --name "${param_path}" --with-decryption --query "Parameter.Value" --output text --region "${AWS_REGION}" 2>/dev/null || echo "SSM_FETCH_FAILED:${param_path}"
+  # Bare + fail-loud: on an SSM error, aws prints to stderr and returns non-zero,
+  # which (under set -euo pipefail) aborts the script at the call site instead of
+  # writing a poisoned 'SSM_FETCH_FAILED:...' literal into config.toml. Mirrors
+  # the mcp cookbook's M5 fix.
+  aws ssm get-parameter --name "${param_path}" --with-decryption --query "Parameter.Value" --output text --region "${AWS_REGION}"
 }
 
 # Start building config.toml
