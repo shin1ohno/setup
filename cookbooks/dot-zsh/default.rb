@@ -1,9 +1,6 @@
 # frozen_string_literal: true
 
 # Phase 4 zsh-startup refactor: Sheldon + starship on all platforms.
-# cookbooks/oh-my-zsh/ and cookbooks/typewritten/ are intentionally left
-# on disk for ~1 week as a rollback safety net — revert by swapping these
-# two includes back to typewritten + oh-my-zsh.
 include_cookbook "starship"
 include_cookbook "sheldon"
 
@@ -51,7 +48,7 @@ EOM
 end
 
 add_profile "dot-zsh" do
-  priority 60 # ensure to load after the oh-my-zsh
+  priority 60 # load after the priority-10 block that defines select-history
   bash_content <<"EOM"
 bindkey '^r' select-history
 EOM

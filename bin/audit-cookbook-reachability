@@ -31,14 +31,12 @@ require "set"
 REPO_ROOT = File.expand_path("..", __dir__)
 Dir.chdir(REPO_ROOT)
 
-# Cookbooks intentionally allowed to be unreachable. Phase 1 empties this.
-# PR 1-1 deleted ruby/openssl/autoconf/disable-ipv6/im-select; the dormant
-# trio below is deleted in PR 1-2 (then this list becomes empty).
-ALLOWLIST = %w[
-  memory-server
-  oh-my-zsh
-  typewritten
-].freeze
+# Cookbooks intentionally allowed to be unreachable. Empty as of Phase 1 (all
+# dead/dormant cookbooks deleted in PR 1-1 + 1-2). Add an entry ONLY for a
+# cookbook that is genuinely used but not include-reachable (e.g. a file-store
+# read by path), with a justifying comment — file-store refs are already
+# auto-detected below, so a manual entry should be rare.
+ALLOWLIST = %w[].freeze
 
 # lxc_entry(...) expands to these (functions/default.rb#lxc_entry).
 LXC_ENTRY_ROLE     = "lxc-core"
