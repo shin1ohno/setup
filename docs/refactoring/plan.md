@@ -287,8 +287,10 @@ migrate に統合する）:
 
 - [ ] PR 4-1: `pve/lxc-weave.rb`（284 行）のインラインロジックを `cookbooks/lxc-weave/` へ抽出。
       薄いエントリ（node override + include）形式に統一。canary: weave CT
-- [ ] PR 4-2: `pve/lxc-pro-router.rb`（224 行）同上。canary 必須 +
-      機能プローブに `~/.claude/rules/tailscale.md` の table-52 検証（`ip rule show` / LAN 到達性）を含める
+- [x] PR 4-2: `pve/lxc-pro-router.rb`（224 行）→ `cookbooks/lxc-pro-router/` 抽出 + 薄化（このPR、canary 待ち）。
+      __FILE__ path 修正。**before/after dry-run diff で挙動保存実証**（392 行一致、差分は temp ファイル名 +
+      notify 駆動 2 resource[apply-sysctl/reload-tailnet] の出力位置のみ＝挙動無関係、純粋 verbatim move）。
+      canary 機能プローブ: `~/.claude/rules/tailscale.md` の table-52 検証（`ip rule show` / LAN 到達性）必須
 - [ ] PR 4-3: `pve/lxc-consent.rb`（181 行）同上。canary: consent CT（OAuth フローの実トークン round-trip を含める —
       `~/.claude/rules/adversarial-review.md` Live Token Gate）
 - [ ] PR 4-4: node attribute 規約整理（`node[:setup][:*]` 等のデフォルト解決を host-profile に集約済みか監査、
