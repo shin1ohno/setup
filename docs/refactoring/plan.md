@@ -202,9 +202,16 @@ migrate に統合する）:
       activation は enable --now→enable&&restart（初回 install 等価・unit 編集時に反映＝改善）
 - [x] PR 2-2（G1）: **クローズ（実態空）**。2026-06-13 実態調査で systemd 手書き 17 件の大半が
       systemd_unit 非適合と判明（下記「Phase 2 sweep 実態調査」）。clean な適用は node-exporter のみで完了済み
-- [ ] PR 2-x（G2）: **canary 必須・実態は per-cookbook カスタマイズあり**（下記調査）。
+- [~] PR 2-x（G2）: **canary 必須・実態は per-cookbook カスタマイズあり**（下記調査）。
       compose_service は monitoring/praeco の 2 件のみ（ES/kibana/apm は native systemd）。
       deploy_with_ssm_env は ~8 cookbook に余地あるが各々 skip_if/gate 数が異なり挙動改善=canary 必須
+  - [x] G2-a `local-mcp`: deploy_with_ssm_env 採用（このPR）。cognee-shape に完全適合する唯一の clean fit。
+        skip_if を content-aware（LLM_API_KEY/EMBEDDING_API_KEY 常時出力）に。**darwin 限定**なので
+        Linux dry-run 不可 → 検証は (1) 実パラメータ throwaway で expansion 確認、(2) resource 名/path 完全保存、
+        (3) **Mac apply で最終 functional 検証**。注: 採用で require_external_auth が helper 内に移り
+        lint #3（profile MISMATCH）の視界外に → G2 採用拡大なら lint #3 を deploy_with_ssm_env 対応へ拡張要
+  - [ ] G2-残: lxc-apm-server(keystore inject), lxc-kibana/elasticsearch(cert+multi-gate), lxc-monitoring(--remove-orphans),
+        lxc-praeco, elastic-agent(3 gate) は cognee-shape 非適合 → helper 拡張か個別対応。lxc-hydra は案 B probe 先行
 
 ### Phase 2 sweep 実態調査（2026-06-13、baseline 概算の訂正）
 
