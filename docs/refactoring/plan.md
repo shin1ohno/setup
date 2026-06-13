@@ -1,7 +1,9 @@
 # Setup リポジトリ全面リファクタリング計画（2026-06）
 
-Status: **Phase 0/1 完了・Phase 2-0(DSL定義) + Phase 3(3-R/3-0/D3) 完了。残: Phase 2 sweep(canary 必須) / Phase 4(canary 必須) / Phase 5**。
-Phase 2 sweep・Phase 4 の canary 検証と案 B の `/hydra/*` profile probe は実機アクセス（PVE host）が必要 → ユーザーの `!` 実行待ち。
+Status: **Phase 0/1 完了・Phase 2-0(DSL定義)/2-1(node-exporter) + Phase 3(3-R/3-0/D3) 完了・G1 クローズ(実態空)。
+残: G2 deploy_with_ssm_env 採用(canary 必須・per-cookbook) / Phase 4(canary 必須) / Phase 5**。
+G2/Phase 4 の canary と案 B `/hydra/*` profile probe は実機（PVE host）アクセスが必要 → ユーザーの `!` 待ち。
+baseline の systemd/compose クラスタは過大計上で、残りは「機械 sweep」でなく per-cookbook 作業（上記 Phase 2 sweep 実態調査）。
 本ファイルが進捗台帳の正本。各 PR のマージ時にチェックボックスを更新し、完了 Phase はマージコミットへのリンクを残すこと。
 
 ## 決定事項ログ
@@ -195,17 +197,45 @@ migrate に統合する）:
 （systemd_unit / compose_service / deploy_with_ssm_env）を同一 PR 系列で適用する。
 パターン横断 sweep で同一ファイルを複数ストリームが触ることを禁止。
 
-- [~] PR 2-1: canary 検証 PR — `node-exporter`（systemd_unit の初適用）。**コード準備済み（#477）・canary 待ち**。
-      node-exporter は .service なので機能検証は `systemctl is-active node-exporter` = active +
-      `curl -sf localhost:9100/metrics | head -1` でメトリクス取得確認（Trigger は timer 用なので非該当）。
-      pro(converged) で before/after dry-run diff ゼロ＝挙動保存を確認済み。activation は enable --now→enable&&restart
-      （初回 install 等価・unit 編集時に反映＝改善）。**canary 手順は本セッション handoff で `!` 提示**
-- [ ] PR 2-2〜: グループ G1（systemd 単純系）: s3-backup, unbound-watchdog ほか systemd 手書き 24 cookbook の残り。
-      2-4 cookbook ずつ機械 sweep
-- [ ] PR 2-x: グループ G2（LXC サービス系、compose + ssm env + systemd 混在）:
-      lxc-monitoring, lxc-praeco, lxc-elasticsearch, lxc-kibana, lxc-apm-server, lxc-hydra,
-      local-mcp, mcp-probe, claude-code, **elastic-agent**（※ elastic-agent は Phase 3 対象外とし G2 に専属）。
-      各 cookbook 1 PR、LXC 系は canary 必須
+- [x] PR 2-1: `node-exporter` を systemd_unit に移行（#477、ユーザー判断で直接マージ）。
+      converged host で no-op（unit 不変 → install は diff-gate で skip → activate 未 notify）。
+      activation は enable --now→enable&&restart（初回 install 等価・unit 編集時に反映＝改善）
+- [x] PR 2-2（G1）: **クローズ（実態空）**。2026-06-13 実態調査で systemd 手書き 17 件の大半が
+      systemd_unit 非適合と判明（下記「Phase 2 sweep 実態調査」）。clean な適用は node-exporter のみで完了済み
+- [ ] PR 2-x（G2）: **canary 必須・実態は per-cookbook カスタマイズあり**（下記調査）。
+      compose_service は monitoring/praeco の 2 件のみ（ES/kibana/apm は native systemd）。
+      deploy_with_ssm_env は ~8 cookbook に余地あるが各々 skip_if/gate 数が異なり挙動改善=canary 必須
+
+### Phase 2 sweep 実態調査（2026-06-13、baseline 概算の訂正）
+
+**G1（systemd_unit sweep）は実態空** — baseline「systemd 17」は過大計上:
+
+| cookbook | 実態 | 適合 |
+|---|---|---|
+| node-exporter | long-running service + files/ | ✓ #477 完了 |
+| unbound-watchdog | system timer + oneshot service（[Install] なし） | △ helper に **install-only モード**が要 |
+| lan-vpc-route | system service（files/）だが tailscale route-fix（table-52 sensitive） | △ 要 canary・個別 |
+| s3-backup / aws-cost-monitor | `systemctl --user` は **README heredoc 内のドキュメント** | ✗ 実 resource でない |
+| obsidian_file_sync | 実 `--user` timer（user-scope + inline 生成） | ✗ helper は sudo system のみ |
+| lxc-mask-unsupported-units / lxc-systemd-hardening-fix | unit の mask/patch | ✗ install でない |
+| edge-agent / lxc-roon | launchd / inline service | 個別扱い |
+
+**G2 も「機械 sweep」でない** — 各採用が per-cookbook カスタマイズに当たる:
+
+| cookbook | 手書きcompose | require_ext_auth | 採用余地 |
+|---|---|---|---|
+| lxc-monitoring | 2 | 2 | compose_service: 但し `--remove-orphans` 使用（helper default は `--build`）→ helper 拡張要。dws: 2 gate |
+| lxc-praeco | 2 | 1 | compose_service 候補 + dws 1 |
+| lxc-elasticsearch / lxc-kibana / lxc-apm-server | 0（native systemd） | 2/2/1 | dws のみ（compose なし） |
+| lxc-hydra | 0 | 1 | **dws + 案 B profile（probe 先行必須）** |
+| local-mcp | 0（compose_service 済） | 1 | dws 1 |
+| mcp-probe | 0 | 1 | require_ext_auth あるが file-delete なし（別パターン） |
+| claude-code | 0 | 0 | dws 非該当 |
+| elastic-agent | 0 | 3 | dws 3 gate |
+
+結論: G2 の真の価値は **deploy_with_ssm_env を ~8 cookbook に採用**（content-aware skip_if 標準化）。
+ただし (a) 各 cookbook の既存 skip_if/generate を厳密に保存する per-cookbook 作業、(b) LXC サービスなので
+**全て canary 必須**、(c) lxc-hydra は案 B probe 先行。compose_service は helper 拡張（`--remove-orphans` 等）が前提。
 - [ ] 案 B 要件（SSM profile 統一、D5）— **独立 PR にしない**。`lxc-hydra` の bare→明示 `--profile` 化は
       その G2 PR に、`lxc-consent` の同変更は Phase 4 PR 4-3（inline 抽出）に**折り込む**
       （1 cookbook = 1 PR が同一ファイルを複数 PR で触らない原則）。共通の必須前提:
