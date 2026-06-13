@@ -291,15 +291,17 @@ migrate に統合する）:
       機能プローブに `~/.claude/rules/tailscale.md` の table-52 検証（`ip rule show` / LAN 到達性）を含める
 - [ ] PR 4-3: `pve/lxc-consent.rb`（181 行）同上。canary: consent CT（OAuth フローの実トークン round-trip を含める —
       `~/.claude/rules/adversarial-review.md` Live Token Gate）
-- [ ] PR 4-4: node attribute 規約整理（`node[:setup][:*]` 等のデフォルト解決を host-profile に集約済みか監査、
-      規約を CLAUDE.md に明文化）+ roles 境界監査（core/foundation/extras の重複 include 検出）
+- [x] PR 4-4: node attribute 規約整理 + roles 境界監査（このPR、CLAUDE.md に明文化）。
+      **監査結果クリーン**: node[:setup]/[:homebrew]/[:profile] は host-profile に一元化済み（22 箇所の重複除去済み・
+      散在代入なし）、roles 間で重複 include される cookbook はゼロ（各 cookbook は 1 role 専有）。修正不要、規約のみ明文化
 
 ## Phase 5: ガードレール恒久化・クローズ（依存: 全 Phase）
 
-- [ ] PR 5-1: CLAUDE.md「Cookbook Best Practices」に新 DSL（systemd_unit / compose_service /
-      deploy_with_ssm_env）の使用を明記。README / docs の更新
-- [ ] PR 5-2: `docs/refactoring/result.md` に baseline 比較（cookbook 数 145 → 目標 ~135、行数 -10% 前後）
-- [ ] Cognee へ結論保存 + retro 実施（PR 不要）
+- [x] PR 5-1: CLAUDE.md「Custom Helpers」+「Conventions」に DSL（lxc_entry / compose_service /
+      systemd_unit / deploy_with_ssm_env）+ thin-entry/guardrail 規約を明記（このPR・4-4 と統合）
+- [~] PR 5-2: `docs/refactoring/result.md` 作成（このPR、**予備版**）。canary PR（#479-482）+ 4-3b マージ後に確定。
+      cookbook 数は 145→136（merged）→ 139（Phase 4 抽出で +3）。dead code ゼロ・allowlist 空・CI ガードレール稼働が実利得
+- [ ] Cognee へ結論保存 + retro 実施（PR 不要）— retro は本セッションで実施済み（rg/-E・mitamae define・sweep 分類の 3 学習）
 
 ## 並列実行ガイド（ultracode / 複数ストリーム向け）
 
