@@ -179,3 +179,26 @@ When presenting a credential or configuration fix to the user that must succeed 
 When verify cannot be composed (e.g. interactive `aws configure`): explicitly mark verify as **required before retrying the main task**, not a suggestion. "and confirm with" or "before retrying, run". Not "you can also check".
 
 Detail (anti-pattern + origin): see `~/.claude/rules/debugging-detail.md#chain-verify-with-fix`.
+
+## Confirm the suspected driver is actually deployed before optimizing it
+
+Before designing an optimization or fix for a specific process / script / cron job suspected of driving a cost or load metric, run a one-shot probe to confirm it is actually present and running on the target host(s). Source-code existence does not imply deployment.
+
+Probe sequence (30 seconds, avoids the full investigation arc on a ghost process):
+
+```bash
+# Is the script/binary on the target?
+ssh root@<host> "find /root /etc/cron.d /etc/cron.* /var/spool/cron -name '<pattern>' 2>/dev/null"
+# Is there a running process?
+ssh root@<host> "pgrep -a -f '<script-name>' || echo NOT_RUNNING"
+# Is there a cron entry calling it?
+ssh root@<host> "grep -rs '<script-name>' /etc/cron* /var/spool/cron || echo NO_CRON"
+# Is there a systemd unit/timer?
+ssh root@<host> "systemctl list-timers --all | grep '<name>' || echo NO_TIMER"
+```
+
+If all return absent / NOT_RUNNING / NO_CRON / NO_TIMER, the suspected driver is not active on the target. Stop optimizing it and pivot to finding the actual driver (CloudTrail, `ps aux`, container logs, `systemctl list-timers`).
+
+**Trigger**: you are about to implement a cache, throttle, or rate-limit for a specific script or service based on source-code reading, without having verified it runs on the target.
+
+This rule exists because the 2026-06-10 KMS-reduction session identified `self-heal-observe.py` as a KMS Decrypt driver from source-code inspection, designed an mtime-based skip cache for it, and nearly deployed it — before the probe revealed the script had no cron entry, no process, and no deployment path on the ES-node LXCs. The actual driver was a different code path. Source-code presence alone is not evidence of runtime deployment.

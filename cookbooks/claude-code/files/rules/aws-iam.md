@@ -484,3 +484,29 @@ When the totals would mix categories, split the totals row by category — never
 When discussing a month where RI was purchased, present both views side by side. UnblendedCost without context looks like a cost explosion; AmortizedCost reflects the true monthly burden.
 
 This rule exists because the 2026-05-11 cost-analysis session presented 「小計 (RDS 以外) ~$20/月」 while the actual 4月 total for that group was $47.64 (containing Registrar $11 annual + ELB/WAF residue from discontinued services + Tax). The user had to ask 「これは何？」 to surface the missing context; the 5月 projection was actually $27/月 due to the annual Registrar not recurring. The vague 「小計」 label hid the discontinuity entirely.
+
+## KMS request attribution — query ssm:GetParameter, not kms:Decrypt
+
+When investigating KMS Decrypt call volume or cost attributed to SSM parameters, **do NOT query CloudTrail `kms:Decrypt` events** as the primary attribution source. SSM invokes KMS internally (ViaService), so every Decrypt event shows `sourceIPAddress: "AWS Internal"` — the calling host, IAM role, and parameter name are invisible on the Decrypt event itself.
+
+**Correct attribution query**: CloudTrail `ssm:GetParameter` (and `ssm:GetParameters`) events where `requestParameters.withDecryption = true`. These show the real caller identity, IP, parameter name, and timestamp.
+
+```bash
+START=$(date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ); END=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+aws cloudtrail lookup-events \
+  --lookup-attributes AttributeKey=EventName,AttributeValue=GetParameter \
+  --start-time "$START" --end-time "$END" --max-results 100 \
+  --profile sh1admn --region ap-northeast-1 --query 'Events[].CloudTrailEvent' --output text \
+| jq -rc 'select(.requestParameters.withDecryption == true) | [.sourceIPAddress, (.requestParameters.name // "?")] | @tsv' \
+| sort | uniq -c | sort -rn
+```
+
+**Also important**: only `SecureString` reads with `withDecryption=true` trigger a KMS Decrypt. `String`-type params (SSH public keys, bucket names, host registry) never invoke KMS — even when `--with-decryption` is passed (it's a no-op). Exclude String params from the KMS count.
+
+Full attribution flow for "which host/script calls SSM repeatedly with decryption?":
+
+1. CloudTrail `ssm:GetParameter` with `withDecryption=true` → caller IP/ARN + param name
+2. Confirm the param's `Type` is `SecureString` (String reads are KMS no-ops)
+3. Cross-reference with `ps` / cron / `systemctl list-timers` on the identified host (see `~/.claude/rules/debugging.md` "Confirm the suspected driver is actually deployed")
+
+This rule exists because the 2026-06-10 KMS-reduction session queried `kms:Decrypt` events first and found only `sourceIPAddress: "AWS Internal"` on all of them. Switching to `ssm:GetParameter` with `withDecryption=true` immediately surfaced caller ARNs, parameter paths, and call frequency. KMS cost is $1/CMK/month + $0.03/10k requests beyond the 20k/month free tier.
