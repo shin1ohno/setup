@@ -133,47 +133,183 @@ module RecipeHelper
       return
     end
 
-    # Non-interactive context (CI / dry-run / agent-driven): can't pause for
-    # user input AND the auth check failed. Skip the inner block entirely.
-    # Yielding here would queue a resource that will fail at converge, which
-    # aborts the whole mitamae run. Skipping with a loud warning lets the
-    # rest of the recipe proceed; the user can re-run after configuring auth.
+    # Non-interactive context (CI / dry-run / agent-driven / auto-mitamae fleet):
+    # can't pause for user input AND the auth check failed. Skip the inner block
+    # entirely. Yielding here would queue a resource that fails at converge,
+    # aborting the whole run. Skipping with a loud warning lets the rest of the
+    # recipe proceed; the user re-runs after configuring auth.
+    #
+    # IMPORTANT: this non-TTY return is BEFORE all the interactive enhancements
+    # below (auto-discovery / diagnosis / `c`/`l` setup). The 19-host fleet
+    # always takes THIS path, so its behavior is byte-identical to before — the
+    # new code adds zero aws calls / latency on the fleet.
     unless STDIN.tty?
       MItamae.logger.warn("[bootstrap] #{tool_name} not configured AND STDIN is not a TTY — skipping auth-gated block. Configure auth and re-run mitamae to apply.")
       return
+    end
+
+    # ---- interactive (TTY) path only from here ----
+    aws = check_command.include?("aws ")
+
+    # AUTO-DISCOVERY (AWS): if a configured profile already satisfies the check,
+    # select it and proceed with NO prompt. ENV mutation is in-process only
+    # (like prepend_path) and is inherited by the block's execute resources at
+    # converge. Checks that pass an explicit --profile ignore AWS_PROFILE, so
+    # this is a harmless no-op for them.
+    if aws
+      found = _auto_select_aws_profile(check_command)
+      if found
+        unless found == "__ambient__"
+          ENV["AWS_PROFILE"] = found
+          MItamae.logger.info("[bootstrap] #{tool_name}: auto-selected AWS profile '#{found}' — set AWS_PROFILE for the rest of this run.")
+        end
+        yield if block_given?
+        return
+      end
     end
 
     attempts = 0
     loop do
       attempts += 1
       MItamae.logger.warn("=" * 60)
-      MItamae.logger.warn("[bootstrap] #{tool_name} not configured (attempt #{attempts})")
+      MItamae.logger.warn("[bootstrap] #{tool_name}: authentication required (attempt #{attempts})")
+      MItamae.logger.warn("Diagnosis: #{_auth_diagnosis(check_command, aws)}")
+      MItamae.logger.warn("Verify (paste to debug): #{_strip_redirect(check_command)}")
       MItamae.logger.warn(instructions)
-      MItamae.logger.warn("Press Enter to re-check, or Ctrl-C to abort.")
+      menu = "Options: [Enter]=re-check  s=skip this block  Ctrl-C=abort"
+      menu += "  c=run 'aws configure' here  l=run 'aws sso login' here" if aws
+      MItamae.logger.warn(menu)
       MItamae.logger.warn("=" * 60)
 
-      STDIN.gets
+      response = (STDIN.gets || "").strip.downcase
+
+      # Skip is available from attempt 1 (was: only after 5 attempts).
+      if response == "s" || response == "skip"
+        if block_given?
+          MItamae.logger.warn("[bootstrap] Skipping #{tool_name}-dependent block. Re-run mitamae after configuring.")
+          return
+        else
+          raise "User skipped #{tool_name} configuration"
+        end
+      end
+
+      # Interactive AWS setup launched from the gate (mruby `system` inherits
+      # the terminal). After it returns, re-discover: the new/updated profile
+      # may now satisfy the check.
+      if aws && (response == "c" || response == "l")
+        _run_aws_setup(response == "l" ? :sso : :configure)
+        found = _auto_select_aws_profile(check_command)
+        if found
+          unless found == "__ambient__"
+            ENV["AWS_PROFILE"] = found
+            MItamae.logger.info("[bootstrap] #{tool_name}: profile '#{found}' now satisfies the check — AWS_PROFILE set for the rest of this run.")
+          end
+          yield if block_given?
+          return
+        end
+        next
+      end
 
       result = run_command(check_command, error: false)
       if result.exit_status == 0
         yield if block_given?
         return
       end
+    end
+  end
 
-      if attempts >= 5
-        MItamae.logger.warn("Still not configured after #{attempts} attempts.")
-        MItamae.logger.warn("Type 'skip' + Enter to bypass this block, or Enter alone to keep retrying.")
-        response = (STDIN.gets || "").strip
-        if response == "skip"
-          if block_given?
-            MItamae.logger.warn("Skipping #{tool_name}-dependent block. Re-run mitamae after configuring.")
-            return
-          else
-            raise "User skipped #{tool_name} configuration"
-          end
-        end
+  # --- require_external_auth internals (AWS-aware, TTY path only) ------------
+  # All of these run ONLY on the interactive path (after the non-TTY return in
+  # require_external_auth), so the extra probe calls never touch the fleet.
+
+  # Try the ambient identity, then each configured profile, against
+  # check_command. Returns "__ambient__" when the current/default identity
+  # already passes, the profile name when a named profile passes, else nil.
+  def _auto_select_aws_profile(check_command)
+    return "__ambient__" if run_command(check_command, error: false).exit_status == 0
+    listed = run_command("aws configure list-profiles 2>/dev/null", error: false)
+    return nil unless listed.exit_status == 0
+    profiles = listed.stdout.to_s.split("\n").map { |l| l.strip }.reject { |p| p.empty? }
+    return nil if profiles.empty?
+    # Visible progress: each attempt is a live SSM call, so without this the
+    # multi-profile probe looks like a hang.
+    MItamae.logger.info("[bootstrap] probing #{profiles.length} configured AWS profile(s) for one that satisfies the check...")
+    profiles.each do |profile|
+      MItamae.logger.info("[bootstrap]   trying AWS profile '#{profile}'...")
+      # Explicit --profile in check_command wins over AWS_PROFILE, so this is a
+      # no-op (same result) for already-profiled checks — harmless to try.
+      if run_command("AWS_PROFILE=#{profile} #{check_command}", error: false).exit_status == 0
+        return profile
       end
     end
+    MItamae.logger.info("[bootstrap] no configured AWS profile satisfies the check — prompting for setup.")
+    nil
+  end
+
+  # One-line, classified reason the auth check fails. AWS-aware, with a generic
+  # fallback for non-aws checks. The sts identity probe MIRRORS the gate's own
+  # profile selection (explicit --profile / AWS_PROFILE= embedded in
+  # check_command) so the diagnosis describes the SAME identity the check uses,
+  # not the ambient default.
+  def _auth_diagnosis(check_command, aws)
+    unless aws
+      out = run_command("#{_strip_redirect(check_command)} 2>&1", error: false)
+      return "command failed (exit #{out.exit_status}): #{_first_line(out.stdout)}"
+    end
+    prof_flag = (check_command =~ /--profile\s+(\S+)/) ? $1 : nil
+    prof_env  = (check_command =~ /AWS_PROFILE=(\S+)/) ? $1 : nil
+    profile = prof_flag || prof_env || ENV["AWS_PROFILE"] || "default"
+    sts =
+      if prof_flag
+        "aws sts get-caller-identity --profile #{prof_flag} 2>&1"
+      elsif prof_env
+        "AWS_PROFILE=#{prof_env} aws sts get-caller-identity 2>&1"
+      else
+        "aws sts get-caller-identity 2>&1"
+      end
+    id = run_command(sts, error: false)
+    idout = id.stdout.to_s
+    if id.exit_status != 0
+      cfg = (prof_flag || prof_env) ? " --profile #{profile}" : ""
+      return "no usable AWS credentials for profile '#{profile}'. Run 'aws configure#{cfg}' (static keys) or 'aws sso login#{cfg}'." if idout.include?("Unable to locate credentials") || idout.include?("configure")
+      return "AWS session token expired for profile '#{profile}'. Run 'aws sso login#{cfg}' or re-run 'aws configure#{cfg}'." if idout.include?("ExpiredToken") || idout.downcase.include?("expired")
+      return "AWS identity check failed (profile=#{profile}): #{_first_line(idout)}"
+    end
+    arn = (idout =~ /"Arn":\s*"([^"]+)"/) ? $1 : "unknown"
+    err = run_command("#{_strip_redirect(check_command)} 2>&1", error: false)
+    eout = err.stdout.to_s
+    return "authenticated (profile=#{profile}, arn=#{arn}) but ACCESS DENIED — this identity lacks ssm:GetParameter + kms:Decrypt on the target path. Try another profile (c) or fix IAM." if eout.include?("AccessDenied") || eout.include?("not authorized")
+    return "authenticated (profile=#{profile}) but the SSM parameter does not exist: #{_first_line(eout)}" if eout.include?("ParameterNotFound")
+    "authenticated (profile=#{profile}, arn=#{arn}) but the check still fails: #{_first_line(eout)}"
+  end
+
+  # Strip a trailing output redirect so the user sees a command that prints the
+  # real error when pasted. Covers `>/dev/null 2>&1`, `2>&1`, `2>/dev/null`,
+  # and `>/dev/null` tails.
+  def _strip_redirect(cmd)
+    cmd.gsub(/ *> *\/dev\/null +2>&1 *$/, "")
+       .gsub(/ *2> *\/dev\/null *$/, "")
+       .gsub(/ *2>&1 *$/, "")
+       .gsub(/ *> *\/dev\/null *$/, "")
+  end
+
+  def _first_line(text)
+    line = text.to_s.split("\n").map { |l| l.strip }.reject { |l| l.empty? }[0]
+    line ? line[0, 200] : "(no output)"
+  end
+
+  # Launch interactive AWS setup inheriting the terminal. mruby `system`
+  # inherits stdio (verified on mitamae v1.14.0), so aws's prompts reach the
+  # user directly. For a named profile, AWS_PROFILE is set so the rest of the
+  # run (and the re-check) use it.
+  def _run_aws_setup(mode)
+    MItamae.logger.warn("Profile name (blank = default): ")
+    name = (STDIN.gets || "").strip
+    base = (mode == :sso) ? "aws sso login" : "aws configure"
+    cmd = name.empty? ? base : "#{base} --profile #{name}"
+    MItamae.logger.warn("Launching: #{cmd}")
+    system(cmd)
+    ENV["AWS_PROFILE"] = name unless name.empty?
   end
 
   # Prepend dirs to mitamae's running ENV['PATH'] so subsequent execute
