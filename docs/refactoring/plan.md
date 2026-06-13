@@ -1,9 +1,11 @@
 # Setup リポジトリ全面リファクタリング計画（2026-06）
 
-Status: **Phase 0/1 完了・Phase 2-0(DSL定義)/2-1(node-exporter) + Phase 3(3-R/3-0/D3) 完了・G1 クローズ(実態空)。
-残: G2 deploy_with_ssm_env 採用(canary 必須・per-cookbook) / Phase 4(canary 必須) / Phase 5**。
-G2/Phase 4 の canary と案 B `/hydra/*` profile probe は実機（PVE host）アクセスが必要 → ユーザーの `!` 待ち。
-baseline の systemd/compose クラスタは過大計上で、残りは「機械 sweep」でなく per-cookbook 作業（上記 Phase 2 sweep 実態調査）。
+Status: **Phase 0-5 実質完遂（2026-06-13）**。Phase 0/1/2-0/2-1/3 マージ済み、G1 クローズ(実態空)、
+Phase 4 抽出 3 件(weave/pro-router/consent)マージ + 実機 canary 検証済み(fleet 19/19 success)、
+case-B 4-3b(lxc-consent → pve-bootstrap-ssm、home-monitor PR #95 で IAM grant + live decrypt 検証済み)完了、
+Phase 4-4/5 docs マージ済み。**残る外部依存のみ**: (a) #479 local-mcp = Air(Mac)が 2日 offline で apply 待ち、
+(b) lxc-hydra case-B = /memory/* grant が別途必要(bare 据え置き)、(c) G2 multi-step cookbook(apm/kibana/es 等)は
+helper 非適合で対象外。詳細は `docs/refactoring/result.md`。
 本ファイルが進捗台帳の正本。各 PR のマージ時にチェックボックスを更新し、完了 Phase はマージコミットへのリンクを残すこと。
 
 ## 決定事項ログ
@@ -317,9 +319,10 @@ migrate に統合する）:
 
 - [x] PR 5-1: CLAUDE.md「Custom Helpers」+「Conventions」に DSL（lxc_entry / compose_service /
       systemd_unit / deploy_with_ssm_env）+ thin-entry/guardrail 規約を明記（このPR・4-4 と統合）
-- [~] PR 5-2: `docs/refactoring/result.md` 作成（このPR、**予備版**）。canary PR（#479-482）+ 4-3b マージ後に確定。
-      cookbook 数は 145→136（merged）→ 139（Phase 4 抽出で +3）。dead code ゼロ・allowlist 空・CI ガードレール稼働が実利得
-- [ ] Cognee へ結論保存 + retro 実施（PR 不要）— retro は本セッションで実施済み（rg/-E・mitamae define・sweep 分類の 3 学習）
+- [x] PR 5-2: `docs/refactoring/result.md` を **final 化**（このPR）。Phase 4 + 4-3b 検証済み・fleet 19/19 を反映。
+      cookbook 数は 145→136（dead/dormant 削除）→ 139（Phase 4 抽出で +3）。dead code ゼロ・allowlist 空・CI ガードレール稼働が実利得
+- [x] retro 実施済み（rg `-E`・mitamae define source 解決・sweep 前分類の 3 学習）+ project memory に保存
+      （[[mitamae-define-remote-file-source-resolution]] / [[setup-refactoring-phase2-scope]]）。Cognee 保存は MCP 接続時に追補
 
 ## 並列実行ガイド（ultracode / 複数ストリーム向け）
 
