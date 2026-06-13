@@ -64,6 +64,10 @@ if node[:platform] == "darwin"
   setup_root = node[:setup][:root]
 
   ea_version  = node.dig(:elastic_agent, :version) || "9.4.2"
+  # darwin branch: admin profile (sh1admn) by default — Macs are not seeded with
+  # the fleet bootstrap profile pve-bootstrap-ssm. Overridable via
+  # node[:elastic_agent][:aws_profile]. (The LXC branch below resolves
+  # pve-bootstrap-ssm from aws-config.json — see CLAUDE.md "AWS profile resolution".)
   aws_profile = node.dig(:elastic_agent, :aws_profile) || "sh1admn"
   aws_region  = node.dig(:elastic_agent, :aws_region)  || "ap-northeast-1"
   es_password_ssm = node.dig(:elastic_agent, :es_password_ssm) ||

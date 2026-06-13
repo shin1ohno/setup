@@ -67,6 +67,11 @@ file "#{setup_root}/bin/aws-cost-snapshot" do
         source "$CONFIG_FILE"
     fi
 
+    # sh1admn (personal-account admin) is INTENTIONAL and required: this monitor
+    # calls Cost Explorer (ce:GetCostAndUsage), which only the admin profile has
+    # — NOT the scoped fleet profile pve-bootstrap-ssm. The := default is
+    # overridable via AWS_PROFILE in the config file. (See CLAUDE.md "AWS profile
+    # resolution".)
     : "${AWS_PROFILE:=sh1admn}"
     : "${AWS_REGION:=ap-northeast-1}"
     : "${COGNEE_ENDPOINT:=http://localhost:8001}"
