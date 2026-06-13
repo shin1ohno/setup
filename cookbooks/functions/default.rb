@@ -177,7 +177,7 @@ module RecipeHelper
       MItamae.logger.warn("Verify (paste to debug): #{_strip_redirect(check_command)}")
       MItamae.logger.warn(instructions)
       menu = "Options: [Enter]=re-check  s=skip this block  Ctrl-C=abort"
-      menu += "  c=aws configure (static IAM keys)  l=SSO (login, or first-time setup)" if aws
+      menu += "  c=run 'aws configure' here (enter a profile + paste its keys)" if aws
       MItamae.logger.warn(menu)
       MItamae.logger.warn("=" * 60)
 
@@ -196,8 +196,8 @@ module RecipeHelper
       # Interactive AWS setup launched from the gate (mruby `system` inherits
       # the terminal). After it returns, re-discover: the new/updated profile
       # may now satisfy the check.
-      if aws && (response == "c" || response == "l")
-        _run_aws_setup(response == "l" ? :sso : :configure)
+      if aws && response == "c"
+        _run_aws_setup
         found = _auto_select_aws_profile(check_command)
         if found
           unless found == "__ambient__"
@@ -287,8 +287,8 @@ module RecipeHelper
     idout = id.stdout.to_s
     if id.exit_status != 0
       cfg = (prof_flag || prof_env) ? " --profile #{profile}" : ""
-      return "no usable AWS credentials for profile '#{profile}'. Run 'aws configure#{cfg}' (static keys) or 'aws sso login#{cfg}'." if idout.include?("Unable to locate credentials") || idout.include?("configure")
-      return "AWS session token expired for profile '#{profile}'. Run 'aws sso login#{cfg}' or re-run 'aws configure#{cfg}'." if idout.include?("ExpiredToken") || idout.downcase.include?("expired")
+      return "no usable AWS credentials for profile '#{profile}'. Run 'aws configure#{cfg}' and paste this account's keys." if idout.include?("Unable to locate credentials") || idout.include?("configure")
+      return "credentials/session for profile '#{profile}' expired. Refresh them: re-run 'aws configure#{cfg}' (or your login tool)." if idout.include?("ExpiredToken") || idout.downcase.include?("expired")
       return "AWS identity check failed (profile=#{profile}): #{_first_line(idout)}"
     end
     arn = (idout =~ /"Arn":\s*"([^"]+)"/) ? $1 : "unknown"
@@ -314,31 +314,19 @@ module RecipeHelper
     line ? line[0, 200] : "(no output)"
   end
 
-  # Launch interactive AWS setup inheriting the terminal. mruby `system`
-  # inherits stdio (verified on mitamae v1.14.0), so aws's prompts reach the
-  # user directly. For a named profile, AWS_PROFILE is set so the rest of the
-  # run (and the re-check) use it.
-  def _run_aws_setup(mode)
+  # Launch `aws configure` inheriting the terminal (mruby `system` inherits
+  # stdio, verified on mitamae v1.14.0) so its prompts reach the user. For a
+  # named profile, AWS_PROFILE is set so the rest of the run (and the re-check)
+  # use it. (An SSO option was removed: no profile in this fleet uses SSO — both
+  # the LXC fleet and the darwin /mcp/* account authenticate with static IAM
+  # keys — and the old `aws sso login`→`aws configure sso` fallback mis-routed
+  # static-key users into an SSO-start-URL prompt they could not answer.)
+  def _run_aws_setup
     MItamae.logger.warn("Profile name (blank = default): ")
     name = (STDIN.gets || "").strip
     prof = name.empty? ? "" : " --profile #{name}"
-    if mode == :sso
-      # `aws sso login` only REFRESHES an already-SSO-configured profile; on a
-      # profile with no sso_start_url (first-time setup) it errors with
-      # "Missing ... sso_start_url". mruby `system` only exposes the exit status
-      # (it inherits the terminal, so the message isn't readable here), so on
-      # ANY non-zero exit fall back to `aws configure sso` — the interactive
-      # first-time setup, which also logs in at the end.
-      MItamae.logger.warn("Launching: aws sso login#{prof}")
-      ok = system("aws sso login#{prof}")
-      unless ok
-        MItamae.logger.warn("'aws sso login' did not succeed (profile may not be SSO-configured yet) — launching 'aws configure sso#{prof}' for first-time SSO setup.")
-        system("aws configure sso#{prof}")
-      end
-    else
-      MItamae.logger.warn("Launching: aws configure#{prof}")
-      system("aws configure#{prof}")
-    end
+    MItamae.logger.warn("Launching: aws configure#{prof}")
+    system("aws configure#{prof}")
     ENV["AWS_PROFILE"] = name unless name.empty?
   end
 
@@ -346,11 +334,10 @@ module RecipeHelper
   # per-profile auto-discovery log. Input is merged stdout+stderr.
   def _classify_short(out)
     s = out.to_s
-    return "no credentials (run 'aws configure' / 'aws configure sso')" if s.include?("Unable to locate credentials")
-    return "SSO not configured (run 'aws configure sso')" if s.include?("sso_start_url") || s.include?("configure sso")
-    return "token expired (run 'aws sso login')" if s.include?("ExpiredToken") || s.downcase.include?("expired")
-    return "access denied (lacks ssm:GetParameter + kms:Decrypt)" if s.include?("AccessDenied") || s.include?("not authorized")
-    return "parameter not found" if s.include?("ParameterNotFound")
+    return "no credentials — run 'aws configure' for this profile" if s.include?("Unable to locate credentials")
+    return "credentials/session expired — refresh them ('aws configure', or your login tool)" if s.include?("ExpiredToken") || s.downcase.include?("expired") || s.include?("sso_start_url")
+    return "access denied — this profile lacks ssm:GetParameter + kms:Decrypt (wrong profile for this path)" if s.include?("AccessDenied") || s.include?("not authorized")
+    return "parameter not found (access OK)" if s.include?("ParameterNotFound")
     _first_line(s)
   end
 
