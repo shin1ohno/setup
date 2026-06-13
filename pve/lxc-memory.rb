@@ -13,13 +13,11 @@
 include_recipe "../cookbooks/functions/default"
 
 # OpenMemory MCP via docker compose (cookbooks/lxc-memory →
-# ghcr.io/mem0ai/openmemory-mcp). The native systemd path
-# (cookbooks/memory-server) was attempted first but openmemory-mcp on
-# PyPI only ships an importable library — no console_scripts entry —
-# so systemd ExecStart=/opt/openmemory/venv/bin/openmemory fails with
-# status=203/EXEC in a tight restart loop (Phase 0.5-Z Z-2 result).
-# Switch the includes below back to memory-server once openmemory-mcp
-# ships a CLI binary.
+# ghcr.io/mem0ai/openmemory-mcp). A native systemd/venv path was attempted
+# first but openmemory-mcp on PyPI only ships an importable library — no
+# console_scripts entry — so a systemd ExecStart fails with status=203/EXEC
+# in a tight restart loop (Phase 0.5-Z Z-2 result). The docker image bundles
+# a working entrypoint.
 include_cookbook "docker-engine"
 include_cookbook "lxc-memory"
 lxc_entry(tags: ["lxc", "memory"])
