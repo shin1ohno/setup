@@ -131,6 +131,14 @@ until queue.empty?
     line.scan(%r{\bcookbooks/([a-z0-9_-]+)/files}) do |m|
       reached_cookbooks << m[0]
     end
+    # Sibling-cookbook file-store ref from inside a cookbook: a recipe in
+    # cookbooks/<a> reads cookbooks/<b>/files via a relative "../<b>/files"
+    # path (File.dirname(__FILE__) is the cookbook dir). e.g. cookbooks/
+    # lxc-consent reads ../consent-app/files. Only matches a sibling-cookbook
+    # name, so it can mark a live cookbook reachable but never hides a dead one.
+    line.scan(%r{\.\./([a-z0-9_-]+)/files}) do |m|
+      reached_cookbooks << m[0]
+    end
   end
 end
 

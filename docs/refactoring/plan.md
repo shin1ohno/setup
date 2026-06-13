@@ -289,8 +289,13 @@ migrate に統合する）:
       薄いエントリ（node override + include）形式に統一。canary: weave CT
 - [ ] PR 4-2: `pve/lxc-pro-router.rb`（224 行）同上。canary 必須 +
       機能プローブに `~/.claude/rules/tailscale.md` の table-52 検証（`ip rule show` / LAN 到達性）を含める
-- [ ] PR 4-3: `pve/lxc-consent.rb`（181 行）同上。canary: consent CT（OAuth フローの実トークン round-trip を含める —
-      `~/.claude/rules/adversarial-review.md` Live Token Gate）
+- [x] PR 4-3a: `pve/lxc-consent.rb`（181 行）→ `cookbooks/lxc-consent/` 抽出（verbatim、case-B は分離）（このPR、canary 待ち）。
+      consent-app file-store path 修正（`../cookbooks/consent-app/files` → `../consent-app/files`）に伴い
+      **reachability に sibling file-store パターン `../X/files` を追加**（consent-app の reachable 維持）。
+      **before/after dry-run diff 完全一致（718 行・差分ゼロ）= 挙動保存**。require_external_auth は BARE 保持。
+      canary: consent CT（OAuth 実トークン round-trip — `~/.claude/rules/adversarial-review.md` Live Token Gate）
+- [ ] PR 4-3b（案 B）: `lxc-consent`（+ `lxc-hydra`）の bare→明示 `--profile` 化。**`/hydra/*` profile probe 先行必須**。
+      probe で読める profile 確定後、check_command + 全 `aws ssm` 実呼び出しに `--profile` 付与
 - [ ] PR 4-4: node attribute 規約整理（`node[:setup][:*]` 等のデフォルト解決を host-profile に集約済みか監査、
       規約を CLAUDE.md に明文化）+ roles 境界監査（core/foundation/extras の重複 include 検出）
 
