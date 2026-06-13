@@ -50,7 +50,12 @@ output_path = "#{node[:setup][:home]}/.codex/config.toml"
 # ordering issue entirely.
 require_external_auth(
   tool_name: "AWS CLI (for MCP server SSM params)",
-  check_command: "aws sts get-caller-identity",
+  # Probe the ACTUAL SSM path generate_config.sh reads (codex shares mcp's
+  # servers.yml -> /mcp/obsidian-api-key) so the gate fails when this identity
+  # lacks SSM access. `aws sts get-caller-identity` was a false gate — it
+  # passes for any valid identity regardless of SSM scope (mirrors mcp #437/M5).
+  # Bare (no --profile) so require_external_auth's profile auto-discovery applies.
+  check_command: "aws ssm get-parameter --name /mcp/obsidian-api-key --with-decryption --query Parameter.Value --output text --region ${AWS_REGION:-ap-northeast-1} >/dev/null 2>&1",
   instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
 ) do
   execute "generate and deploy codex config.toml" do

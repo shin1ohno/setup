@@ -569,9 +569,20 @@ file "#{setup_root}/bin/gpg-master-backup" do
         command -v aws &>/dev/null || die "AWS CLI is required. Install with: brew install awscli"
         command -v gpg &>/dev/null || die "GPG is required"
 
-        # Check AWS credentials
-        if ! aws sts get-caller-identity &>/dev/null; then
-            die "AWS credentials not configured. Run: aws configure"
+        # Real-scope gate: verify this identity can actually reach the
+        # ${SSM_PREFIX}/* SSM namespace, not just that *some* credential is
+        # valid. `aws sts get-caller-identity` was a false gate (passes for any
+        # identity regardless of SSM scope). This tool CREATES /gpg/* params, so
+        # on a fresh setup none exist yet — a get on a probe name returns
+        # ParameterNotFound when access IS granted (param simply absent) vs
+        # AccessDenied / no-credentials when it is not.
+        local probe
+        if probe=$(aws ssm get-parameter --name "${SSM_PREFIX}/__access_probe__" 2>&1); then
+            : # param exists and is readable — access OK
+        elif grep -q 'ParameterNotFound' <<<"$probe"; then
+            : # access OK, parameter simply absent (expected on a fresh setup)
+        else
+            die "SSM preflight failed for ${SSM_PREFIX}/* ($(head -1 <<<"$probe")). Ensure AWS credentials, region, and ssm:GetParameter/PutParameter on ${SSM_PREFIX}/* are configured (e.g. aws configure)."
         fi
     }
 
