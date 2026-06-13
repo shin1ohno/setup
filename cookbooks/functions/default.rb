@@ -467,3 +467,193 @@ define :compose_service,
     only_if "test -f #{ep}" if ep
   end
 end
+
+# Install an already-staged systemd unit (service or timer) and activate it
+# with the CORRECT sequence baked in. Collapses the install + daemon-reload +
+# enable + restart/start boilerplate that ~17 cookbooks repeat.
+#
+# The CALLER stages the unit file with its own `remote_file ... source
+# "files/<unit>"` and passes the resulting absolute path as :staging_path.
+# Staging is NOT done here on purpose: a `remote_file source "files/..."`
+# declared inside a `define` resolves relative to cookbooks/functions/, not
+# the calling cookbook (mitamae define source-resolution quirk), so it would
+# look for the unit under functions/files/. Staging stays in the caller (one
+# line, resolves correctly); this helper owns the error-prone activation.
+#
+# Activation rules (see ~/.claude/rules/infrastructure.md "systemd Timer
+# Verification Gate"):
+#   - .service: daemon-reload + enable + restart. `restart` (not `enable
+#     --now`) is required so a unit-file EDIT actually takes effect on an
+#     already-running service — `enable --now` only starts a stopped unit.
+#   - .timer:   daemon-reload + enable <timer> + restart <timer> + start
+#     <companion .service>. `enable --now` is a no-op on an active timer, so
+#     a cookbook-driven timer-body change never reloads without `restart`;
+#     `start <service>` seeds the deactivation reference that
+#     OnUnitInactiveSec timers need.
+#
+# The activate execute runs only on a real unit change (notified by the
+# install execute, which is gated on `diff -q`), so re-applies are no-ops.
+# Verify a timer after apply with `systemctl show <name> --property=Trigger`
+# (a future timestamp; `n/a` means it will never fire) — NOT `is-active`.
+#
+# Usage (long-running service):
+#   staged = "#{node[:setup][:root]}/node-exporter/node-exporter.service"
+#   remote_file staged do
+#     source "files/node-exporter.service"
+#     owner node[:setup][:user]; group node[:setup][:group]; mode "644"
+#   end
+#   systemd_unit "node-exporter.service" do
+#     staging_path staged
+#   end
+#
+# Usage (timer + companion oneshot service; stage + install the service first):
+#   systemd_unit "foo.service" do
+#     staging_path foo_service_staged
+#     start false                      # oneshot triggered only by the timer
+#   end
+#   systemd_unit "foo.timer" do
+#     staging_path foo_timer_staged
+#     companion_unit "foo.service"     # default: same basename + .service
+#   end
+#
+# Params:
+#   staging_path   (required) absolute path of the staged unit (caller stages it)
+#   companion_unit optional (.timer only); the .service to `start` on activate
+#   start          optional bool (default true); for a .service, false skips
+#                  restart (oneshot units driven solely by a timer)
+define :systemd_unit,
+       staging_path: nil,
+       companion_unit: nil,
+       start: true do
+  unit = params[:name]
+  raise "systemd_unit name must end in .service or .timer (#{unit})" unless unit =~ /\.(service|timer)\z/
+
+  staging = params[:staging_path]
+  raise "systemd_unit '#{unit}' requires :staging_path (the caller stages the file)" unless staging
+
+  is_timer    = unit.end_with?(".timer")
+  system_path = "/etc/systemd/system/#{unit}"
+  activate    = "systemd_unit activate #{unit}"
+
+  execute "install #{unit}" do
+    command "sudo install -m 644 -o root -g root #{staging} #{system_path}"
+    not_if "diff -q #{staging} #{system_path} 2>/dev/null"
+    notifies :run, "execute[#{activate}]"
+  end
+
+  cmds = ["sudo systemctl daemon-reload"]
+  if is_timer
+    svc = params[:companion_unit] || unit.sub(/\.timer\z/, ".service")
+    cmds << "sudo systemctl enable #{unit}"
+    cmds << "sudo systemctl restart #{unit}"
+    cmds << "sudo systemctl start #{svc}"
+  elsif params[:start]
+    cmds << "sudo systemctl enable #{unit}"
+    cmds << "sudo systemctl restart #{unit}"
+  else
+    # oneshot service driven by a sibling timer: load the new unit, do not run it.
+    cmds << "sudo systemctl enable #{unit}"
+  end
+
+  execute activate do
+    command cmds.join(" && ")
+    action :nothing
+  end
+end
+
+# Deploy an SSM-sourced .env file: gate on AWS auth, run a generator that
+# writes a temp file, then place it atomically and clean up. Collapses the
+# `require_external_auth + generate + remote_file + temp-delete` quartet that
+# ~9 cookbooks repeat, and bakes in CONTENT-AWARE skip_if.
+#
+# skip_if (see ~/.claude/rules/ruby.md "SSM-sourced .env generator ... drops
+# new KEY=VALUE lines silently"): the gate is skipped only when the output
+# already contains EVERY key in :expected_keys. A plain `File.exist?` skip
+# would make adding a key to the generator a silent no-op on hosts whose .env
+# predates the change; the content check forces a re-fetch instead.
+#
+# Usage:
+#   deploy_with_ssm_env "cognee" do
+#     tool_name        "AWS CLI (profile=#{aws_profile}) for /cognee/* SSM"
+#     check_command    "aws ssm get-parameter --name /cognee/llm-endpoint " \
+#                      "--profile #{aws_profile} --region #{aws_region} >/dev/null 2>&1"
+#     instructions     "Configure '#{aws_profile}' with ssm:GetParameter on /cognee/*."
+#     generate_command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+#                      "bash #{generate_env_script} #{env_temp_path}"
+#     temp_path        env_temp_path
+#     output_path      env_output_path
+#     expected_keys    %w[LLM_API_KEY OTEL_EXPORTER_OTLP_HEADERS]
+#     restart_resource "execute[restart cognee]"   # notified on output change
+#   end
+#
+# IMPORTANT: keep :expected_keys in sync with every key the generator writes —
+# that list IS the drift detector. :check_command and the generator's aws
+# calls must use the same --profile/AWS_PROFILE (bin/lint-cookbooks enforces).
+#
+# Params:
+#   tool_name, check_command, instructions  (required) -> require_external_auth
+#   generate_command   (required) the shell that writes :temp_path
+#   temp_path          (required) generator output, deleted after placement
+#   output_path        (required) final .env path
+#   expected_keys      array of KEY names for the content-aware skip_if
+#   owner/group/mode   optional (defaults: setup user/group, "600")
+#   restart_resource   optional "execute[...]" notified when output changes
+#   user               optional generator user (default node[:setup][:user])
+define :deploy_with_ssm_env,
+       tool_name: nil,
+       check_command: nil,
+       instructions: nil,
+       generate_command: nil,
+       temp_path: nil,
+       output_path: nil,
+       expected_keys: [],
+       owner: nil,
+       group: nil,
+       mode: "600",
+       restart_resource: nil,
+       user: nil do
+  tp  = params[:temp_path]
+  op  = params[:output_path]
+  gen = params[:generate_command]
+  raise "deploy_with_ssm_env '#{params[:name]}' requires :temp_path + :output_path" unless tp && op
+  raise "deploy_with_ssm_env '#{params[:name]}' requires :generate_command" unless gen
+
+  u      = params[:user] || node[:setup][:user]
+  keys   = params[:expected_keys] || []
+  rsrc   = params[:restart_resource]
+  fowner = params[:owner] || node[:setup][:user]
+  fgroup = params[:group] || node[:setup][:group]
+  fmode  = params[:mode]
+
+  content_aware_skip = lambda do
+    next false unless File.exist?(op)
+    body = File.read(op)
+    keys.all? { |k| body.include?("#{k}=") }
+  end
+
+  require_external_auth(
+    tool_name: params[:tool_name],
+    check_command: params[:check_command],
+    instructions: params[:instructions],
+    skip_if: content_aware_skip,
+  ) do
+    execute "generate #{params[:name]} .env" do
+      command gen
+      user u
+    end
+  end
+
+  remote_file op do
+    source tp
+    owner fowner
+    group fgroup
+    mode fmode
+    only_if "test -f #{tp}"
+    notifies :run, rsrc if rsrc
+  end
+
+  file tp do
+    action :delete
+    only_if "test -f #{tp}"
+  end
+end
