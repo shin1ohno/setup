@@ -32,12 +32,9 @@ REPO_ROOT = File.expand_path("..", __dir__)
 Dir.chdir(REPO_ROOT)
 
 # Cookbooks intentionally allowed to be unreachable. Phase 1 empties this.
+# PR 1-1 deleted ruby/openssl/autoconf/disable-ipv6/im-select; the dormant
+# trio below is deleted in PR 1-2 (then this list becomes empty).
 ALLOWLIST = %w[
-  ruby
-  openssl
-  autoconf
-  disable-ipv6
-  im-select
   memory-server
   oh-my-zsh
   typewritten
