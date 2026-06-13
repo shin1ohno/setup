@@ -1,8 +1,12 @@
 # Refactoring result (2026-06, vs baseline.md)
 
-PRELIMINARY — finalize when the canary-gated PRs (#479 local-mcp, #480 weave,
-#481 pro-router, #482 consent) and the case-B PR 4-3b merge. Baseline measured
-on `main` @ `2ee9f1b` (see baseline.md).
+FINAL (2026-06-13). #480 weave / #481 pro-router / #482 consent merged +
+canary-validated on their real CTs (apply exit 0, services healthy, no restart;
+fleet auto_mitamae 19/19 success). case-B PR 4-3b (lxc-consent) merged + verified
+(home-monitor PR #95 granted pve-bootstrap-ssm /hydra/* + aws/ssm decrypt;
+DECRYPT_OK on CT 110; the 3 /hydra/* reads succeed via the profile). Only #479
+local-mcp (Air offline) + lxc-hydra case-B (needs /memory/* grant) are open.
+Baseline measured on `main` @ `2ee9f1b` (see baseline.md).
 
 ## Outcome by phase
 
@@ -43,9 +47,23 @@ guardrails, and the consolidated entry-recipe shape — not raw count.
 - Lesson (codified in retro): classify real-resource vs doc-heredoc vs
   `--user` vs guard BEFORE scoping a "mechanical sweep".
 
-## Remaining (needs real-machine `!`)
+## Done since the preliminary draft
 
-- Canary-validate + merge #479 (Air apply) / #480 / #481 (table-52) / #482 (OAuth).
-- case-B `/hydra/*` profile probe → PR 4-3b (lxc-consent + lxc-hydra bare→--profile).
-- Optional: starship mise migration (low value); compose_service helper extension
-  for monitoring/praeco; systemd_unit install-only mode for unbound-watchdog.
+- #480/#481/#482 merged + canary-validated on weave/pro-router/consent CTs
+  (apply exit 0; weave 4 containers + "Up 11 days", pro-router table-52 clean +
+  LAN OK, consent "Up 10 days"); fleet converged to 19/19 success.
+- home-monitor PR #95 (pve-bootstrap-ssm /hydra/* + aws/ssm kms:Decrypt) merged +
+  applied; live decrypt probe on CT 110 = DECRYPT_OK.
+- case-B PR 4-3b: lxc-consent migrated to --profile pve-bootstrap-ssm; the 3
+  /hydra/* reads verified working via the profile.
+
+## Remaining (genuinely external)
+
+- **#479 local-mcp**: Air (Mac) offline ≥2 days (tailscale "last seen 2d ago").
+  CI-green, behavior-preserving deploy_with_ssm_env adoption; apply on Air when
+  it is next online (`COOKBOOK=local-mcp ./bin/mitamae local test-cookbook.rb`).
+- **lxc-hydra case-B**: also reads /memory/aurora-endpoint, which pve-bootstrap-ssm
+  cannot read (probe MEMORY_FAIL). Needs a separate /memory/* grant before
+  migrating off bare; left bare (operator-seeded .env, working).
+- Optional/low-value: starship mise migration; compose_service `--remove-orphans`
+  extension for monitoring/praeco; systemd_unit install-only mode for unbound-watchdog.
