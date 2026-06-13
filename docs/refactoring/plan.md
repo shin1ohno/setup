@@ -295,12 +295,17 @@ migrate に統合する）:
 - [x] PR 4-1: `pve/lxc-weave.rb`（284 行）→ `cookbooks/lxc-weave/` 抽出 + 薄いエントリ化（#480、**canary 検証済み**）。
       __FILE__ path を cookbook 規約（`"..", "ssh-keys"`）に修正。before/after dry-run diff で挙動保存実証。
       weave CT 実適用 exit 0・4 コンテナ稼働・weave-server "Up 11 days"（再起動なし＝no-op 確認）
-- [x] PR 4-2: `pve/lxc-pro-router.rb`（224 行）→ `cookbooks/lxc-pro-router/` 抽出 + 薄化（このPR、canary 待ち）。
-      __FILE__ path 修正。**before/after dry-run diff で挙動保存実証**（392 行一致、差分は temp ファイル名 +
-      notify 駆動 2 resource[apply-sysctl/reload-tailnet] の出力位置のみ＝挙動無関係、純粋 verbatim move）。
-      canary 機能プローブ: `~/.claude/rules/tailscale.md` の table-52 検証（`ip rule show` / LAN 到達性）必須
-- [ ] PR 4-3: `pve/lxc-consent.rb`（181 行）同上。canary: consent CT（OAuth フローの実トークン round-trip を含める —
-      `~/.claude/rules/adversarial-review.md` Live Token Gate）
+- [x] PR 4-2: `pve/lxc-pro-router.rb`（224 行）→ `cookbooks/lxc-pro-router/` 抽出 + 薄化（#481、**canary 検証済み**）。
+      __FILE__ path 修正。before/after dry-run diff 挙動保存実証。pro-router CT 実適用 exit 0・tailnet-routes active・
+      table-52 の 192.168/16 ルート 0（LAN black-hole なし）・LAN 到達 OK
+- [x] PR 4-3a: `pve/lxc-consent.rb`（181 行）→ `cookbooks/lxc-consent/` 抽出（verbatim、case-B は分離）（このPR、canary 待ち）。
+      consent-app file-store path 修正（`../cookbooks/consent-app/files` → `../consent-app/files`）に伴い
+      **reachability に sibling file-store パターン `../X/files` を追加**（consent-app の reachable 維持）。
+      **before/after dry-run diff 完全一致（718 行・差分ゼロ）= 挙動保存**。require_external_auth は BARE 保持。
+      canary: consent CT（OAuth 実トークン round-trip — `~/.claude/rules/adversarial-review.md` Live Token Gate）
+- [ ] PR 4-3b（案 B）: `lxc-consent`（+ `lxc-hydra`）の bare→明示 `--profile` 化。**`/hydra/*` profile probe 完了 →
+      どの profile も読めず（pve-bootstrap-ssm は IAM-denied、default/sh1admn は token 期限切れ）。
+      決定: home-monitor で IAM policy に `/hydra/*` + `kms:Decrypt` 付与（cross-repo PR）→ その後 setup で `--profile` 化**
 - [x] PR 4-4: node attribute 規約整理 + roles 境界監査（このPR、CLAUDE.md に明文化）。
       **監査結果クリーン**: node[:setup]/[:homebrew]/[:profile] は host-profile に一元化済み（22 箇所の重複除去済み・
       散在代入なし）、roles 間で重複 include される cookbook はゼロ（各 cookbook は 1 role 専有）。修正不要、規約のみ明文化
