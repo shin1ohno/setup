@@ -34,7 +34,6 @@ include_cookbook "ncurses"
 include_cookbook "zlib"
 include_cookbook "rbenv"
 include_cookbook "ruby33"
-include_cookbook "ruby32"
 
 # Other programming languages
 include_cookbook "rust"

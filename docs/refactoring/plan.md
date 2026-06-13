@@ -220,8 +220,11 @@ migrate に統合する）:
       結果表を本ファイルに追記
 - [ ] PR 3-1〜: 5-check 通過ツールのみ `mise_tool` 化（2-3 cookbook / PR）。
       不通過ツールは curl+tar のまま（必要なら共通 `download_install` ヘルパー化を Phase 5 で判断）
-- [ ] PR 3-R: ruby 3.3 一本化（D2）: roles/programming から ruby32 include 削除 + `cookbooks/ruby32` 削除。
-      事前に `rg 'ruby.?3\.2|\.ruby-version'` で 3.2 依存の残存を確認
+- [x] PR 3-R: ruby 3.3 一本化（D2）: roles/programming から ruby32 include 削除 + `cookbooks/ruby32` 削除（このPR）。
+      3.2 依存の残存ゼロを確認。global は `roles/programming:13 global_version: "3.3"` で元から 3.3 →
+      ruby32 削除で global は不変・ruby33 が 3.3.0 install 継続。rbenv は既存 3.2.1 をアンインストールせず
+      （install 停止のみ）。roles/programming は linux/darwin/lxc-dev-workstation(CT104) が include → CT104 に届くが
+      idempotent・サービス無影響
 - [ ] 調査タスク（PR なし、D3）: python（pyenv 89 行）/ rust（rustup 22 行）の mise 統一可否。
       pipx backend 制約（`~/.claude/rules/mise-migration.md`）を踏まえ結果を本ファイルに追記し、
       実行可否は**ユーザー判断を仰ぐ**
