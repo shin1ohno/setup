@@ -1,6 +1,8 @@
 # Setup リポジトリ全面リファクタリング計画（2026-06）
 
-Status: **Phase 1 完了（#470 Phase0 / #471 #472 + 本PR Phase1）。Phase 2 着手可（Phase 3 並列可）**。本ファイルが進捗台帳の正本。各 PR のマージ時にチェックボックスを更新し、完了 Phase はマージコミットへのリンクを残すこと。
+Status: **Phase 0/1 完了・Phase 2-0(DSL定義) + Phase 3(3-R/3-0/D3) 完了。残: Phase 2 sweep(canary 必須) / Phase 4(canary 必須) / Phase 5**。
+Phase 2 sweep・Phase 4 の canary 検証と案 B の `/hydra/*` profile probe は実機アクセス（PVE host）が必要 → ユーザーの `!` 実行待ち。
+本ファイルが進捗台帳の正本。各 PR のマージ時にチェックボックスを更新し、完了 Phase はマージコミットへのリンクを残すこと。
 
 ## 決定事項ログ
 
@@ -215,19 +217,38 @@ migrate に統合する）:
 
 ## Phase 3: インストール手法統一（依存: Phase 0。Phase 2 と並列可、ただし対象 cookbook 排他）
 
-- [ ] PR 3-0: 対象候補（gcloud-cli, neovim, speedtest-cli, zk, starship fallback 等。
-      elastic-agent は G2 専属のため**除外**）全ツールへ `/verify-mise-backend` 5-check を一括実行し、
-      結果表を本ファイルに追記
-- [ ] PR 3-1〜: 5-check 通過ツールのみ `mise_tool` 化（2-3 cookbook / PR）。
-      不通過ツールは curl+tar のまま（必要なら共通 `download_install` ヘルパー化を Phase 5 で判断）
+- [x] PR 3-0: mise registry survey 実施（このPR、下記「Phase 3 mise survey」）。**結論: curl→mise の移行余地は
+      ほぼ枯渇** — 大半の CLI ツールは既に mise 管理。残る唯一の marginal 候補は starship（aqua/cargo backend）
+- [ ] PR 3-1〜: **要否はユーザー判断**（survey の通り候補が starship 1 件のみで低価値）。
+      実施する場合も dev/CT104 への install 方式変更 = 実機 apply 検証が必要
+
+### Phase 3 mise survey（2026-06-13、`mise registry` + install 方式実測）
+
+| cookbook | 現 install | `mise registry` | 判定 |
+|---|---|---|---|
+| `starship` | darwin=brew / linux=curl | `aqua:starship/starship`, `cargo:starship` | **唯一の候補**: `mise use aqua:starship/starship` で brew+curl をクロス統一可。価値は中（brew は darwin で機能中、利得は linux 統一） |
+| `gcloud-cli` | darwin/linux=curl+tar（公式 dl.google.com） | `vfox:`/`asdf:` plugin のみ（core なし） | **skip**: 公式 tarball が plugin backend より確実 |
+| `speedtest-cli` | linux=curl+tar(Ookla) / darwin=brew tap | MISS | **skip**: Ookla は registry 外（`-universal` URL 特殊、mise-migration.md 既知） |
+| `eternal-terminal` | darwin=brew / linux=apt repo | MISS | **skip**: apt/brew、tarball ツールでない |
+| `zk` | 既に `mise_tool "zk-org/zk" backend "aqua"` + brew/curl fallback | MISS（aqua 指定で導入済） | **済**: 既に mise 管理 |
+| `altserver` / `herdr` | curl install | MISS | **skip**: niche、registry 外 |
+| `neovim` | 既に mise(aqua) | `aqua:neovim/neovim` | **済** |
+
+既に mise 管理のツール群（bat/fd/jq/lazygit/fastfetch/golang/jdk/haskell/gemini-cli/git/macism/imgcat/zk/neovim 等）が示すとおり、本リポは過去に大半を mise 化済み。curl が残るのは「registry 外ツール」か「サービス成果物（node-exporter/elastic-agent）」。**PR 3-1 は starship のみ・低価値のため要否をユーザー判断とする。**
 - [x] PR 3-R: ruby 3.3 一本化（D2）: roles/programming から ruby32 include 削除 + `cookbooks/ruby32` 削除（このPR）。
       3.2 依存の残存ゼロを確認。global は `roles/programming:13 global_version: "3.3"` で元から 3.3 →
       ruby32 削除で global は不変・ruby33 が 3.3.0 install 継続。rbenv は既存 3.2.1 をアンインストールせず
       （install 停止のみ）。roles/programming は linux/darwin/lxc-dev-workstation(CT104) が include → CT104 に届くが
       idempotent・サービス無影響
-- [ ] 調査タスク（PR なし、D3）: python（pyenv 89 行）/ rust（rustup 22 行）の mise 統一可否。
-      pipx backend 制約（`~/.claude/rules/mise-migration.md`）を踏まえ結果を本ファイルに追記し、
-      実行可否は**ユーザー判断を仰ぐ**
+- [x] 調査タスク（PR なし、D3）: python / rust の mise 統一可否（このPR で調査完了。下記結論。実行は**ユーザー判断**）
+  - **python（pyenv）**: mise core registry に `python` あり、`mise use python@3.12` で移行は技術的に可能。
+    ただし (a) dev/CT104 の python 管理方式変更 = 挙動変更、(b) `~/.claude/rules/mise-migration.md` の
+    **mise pipx 制約**（pipx を別途 PATH に要する / mise pipx の venv は `pipx inject` 不可）。
+    pip extras を要するツール（git-remote-codecommit の `botocore[crt]` 等）は pyenv pip が必要。
+    → **据え置き推奨**。移行するなら pipx 依存ツールの棚卸しが前提
+  - **rust（rustup）**: mise に rust（rustup backend）あるが、rustup が rust の canonical manager
+    （components / `rustup target add aarch64-apple-ios` 等）。`~/.claude/rules/ios-build.md` が
+    rustup target 管理に依存。mise 経由は indirection 増で利得なし → **rustup 据え置き推奨**
 
 ## Phase 4: 構造リファクタ（依存: Phase 2）
 
