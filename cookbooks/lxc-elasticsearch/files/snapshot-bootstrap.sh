@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Phase 7-s3 — Elasticsearch S3 snapshot bootstrap (NATIVE INSTALL VARIANT).
 #
-# Adapted from docs/adr/0005-impl/phase-7-s3-cookbook.patch which targeted
-# the docker-based ES install. Phase 3b shipped native systemd ES instead,
+# Adapted from the Phase 7-s3 design (originally a docker-based patch; see
+# ADR 0005 + git history) which targeted the docker-based ES install. Phase
+# 3b shipped native systemd ES instead,
 # so this script:
 #   - calls /usr/share/elasticsearch/bin/elasticsearch-keystore directly
 #     (no `docker exec`)

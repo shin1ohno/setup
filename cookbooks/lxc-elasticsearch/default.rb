@@ -567,8 +567,8 @@ end
 # === Phase 7-s3 — S3 snapshot repository + SLM daily policy ===
 #
 # Closes ADR 0005 §否定面 #4 (disk SPOF — 3 ES nodes share one USB SSD).
-# Adapted from docs/adr/0005-impl/phase-7-s3-cookbook.patch (which targeted
-# the docker-based install) for the native systemd ES install Phase 3b
+# Adapted from the Phase 7-s3 design (originally a docker-based patch; see
+# ADR 0005 + git history) for the native systemd ES install Phase 3b
 # actually shipped. Companion: home-monitor PR #43 creates the S3 bucket
 # + IAM user + SSM creds.
 #
