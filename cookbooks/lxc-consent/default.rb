@@ -16,6 +16,15 @@ group = `id -gn`.strip
 include_cookbook "docker-engine"
 include_cookbook "awscli"
 
+# Case B (PR 4-3b): read /hydra/* via the fleet profile (pve-bootstrap-ssm,
+# granted ssm:GetParameter /hydra/* + aws/ssm kms:Decrypt in home-monitor —
+# verified by a live decrypt probe) instead of the prior bare/default profile.
+# The check_command and the generator's aws calls use the same profile
+# (~/.claude/rules/ruby.md auth-gate rule; bin/lint-cookbooks enforces).
+ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
+aws_profile = ssh_keys_config["aws_profile"]
+aws_region  = ssh_keys_config["aws_region"]
+
 deploy_dir = "#{node[:setup][:home]}/deploy/consent"
 
 # Hydra admin reachable cross-LXC over the home.local DNS zone. Override
@@ -117,14 +126,15 @@ env_output_path = "#{deploy_dir}/.env"
 
 require_external_auth(
   tool_name: "AWS CLI (for /hydra/* SSM params)",
-  check_command: "aws ssm get-parameter --name /hydra/google-client-id --with-decryption --query Parameter.Value --output text >/dev/null 2>&1",
-  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  check_command: "aws ssm get-parameter --name /hydra/google-client-id --with-decryption --profile #{aws_profile} --region #{aws_region} --query Parameter.Value --output text >/dev/null 2>&1",
+  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on /hydra/* + aws/ssm kms:Decrypt in #{aws_region} (home-monitor pve-bootstrap-ssm policy). On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter to retry.",
   skip_if: -> { File.exist?(env_output_path) },
 ) do
   execute "generate consent .env" do
     command <<~SH
       set -e
       umask 077
+      export AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region}
       GOOGLE_CLIENT_ID=$(aws ssm get-parameter --name /hydra/google-client-id --with-decryption --query Parameter.Value --output text)
       GOOGLE_CLIENT_SECRET=$(aws ssm get-parameter --name /hydra/google-client-secret --with-decryption --query Parameter.Value --output text)
       ALLOWED_EMAILS=$(aws ssm get-parameter --name /hydra/allowed-emails --with-decryption --query Parameter.Value --output text)

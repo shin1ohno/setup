@@ -303,9 +303,12 @@ migrate に統合する）:
       **reachability に sibling file-store パターン `../X/files` を追加**（consent-app の reachable 維持）。
       **before/after dry-run diff 完全一致（718 行・差分ゼロ）= 挙動保存**。require_external_auth は BARE 保持。
       canary: consent CT（OAuth 実トークン round-trip — `~/.claude/rules/adversarial-review.md` Live Token Gate）
-- [ ] PR 4-3b（案 B）: `lxc-consent`（+ `lxc-hydra`）の bare→明示 `--profile` 化。**`/hydra/*` profile probe 完了 →
-      どの profile も読めず（pve-bootstrap-ssm は IAM-denied、default/sh1admn は token 期限切れ）。
-      決定: home-monitor で IAM policy に `/hydra/*` + `kms:Decrypt` 付与（cross-repo PR）→ その後 setup で `--profile` 化**
+- [x] PR 4-3b（案 B）: `lxc-consent` を bare→`--profile #{aws_profile}`(pve-bootstrap-ssm) 化（このPR）。
+      home-monitor PR #95（pve-bootstrap-ssm に /hydra/* GetParameter + aws/ssm kms:Decrypt）を merge + apply 済み →
+      **CT 110 で live decrypt probe DECRYPT_OK（IAM 伝播 ~60s 後）= grant 検証済み**。check_command + generate の
+      全 /hydra/* read が pve-bootstrap-ssm 経由。lint #3 profile 一致。
+- [ ] lxc-hydra は **case-B 対象外（保留）**: /hydra/* に加え **/memory/aurora-endpoint も読む**が pve-bootstrap-ssm は
+      /memory/* 未許可（probe: MEMORY_FAIL）→ 完全移行には /memory/* grant が別途必要。現状 bare 据え置き（.env operator-seed で稼働）
 - [x] PR 4-4: node attribute 規約整理 + roles 境界監査（このPR、CLAUDE.md に明文化）。
       **監査結果クリーン**: node[:setup]/[:homebrew]/[:profile] は host-profile に一元化済み（22 箇所の重複除去済み・
       散在代入なし）、roles 間で重複 include される cookbook はゼロ（各 cookbook は 1 role 専有）。修正不要、規約のみ明文化
