@@ -105,6 +105,10 @@ Auto-mitamae: `cookbooks/auto-mitamae-target` installs a systemd timer on each L
 - `require_external_auth(tool_name:, check_command:, instructions:, skip_if:)` - Gate cookbook on external auth (SSM, gh, etc.); skips in non-TTY contexts
 - `prepend_path(*dirs)` - Prepend dirs to PATH for the current recipe run
 - `brew_formula?(name)` / `brew_cask?(name)` / `brew_tap?(name)` - Cached lookup against `brew list/tap` (cache populated by `cookbooks/homebrew`)
+- `lxc_entry(tags:, elastic_agent_extra:)` - LXC entry-recipe tail: `include_role "lxc-core"` (node-exporter + auto-mitamae-target) + `include_cookbook "elastic-agent"` tagged with `tags`
+- `compose_service "<name>" do … end` - docker-compose deploy pair: `ensure <name> running` (idempotency-probed `up -d`) + notify-driven `restart <name>` (`up -d --force-recreate`). Params: `compose_path`, `deploy_dir`, `env_path`, `buildkit`, `build_flag`, `wait`. Reference adopters: lxc-cognee / lxc-memory / lxc-roon-mcp / local-mcp / lxc-weave / lxc-consent
+- `systemd_unit "<name>.service|.timer" do staging_path … end` - install an already-staged unit + activate correctly (.service: enable+restart; .timer: enable+restart timer+start companion). The CALLER stages via its own `remote_file source "files/<unit>"` (a `remote_file` inside a `define` resolves relative to `cookbooks/functions/`, not the call site). Adopter: node-exporter
+- `deploy_with_ssm_env "<name>" do … end` - SSM-gated `.env`: `require_external_auth` + generate + `remote_file` + temp-delete, with content-aware `skip_if` (`expected_keys`). Fits the single-generate→copy→delete shape (cognee/local-mcp); cookbooks with cert-fetch / keystore / multi-gate flows keep their explicit form
 
 **Node Configuration Access:**
 
@@ -112,6 +116,13 @@ Auto-mitamae: `cookbooks/auto-mitamae-target` installs a systemd timer on each L
 - `node[:setup][:user]` - Current user
 - `node[:platform]` - Platform (darwin/ubuntu/arch)
 - `node[:homebrew][:prefix]` - Homebrew installation path
+
+**Conventions (audited/established by the 2026-06 refactor — see `docs/refactoring/`):**
+
+- **node[:setup]/[:homebrew]/[:profile] are resolved ONCE** in `cookbooks/host-profile` (included first by `cookbooks/functions/default.rb`). Cookbooks READ these; never re-derive them with a local `node.reverse_merge!(setup: {...})` (that pattern was de-duplicated from 22 sites). Per-host identity comes from `node[:profile][:label]` (e.g. `air`), also host-profile-resolved.
+- **Roles partition cookbooks — no cookbook is included by two roles.** Each cookbook is owned by exactly one of core/foundation/extras/llm/lxc-core/manage/network/programming/server. Keep it that way (verified: zero cross-role duplicate includes).
+- **LXC entry recipes stay thin**: `include functions` → `include_cookbook "lxc-<name>"` → `lxc_entry(...)`. Service logic lives in `cookbooks/lxc-<name>/`, not inline in `pve/lxc-<name>.rb` (reference: lxc-roon-mcp, lxc-weave, lxc-pro-router, lxc-consent).
+- **Guardrails run in CI** (`syntax-check` job): `bin/audit-cookbook-reachability` (no dead/unreachable cookbook; ALLOWLIST is empty) + `bin/lint-cookbooks` (compile-time `File.exist?`, Integer owner/group, auth-gate profile mismatch, notify-driven compose without `--force-recreate`). Run both before committing a cookbook change.
 
 ## Claude Code Hooks
 

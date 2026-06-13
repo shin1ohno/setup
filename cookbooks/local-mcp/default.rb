@@ -118,40 +118,32 @@ generate_env_script = File.join(File.dirname(__FILE__), "files", "generate_env.l
 env_temp_path   = "#{generated_dir}/local-mcp.env"
 env_output_path = "#{deploy_dir}/.env"
 
-require_external_auth(
-  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /cognee/* + /mcp/openai-api-key SSM params",
-  check_command: "aws ssm get-parameter --name /cognee/llm-endpoint " \
-                 "--profile #{aws_profile} --region #{aws_region} " \
-                 "> /dev/null 2>&1",
-  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on /cognee/* and " \
-                "/mcp/openai-api-key in #{aws_region} (aws configure --profile #{aws_profile}), " \
-                "OR skip SSM and run the generator manually with exported keys:\n" \
-                "  COGNEE_LLM_API_KEY=sk-... OPENAI_API_KEY=sk-... " \
-                "bash #{generate_env_script} #{env_output_path}\n" \
-                "Then press Enter.",
-  skip_if: -> { File.exist?(env_output_path) },
-) do
-  execute "generate local-mcp .env" do
-    command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
-            "bash #{generate_env_script} #{env_temp_path}"
-    user user
-  end
-end
-
-# Deploy + clean up at converge time (only_if guards the clean-run case where
-# the generate step was skipped — non-TTY without SSM auth).
-remote_file env_output_path do
-  source env_temp_path
+# SSM-gated .env via the deploy_with_ssm_env helper (Phase 2 G2): gate on AWS
+# auth, generate to a temp file, place + clean up, notify restart. skip_if is
+# now content-aware (LLM_API_KEY + EMBEDDING_API_KEY — both always written by
+# generate_env.local.sh) so a future generator key addition re-fetches instead
+# of no-op'ing on a stale .env, replacing the prior File.exist? skip.
+deploy_with_ssm_env "local-mcp" do
+  tool_name "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /cognee/* + /mcp/openai-api-key SSM params"
+  check_command "aws ssm get-parameter --name /cognee/llm-endpoint " \
+                "--profile #{aws_profile} --region #{aws_region} " \
+                "> /dev/null 2>&1"
+  instructions "Configure '#{aws_profile}' with ssm:GetParameter on /cognee/* and " \
+               "/mcp/openai-api-key in #{aws_region} (aws configure --profile #{aws_profile}), " \
+               "OR skip SSM and run the generator manually with exported keys:\n" \
+               "  COGNEE_LLM_API_KEY=sk-... OPENAI_API_KEY=sk-... " \
+               "bash #{generate_env_script} #{env_output_path}\n" \
+               "Then press Enter."
+  generate_command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+                   "bash #{generate_env_script} #{env_temp_path}"
+  temp_path env_temp_path
+  output_path env_output_path
+  expected_keys %w[LLM_API_KEY EMBEDDING_API_KEY]
   owner user
   group group
   mode "600"
-  notifies :run, "execute[restart local-mcp]"
-  only_if "test -f #{env_temp_path}"
-end
-
-file env_temp_path do
-  action :delete
-  only_if "test -f #{env_temp_path}"
+  restart_resource "execute[restart local-mcp]"
+  user user
 end
 
 # Docker Desktop is the daemon for the compose stack below. On a laptop it is
