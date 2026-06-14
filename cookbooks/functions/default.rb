@@ -99,6 +99,14 @@ module RecipeHelper
       return
     end
 
+    # An EMPTY AWS_PROFILE in the environment breaks every aws call with
+    # "The config profile () could not be found" (aws treats "" as a profile
+    # name, not as unset). Normalize it to unset so the default credential chain
+    # / explicit --profile flags apply, and the diagnosis reads "default" rather
+    # than an empty "profile=". Real envs never set it empty; this guards
+    # malformed shells and test overrides like `AWS_PROFILE=`.
+    ENV.delete("AWS_PROFILE") if ENV.key?("AWS_PROFILE") && ENV["AWS_PROFILE"].to_s.strip.empty?
+
     # First check before any prompting — covers the warm-rerun case.
     result = run_command(check_command, error: false)
     if result.exit_status == 0
