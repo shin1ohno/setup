@@ -62,4 +62,21 @@ else
   )
 end
 
+# Language version defaults that the platform roles set (roles/programming) but
+# a single-cookbook test bypasses. Without these, cookbooks that read
+# node[:<lang>][:versions] — nodejs (line 10), ruby33, rust, go, python — crash
+# with `undefined method '[]'` on a nil node[:<lang>] before the cookbook under
+# test even runs (e.g. COOKBOOK=mcp pulls in nodejs transitively).
+# KEEP IN SYNC with roles/programming/default.rb.
+node.reverse_merge!(
+  rbenv: {
+    root: "#{node[:setup][:home]}/.rbenv",
+    global_version: "3.3",
+    global_gems: %w(bundler itamae ed25519 bcrypt_pbkdf),
+  },
+  go: { versions: %w(1.22.3 1.21.8) },
+  nodejs: { versions: %w(lts 18 20 21) },
+  python: { versions: %w(3.12.2 3.11.8) },
+)
+
 include_cookbook cookbook_name
