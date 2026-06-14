@@ -136,6 +136,12 @@ This applies equally to **`kms:Decrypt`** chains for SSM SecureString (see the `
 
 This rule exists because the 2026-05-11 PR #339+#340 designed a two-stage `aws login --remote → aws-credentials fetches pve-bootstrap-ssm` flow that was structurally moot: `pve-bootstrap-ssm` has `/ssh-keys/*` only, not `/cognee/*`, so even a perfectly-working sh1admn admin auth couldn't fix `aws ssm get-parameter --name /cognee/llm-endpoint --profile pve-bootstrap-ssm`. The 30-second per-profile probe at design time would have caught this. Reverted via PR #343.
 
+**Auto-discovery is TTY-only — fleet cookbooks MUST pin `--profile`**: the `require_external_auth` profile auto-discovery (setup, added 2026-06) runs ONLY on a TTY — in a non-TTY context the helper returns BEFORE auto-discovery executes. Fleet cookbooks run via `auto-mitamae-target` over an SSH forced-command (non-TTY), so they NEVER reach auto-discovery; a fleet cookbook with a *bare* gate silently does nothing (skips its `.env`) on a fresh/rotated LXC.
+
+- Fleet cookbook (non-TTY) → EXPLICIT `--profile <scoped>` in `check_command` AND every aws call.
+- darwin / manual-operator cookbook (TTY) → bare gate + auto-discovery is fine (Pattern B: `mcp`, `local-mcp`).
+- Mixing them is the "works when I test it (TTY), fails on the fleet" bug class. `bin/lint-cookbooks` check #5 flags a fully-bare gate in a non-allowlisted cookbook.
+
 ## IAM principal that cannot self-rotate — design `bootstrap_profile` chain accordingly
 
 A common security posture for fleet-deployed IAM principals (e.g., `pve-bootstrap-ssm` in home-monitor) is **least-privilege at runtime + cannot read its own credential SSM parameters**. This intentional asymmetry blocks credential-leak escalation: even with the leaked key, the attacker cannot read future rotated keys from SSM.
@@ -180,6 +186,23 @@ git grep -nE 'bootstrap_profile.*pve-bootstrap-ssm|aws sts get-caller-identity.*
 Any fleet-host cookbook using its OWN runtime IAM identity as `bootstrap_profile` is a candidate to verify against the home-monitor IAM policy.
 
 This rule exists because setup PR #166 (2026-05-07, aws-credentials systematic-化) included `aws-credentials` in `auto-mitamae-target` with `bootstrap_profile=pve-bootstrap-ssm`. The cookbook's `aws sts get-caller-identity` probe passed; the actual `aws ssm get-parameter` then failed with `AccessDeniedException` on `/home-monitor/iam/pve-bootstrap-ssm/access-key-id`. Recovery required revert PR #167 + manual re-apply on CT 111. The IAM policy denial is intentional — `pve-bootstrap-ssm` cannot read its own credential paths to prevent self-rotation as a privilege-escalation surface. The cookbook now uses the external `bin/bootstrap-lxc-creds` script as the systematic-化 channel instead.
+
+## Fleet Cookbook SSM Gate Path Must Match the Profile's IAM Grant
+
+Before writing a `require_external_auth` / `deploy_with_ssm_env` gate that probes an SSM path on a FLEET cookbook pinned to a scoped profile (e.g. `pve-bootstrap-ssm`), live-probe that EXACT path with that profile:
+
+```bash
+aws ssm get-parameter --name "<gate-path>" --profile "<pinned-profile>" \
+  --region <region> >/dev/null 2>&1 && echo OK || echo DENIED
+```
+
+This is ORTHOGONAL to "Auth-check gate must match the cookbook's actual invocation profile" (and `lint-cookbooks` check #3): that verifies the gate's `--profile` equals the ops' `--profile`. THIS catches the other failure — the profile matches, but the SSM PATH is outside that profile's IAM grant namespace. Both are necessary.
+
+The failure is INVISIBLE on a warm host: `skip_if: File.exist?(env_output_path)` skips the gate when `.env` already exists, so the cookbook looks healthy. It only bites on a fresh/rotated LXC where `.env` is absent AND the gate runs non-TTY (auto-discovery is TTY-only) → AccessDenied → `.env` block silently skipped → service boots misconfigured. Probe from a bare SSH (no `-t`) to match fleet conditions.
+
+When the IAM grant is the cited fix, verify which RESOURCE holds it: a grep hit for the path in a `tailscale.tf` `aws_iam_role_policy` is a grant to the EC2 instance ROLE, NOT to the `pve-bootstrap-ssm` IAM USER — distinct identities. Confirm against the user's own policy (`pve-bootstrap-iam.tf`) + a live probe, never a single grep hit.
+
+This rule exists because the 2026-06 setup AWS-profile review confirmed via live probe that `lxc-cognee` / `lxc-memory` / `lxc-hydra` pinned `pve-bootstrap-ssm` but gated on `/cognee/llm-endpoint` + `/memory/aurora-endpoint` — paths OUTSIDE the profile's grant (`/ssh-keys/* /monitoring/* /hydra/*`; the `/memory/*` grant in tailscale.tf was on the EC2 instance role). Fresh/rotated fleet LXCs silently skipped `.env`; warm hosts hit `skip_if` and looked healthy. Fix: a home-monitor IAM grant for `/cognee/* /memory/*` (KMS-scoped) + pinning lxc-hydra's previously-bare gate.
 
 ## kms:Decrypt with EncryptionContext — wildcard `*` denies silently
 
