@@ -30,6 +30,15 @@
 set -euo pipefail
 shopt -s inherit_errexit
 
+# Preset AWS_PROFILE for the fleet non-TTY apply path. require_external_auth's
+# profile auto-discovery is TTY-only, so without this env preset bare-gate
+# cookbooks (ssh-keys etc.) would fall through to the `default` profile (which
+# does not exist on a fresh LXC) and silently skip. The fleet's only configured
+# profile is pve-bootstrap-ssm (seeded by bin/bootstrap-lxc-creds), so this is
+# deterministic. Cookbooks that pin an explicit --profile are unaffected — the
+# CLI flag wins over AWS_PROFILE.
+export AWS_PROFILE=pve-bootstrap-ssm
+
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 cmd="${SSH_ORIGINAL_COMMAND:-}"
