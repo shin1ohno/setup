@@ -1,0 +1,67 @@
+#!/bin/bash
+# bin/apply — sudo-primed wrapper around mitamae for interactive Mac/Linux applies.
+#
+# Many cookbooks declare per-resource `execute "sudo ..."` for system-path
+# installs. sudo caches each session's timestamp for 5 minutes by default;
+# if a long resource (e.g. a brew install or a cargo build) takes more than
+# 5 minutes between sudo invocations, the NEXT sudo prompt re-fires
+# mid-apply. The prompt gets buried in mitamae's progress output and the
+# apply stalls invisibly until the operator notices and retypes.
+#
+# This wrapper:
+#   1. Prompts for sudo password ONCE at the start (sudo -v primes the cache)
+#   2. Refreshes the cache every 60s via a background keepalive while mitamae
+#      runs (sudo -n true is non-interactive — no prompt, just touches the
+#      timestamp)
+#   3. Cleans up the keepalive on any exit path
+#
+# Use this INSTEAD of `./bin/mitamae local <recipe>` for interactive applies.
+# The fleet apply path (auto-mitamae-target's mitamae-runner.sh, runs as
+# root) doesn't need this — root has no sudo prompt.
+#
+# Usage:
+#   ./bin/apply darwin.rb
+#   ./bin/apply linux.rb --dry-run
+#   ./bin/apply pve/lxc-foo.rb
+#
+# Args after the recipe path are forwarded to mitamae.
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <recipe.rb> [mitamae-args...]" >&2
+    echo "Example: $0 darwin.rb" >&2
+    exit 1
+fi
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+MITAMAE="${SELF_DIR}/mitamae"
+
+if [ ! -x "${MITAMAE}" ]; then
+    echo "[apply] mitamae binary missing at ${MITAMAE}. Run ./bin/setup first." >&2
+    exit 1
+fi
+
+# Prime sudo cache. Interactive — operator will be prompted once.
+echo "[apply] priming sudo cache (one prompt for the whole apply)..."
+sudo -v
+
+# Background keepalive: refresh the sudo timestamp every 60s while we live.
+# `sudo -n true` is non-interactive and exits 0 when the cache is valid, so it
+# silently extends the timestamp; if the cache somehow expires (very long idle),
+# it exits non-zero and the loop terminates — the next interactive sudo in
+# mitamae will then re-prompt (recoverable degradation, not worse than today).
+# kill -0 $$ checks the parent is still alive; loop exits when mitamae returns.
+( while true; do
+        sleep 60
+        kill -0 "$$" 2>/dev/null || exit
+        sudo -n true 2>/dev/null || exit
+    done ) &
+KEEPER_PID=$!
+
+# Always clean up the keepalive on exit (success, error, or signal).
+trap 'kill "${KEEPER_PID}" 2>/dev/null || true' EXIT
+
+# Hand off to mitamae. exec replaces this shell so the trap fires from
+# mitamae's exit, not from a wrapper-level wait.
+exec "${MITAMAE}" local "$@"
