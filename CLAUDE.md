@@ -60,19 +60,19 @@ This repository does NOT configure:
 ```bash
 # macOS
 ./bin/setup                    # Download mitamae
-./bin/apply darwin.rb          # Run full macOS setup (sudo prompts ONCE)
+./bin/mitamae local darwin.rb  # Run full macOS setup
 
 # Linux (bare-metal)
 ./bin/setup                    # Download mitamae
-./bin/apply linux.rb           # Run full Linux setup (sudo prompts ONCE)
+./bin/mitamae local linux.rb   # Run full Linux setup
 ```
 
-`bin/apply` is the interactive entry point: it primes sudo at the start and runs a 60s keepalive in the background so per-resource `execute "sudo ..."` calls don't re-prompt mid-apply (the previous `./bin/mitamae local <recipe>` form re-prompted whenever sudo's 5-min timestamp expired between resources). Use plain `./bin/mitamae local …` only inside the fleet runner (`mitamae-runner.sh`, runs as root) or for dry-runs.
+`cookbooks/mac-sudo` ships a `Defaults:<user> timestamp_type=global, timestamp_timeout=60` drop-in (60-min credential cache shared across all of the user's processes), so a full darwin apply prompts for sudo at most once — Touch ID (pam_tid) turns that one prompt into a fingerprint tap.
 
 **Development/Testing:**
 
 ```bash
-# Dry run mode (no sudo, plain mitamae form)
+# Dry run mode
 ./bin/mitamae local darwin.rb --dry-run
 ```
 

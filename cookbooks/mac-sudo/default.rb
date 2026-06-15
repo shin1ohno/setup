@@ -47,22 +47,31 @@ sudoers_staging = "#{staging}/setup-sudo-timestamp"
 file sudoers_staging do
   content <<~SUDOERS
     # Managed by cookbooks/mac-sudo — do not edit by hand.
-    # Share #{user}'s sudo credential cache across all processes instead of
-    # per-tty (macOS default tty_tickets), so a mitamae apply with many
-    # `execute "sudo ..."` resources prompts at most once.
-    Defaults:#{user} timestamp_type=global
+    # Two tweaks to keep an interactive mitamae apply prompt-light:
+    # 1. timestamp_type=global — share #{user}'s sudo credential cache
+    #    across all processes instead of per-tty (macOS default tty_tickets).
+    #    Without this, every mitamae specinfra subshell would re-prompt.
+    # 2. timestamp_timeout=60 — extend the credential cache to 60 minutes
+    #    (default is 5). A single resource that takes more than 5 minutes
+    #    (brew install, cargo build, large pkg download) would otherwise
+    #    cause the NEXT sudo to re-prompt mid-apply, since bin/apply's
+    #    60s keepalive is a best-effort backup and doesn't survive every
+    #    cache-eviction edge case in macOS sudo. 60 minutes is longer than
+    #    any practical interactive apply.
+    Defaults:#{user} timestamp_type=global, timestamp_timeout=60
   SUDOERS
   mode "644"
 end
 
+# Detect drift from the canonical content so a cookbook update (e.g., adding
+# timestamp_timeout) re-installs the drop-in. `diff -q` exits 0 only when the
+# file matches byte-for-byte; sudoers.d is 0755 so the diff itself needs no
+# sudo. The install step still runs sudo to write the system path.
 execute "install global sudo timestamp drop-in" do
   command "visudo -cf #{sudoers_staging} && " \
           "sudo install -m 0440 -o root -g wheel " \
           "#{sudoers_staging} /etc/sudoers.d/setup-sudo-timestamp"
-  # test -e needs no sudo (/etc/sudoers.d is 0755); keeps dry-run prompt-free.
-  # The drop-in is a stable one-liner; if its content ever changes, remove the
-  # dest first so this re-installs (existence-based idempotency by design).
-  not_if "test -e /etc/sudoers.d/setup-sudo-timestamp"
+  not_if "diff -q #{sudoers_staging} /etc/sudoers.d/setup-sudo-timestamp 2>/dev/null"
 end
 
 # --- 2. Touch ID for sudo (pam_tid) ------------------------------------------
