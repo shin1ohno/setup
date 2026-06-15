@@ -23,7 +23,7 @@ When launching 3+ sub-agents in parallel over the same repository, declare which
    - **Split the file**: split the cookbook / module so each stream owns a distinct file (e.g., `cookbooks/elastic-agent/files/elastic-agent.linux.yml.tmpl` vs `elastic-agent.darwin.yml.tmpl`)
 4. State the exclusivity decision in each stream's prompt: "You will write to FILES X, Y, Z. DO NOT modify any file under cookbooks/foo/ — Stream <name> owns it."
 
-This rule exists because the 2026-05-09 ADR-0005 Phase 4 session launched Stream P (Linux Elastic Agent) and Stream Q (macOS Elastic Agent) in parallel without declaring file ownership. Both independently created `cookbooks/elastic-agent/default.rb`. Stream P merged first (PR #277), Stream Q's PR #276 hit a merge conflict that required Stream Z to spawn for rebase + cross-platform branching (PR #276 second-merge cycle). One full PR cycle wasted.
+Origin: 2026-05-09 two parallel streams both created the same cookbook file; one full PR cycle wasted on the merge conflict.
 
 ## Sub-agent Destructive-Operation Scope Boundary
 
@@ -44,7 +44,7 @@ Applies to:
 - **Database tables / collections / indices**
 - **Cloud resources** (S3 buckets, IAM users, KMS keys)
 
-This rule exists because the 2026-05-09 ADR-0005 Phase 5 Stream N "rtx-overview-v2 layout adjustment" task autonomously interpreted "consolidate dashboards" as authorization to delete Phase 5 (PR #238) saved objects (rtx-discover, top-src lens, top-dst-port lens, rtx-overview-min). The harness blocked the push but the in-stream deletions had already happened. Push was deferred indefinitely awaiting user judgment. The deletion was outside the original "build rtx-overview-v2 dashboard" task scope.
+Origin: 2026-05-09 an agent read "consolidate dashboards" as license to delete predecessor saved objects outside its task scope.
 
 ## Analysis-only Agent Scope — No File Edits Without Explicit Authorization
 
@@ -60,7 +60,7 @@ When a sub-agent's (or workflow agent's) task is framed as **analysis, design, o
 
 **Why "no immediate error" is insufficient**: an agent fixing a collection/serialization bug in a typed framework (Terraform provider, GraphQL resolver, protobuf/JSON codec) may eliminate the observable crash while introducing a subtler invariant violation — wrong list order, missing element, schema mismatch — that fails differently on a different code path. An adversarial verifier that only checks "did the panic go away?" misses it; it must check the framework's actual contract (e.g. for a Terraform list of a Required attribute, the applied value must equal the plan element-by-element in order and count).
 
-This rule exists because the 2026-05-31 terraform-provider-rtx session ran "analysis" workflow agents with full tool access. The dns_server-panic agent edited resource.go and created a test (out of scope) and produced a fix that stopped the nil-pointer panic but appended unmatched entries at the END of the reordered list — re-triggering "Provider produced inconsistent result after apply" because query_pattern is Required and must match plan order. The adversarial Verify phase accepted it; the parent session's independent source review caught it and replaced it with a plan-fallback.
+Origin: 2026-05-31 an analysis agent stopped a panic but broke the plan-order contract; the adversarial Verify phase accepted it.
 
 **Production service boundary** — when an analysis/synthesis-phase agent's task touches a RUNNING service (docker container, systemd unit, `elastic-agent`, the auto-mitamae orchestrator, any PVE LXC service), the read-only default applies EVEN IF the parent prompt omitted the verbatim sentence above. Default in these contexts:
 
@@ -69,7 +69,7 @@ This rule exists because the 2026-05-31 terraform-provider-rtx session ran "anal
 
 If the agent concludes it MUST mutate a production service to resolve an ambiguity, it surfaces the proposed change as text + stops — it does not execute. An orchestrator / auto-mitamae auto-revert is NOT a safety net: it catches the action only AFTER the service was already restarted with an untested config.
 
-This boundary exists because the 2026-06-01 elastic-agent incident session ran a Workflow synthesis agent (full tools, "analyze + synthesize" framing) that edited CT 111's production `elastic-agent.yml` and restarted the service during the analysis phase. PR #408's rule was in effect but the verbatim sentence was absent from the `agent()` prompt, so the agent proceeded. Auto-mitamae reverted it on its next cycle — but the production agent had already been restarted with the unvalidated config.
+Origin: 2026-06-01 a synthesis agent restarted a production service with an unvalidated config during the analysis phase.
 
 ## Fleet Status Verification — Functional Probe in the Agent Prompt
 
@@ -84,7 +84,7 @@ When dispatching an agent to verify health across fleet hosts, the prompt MUST n
 
 Prompt line to include: "Report each host's FUNCTIONAL health via `<specific-command>`, NOT `systemctl is-active`. A host is HEALTHY only when the functional check confirms behavior (data flowing, components active), not just that the process runs."
 
-This rule exists because the 2026-06-01 elastic-agent fleet rollout dispatched a fleet-scope agent that reported 19/19 hosts HEALTHY using (almost certainly) `systemctl is-active` — true for every host even while the OTel manager + metricbeat had stopped emitting. The synthesis phase caught the false positives by re-probing with `elastic-agent status`.
+Origin: 2026-06-01 a fleet agent reported 19/19 HEALTHY via `systemctl is-active` while emission had stopped.
 
 ## Tool Availability — ToolSearch Before Claiming Unavailable
 
@@ -101,7 +101,7 @@ Sequence:
 
 Parent prompts for sessions involving deferred tools should explicitly include: "If a tool appears unavailable, call `ToolSearch('<tool>')` before reporting the blockage." For sub-agent prompts that depend on `SendMessage`, `EnterPlanMode`, or skill invocation, name the ToolSearch query directly: "ToolSearch with `select:SendMessage` to load the SendMessage schema."
 
-This rule exists because the 2026-05-09 ADR-0005 Phase 4 Stream O blocked itself reporting "no SendMessage tool available" / "no EnterPlanMode tool available" — both reachable via ToolSearch. The stream consumed a slot for ~60 seconds and produced no output. The Fleet Server work was re-routed via parent-session SendMessage broadcasts, but Stream O's idle slot was wasted.
+Origin: 2026-05-09 a stream blocked itself reporting SendMessage/EnterPlanMode unavailable — both reachable via ToolSearch.
 
 ## Bulk Research Pattern
 
@@ -117,23 +117,6 @@ Example: "Save all reviews from this page" → launch sub-agents per category in
 Example: "Look up all reviews for this brand" → 1 agent per brand in background
 Example: "Find bindings for this board" → 1 agent per brand group in background
 ```
-
-## Agent Self-Recovery
-
-Sub-agents should handle predictable errors autonomously before escalating to the user:
-
-- **Library fallback**: if a Python module is unavailable (e.g., `requests`), switch to stdlib alternatives (`urllib.request`, `json`, `http.client`)
-- **Extraction fallback**: if PyMuPDF returns empty text from a PDF, escalate to Vision API (page→PNG→Claude vision)
-- **API fallback**: if REST API returns unexpected results, try the equivalent MCP tool
-- **Escalation threshold**: only report to user after 2+ alternative approaches have been attempted and failed
-
-This principle enables parallel agents to complete independently without blocking on user input for recoverable errors.
-
-### Shell Init Noise
-
-If Bash commands produce repeated `zsh: command not found: -e` or similar shell init noise, the cause is a `.zshrc` that interprets literal flags as commands. This is cosmetic — ignore the noise lines and parse only the actual command output that follows.
-
-**Active scanning**: when noise is in the output, explicitly grep for real errors instead of just "not noticing them at the bottom". After any Bash invocation with noisy output, scan for `error`, `Error`, `ERROR`, `fatal`, `failed`, `FAILED`, `permission denied`, `cannot`, `not found` (only after the noise block), `✗`, `❌`. Real errors tend to cluster at the end of output AFTER the noise, so tail-inspection is where mistakes happen — prefer `grep -iE "error|fatal|failed|denied"` on the full output over `| tail`.
 
 ## Long-Running Tasks
 
@@ -161,7 +144,7 @@ If the deadline passes without a completion notification, do NOT wait silently. 
 
 Do not re-launch the same agent with the same prompt expecting a different result. If the agent silently fails once, the second attempt usually fails the same way — instead narrow the scope or switch tools.
 
-This rule exists because the 2026-04-23 iOS session had two consecutive Ultraplan failures (one user-stopped after ~15 min; one timed out silently at 90 min). Both required the user to notice the silence and manually restart. Explicit deadlines with escalation via AskUserQuestion would have surfaced the failure at the first 30 min mark.
+Origin: 2026-04-23 two consecutive Ultraplan agents failed silently; the user had to notice and restart.
 
 ## Tool Selection Guide
 
@@ -188,4 +171,4 @@ Commands that always qualify:
 
 Pattern: launch the sub-agent with `run_in_background: true`, emit one short user-facing line ("Deploy in background, waiting for completion notification"), and continue interacting with the user. Feed results back when the completion notification arrives. Multiple such tasks can and should run in parallel when independent.
 
-Anti-pattern (caught in the 2026-04-23 weave session): attempting `docker compose up -d --build` inline as a foreground `Bash` call. The user corrected with "そういう時間がかかるタスクは SubAgent でやって" — this rule codifies that correction.
+Origin: 2026-04-23 attempted `docker compose up -d --build` inline as a foreground Bash call; user corrected "時間がかかるタスクは SubAgent で".

@@ -25,14 +25,7 @@ If Cognee MCP is not connected in this session, skip all Cognee operations silen
 
 ### When to Search (READ)
 
-Run a Cognee search **before** generating a response to the first message in a conversation.
-
-When to search:
-1. **Conversation start**: the first message involving a non-trivial task
-2. **Before decisions**: past decisions, reviews, or evaluations on the same topic/product/technology
-3. **Product or tool discussions**: existing reviews, comparisons, recommendations
-4. **On errors**: error messages or patterns — may have been solved before
-5. **Investment or business questions**: past analyses, market data, recommendations on similar topics
+Run a Cognee search **before** generating a response to the first message in a conversation. Also search before decisions on the same topic/product/tech, on errors (may be solved before), and for investment/business questions.
 
 **No search needed**: trivial edits, typo fixes, and git operations only.
 
@@ -50,62 +43,13 @@ Use `top_k=5` for focused queries, `top_k=15` for broad exploration.
 
 When a research, review, or analysis task reaches a conclusion (summary or comparison table produced), save immediately **before** moving to the next task. Do not wait for the user to ask.
 
-**Debugging sessions**: the save trigger is **root cause identification**, not task completion. When you identify the root cause of a non-obvious bug with confidence, save it to Cognee immediately — before implementing the fix. Debugging sessions often involve multiple hypothesis-test cycles; the root cause and the failed hypotheses both have future value.
+**Debugging sessions**: the save trigger is **root cause identification**, not task completion. When you identify the root cause of a non-obvious bug with confidence, save it to Cognee immediately — before implementing the fix. The root cause and the failed hypotheses both have future value.
 
-**Always save (use `cognify`):**
-- Product reviews, evaluations, and comparison results
-- Recommended product/tool combinations with rationale
-- Root cause of a non-obvious bug and its fix
-- Architectural decisions and their rationale
-- Surprising API behavior, gotchas, or workarounds
-- Infrastructure/deployment patterns
-- Investment or business analysis results
-- Cross-project patterns or conventions
-- User attributes, possessions, and preferences (body measurements, owned gear/devices, taste preferences, etc.) — save proactively whenever revealed in conversation, without waiting for the user to ask
-
-**Save lightly (use `save_interaction`):**
-- Troubleshooting steps that led to a resolution
-- Quick product impressions or initial evaluations
-- Project-specific setup steps
-
-**Never save:**
-- Routine code changes (rename, formatting, simple refactor)
-- Information already in project README or docs
-- Temporary state (current branch, WIP status)
-- Secrets, credentials, tokens, passwords
+**`cognify` (durable insight)** for the lasting stuff: bug root-causes + fixes, architectural decisions + rationale, product reviews/comparisons, API gotchas/workarounds, infra patterns, cross-project conventions, user attributes/possessions/preferences (save proactively when revealed). **`save_interaction` (light)** for troubleshooting steps, quick impressions, project setup notes. **Never save** secrets/credentials/tokens, routine refactors, info already in README, or temporary state (branch/WIP).
 
 ### Save Format
 
-When calling `cognify`, structure the data as a self-contained knowledge note:
-
-For technical knowledge:
-```
-## [Topic]: [Specific Subject]
-Context: [project name, tech stack]
-Problem: [what happened]
-Solution: [what worked]
-Why: [root cause or rationale]
-```
-
-For product reviews and evaluations:
-```
-## Review: [Product Name] ([Category])
-Rating: [1-5 or qualitative]
-Use case: [what it's good for]
-Pros: [strengths]
-Cons: [weaknesses]
-Compared to: [alternatives considered]
-Verdict: [recommendation and context]
-```
-
-For business/investment insights:
-```
-## Analysis: [Subject]
-Context: [market, timing, constraints]
-Key findings: [main points]
-Recommendation: [action items]
-Risk factors: [caveats]
-```
+Structure each `cognify` note as a self-contained block: Topic / Context (project, stack) / Problem / Solution / Why. (Adapt the labels for reviews — Rating/Pros/Cons/Verdict — or analyses — Findings/Recommendation/Risks.)
 
 ### Post-Cognify Verification
 
@@ -140,7 +84,7 @@ When a `cognify` MCP call returns a timeout error (typically after ~60s waiting 
 
 **When to use Mem0 fallback instead**: if the content is short (1-2 sentences, single fact about user attribute or possession), the Mem0 `add_memories` MCP tool is faster and has different infrastructure. Cross-session knowledge that's larger (debug pattern, architectural decision, multi-paragraph rationale) belongs in cognify even if it has to wait for re-ingest.
 
-This rule exists because the 2026-04-29 weave session lost two cognify saves (the iOS Nuimo battery debug pattern + the CBUUID FFI gotcha) to back-to-back timeouts. The knowledge survived in commits and the cookbook rules but is invisible to graph search until manually re-ingested. Without this fallback, the same trap is rediscovered next session.
+Origin: 2026-04-29 two cognify saves lost to back-to-back timeouts, invisible to graph search until re-ingested.
 
 ### Ingestion Method Selection
 

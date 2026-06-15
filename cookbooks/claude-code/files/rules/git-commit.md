@@ -4,11 +4,7 @@ description: "Git commit message format rules — loaded when creating commits"
 
 # Git Commit Format
 
-## First Line (Summary)
-
-- Start with `{component}: ` prefix when possible (shortened filename or directory)
-- Prefer contextful verbs over generic "Change", "Add", "Fix", "Update"
-- Explain the "why", not just the "what"
+Start the summary with a `{component}: ` prefix; explain the "why", not just the "what".
 
 ## Deferred Stubs in PR Description
 
@@ -21,9 +17,9 @@ Format:
 - `weave_ios_core::EdgeClient::publish_edge_status(wifi)` — public stub awaiting Swift `NEHotspotNetwork` reader + 10s timer in WeaveIos app repo
 ```
 
-This applies even when the plan or commit body already mentions the deferral — the PR description is the durable artifact reviewers see, and the section is where reviewers expect "what's intentionally not finished here." A `// TODO: Swift impl` source comment is NOT a substitute; reviewers don't grep new public symbols.
+This applies even when the plan or commit body already mentions the deferral — the PR description is the durable artifact reviewers see. A `// TODO: Swift impl` source comment is NOT a substitute; reviewers don't grep new public symbols.
 
-This rule exists because the 2026-04-26 weave session shipped `EdgeClient::publish_edge_status` as a stub for a deferred iOS Swift side, mentioned it in the commit body, but the PR description had no Deferred section — the unused public symbol could read as oversight rather than scope decision.
+Origin: 2026-04-26 deferred-stub public symbol read as oversight.
 
 ## Default to PR Branch; Do Not Push to main
 
@@ -46,7 +42,7 @@ Absent an explicit opt-in OR an established convention, always go PR branch → 
 
 **The convention signal is per-file-class, not per-repo**: a repo can have HANDOFF/log files that go direct-to-main while code changes still go through PRs. When the file being committed is a different class than the historical direct-to-main commits, the convention does NOT apply — fall back to PR branch.
 
-This rule exists because the 2026-05-05 PVE migration session ended with 3 unpushed `HANDOFF.md` commits on `main` of the `ultraplan-pve-roundtable` repo. The repo's `git log --oneline origin/main -10` showed every prior HANDOFF commit went direct to `main` with no PR — a clear convention. Per the rule's prior wording I correctly presented `! git push origin main` for user authorization, but had also asked the user about PR-vs-direct ceremony when the history already answered. The git-log signal is machine-readable and can resolve the question without burning a user turn.
+Origin: 2026-05-05 PVE migration — asked PR-vs-direct ceremony when git-log already answered.
 
 **Deny-list scope note**: The `Bash(git push:*)` deny entry matches commands that *start with* `git push`. A compound command `cd /repo && git push ...` bypasses the matcher. This is a known limitation. The behavioral rule (always present the blocked push as `! git push ...` and let the user run it) is the reliable enforcement mechanism — not the deny entry alone. Do not exploit the compound-form loophole to auto-push.
 
@@ -69,9 +65,9 @@ For tasks whose primary output is edits to `CLAUDE.md`, `~/.claude/rules/*.md`, 
 git -C /path/to/repo branch --show-current  # before the first Write
 ```
 
-If the current branch is not the intended one (typically: not `main`, not a branch created for this task), cut a fresh branch from `origin/main` BEFORE editing. The existing rule's "Before writing any file" wording is correct but easily missed when the editing session spans many turns and never touches `git add` until late.
+If the current branch is not the intended one (typically: not `main`, not a branch created for this task), cut a fresh branch from `origin/main` BEFORE editing. The "Before writing any file" wording is easily missed when the editing session spans many turns and never touches `git add` until late.
 
-Origin: 2026-05-11 CLAUDE.md trim session applied 5+ Writes to `cookbooks/claude-code/files/CLAUDE.md` while sitting on `fix/aws-credentials-login-session-bootstrap` (an unrelated open PR's branch). The user surfaced the scope-bleed with "origin/mainにも入ってる？" only after all edits had landed; recovery required `git stash --include-untracked` → fresh branch from `origin/main` → `git stash pop` → 2 commits cycle.
+Origin: 2026-05-11 CLAUDE.md trim — 5+ Writes on an unrelated open PR's branch.
 
 ### Branch check immediately before `gh pr create`
 
@@ -92,7 +88,7 @@ cat /tmp/pr-body.md | gh pr create --base main --head feat/my-branch --title "..
 
 The `--head` form is the safest — gh uses the explicit branch regardless of CWD's current branch state.
 
-This rule exists because the 2026-05-09 ADR-0005 Phase 4 Stream T session shipped PR #280 with the WRONG content. `gh pr create` was invoked while CWD's current branch was `feat/kibana-port-rtx-routers-dashboard` (Stream U's), not the intended `feat/elastic-agent-prometheus-integration` (Stream T's). PR #280's title described Stream T's Prometheus federation cookbook but the diff was Stream U's rtx-routers dashboard NDJSON — a duplicate of PR #279. Stream T's actual code was shipped in a re-do PR #281. One full PR cycle wasted; the title/diff mismatch was discoverable only by reading the diff after merge.
+Origin: 2026-05-09 multi-stream worktree — PR shipped with wrong stream's diff (current branch drifted between commit and PR-create).
 
 ### Multi-repo tasks
 
@@ -103,7 +99,7 @@ When a task spans 2+ repositories (e.g., CWD is `weave`, edits land in `edge-age
 
 Tool-side CWD resets (Bash sandbox reverts to the primary working directory on each invocation) mean a cd-based branch check only describes the primary repo; a CWD-based check is insufficient when edits reach into a sibling repo via absolute paths. Run the check per-repo, explicitly naming the path with `git -C`.
 
-This rule exists because the 2026-04-23 iOS session edited `~/ManagedProjects/edge-agent` from a `~/ManagedProjects/weave` primary CWD. The check happened to succeed (edge-agent was on `main` and I cut a fresh branch), but the default `git branch --show-current` in that session was describing the weave repo, not the repo being edited.
+Origin: 2026-04-23 iOS — bare branch check described primary CWD, not the sibling repo edited.
 
 ### Cross-repo propagation: enumerate first
 
@@ -116,7 +112,7 @@ grep -rln '"air"\|"pro"' ~/ManagedProjects/*/ 2>/dev/null
 
 If the grep surfaces K repos, the plan should list K branch/PR pairs up front. Do not start the first repo's PR and discover the second repo's need mid-flight — the user sees sequential round-trips where one coordinated planning step would have sufficed.
 
-This rule exists because the 2026-04-25 session added `neo` to `setup` first, then separately discovered `home-monitor/ssh-devices.tf` also needed the entry, producing two sequential PR flows where one planning step would have scoped both.
+Origin: 2026-04-25 `neo` host add — `home-monitor/ssh-devices.tf` discovered as a second sequential PR.
 
 ### Re-check after any long-running background operation
 
@@ -141,7 +137,7 @@ cd /home/shin1ohno/ManagedProjects/setup &&
 
 If the `branch --show-current` test fails the chain aborts before staging, surfacing the drift immediately rather than after the commit lands on the wrong branch. **Do NOT** split `git checkout -b` into a separate Bash invocation from the commit — branch context does not survive the CWD reset between calls.
 
-This rule exists because the 2026-04-22 session landed a `rtx-hnd: block DHCP ...` commit on `fix/hydra-upstream` instead of `main` — the user had switched branches while a long `terraform apply` was running in the background. Fixed afterward via FF-merge, but only after the user spotted it. Strengthened on 2026-05-06 after two consecutive misplaced-commit incidents in the Phase 2b auto-mitamae rollout (PRs #156 + #158): commits intended for `fix/grafana-datasource-uid` and `fix/docker-compose-force-recreate` both landed on the user's leftover `feat/grafana-pve-dashboard` branch because the `git checkout -b` ran in a separate Bash call from the eventual `git commit`. Both required cherry-pick recovery into the correct branch and `git branch -f feat/grafana-pve-dashboard origin/main` to clean up.
+Origin: 2026-04-22 commit on wrong branch after background `terraform apply`; strengthened 2026-05-06 after two misplaced commits where `git checkout -b` ran in a separate Bash call from `git commit` (recovery: cherry-pick + `git branch -f <branch> origin/main`).
 
 ### Cherry-pick is a commit operation — branch check applies
 
@@ -155,7 +151,7 @@ The standard pattern for moving an existing commit onto its own clean branch:
 
 Never cherry-pick onto an existing feature branch unless that branch is the cherry-pick's intended destination. The "branch is not main" heuristic is insufficient — the branch may be another in-flight feature (the user's WIP, a sibling task) that has nothing to do with the commit you're moving.
 
-This rule exists because the 2026-04-25 session cherry-picked an `ssh-keys: ...` commit onto `feat/roon-mcp-0.5.2-allowed-host` (the user's unrelated WIP branch). Recovery required `git branch -f <branch> origin/<branch>` to discard the misplaced commit and a fresh cherry-pick onto `fix/ssh-keys-host-pattern` from main.
+Origin: 2026-04-25 cherry-picked onto the user's unrelated WIP branch.
 
 ### Branch overlap pre-flight: open PR file scope
 
@@ -178,7 +174,7 @@ Before `git checkout -b feat/<topic> origin/main`:
 
 Default to **(a)**. The cost of cherry-picking later is one extra round-trip the user must notice on their own; the cost of (a) is a routine post-merge rebase.
 
-This rule exists because the 2026-04-25 weave session cut `feat/ios-edge-client` from `origin/main` while `fix/ios-ble-scan-no-filter` (PR #41) was still open and modifying `ios/WeaveIos/Core/BleBridge.swift`. PR #42 was then deployed to iPad without #41's fix, breaking BLE pairing on the redeploy. Recovery required cherry-picking the fix commit onto the feature branch — the user had to surface the regression by re-testing on hardware.
+Origin: 2026-04-25 weave — feature branch cut from main lacked an open sibling fix, regressing BLE pairing on redeploy.
 
 ## Branch Cleanup Survey
 
@@ -194,7 +190,7 @@ git branch --merged origin/main | grep -v '^\*\| main$\| master$'
 
 Present the union of A and B as a single candidate list, cross-reference each against `gh pr list --state closed --head <branch>` to confirm merged status, then ask once for destructive-op authorization. Do not ship the first-pass deletion and then surface "by the way, 2 more remain" — that forces a second user roundtrip.
 
-This rule exists because the 2026-04-24 weave session ran only `git branch --no-merged origin/main` in the first pass (detected 3 squash-merged branches) and missed 2 true-merge-commit branches (`docs/operational-assumptions`, `feat/connections-first-ui`). The user had to reply "消してください" a second time after the remaining candidates were surfaced post-deletion.
+Origin: 2026-04-24 weave — only `--no-merged` surveyed, missed true-merge-commit branches.
 
 ## PR Review Comment Exhaustive Fetch
 
@@ -214,7 +210,7 @@ gh pr view <n> --json reviewThreads --jq '[.reviewThreads[] | select(.isResolved
 
 **Verification gate before pushing the fix commit**: count unresolved threads, count comments you've addressed. If the numbers don't match, re-fetch — there is at least one comment from a review submission you didn't see.
 
-This rule exists because the 2026-05-07 PR #179 session fetched only 2 inline comments via `pulls/179/comments` and pushed a "review feedback addressed" commit. The reviewer had submitted a SECOND review (review id `PRR_kwDOJGwgDM787Pie`) adding a third comment at line 113 that was missed. User had to flag "一つ対応もれ" before I re-fetched and saw the gap. The `reviewThreads` approach would have surfaced all 3 from the start.
+Origin: 2026-05-07 — `pulls/<n>/comments` dropped a comment from a second review submission.
 
 ### Diff before acting on comments that reference content by name
 
@@ -255,7 +251,7 @@ Once the downstream PR's base is `main`, GitHub computes the diff against the po
 
 **Workflow integration** — when running a PR-merge sequence (typical /retro session, multi-PR feature shipping), do the retarget pass *before* the first merge in the chain, not interleaved per-merge. Discovering a missed dependent after the parent PR has already been merged + branch deleted means GitHub has already auto-closed it.
 
-This rule exists because the 2026-04-26 iOS session merged #45 with `--delete-branch`, which auto-closed stacked PRs #46 and #47. Recovery cost: cherry-pick → fresh branches → re-open as #48 / #50 → re-run CI. Two avoidable round-trips. The pre-merge `gh pr list --base` query takes one second.
+Origin: 2026-04-26 iOS — `--delete-branch` auto-closed two stacked downstream PRs.
 
 ## Tag a release immediately when fixing auth/security on a downstream-consumed library
 
@@ -279,7 +275,7 @@ The trap: a fix sits unreleased on `main` for days while every consumer of the p
 
 Don't defer step 2-3 to a "release later" pile. The five seconds of tag-cutting closes the gap; the multi-day gap is what makes the fix invisible.
 
-This rule exists because roon-rs commit `f6b5491` ("roon-mcp: add SSE server transport") landed on `main` 2026-05-02 and disabled JWT audience validation as a side effect — but no release tag was cut. The lxc-roon-mcp cookbook stayed pinned to `v0.5.3` (audience-validation-enabled) and rejected every claude.ai Bearer token with HTTP 401 invalid_token (`AuthError::WrongAudience`) for 3 days. The 2026-05-05 session burned the entire 401 debug arc — including a debug branch with added `tracing::warn!` and a full container rebuild — before diff'ing `v0.5.3..main` revealed the released-but-not-tagged fix. Tagging `v0.5.4` and bumping the cookbook took 2 minutes after the diagnosis; the cost would have been zero if the tag had been cut at merge time.
+Origin: 2026-05-02 roon-rs `f6b5491` fixed JWT audience validation but cut no tag; `lxc-roon-mcp` stayed pinned to `v0.5.3` and 401'd every claude.ai token (`AuthError::WrongAudience`) for 3 days until a `v0.5.3..main` diff surfaced the untagged fix.
 
 ## `gh pr create` body containing code → use `--body-file`
 
@@ -299,7 +295,7 @@ gh pr create --base main --title "..." --body-file /tmp/pr-body.md
 
 The body file is plain Markdown — no escaping, no quoting concerns, no parser ambiguity. Apply unconditionally when the PR body has any of: backticks, code fences, `$()`, `${...}`, single quotes inside double quotes, or multi-paragraph structure.
 
-This rule exists because setup PR #135 (2026-05-05) used inline HEREDOC with backticks around `\`https://mcp.ohno.be/roon\`` in the body. `gh pr create` printed `--title string` usage hints and aborted without creating the PR. Retry with `--body-file /tmp/pr-body-bump.md` succeeded immediately. This recurs every few sessions on different repos — the body-file approach has zero failure modes.
+Origin: 2026-05-05 — inline HEREDOC with backticks made `gh pr create` print `--title string` usage hints and abort.
 
 ### When the harness blocks `--body-file` — pipe via stdin
 
@@ -313,7 +309,7 @@ cat /tmp/pr-body.md | (cd /path/to/repo && gh pr create --base main --title "...
 
 `--body-file -` reads from stdin. The body content flows through the pipe, the harness sees it inline, and the deny rule doesn't fire. The body file stays as the source of truth on disk; the pipe is just the audit-friendly delivery channel.
 
-This rule exists because setup PR #163 (Phase 3b, 2026-05-07) hit `--body-file /tmp/pr-body-phase3b.md` denial right after a Write — the harness verifier's window had advanced past the Write call by the time the gh invocation ran. Stdin pipe succeeded immediately.
+Origin: 2026-05-07 — `--body-file /tmp/...` denied right after a Write the verifier window had advanced past.
 
 ## GPG Signing Failures
 
@@ -333,7 +329,7 @@ Do not bypass signing with `-c commit.gpgsign=false` unless the user explicitly 
 
 Before emitting the GPG cache-refresh `!` line, scan the line you are about to write and verify both halves are intact. If you cannot fit the full command on a single line, emit it as a fenced code block (which preserves it as one logical unit) — never inline-formatted at the end of a sentence where the line wrap can swallow trailing tokens.
 
-This rule exists because the 2026-05-04 retro session emitted `! gpg-connect-agent reloadagent /bye && echo "test" | gp` (truncated mid-word at line wrap), the user ran the truncated form, the pinentry cache stayed cold, and the next signed commit failed exactly the same way until the full command was re-emitted.
+Origin: 2026-05-04 retro — emitted `... echo "test" | gp` truncated mid-word; cold pinentry cache failed the next commit.
 
 ## Working directory `.git` check before first file write
 
@@ -351,6 +347,6 @@ find ~/ManagedProjects -maxdepth 4 -name "$(basename "$PWD" | sed 's/-main$//;s/
 
 Edit the tracked copy in `~/ManagedProjects/`, not the deploy copy. The deploy copy is regenerated on each `mitamae` apply (or equivalent), so changes there are silently discarded.
 
-**Why this fires reliably**: this `setup` repo is intentionally dual-located — `~/ManagedProjects/setup/` is the git-tracked source, `~/setup-main/` (or similar tarball-extracted directory) is the deploy copy that mitamae operates on. Future bootstraps of this same pattern (any pull-and-extract delivery model) will hit the same trap.
+**Why this fires reliably**: this `setup` repo is intentionally dual-located — `~/ManagedProjects/setup/` is the git-tracked source, `~/setup-main/` (or similar tarball-extracted directory) is the deploy copy that mitamae operates on. Any pull-and-extract delivery model hits the same trap.
 
-This rule exists because the 2026-05-03 LXC bootstrap session edited 14 cookbook files in `~/setup-main/` (deploy copy, no `.git`) before the user asked `git status` and the dual-location issue surfaced. Recovery required syncing all 14 files into `~/ManagedProjects/setup/`, creating a branch there, and committing — work that would have been done in-place from the start with the up-front `.git` check.
+Origin: 2026-05-03 LXC bootstrap — edited 14 files in `~/setup-main/` (no `.git`) before the dual-location surfaced.

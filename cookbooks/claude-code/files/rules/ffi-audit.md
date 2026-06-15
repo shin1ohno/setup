@@ -19,4 +19,4 @@ For each item, write down the **observed value on each side** and mark **DIVERGE
 
 ## Origin
 
-2026-04-29 weave session's plan correctly identified the structural failure (missing initial battery read on iOS NuimoDevice) but assumed "the existing parse path handles it" — true for Linux/macOS callers via btleplug, false for iOS via `CBUUID.uuidString`. Encoding divergence cost a second PR (#84) and a full hardware re-deploy cycle.
+2026-04-29 plan assumed existing parse path; iOS `CBUUID.uuidString` diverged, cost a second PR.

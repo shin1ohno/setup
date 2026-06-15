@@ -4,12 +4,6 @@ globs: ["*.sh", "*.zsh", "*.bash"]
 
 # Shell Script Guidelines
 
-- Always quote variables: `"$var"` not `$var`
-- Use `set -euo pipefail` at the top of bash scripts
-- Consider POSIX compatibility when the script may run on different shells
-- Use `$()` for command substitution, not backticks
-- Prefer `[[ ]]` over `[ ]` in bash/zsh scripts
-
 ## Locality Check Before Assuming Remote
 
 Before writing any command that assumes a target host is remote (ssh, scp, rsync over ssh, `gh api` to a remote server, any "please run this on $host" handoff), verify whether the current machine **is** that host. Cheapest possible check:
@@ -18,9 +12,11 @@ Before writing any command that assumes a target host is remote (ssh, scp, rsync
 hostname -s
 ```
 
-If the output matches the target, drop the ssh wrapper and run the command directly. The 2026-04-23 weave session lost one round-trip attempting `ssh pro.home.local` before realizing the Linux box the session was on literally **was** pro. `hostname -s` returning `pro` would have surfaced this in under a second.
+If the output matches the target, drop the ssh wrapper and run the command directly.
 
 Rule: whenever a user message mentions a host by name (`pro`, `air`, `$service.home.local`, etc.), if the command you're about to issue depends on that host being remote, `hostname -s` check first. This check is also free to run as part of any "deploy this" or "restart the service on $host" workflow.
+
+Origin: 2026-04-23 weave — ssh'd to a host the session already ran on.
 
 ## Never Chain Two `sudo` Calls in a `!` Block
 
@@ -48,7 +44,7 @@ This does NOT apply to:
 - A single `sudo bash -c "..."` that internally chains multiple privileged operations (one password entry, one process)
 - The "compose verify with fix" pattern from `~/.claude/rules/debugging.md` — which explicitly chains a fix with a verify, not two privileged operations
 
-This rule exists because the 2026-04-26 session presented `sudo dpkg-divert ... && sudo systemctl restart tailscaled && sleep 3 && tailscale status | head -3` as a single `!` block. The first sudo ran (visible), the second silently did not (chain terminated invisibly), and verification of `tailscaled` showed it had not been restarted in 4 days. One extra round-trip to ask the user to run the restart separately.
+Origin: 2026-04-26 — chained `sudo ... && sudo ...` `!` block, second sudo silently skipped.
 
 ## SSH inside `while-read` Loop Drains Parent Stdin
 
@@ -80,7 +76,7 @@ done < <(jq -c '.[]' "$HOSTS_JSON")
 
 **Plan-time review checklist**: if your orchestrator-style script has `while read X; do ...; done < <(...)` AND the loop body invokes `ssh`/`gpg`/`bash -s`, check `-n` / `< /dev/null` is present BEFORE shipping. The trap is invisible to `shellcheck` and `bash -n` — it surfaces only at runtime, exactly once per affected host loop, and looks like a successful run with missing data.
 
-This rule exists because PR #153 (2026-05-06 auto-mitamae orchestrator) shipped a `while ... done < <(jq -c '.[]' hosts.json)` loop with bare `ssh` inside; the orchestrator's first cycle reported only `host="monitoring"` results and silently dropped `host="weave"` entirely. `bash -x` trace showed iteration 2 returning EOF before the loop body ran. Fixed by adding `-n` to the ssh invocation; verified with a re-run that produced both host metrics correctly.
+Origin: 2026-05-06 PR #153 — bare ssh in jq-fed read loop dropped all hosts but the first.
 
 ## Multi-hop Shell Injection (ssh → pct exec → bash)
 
@@ -127,8 +123,6 @@ Why this works:
 
 **Detection while composing**: if the command body has any of `()`, `$()`, backticks, `*`, `!`, `<<`, or quotes nested >1 level deep, switch to the heredoc + `bash -s` form. The cost of switching is one extra line; the cost of debugging a layer-2 misinterpretation through three remote shells is several round-trips.
 
-This rule exists because the 2026-05-06 monitoring CT 111 bootstrap tried `ssh ... pct exec ... bash -c "echo === step 1.3: bin/setup (mitamae binary download) ==="` and failed with `bash: -c: line 12: syntax error near unexpected token '('`. Removing the parens worked but the trap is structural — the next session will hit it with a different metacharacter unless the heredoc + `bash -s` pattern is the default.
-
 **Same trap fires for direct (non-nested) `bash -c '...'` too**: any `()` inside the single-quoted body — typically commentary parentheses in `echo === foo (bar) ===` — is interpreted as subshell grouping by the inner bash. Both forms break:
 
 ```
@@ -145,7 +139,9 @@ Fix options (any work):
 - Escape: `echo "=== foo (bar) ==="` (use double quotes outside, or escape `\(\)`)
 - Heredoc: `bash <<'EOF' ... EOF` (no -c argument)
 
-**Composition gate**: before writing any `bash -c '...'`, `ssh host '...'`, or `ssh host 'pct exec <vmid> -- bash -c/-s ...'`, scan the inner body for the metacharacter set `()`, `$()`, backticks, `*`, `!`, `<<`, nested quotes — **commentary parentheses in `echo` statements count** (e.g. `echo (already paused)`). Any hit → switch shape (single-quoted `bash -s` heredoc) before sending. Three repeats of the same `syntax error near unexpected token '('` in one session (2026-05-11 aws bootstrap session) traced to commentary parens inside `echo === ... ===` headers in probe blocks. Recurred 2026-06-07 (setup security audit): `echo (already paused or missing)` inside an `ssh ... pct exec ... bash -c` orchestrator-pause command broke with the same error; the single-quoted `bash -s` heredoc form fixed it. The composition-time scan would have caught each instance in <1 sec.
+**Composition gate**: before writing any `bash -c '...'`, `ssh host '...'`, or `ssh host 'pct exec <vmid> -- bash -c/-s ...'`, scan the inner body for the metacharacter set `()`, `$()`, backticks, `*`, `!`, `<<`, nested quotes — **commentary parentheses in `echo` statements count** (e.g. `echo (already paused)`). Any hit → switch shape (single-quoted `bash -s` heredoc) before sending.
+
+Origin: 2026-05-06 / 2026-05-11 / 2026-06-07 — `syntax error near unexpected token '('` from commentary parens in `echo === ... ===` headers through three remote shells; structural, recurs per metacharacter unless heredoc + `bash -s` is the default.
 
 ## Prefer sed/awk over `python3 -c` for inline filesystem edits
 
@@ -166,7 +162,7 @@ When the task is "edit one line of an INI/JSON/YAML file" or "remove a section h
 
 **When python IS the right tool**: when the edit needs Python-grade parsing (multi-line JSON edit with comments, complex schema migration, anything where regex fragility outweighs paste fragility). In those cases, `python3 < /tmp/script.py` with the script written via Write first — never `python3 -c` inline.
 
-This rule exists because the 2026-05-11 aws bootstrap session used `python3 -c "import configparser; ..."` to remove the `[sh1admn]` section from `~/.aws/credentials`. The presented multi-line command paste-broke with `IndentationError`, two retry shapes (heredoc + one-liner with `;`) both also paste-broke, and the user explicitly corrected with "Pythonやめて". One sed command worked first try.
+Origin: 2026-05-11 — multi-line `python3 -c` paste-broke with `IndentationError`; one sed command worked first try.
 
 ## awk Cross-platform Pitfalls (BWK vs gawk)
 
@@ -216,4 +212,4 @@ Default to the **temp file pattern**. Other approaches accumulate escape complex
 
 **Plan-time detection**: any cookbook with a multi-line shell variable feeding `awk -v` must be tested with macOS BWK awk before merge. `bash -n` does not catch this; the failure surfaces only at runtime under mac awk. CI on Linux gawk is also blind to it.
 
-This rule exists because setup PR #330 (2026-05-11) fixed a 3-host `ES_HOSTS_YAML` -v failure in the elastic-agent cookbook. CI (Linux gawk) passed; macOS mitamae apply failed with `awk: newline in string` exit 2. Fix shipped as the temp file pattern in `cookbooks/elastic-agent/files/generate_config.sh`.
+Origin: 2026-05-11 PR #330 — multi-line `awk -v` passed Linux CI, failed macOS BWK with `awk: newline in string`. Fix: temp file pattern in `cookbooks/elastic-agent/files/generate_config.sh`.

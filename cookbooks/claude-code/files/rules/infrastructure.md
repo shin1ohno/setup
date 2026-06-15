@@ -6,11 +6,6 @@ globs: ["*.yaml", "*.yml", "*.tf", "Dockerfile", "docker-compose*.yml"]
 
 This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/rules/infrastructure-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
 
-- Always verify changes with dry-run / plan before applying
-- Never hardcode secrets, tokens, or passwords — use environment variables or secret management
-- Validate YAML/HCL syntax before committing
-- Document non-obvious configuration choices with comments
-
 **Topic-specific rules** (split out 2026-05-07 to keep this file scannable):
 
 - AWS / IAM / SSM / Terraform — see `~/.claude/rules/aws-iam.md`
@@ -69,16 +64,6 @@ Before adding to a cookbook, answer:
 
 Detail (anti-pattern + origin): see `~/.claude/rules/infrastructure-detail.md#cross-os-scope-gate`.
 
-## Long-Running Operations
-
-`terraform plan`, `terraform apply`, and other commands that typically take 30+ seconds must run in a background sub-agent (`run_in_background: true`) so the main conversation remains interactive. Pattern:
-
-1. Launch a background agent that runs the command and parses the output
-2. Continue interacting with the user (answer questions, start other work)
-3. When the agent completes, present the results and ask for next steps
-
-This applies to: `terraform plan/apply`, `docker build`, long test suites, and any command where the user cannot usefully intervene mid-execution.
-
 ## Per-Device Identity Probe Before Cookbook Configuration
 
 Before writing any cookbook resource that keys off a host's identity — hostname match in a device registry (`devices.json`, `node_map`, YAML host dict), user-home path, SSH login user, or per-device SSM parameter name — run a one-shot probe on the actual target host:
@@ -102,7 +87,7 @@ Detail (origin): see `~/.claude/rules/infrastructure-detail.md#per-device-identi
 When a user reports any service or application misbehavior (slow, unavailable, failing):
 1. Run `systemctl --failed` and check OOM kills in journal before diagnosing application logic
 2. Check `journalctl -u <service> -n 50 --no-pager` for the affected service
-3. Report findings **with a concrete fix plan** for review — never present findings alone without actionable next steps. The cause may be OS-level, not app-level
+3. The cause may be OS-level, not app-level. Report findings with a concrete fix plan.
 
 ## Physical Network Device Pre-Plan SNMP Probe (YAMAHA RTX et al)
 
@@ -170,7 +155,7 @@ sudo systemctl daemon-reload && \
 
 **Service-side note**: when changing a `Type=oneshot` unit's `RemainAfterExit` flag (e.g., `true` → `false` to allow timer-driven re-firing), `systemctl restart <name>.service` is also required — `daemon-reload` updates the file body but the running service keeps its old in-memory state. A service stuck in `active (exited)` from a `RemainAfterExit=true` era never deactivates, so `OnUnitInactiveSec` never gets a reference. `systemctl start` is a no-op when active; only `restart` forces the transition through inactive.
 
-This rule exists because the 2026-05-09 tailscale route-fix timer session shipped `OnUnitActiveSec=60s` on `Type=oneshot` (PR #253). The unit reported `active` but had `Trigger: n/a` — the "fix" never fired. Three sequential PRs (#253 / #257 / #259) were needed to fully close the failure class. A single `systemctl show --property=Trigger` probe after PR #253 would have caught it before merge.
+Origin: 2026-05-09 `OnUnitActiveSec=60s` on `Type=oneshot` shipped `active` but `Trigger: n/a`, never fired (PRs #253/#257/#259).
 
 ## Auto-mitamae Fleet Cookbook Validation — Canary Before Fleet
 
@@ -183,7 +168,7 @@ Pause → validate → resume:
 3. **Verify FUNCTIONALLY** (not `systemctl is-active`): e.g. `elastic-agent status` HEALTHY + ES doc-count advancing.
 4. **Merge the cookbook PR to `main` FIRST, then resume** (restore the cron file). The orchestrator pulls from `origin/main`, so resuming before merge reverts the canary too. After resume, trigger one immediate cycle (run `drift-checker.sh` then `orchestrator.sh`) for fast rollout instead of waiting for the 5-min cron — the canary gate (canary applies first, fleet only if it succeeds) protects the rest of the fleet.
 
-This pattern exists because the 2026-06-01 elastic-agent `processors:` schema fix (PR #412) needed the orchestrator paused during the CT 111 canary validation, or it reverted the test config before the functional health check completed.
+Origin: 2026-06-01 elastic-agent `processors:` schema fix — orchestrator reverted canary config before health check.
 
 ## "Known Limitation" Comments Are Incomplete Fixes
 
@@ -212,4 +197,4 @@ If neither condition holds — not out of scope, no TODO entry — the comment i
    - NO → fix X in this PR before merging
 3. Never let "we'll get to it later" be the unstated third option
 
-This rule exists because setup PR #174 (tailscale route-fixup oneshot, 2026-05-07) shipped a self-documented "manual restart required when tailscale re-injects routes at runtime" comment with no TODO entry. The comment was accurate. The fix regressed at 02:00 on 2026-05-09 when tailscale re-injected routes mid-session, and 3 new PRs (#253 / #257 / #259) were needed to convert the boot-only oneshot into a proper self-healing timer — work that PR #174's author had already identified as necessary at the moment of writing the comment.
+Origin: 2026-05-07 "manual restart required" comment shipped with no TODO; the named failure class regressed 2 days later (PRs #253/#257/#259).

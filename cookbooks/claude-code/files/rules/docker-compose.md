@@ -23,7 +23,7 @@ If the working tree's branch was cut from `origin/main` *before* a sibling featu
 
 **Anti-pattern**: running `docker compose up -d --build weave-web` from a feature branch that diverged from `origin/main` two PRs ago. The compose run will rebuild `weave-server` too if its working tree has any change relative to the branch base — and the rebuild produces a **regressed** weave-server image because the branch lacks the parent PRs' server-side commits.
 
-This rule exists because the 2026-04-27 cross-edge intent forwarding session deployed weave-web from a feature branch cut from `origin/main` while PR #51 (cross-edge server logic) was still open. The compose rebuild produced a weave-server image without PR #51's `find_edge_for_service` and `EdgeToServer::DispatchIntent` arm, immediately regressing Hue / Roon dispatch. Recovery required merging PR #51, merging `origin/main` into the working branch, and rebuilding weave-server again — costing two extra deploy cycles.
+Origin: 2026-04-27 — deployed weave-web from a branch missing an open server-logic PR, regressing dispatch.
 
 ## Container state path audit when `user:` is non-root
 
@@ -76,7 +76,7 @@ volumes:
   - /var/lib/<service>/state:/data:rw
 ```
 
-This rule exists because lxc-roon-mcp cookbook (PR #131, 2026-05-05) initially mounted `${home}/.config/roon-rs:/root/.config/roon-rs:rw` while the container ran as UID 1000 with `HOME=/`. The application wrote to `/.config/roon-rs/` (unwritable for UID 1000), the bind-mount caught zero writes, and `roon_api::registry: Failed to persist token: Permission denied (os error 13)` warns repeated on every Roon Core handshake. Fixed by switching to `/var/lib/roon-mcp/state` host path + `XDG_CONFIG_HOME=/data` env. The audit checklist would have caught this at plan time.
+Origin: 2026-05-05 lxc-roon-mcp — mounted `${home}/.config/roon-rs:/root/.config/roon-rs:rw` while container ran UID 1000 / `HOME=/`; app wrote to `/.config/roon-rs/` (unwritable), bind-mount caught zero writes, `roon_api::registry: Failed to persist token: Permission denied (os error 13)` per handshake. Fixed via `/var/lib/roon-mcp/state` + `XDG_CONFIG_HOME=/data`.
 
 ## docker-compose Notify-Driven Restart Requires `--force-recreate`
 
@@ -110,7 +110,7 @@ git grep -B3 'action :nothing' cookbooks/ | grep -A2 'execute "(docker compose )
 
 Any hit is a candidate.
 
-This rule exists because the 2026-05-06 Phase 2b verify session shipped PR #154 (`prometheus.yml: honor_labels: true`), and the cookbook's `restart monitoring` notify fired correctly — but the bare `up -d` was a no-op, so the running prometheus container kept the pre-edit config until manual `docker kill --signal=SIGHUP`. Recovery swept 7 cookbooks (PRs #158 + #159) to add `--force-recreate` to the notify-driven paths: ai-memory, cognee, hydra, lxc-consent, lxc-monitoring, lxc-roon-mcp, lxc-weave.
+Origin: 2026-05-06 — `prometheus.yml: honor_labels: true` notify fired but bare `up -d` was a no-op; running prometheus kept pre-edit config. Swept 7 cookbooks to add `--force-recreate`: ai-memory, cognee, hydra, lxc-consent, lxc-monitoring, lxc-roon-mcp, lxc-weave.
 
 ## Grafana Datasource Provisioning — Pin `uid` Explicitly
 
@@ -147,13 +147,13 @@ The only way to diagnose without this rule is to manually inspect `GET /api/data
 
 After fixing the provisioning yaml, **`docker compose restart grafana`** is required (or full container recreate) — Grafana reloads provisioned datasources on container start, not on file watch.
 
-This rule exists because the 2026-05-06 Phase 2b verify session shipped a Grafana auto-mitamae-fleet dashboard with `"uid": "prometheus"` refs but the provisioning yaml omitted the explicit `uid:` field. Every panel showed "No data" until PR #156 pinned `uid: prometheus` in the provisioning yaml and a `docker restart monitoring-grafana` reloaded the datasource.
+Origin: 2026-05-06 — dashboard had `"uid": "prometheus"` refs but provisioning yaml omitted explicit `uid:`; every panel "No data" until `uid: prometheus` pinned + `docker restart monitoring-grafana`.
 
 ## UDP Listener Containers Require `network_mode: host`
 
 Docker's userland proxy (`docker-proxy`) does not reliably forward UDP packets — packets arrive at the host's published port, the container's UDP listener binds inside the container netns, but no packets surface inside the container. No errors logged. Symptom for syslog/SNMP-trap/StatsD/DNS receivers: the listener starts, the port appears bound (`ss -uln` shows `*:port` owned by docker-proxy), `/proc/net/udp{,6}` inside the container shows the listener — but Promtail-style `entries_total` counters stay at 0 even when packets flood in from the LAN.
 
-Empirically observed on PVE unprivileged LXC + bridge + nesting=true (2026-05-07 setup PR #199), but the issue isn't unique to that combination — `docker-proxy` UDP forwarding is broken across many docker installations. Don't wait to find out if your specific stack is affected.
+Empirically observed on PVE unprivileged LXC + bridge + nesting=true (2026-05-07), but the issue isn't unique to that combination — `docker-proxy` UDP forwarding is broken across many docker installations. Don't wait to find out if your specific stack is affected.
 
 **Rule**: any container that receives UDP traffic — syslog collectors (Promtail, Fluentd, Logstash), SNMP trap receivers, StatsD, DNS servers — MUST use `network_mode: host`. TCP-only containers don't need this.
 
@@ -172,7 +172,7 @@ Side effects of `network_mode: host`:
 - docker-compose service-name resolution (`http://loki:3100/...`) is unavailable — switch to `127.0.0.1:<port>` if the peer service binds 127.0.0.1, OR move both services to host net
 - Prometheus scrape targeting changes — `localhost:<port>` from the host now works; the bridge IP doesn't apply
 
-This rule exists because setup PR #199 was 100% a `network_mode: host` migration after PR #198 deployed Promtail with default bridge networking and zero UDP packets reached the syslog target despite the listener binding correctly. The OS-level UDP path was verified working with a Python listener on the same port — confirming it was a docker-proxy issue, not network.
+Origin: 2026-05-07 — Promtail on default bridge networking got zero UDP packets despite the listener binding; a Python listener on the same port proved the OS path worked, isolating it to docker-proxy. Fixed by `network_mode: host`.
 
 ## Loki / Promtail Minimum Version: 3.x for Syslog UDP
 
@@ -195,7 +195,7 @@ services:
 
 Note: Grafana renamed Promtail to **Alloy** in the 3.x track; 3.6.x is the last `grafana/promtail` line maintained as a separate image. New deployments may eventually want to migrate to Alloy, but for existing Promtail-based pipelines 3.6.x continues to receive maintenance fixes.
 
-This rule exists because setup PRs #198 → #199 → #200 chain: PR #198 deployed 2.9.10 with bridge networking (broke for both reasons), PR #199 fixed networking (still no entries — same metrics 0), PR #200 bumped to 3.6.10 and the next test packet immediately incremented `syslog_target_entries_total`. The UDP issue is a Promtail 2.9 regression, not a config bug.
+Origin: 2026-05-07 — 2.9.10 + bridge net got 0 entries; fixing net still got 0; bumping to 3.6.10 immediately incremented `syslog_target_entries_total`. The UDP issue is a Promtail 2.9 regression, not a config bug.
 
 ## `docker import` hang post image-creation + `removal in progress` recovery
 
@@ -236,7 +236,7 @@ Side effect of `systemctl restart docker`: every running container is restarted.
 
 **Detection signal** during a flatten build: `docker import` etime > 10 minutes with the image already visible in `docker images`. The export side (`docker export`) typically completes within 2-3 minutes for a 10GB layer; if export PID is gone but import etime keeps growing, the import is stuck.
 
-This rule exists because the 2026-05-09 cognee-mcp:cpu flatten ran `docker export | docker import` and the image was created within minutes (visible in dockerd logs at `image created`), but the CLI hung for 10+ minutes waiting on the API socket. Manual kill resolved the build script, but dockerd was left with a container stuck in "removal in progress" — `systemctl restart docker` was the only path forward. The flattened image survived the daemon restart cleanly.
+Origin: 2026-05-09 cognee-mcp:cpu flatten — image created within minutes but CLI hung 10+ min on the API socket; container stuck in "removal in progress", `systemctl restart docker` the only path forward. Flattened image survived the restart.
 
 ## PyTorch 2.7+ — CUDA libs required even for CPU-only inference
 
@@ -265,7 +265,7 @@ RUN /app/.venv/bin/uv pip uninstall --python /app/.venv/bin/python triton \
 
 The `python3 -c "import torch"` step fails the build if the slim broke the import, before flatten or push.
 
-This rule exists because the 2026-05-09 cognee-mcp:cpu first build attempt uninstalled all 15 `nvidia-*-cu12` packages plus triton + torch, then attempted a clean torch reinstall via `--index-url whl/cpu/`. The reinstall failed (no torch 2.10.0 +cpu wheel exists), and even keeping the original torch failed at import because `_preload_cuda_deps` couldn't find the now-uninstalled nvidia libs. The working strategy was to keep nvidia libs in place, uninstall only triton, and rely on flatten for the actual size reduction (22.4GB → 4.59GB).
+Origin: 2026-05-09 cognee-mcp:cpu — uninstalling all 15 `nvidia-*-cu12` + triton + torch then reinstalling torch via `--index-url whl/cpu/` failed (no torch 2.10.0 +cpu wheel); keeping torch still failed import (`_preload_cuda_deps` couldn't find the uninstalled libs). Working strategy: keep nvidia libs, uninstall only triton, flatten for the size win (22.4GB → 4.59GB).
 
 ## `docker compose up -d` Exit-1 with `No such container: <id>` — inspect `ps -a` before retrying
 
@@ -282,7 +282,7 @@ cd <compose-dir> && docker compose ps -a
 
 The misclassification cost is real: a reflex "retry on exit-1" can recreate already-running containers (interrupting in-flight requests) or, worse, trigger a `down → up` cycle when the actual deploy is fine.
 
-This rule exists because the 2026-05-10 cognee leak fix's mitamae apply ended with `Error response from daemon: No such container: d8c8f128f3ae...` and exit 1, but `docker compose ps -a` showed all 9 cognee containers freshly recreated, healthy, and serving — the auth-proxy patch was already live. The error was compose cleaning up a stale ID from the prior `down`. Treating the exit-1 as a failure and re-running mitamae would have re-recreated everything for nothing.
+Origin: 2026-05-10 cognee leak fix — apply ended with `Error response from daemon: No such container: d8c8f128f3ae...` exit 1, but `docker compose ps -a` showed all 9 containers freshly recreated and serving. The error was compose cleaning a stale ID from the prior `down`.
 
 ## Throwaway-Preflight Pattern for Major Version Upgrades (native extensions + DB migrations)
 
@@ -307,7 +307,7 @@ If `avx2` is absent and the library bumped its minimum target, the upgrade will 
 
 **Detection signal**: `Illegal instruction` in container logs immediately after `import <library>`, not during inference. Always import-time.
 
-This rule exists because the 2026-06-08 cognee 0.5.8→1.0.9 upgrade caught a lancedb SIGILL on the Xeon E5-1650 v2 (Ivy Bridge, no AVX2) via a throwaway-postgres preflight (restored a live pg_dump, ran the 1.0.9 migrations + setup.py before touching RDS). Without it the SIGILL would have surfaced only after the production DB migration had already run. The runtime mitigation: `VECTOR_DB_PROVIDER=pgvector` + API mode keep lancedb's import off the boot path.
+Origin: 2026-06-08 cognee 0.5.8→1.0.9 — throwaway-postgres preflight caught a lancedb SIGILL on the Xeon E5-1650 v2 (Ivy Bridge, no AVX2) before the production DB migration ran. Runtime mitigation: `VECTOR_DB_PROVIDER=pgvector` + API mode keep lancedb's import off the boot path.
 
 ## Verify Actual Installed Library Version Before Debugging
 
@@ -336,4 +336,4 @@ If it's older than `pyproject.toml` specifies, regenerate: `uv lock`.
 
 **Baseline invariant for multi-turn debug sessions**: record `<library>.__version__` at the start of each turn where library behavior is the subject. A different version from the previous turn means the container was rebuilt and prior observations no longer apply.
 
-This rule exists because the 2026-06-08 cognee upgrade session had three distinct `server.py` source generations under the same nominal cognee-mcp package version 0.5.4, and `cognee/cognee-mcp:latest` drifted from cognee 1.0.4 to 1.1.0 between sessions, making prior debug observations non-reproducible. A one-line `__version__` check at each debug turn would have surfaced this immediately.
+Origin: 2026-06-08 cognee upgrade — three distinct `server.py` generations under the same cognee-mcp 0.5.4, and `cognee/cognee-mcp:latest` drifted cognee 1.0.4→1.1.0 between sessions, making prior debug observations non-reproducible.

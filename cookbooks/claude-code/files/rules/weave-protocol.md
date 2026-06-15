@@ -37,9 +37,7 @@ Or: you're designing the JSON shape for a new edge state stream (Apple Music now
 
 5. **Keep the composite stream too — for UI display.** Splitting publishes into per-property frames doesn't replace the composite UI payload. Both have value: scalar properties drive feedback, composites drive rich UI cards. Just don't expect the composite to also drive feedback.
 
-## Origin
-
-This rule exists because the 2026-04-26 iOS session shipped PR #50 / #52 publishing all of `state`, `volume`, `title`, `artist` under a single `property: "now_playing"` whose value was a JSON object. The user had configured Roon-style feedback rules (`{"state": "playback", "feedback_type": "glyph", "mapping": {"playing": "play", …}}`) which were structurally correct but never matched, because the property name and value type didn't line up. Discovery happened only when LED feedback testing returned a dark Nuimo. PR #54 fixed it by splitting into three separate publishes — at the cost of a follow-up PR that could have been avoided by checking the shape at PR #50 design time.
+Origin: 2026-04-26 iOS — composite `now_playing` object never matched glyph rules; dark Nuimo, fixed by splitting into 3 publishes.
 
 # Cross-edge Dispatch — Capability Advertisement vs Runtime Readiness
 
@@ -76,6 +74,4 @@ A silent dispatch drop is worse than a visible error: the user sees their hardwa
 
 Long-term: edge-agent should announce capabilities **based on runtime adapter state**, not just compile-time features. A `hue` capability should be advertised only after `hue-token.json` loads and the adapter task reports ready. Until that change ships, the server-side selection logic above is the workaround.
 
-## Origin (cross-edge)
-
-This section exists because the 2026-04-27 cross-edge intent forwarding session forwarded an iPad-routed Hue intent to neo (which advertised `hue` capability via `cfg!(feature = "hue")` but had no `hue-token.json`). The forwarded intent silently failed on neo because (a) neo was on edge-agent v0.8.0 and couldn't deserialize `ServerToEdge::DispatchIntent`, and (b) even after a 0.10.0 upgrade, neo's runtime hue adapter would have failed to dispatch. The user observed "press the Nuimo, Hue light doesn't react" with no UI signal explaining why. Recovery required killing neo's edge-agent + adding version-preference to `find_edge_for_service` + plus this rule.
+Origin: 2026-04-27 cross-edge — Hue intent forwarded to a host advertising `hue` but lacking `hue-token.json`; silent failure, no UI signal.

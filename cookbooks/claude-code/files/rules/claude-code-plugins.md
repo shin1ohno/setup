@@ -31,19 +31,19 @@ When the user asks to create a new Claude Code hook based on a conversation patt
 
 Do NOT use hookify for scenarios that belong in a Ruby hook script. Ruby hooks are mandatory for: commit gating, tool-input mutation, whitespace/newline enforcement.
 
-## MCP Server Development
+## Self-describing skill pointers
 
-When designing or building an MCP server, invoke `mcp-server-dev` skills. They cover deployment models (remote HTTP / MCPB / local stdio), tool design patterns, authentication flows, and interactive MCP apps. Use before writing server code, not after.
+These plugins self-advertise their own triggers via frontmatter — Claude auto-invokes on match. Use:
 
-## Frontend / UI Work
-
-For non-trivial UI implementation (new component, page redesign, visual system), invoke the `frontend-design` skill before writing CSS or component code. It guides away from generic AI-aesthetic output and toward production-grade design decisions.
-
-For quick interactive HTML exploration (single-file playground with live controls), use the `playground` skill.
-
-## Repository Onboarding
-
-When entering an unfamiliar repository for the first time and the user asks for Claude Code setup guidance, invoke the `claude-automation-recommender` skill (from `claude-code-setup` plugin). It surveys the codebase and recommends 1-2 of each automation type (hooks, subagents, skills, plugins, MCP servers). Read-only; user implements the recommendations manually.
+- `mcp-server-dev` skills — building/designing an MCP server (deployment models, tool design, auth, interactive apps); invoke before writing server code
+- `frontend-design` skill — non-trivial UI implementation (new component, page redesign, visual system); invoke before writing CSS/component code
+- `playground` skill — quick interactive HTML exploration (single-file live-controls playground)
+- `claude-automation-recommender` skill (`claude-code-setup` plugin) — onboarding an unfamiliar repo for Claude Code setup guidance; read-only, recommends 1-2 of each automation type
+- `document-skills` (`anthropic-agent-skills`) — create/edit Office formats (DOCX/PDF/PPTX/XLSX). Note: the cookbook's `ingest-pdf` skill is separate (PDF → Cognee ingestion with Vision API fallback), distinct from `document-skills`' PDF form-field manipulation
+- `/design-md:generate` (`design-md`, `saladdays-skills`) — generate a `DESIGN.md` design-system rulebook for a product with 3+ AI-generated screens needing visual cohesion
+- `/roundtable:start` (`roundtable`, `saladdays-skills`) — structured multi-expert deliberation on cross-domain judgment calls ("レビューして" / "多角的に評価" / "専門家に聞きたい" / "議論して")
+- `hookify` plugin — create a soft-reminder hook from a conversation pattern ("whenever X happens, warn me"). Rules live in `.claude/hookify.{rule-name}.local.md`. Do NOT use hookify for hard guards (commit gating, tool-input mutation, whitespace/newline enforcement) — those are mandatory Ruby hooks in `cookbooks/claude-code/files/hooks/`
+- `plugin-dev` plugin skills (`agent-development`, `command-development`, `hook-development`, `mcp-integration`, `plugin-settings`, `plugin-structure`, `skill-development`) — building a new Claude Code plugin; avoids placing `skills/`/`commands/` inside `.claude-plugin/`
 
 ## CLAUDE.md Maintenance
 
@@ -75,51 +75,3 @@ The `code-simplifier` plugin agent and the `/simplify` cookbook skill coexist: t
 ## Security Guidance Hook
 
 `security-guidance` installs a PreToolUse hook that warns on 9 pattern matches (command injection, XSS, unsafe eval, etc.) during file edits. This is ambient — no action required beyond reading the warnings. Complements but does NOT replace the on-demand `/security-review` skill.
-
-## Document Skills (DOCX / PDF / PPTX / XLSX)
-
-The `document-skills` from `anthropic-agent-skills` marketplace handle creation and editing of Office-format documents. Claude auto-invokes when the user asks for these formats. Note: the cookbook's `ingest-pdf` skill is separate — it handles PDF → Cognee ingestion with Vision API fallback, distinct from `document-skills`' PDF form-field manipulation.
-
-## DESIGN.md Generation (`/design-md:generate`)
-
-The `design-md` plugin from the `saladdays-skills` marketplace generates a `DESIGN.md` rulebook — a Markdown design-system document structured as three layers: rationale (Why), specifications (What), and application guidance (When). Its purpose is to maintain visual consistency across multiple AI-generated UI screens by codifying shared decision-making principles rather than pixel-perfect specs.
-
-**Invoke `/design-md:generate` when**:
-- User is building or owns a product with 3+ screens that need to feel cohesive
-- Existing product shows inconsistency as new AI-generated pages accumulate
-- No dedicated designer; user wants to codify aesthetic direction as text
-- Rapid prototyping where speed and consistency both matter
-- Trigger phrases: "5+ screens need cohesion", "AI pages look different", "document our design decisions", "design system from scratch"
-
-**Inputs the skill asks for** (prepare these if available): 3+ product URLs or codebase samples, W3C DTCG token files / CSS variables / Figma styles, target users, desired tone, aesthetics to avoid. For iterative updates, pass the existing `DESIGN.md`.
-
-**Do NOT invoke `/design-md:generate` when**:
-- Single-page design — the overhead is not justified
-- User wants pixel-perfect prescriptive specs — the skill intentionally preserves creative latitude
-- User expects a one-shot output — treat the output as a living document that must be revisited as the product evolves
-- User wants brand/competitive strategy — DESIGN.md codifies craft decisions, not market positioning
-
-Reference: [saladdays note on DESIGN.md integration](https://note.com/saladdays/n/nd6bdc9727c8e).
-
-## Expert Roundtable Deliberation (`/roundtable:start`)
-
-The `roundtable` plugin from `saladdays-skills` orchestrates structured multi-expert deliberation: it dynamically selects domain experts, generates their independent opinions first (Delphi / Nominal Group Technique), then runs up to 2 debate rounds (MAD research shows 3+ rounds degrade quality), preserving minority views and Red-Team / Devil's-Advocate objections.
-
-**Invoke `/roundtable:start` when**:
-- User is about to make a judgment call that benefits from diverse expert perspectives (product strategy, organization design, architectural pivot, investment decision, design review)
-- User explicitly asks for a review, evaluation, or multi-angle critique ("レビューして", "多角的に評価", "専門家に聞きたい", "議論して")
-- The decision has meaningful downside and the user has time for a deliberation cycle
-- The topic is cross-domain (e.g., product + legal + ops) where a single expert view is insufficient
-
-**Inputs to prepare**: a clear topic or problem statement. Optional: URLs, attached files, in-context references. The skill auto-calibrates depth (Quick vs Deep) from perceived risk.
-
-**Output**: executive summary, expert panel roster, consensus points, debated issues (pro/con/chosen rationale), preserved minority opinions with reasoning, prioritized recommendations, scope limitations.
-
-**Do NOT invoke `/roundtable:start` when**:
-- Pure fact-finding / factual lookup — use direct queries instead
-- Time-critical decisions where the multi-round deliberation cost is prohibitive
-- Single-domain technical specs with an unambiguous answer (e.g., "which npm flag does X")
-- Low-stakes brainstorming where speed outweighs rigor
-- As a substitute for human stakeholder sign-off on high-stakes choices — the skill explicitly flags that human verification is still required
-
-Reference: [saladdays note on the roundtable skill](https://note.com/saladdays/n/nd62af8015341).
