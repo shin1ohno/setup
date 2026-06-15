@@ -60,17 +60,19 @@ This repository does NOT configure:
 ```bash
 # macOS
 ./bin/setup                    # Download mitamae
-./bin/mitamae local darwin.rb  # Run full macOS setup
+./bin/apply darwin.rb          # Run full macOS setup (sudo prompts ONCE)
 
-# Linux
+# Linux (bare-metal)
 ./bin/setup                    # Download mitamae
-./bin/mitamae local linux.rb   # Run full Linux setup
+./bin/apply linux.rb           # Run full Linux setup (sudo prompts ONCE)
 ```
+
+`bin/apply` is the interactive entry point: it primes sudo at the start and runs a 60s keepalive in the background so per-resource `execute "sudo ..."` calls don't re-prompt mid-apply (the previous `./bin/mitamae local <recipe>` form re-prompted whenever sudo's 5-min timestamp expired between resources). Use plain `./bin/mitamae local …` only inside the fleet runner (`mitamae-runner.sh`, runs as root) or for dry-runs.
 
 **Development/Testing:**
 
 ```bash
-# Dry run mode
+# Dry run mode (no sudo, plain mitamae form)
 ./bin/mitamae local darwin.rb --dry-run
 ```
 
