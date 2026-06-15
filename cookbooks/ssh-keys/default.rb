@@ -25,30 +25,47 @@ include_cookbook "awscli"
 # file contains nothing else.
 aws_config_file = File.join(File.dirname(__FILE__), "files", "aws-config.json")
 aws_config = JSON.parse(File.read(aws_config_file))
-aws_profile = aws_config["aws_profile"]
 aws_region = aws_config["aws_region"]
 
-# AWS auth + SSM access required to fetch the host registry. Pause here
-# on a fresh machine until both are in place. The check actually attempts
-# the SSM read on /host-registry/devices — this verifies (a) the named
-# profile exists, (b) credentials are valid, (c) the region is right,
-# and (d) the IAM principal has ssm:GetParameter on the path.
+# Bare gate + bare fetch_ssm on every platform — auto-select a profile
+# with the required permissions instead of pinning a specific name.
+#
+# - darwin (TTY): require_external_auth's auto-discovery iterates the
+#   operator's configured profiles, sets ENV["AWS_PROFILE"] on the first
+#   one that satisfies the check_command. fetch_ssm (also bare) inherits
+#   that env. The operator does not need to maintain a specific profile
+#   name — any profile with the required SSM/KMS scope works.
+# - fleet (non-TTY LXC): auto-discovery is TTY-only, so non-TTY apply
+#   relies on AWS_PROFILE preset by `cookbooks/auto-mitamae-target/
+#   files/mitamae-runner.sh` (exports AWS_PROFILE=pve-bootstrap-ssm
+#   before invoking mitamae). bare check_command and bare fetch_ssm then
+#   both inherit that env → deterministic, no per-cookbook --profile pin
+#   required.
+#
+# Pin-match lint invariant (~/.claude/rules/ruby.md "Auth-check gate"):
+# gate and ops are both bare → bare↔bare consistency, no false gate.
+# Listed in bin/lint-cookbooks BARE_OK (same category as mcp/local-mcp).
 host_registry_check = "aws ssm get-parameter --name /host-registry/devices " \
                       "--query Parameter.Value --output text " \
-                      "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1"
+                      "--region #{aws_region} > /dev/null 2>&1"
 require_external_auth(
-  tool_name: "AWS SSM access (profile=#{aws_profile}, region=#{aws_region})",
+  tool_name: "AWS SSM access (auto-discovered profile, region=#{aws_region})",
   tool_binary: "aws",
   check_command: host_registry_check,
-  instructions: "Configure the '#{aws_profile}' profile with credentials that have " \
-                "ssm:GetParameter on /host-registry/devices and /ssh-keys/devices/* " \
-                "in #{aws_region}. On a fresh machine: " \
-                "`aws configure --profile #{aws_profile}` (or run bin/bootstrap-lxc-creds " \
-                "from the PVE host for LXCs). Then press Enter.",
+  instructions: "Configure any AWS profile with ssm:GetParameter on " \
+                "/host-registry/devices + /ssh-keys/devices/* AND kms:Decrypt " \
+                "on the SSM EncryptionContext in #{aws_region}. " \
+                "Refresh via `aws login` or `aws configure --profile <name>`. " \
+                "On TTY (darwin): auto-discovery will pick it up. " \
+                "On fleet LXC: re-run bin/bootstrap-lxc-creds from the PVE " \
+                "host to seed the pve-bootstrap-ssm profile. Then press Enter.",
 )
 
 # Helper: fetch a parameter from SSM. Defined here (after auth gate) so
 # the gate failure path can short-circuit before any SSM call below.
+# Bare — uses whatever profile is selected via AWS_PROFILE env (set by
+# the gate's auto-discovery on TTY, or pre-set by mitamae-runner.sh on
+# the fleet).
 fetch_ssm = ->(path) {
   result = run_command(
     "aws ssm get-parameter" \
@@ -56,7 +73,6 @@ fetch_ssm = ->(path) {
     " --with-decryption" \
     " --query 'Parameter.Value'" \
     " --output text" \
-    " --profile '#{aws_profile}'" \
     " --region '#{aws_region}'",
     error: false
   )

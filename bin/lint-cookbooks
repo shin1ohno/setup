@@ -57,14 +57,19 @@ ALLOW3 = %w[
 ].to_set
 
 # Check 5: cookbooks whose FULLY-BARE auth gate (no --profile/AWS_PROFILE) is
-# intentional — darwin-only stacks that rely on require_external_auth's profile
-# AUTO-DISCOVERY (which is TTY-only). A bare gate is unsafe on the unattended
-# NON-TTY fleet: auto-discovery never runs there, so the bare check falls through
-# to a non-deterministic ambient profile (the cognee/memory/hydra silent-.env-skip
-# class). Everything NOT listed here (and not in ALLOW3, which is skipped wholesale)
+# intentional. Two cases:
+#   - darwin-only stacks (local-mcp) rely on require_external_auth's profile
+#     auto-discovery, which is TTY-only on darwin.
+#   - fleet+darwin shared cookbooks (ssh-keys) rely on TTY auto-discovery on
+#     darwin AND on AWS_PROFILE preset by the fleet entry point
+#     (cookbooks/auto-mitamae-target/files/mitamae-runner.sh exports
+#     AWS_PROFILE=pve-bootstrap-ssm before invoking mitamae). Both branches
+#     converge on a working profile without per-cookbook --profile pinning.
+# Everything NOT listed here (and not in ALLOW3, which is skipped wholesale)
 # must pin an explicit --profile. mcp/codex-cli are already covered by ALLOW3.
 BARE_OK = %w[
   cookbooks/local-mcp/default.rb
+  cookbooks/ssh-keys/default.rb
 ].to_set
 
 # --- file discovery --------------------------------------------------------
