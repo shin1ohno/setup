@@ -26,7 +26,7 @@ Reserve docker-compose for genuinely multi-container stacks (e.g. monitoring wit
 - memlock: LXC `lxc.prlimit.memlock unlimited` inherits naturally
 - no 1.4 GB image pull on every fresh CT
 
-This rule exists because the 2026-05-09 ADR-0005 Phase 3b session lost ~5 hours debugging an ES + Kibana docker-compose deployment. 4 of 8 cookbook bugs were direct docker-isms (`.env` source collision, ES_TMPDIR image-internal path, network bind/publish split, docker-proxy 9300 drop). LXC native install would have made all 4 structurally impossible. The user surfaced the design question mid-session ("なんで Docker を使ってるんでしょう？") — it belonged at plan time.
+Origin: 2026-05-09 ES+Kibana docker-compose — 4 docker-ism bugs.
 
 ## PVE LXC — Bind Mounts and `terraform import`
 
@@ -53,7 +53,7 @@ The check uses string equality on `$authuser`, so `root@pam!terraform` (a token 
 
 **State-archaeology check before designing**: if the new LXC needs a bind mount, run `terraform state show 'proxmox_virtual_environment_container.lxc["<existing-with-bind-mount>"]'` first. The presence of the bind mount in state with no plan diff confirms the manual-create + import convention is the established path. Do NOT default to "let TF create it" — the API token's permission ceiling makes this fail at apply time, costing one or more apply-retry cycles.
 
-This rule exists because the 2026-05-06 PR #15 (home-monitor monitoring LXC) terraform apply failed twice on `mount point type bind is only allowed for root@pam` before the API-token-vs-root@pam constraint was confirmed by reading PVE source. Recovery required a hotfix PR (#17) adding `lifecycle.ignore_changes`, plus manual `pct create 111` + `terraform import pro/111`. The full sequence cost ~45 min that would have collapsed to ~5 min if the state-archaeology check at plan time had surfaced the convention.
+Origin: 2026-05-06 monitoring CT 111 — bind-mount apply failed twice.
 
 ## Unprivileged LXC Bind-Mount Host Ownership Mapping
 
@@ -107,7 +107,7 @@ If the cookbook omits explicit owners for subdirectories, the bind-mount target 
 
 **Detection signal**: docker container restarting on an unprivileged-LXC bind-mount with logs showing `Permission denied` / `mkdir: ... not writable` → host directory owner doesn't match the container runtime UID. Fix path: chown the bind-mount subdirectory inside the container (`pct exec <vmid> -- chown -R <runtime-uid>:<runtime-uid> /data/<service>/<subdir>`) then `docker compose restart`.
 
-This rule exists because the 2026-05-06 monitoring CT 111 first mitamae apply created `/data/monitoring/{prometheus,grafana}` as `root:root` inside the container; both Prometheus (UID 65534) and Grafana (UID 472) crash-looped on first write. Recovery: in-container chown to the correct runtime UIDs, then `docker compose restart`. Plan time should have included an explicit `directory` resource per service subdirectory with the runtime UID. Dry-run on the dev box hides this because the dev box is privileged Linux without UID mapping.
+Origin: 2026-05-06 monitoring CT 111 — `/data/monitoring/{prometheus,grafana}` root:root crash-loop.
 
 ## `pct set -rootfs size=` does not propagate to ZFS refquota
 
@@ -141,7 +141,7 @@ pct exec <vmid> -- df -h /
 
 For grow, the order is the same but the quota change is online-safe (CT can be running). Recovery from a too-small shrink is one-liner: `zfs set refquota=<larger>G rpool/data/subvol-<vmid>-disk-0` + sync `pct set` config. ZFS refquota grow takes effect immediately.
 
-This rule exists because the 2026-05-09 cognee disk shrink (32G → 8G) had `pct set -rootfs ...,size=8G` succeed silently, but `df -h /` inside CT 105 still showed 32G. `zfs get refquota` confirmed PVE only updated its own config, not the underlying ZFS dataset. The fleet-config alignment that motivated the shrink was incomplete until `zfs set refquota` was applied as a second step.
+Origin: 2026-05-09 cognee shrink 32G→8G on CT 105 — df still showed 32G.
 
 ## `pct exec` from `ssh root@<pve-host>` is non-TTY — `STDIN.tty?` returns false
 
@@ -172,7 +172,7 @@ git grep -nE 'pct exec.*--.*bash -lc' cookbooks/ pve/ docs/  # plans that assume
 
 Any plan / doc that talks about `pct exec` as "TTY apply" is suspect — replace the assumption with the seed-auth-then-apply pattern above.
 
-This rule exists because the 2026-05-06 Phase 3a session walked into this assumption: 6 fleet hosts each needed a manual `aws configure set` step BEFORE mitamae apply, and the original plan's `pct exec` "TTY apply" framing didn't surface the prerequisite. Phase 3b/3c re-discovered it; Phase 3c started with an explicit AWS profile probe step (Stage 0) on every new host as a result.
+Origin: 2026-05-06 Phase 3a — `pct exec` "TTY apply" framing hid manual aws-configure prereq.
 
 ## Privileged PVE LXC — systemd unit hardening directives fail with `status=226/NAMESPACE`
 
@@ -200,7 +200,7 @@ If the LXC is privileged (no `unprivileged:` line) AND the unit status is `activ
 
 **When designing new fleet cookbooks that ship systemd units**: assume any LXC in the fleet might be privileged (today only CT 100 roon is, but the rule is "support both"). Skip the namespace-related hardening directives in the cookbook-managed unit; if defense-in-depth is needed for a specific deployment, add a drop-in (which, as noted, may not actually take effect on privileged LXCs — accept the limitation).
 
-This rule exists because setup PR #164 (2026-05-06) was required after Phase 3b apply on CT 100 left node-exporter cycling in `activating` state. CT 100 (roon) is the only privileged LXC in the home fleet (it predates the unprivileged-default convention). The hardening directives shipped fine on every other LXC; only privileged tripped over them.
+Origin: 2026-05-06 — privileged CT 100 (roon) node-exporter stuck `activating`.
 
 ## PVE / LXC reachability — read the LAN IP from `devices.json`, do not guess FQDNs
 
@@ -221,7 +221,7 @@ jq '.devices["<logical-name>"]' ~/ManagedProjects/home-monitor/contracts/devices
 
 Construct an FQDN only when the entry has an explicit `fqdn` or `tailscale` field — never from the logical name alone. For PVE LXCs specifically, prefer `pct exec <ct_id>` from the PVE host over direct SSH, since LXCs may not have SSH keys provisioned for your user.
 
-This rule exists because the 2026-05-10 cognee leak diagnosis burned three SSH attempts on `pve-host.home.local`, `pve.home.local`, and other guessed FQDNs before discovering that `pve-host` (devices.json logical name) maps to the same machine as `pro` (the bare-metal Linux entry, IP `192.168.1.10`). The correct path was always `ssh root@192.168.1.10` — the IP was right there in `pve-host`'s sibling `pro` entry, not under a constructed FQDN.
+Origin: 2026-05-10 cognee leak — 3 guessed FQDNs before `ssh root@192.168.1.10` (pve-host = pro).
 
 ## `pct exec` spawns a non-login shell — use `bash -lc` for profile.d tools
 
@@ -243,9 +243,7 @@ This is PATH-only, NOT a TTY — it does not interact with the separate
 `STDIN.tty?`-returns-false behavior documented above (`-l` grants PATH, not a
 terminal).
 
-This rule exists because the 2026-06-13 setup case-B SSM probe ran
-`pct exec 110 -- aws ssm get-parameter ...` and got `Failed to exec aws`; the
-identical command under `bash -lc` resolved `aws` from `/usr/local/bin` and ran.
+Origin: 2026-06-13 case-B — `pct exec 110 -- aws ssm` got `Failed to exec aws`; `bash -lc` resolved it.
 
 ## IAM policy attachment — ~60s eventual consistency before the first probe
 
@@ -265,7 +263,4 @@ If the policy ARN / region / principal are correct, an immediate `AccessDenied`
 is a timing artifact — the fix is to wait, not to change the policy. Re-diagnose
 only if it persists past ~2 min.
 
-This rule exists because the 2026-06-13 case-B home-monitor IAM grant
-(pve-bootstrap-ssm → /hydra/* + aws/ssm `kms:Decrypt`) returned `AccessDenied`
-on the live decrypt probe immediately after `terraform apply`; the identical
-probe succeeded ~60s later (DECRYPT_OK on CT 110).
+Origin: 2026-06-13 case-B IAM grant (pve-bootstrap-ssm → /hydra/* + kms:Decrypt) — AccessDenied immediately, DECRYPT_OK ~60s later on CT 110.

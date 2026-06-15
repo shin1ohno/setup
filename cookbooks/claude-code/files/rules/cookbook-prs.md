@@ -29,4 +29,4 @@ Implementation-level, distinct from the design-level `~/.claude/rules/adversaria
 
 ## Origin
 
-2026-05-09 ADR-0005 Phase 3b session shipped 6 fix PRs sequentially for bugs all 4 of these checks would have caught at PR time, costing ~3 hours of fix-PR-CI-merge-redeploy cycles.
+2026-05-09 6 sequential fix PRs for bugs all 4 checks catch at PR time.

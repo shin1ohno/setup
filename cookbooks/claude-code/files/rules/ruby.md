@@ -4,9 +4,6 @@ globs: "*.rb"
 
 # Ruby Code Guidelines
 
-- Prefer explicit over implicit — avoid magic methods and meta-programming unless clearly beneficial
-- Use guard clauses to reduce nesting
-- Follow existing project conventions (indentation, naming, etc.)
 - When working with mitamae DSL: use `not_if` / `only_if` for idempotency checks
 - Prefer symbols over strings for hash keys in DSL code
 - mitamae runs without sudo. Never use `owner node[:setup][:system_user]` on file/remote_file resources — it triggers an internal `sudo chown` that fails without a terminal. Instead, stage files in user space (`node[:setup][:root]`) and use `execute` with explicit `sudo cp` to place them in system directories
@@ -32,7 +29,7 @@ grep -rn 'sudo install\|sudo cp\|sudo mkdir' cookbooks/*/default.rb
 
 Custom `execute` is the fallback when the DSL resource cannot express the operation, NOT the reflex.
 
-This rule exists because the 2026-05-07 node-exporter session reached for `execute "sudo install -d -m 0755 -o root -g root /var/lib/node_exporter"` mirroring the `lxc-pro-router` system-file pattern, when `cookbooks/lazygit/default.rb` already carried the simpler `directory ... user "root"` precedent that would have cost no `execute` at all. The user surfaced the cleaner approach with "directory の user 属性で実行ユーザーを指定できないですかね？" — a 10-second `awk` over the cookbook tree at design time would have found the precedent without the round-trip.
+Origin: 2026-05-07 node-exporter — reached for `execute "sudo install -d ..."` when `directory ... user "root"` precedent existed.
 
 ## Mitamae evaluation model — top-level Ruby is compile-time
 
@@ -98,7 +95,7 @@ Same shape applies whenever the gate file is produced by an upstream cookbook in
 git grep -nE '^if File\.exist\?|^unless File\.exist\?' cookbooks/
 ```
 
-This rule exists because PRs #75 and #77 fixed the same `if File.exist?(temp_path)` bug across six cookbooks (codex-cli, mcp, ai-memory, cognee, hydra, notion), each requiring 2-3 mitamae passes to converge before the fix. The repo had already gained a related cluster of "Proc not_if" fixes (PRs #69-72) for the sibling problem of compile-time guards inside resource arguments — this rule names the umbrella class so the next contributor doesn't reinvent either form.
+Origin: 2026-05 — `if File.exist?(temp_path)` compile-time bug across six cookbooks needing 2-3 converge passes.
 
 ## Auth-check gate must match the cookbook's actual invocation profile
 
@@ -120,7 +117,7 @@ vs the false gate:
 require_external_auth(check_command: "aws sts get-caller-identity", ...)  # passes against ANY default profile
 ```
 
-This rule exists because the 2026-04-25 neo bootstrap session: ssh-keys cookbook gated on `aws sts get-caller-identity` (no `--profile`) but invoked SSM with `--profile sh1admn`. neo had only `default` configured → gate passed → every fetch_ssm silently failed → cascade through dot-tmux, managed-projects, speedtest-cli before the user noticed. Fixed in cc2f989 by switching to a profile-aware actual-SSM-read gate.
+Origin: 2026-04-25 neo bootstrap — ssh-keys gated on bare `aws sts get-caller-identity` but invoked SSM with `--profile sh1admn`; neo had only `default` → gate passed → silent fetch_ssm cascade.
 
 **Detection — run before declaring a cookbook review done**:
 
@@ -128,7 +125,7 @@ This rule exists because the 2026-04-25 neo bootstrap session: ssh-keys cookbook
 git grep -nE 'check_command:' cookbooks/ | grep -v -- '--profile'
 ```
 
-Any hit is a false-gate candidate unless the cookbook genuinely uses the default AWS profile exclusively (rare — most service LXCs run with `pve-bootstrap-ssm` profile). This grep takes under one second and catches the class of bugs that caused silent SSM fetch failures in cognee (#143 fixed) and lxc-monitoring (#148 shipped with the bug, surfaced during 2026-05-06 apply when CT 111 had `pve-bootstrap-ssm` profile but no `default` profile → cookbook's bare `aws ssm get-parameter` check failed → non-TTY skip → Grafana stack silently undeployed). Fix: include `--profile <name>` in the `check_command`, sourcing the profile name from `cookbooks/ssh-keys/files/aws-config.json` (Phase A 2026-05-07 SSM 切替後; bootstrap config のみ in-repo、host registry 本体は SSM `/host-registry/devices`) like `auto-mitamae-target` does.
+Any hit is a false-gate candidate unless the cookbook genuinely uses the default AWS profile exclusively (rare — most service LXCs run with `pve-bootstrap-ssm` profile). Fix: include `--profile <name>` in the `check_command`, sourcing the profile name from `cookbooks/ssh-keys/files/aws-config.json` (host registry 本体は SSM `/host-registry/devices`) like `auto-mitamae-target` does. Origin: 2026-05-06 lxc-monitoring — bare gate passed on CT 111 (had `pve-bootstrap-ssm`, no `default`) → Grafana silently undeployed.
 
 ## STDIN.tty? guard before any blocking STDIN read
 
@@ -152,7 +149,7 @@ end
 
 Never rely on `gets` returning nil as a loop-exit signal.
 
-This rule exists because the 2026-04-25 bootstrap-robustness PR shipped a `require_external_auth` helper that hung 3 CI runs for 1+ hour each before manual cancellation. The bug was visible only in CI — local TTY runs worked fine, hiding it. Fixed by adding the TTY guard before the loop.
+Origin: 2026-04-25 — `require_external_auth` helper hung 3 CI runs 1+ hr each (non-TTY `gets` returned nil); local TTY hid it.
 
 ## sudo `secure_path` strips user home — symlink user-space tools into /usr/local/bin
 
@@ -178,7 +175,7 @@ Use the shim (not the resolved binary) so pyenv/mise version switches still take
 
 **Detection**: when designing a cookbook that installs a Python/Rust/Node CLI tool, ask: "Will any privileged code path invoke this tool?" If yes, plan the symlink in the same cookbook.
 
-This rule exists because the 2026-05-04 git-remote-codecommit cookbook installed the shim correctly via pyenv pip, but `git clone codecommit::…` failed inside `managed-projects' git_clone (sudo-wrapped) with `git: 'remote-codecommit' is not a git command`. Resolution required adding a `/usr/local/bin/git-remote-codecommit` symlink in the same cookbook.
+Origin: 2026-05-04 git-remote-codecommit — pyenv-installed shim invisible to sudo-wrapped `git_clone`; `git: 'remote-codecommit' is not a git command`. Fixed via `/usr/local/bin/git-remote-codecommit` symlink.
 
 ## docker-compose service restart `execute` must guard on the config file existence
 
@@ -207,7 +204,7 @@ git grep -nE 'docker compose.*up' cookbooks/ | xargs -I{} grep -L only_if {}
 
 Any restart resource without an `only_if "test -f <env>"` is a candidate, especially if it has `action :nothing` (notifies fire from upstream `remote_file` resources that don't themselves know about `.env` state).
 
-This rule exists because the 2026-05-04 `linux.rb` LXC bootstrap session hit `hydra-migrate` failing to reach Aurora with empty credentials, traced back to the `docker compose restart hydra` execute firing despite the `.env` generator being skipped (no AWS auth on the LXC). Fixed by adding `.env`-existence guards to hydra / cognee / ai-memory / hydra-server restart resources in PR #103.
+Origin: 2026-05-04 linux.rb LXC bootstrap — `docker compose restart hydra` fired despite skipped `.env` generator (no AWS auth) → `hydra-migrate` hit Aurora with empty credentials.
 
 ## Cookbook skip-paths must log at WARN, not INFO
 
@@ -235,7 +232,7 @@ Include the **consequence** in the warn message ("no authorized_keys written"), 
 
 The same WARN-vs-INFO discipline applies to any auth-gate fall-through, missing-config bypass, or `client_only`-style early return that an operator might want to know about. INFO is for "I did the thing successfully and here's a status note"; WARN is for "I did NOT do the thing and you might care."
 
-This rule exists because setup PR #142 (2026-05-06) was required to fix `air`'s missing pubkeys. The root cause was a devices.json hostname mismatch, but the ssh-keys cookbook's `info`-level skip (`hostname '<serial>' not in devices.json, skipping`) was invisible in the apply output. The operator believed mitamae had succeeded and the bug persisted across multiple sessions until a per-device verification pass forced the hostname mismatch to surface.
+Origin: 2026-05-06 — `air` missing pubkeys; ssh-keys `info`-level skip (`hostname '<serial>' not in devices.json`) invisible in apply output, persisted for sessions.
 
 ## Rescue EPERM/EACCES on user-local override file reads
 
@@ -275,7 +272,7 @@ git grep -nE 'File\.read.*\.local\.|JSON\.parse.*\.local\.' cookbooks/ roles/
 
 Any hit without a `rescue Errno::EPERM` (or wrapping `begin`/`rescue` block) is a candidate.
 
-This rule exists because setup PR #147 (2026-05-06) was required after `roles/manage` on `air` raised `EPERM` on a `repositories.local.json` symlinked into iCloud Drive (`~/Library/Mobile Documents/.../securebu/repositories.local.json`). The unhandled exception halted the entire `darwin.rb` recipe chain — every cookbook downstream of `roles/manage` (managed-projects, mac-settings, edge-agent, macos-hub) silently never ran. The fix added `rescue Errno::EPERM, Errno::EACCES, JSON::ParserError` around the local-override read.
+Origin: 2026-05-06 — `roles/manage` on `air` raised `EPERM` on a `repositories.local.json` symlinked into iCloud Drive (`~/Library/Mobile Documents/.../securebu/repositories.local.json`); unhandled exception halted entire `darwin.rb` chain downstream of `roles/manage`.
 
 ## remote_file idempotency guard — file-existence vs content-aware
 
@@ -307,7 +304,7 @@ end
 
 After all hosts have migrated, simplify the guard back to `test -f` in a follow-up commit. Leaving the migration-specific grep permanently is harmless but adds noise for the next maintainer.
 
-This rule exists because setup PR #130 (2026-05-05) migrated edge-agent's `config_server_url` from `192.168.1.20:3101` (pre-PVE weave-server on pro) to `weave.home.local:8888` (PVE CT 109). The cookbook had `not_if "test -f #{config}"`, which would have left neo / air pinned to the dead endpoint forever despite the cookbook source being correct. The migration-specific grep guard solved this without changing semantics for new-host installs.
+Origin: 2026-05-05 — edge-agent `config_server_url` migration `192.168.1.20:3101` → `weave.home.local:8888` (CT 109); `not_if "test -f #{config}"` would have left neo/air pinned to the dead endpoint.
 
 ## SSM-sourced `.env` generator: file-existence skip_if drops new KEY=VALUE lines silently
 
@@ -359,7 +356,7 @@ pct exec <ct> -- bash -lc 'cd /root/setup && ./bin/mitamae local pve/lxc-<servic
 # Verify: docker exec <container> env | grep <NEW_KEY> must show the value.
 ```
 
-This rule exists because the 2026-05-12 APM Phase 5 rollout's cookbook PRs (setup #337 cognee, #333 ai-memory) added `OTEL_EXPORTER_OTLP_HEADERS=...` to `generate_env.sh` for both services, but `require_external_auth(skip_if: -> { File.exist?(env_output_path) })` made the generator a no-op on hosts whose `.env` predated the change. The container env had OTEL_SERVICE_NAME / ENDPOINT / CERTIFICATE (from docker-compose `environment:` block) but NOT OTEL_EXPORTER_OTLP_HEADERS (the one from env_file), so OTLP exports went out without auth → apm-server rejected them silently → service.name absent from `traces-apm-default`. Recovery required manual `.env` rename + reapply on every affected host. The content-aware skip_if would have re-fetched on the first apply post-merge.
+Origin: 2026-05-12 APM Phase 5 (cognee/ai-memory) — added `OTEL_EXPORTER_OTLP_HEADERS=` to `generate_env.sh`, but `skip_if: -> { File.exist?(env_output_path) }` made the generator a no-op on hosts whose `.env` predated it → OTLP exports unauthenticated → apm-server silently rejected → service.name absent from `traces-apm-default`.
 
 ## mitamae directory/file `owner`/`group` MUST be String, not Integer
 
@@ -395,7 +392,7 @@ git grep -nE 'owner\s+[0-9]+|group\s+[0-9]+' cookbooks/
 
 A non-empty result is a bug. Quote each match.
 
-This rule exists because setup PR #131 (2026-05-05) introduced `owner 1000` (Integer) for `/var/lib/roon-mcp/state/` resources. CI passed. The mitamae apply on CT 108 immediately failed with `InvalidTypeError`, requiring hotfix PR #133. One full PR + CI cycle wasted on a class of bug no static check catches. The grep above run before commit would have caught it.
+Origin: 2026-05-05 — `owner 1000` (Integer) for `/var/lib/roon-mcp/state/`; CI passed, mitamae apply on CT 108 failed with `InvalidTypeError`.
 
 ## Defensive `directory` resource for `node[:setup][:root]` and its subdirs
 
@@ -424,7 +421,7 @@ The dry-run gate does NOT catch this — `mitamae local --dry-run` on the dev bo
 
 Detection: `git grep -nE 'node\[:setup\]\[:root\]' cookbooks/ | grep -v 'directory '` — any hit not associated with a `directory` resource is a candidate.
 
-This rule exists because setup PR #137 (2026-05-05) shipped `auto-mitamae` placing `auto-mitamae.sh` under `node[:setup][:root]` without a defensive `directory` resource. Dry-run on the dev box passed. CT 109 bootstrap failed at converge with `cp: cannot create regular file '/root/.setup_shin1ohno/auto-mitamae.sh'`. Hotfix PR #138 added the two `directory` resources and re-namespaced into `<setup_root>/auto-mitamae/`.
+Origin: 2026-05-05 auto-mitamae — placed `auto-mitamae.sh` under `node[:setup][:root]` without a `directory` resource; dev-box dry-run passed, CT 109 bootstrap failed `cp: cannot create regular file '/root/.setup_shin1ohno/auto-mitamae.sh'`.
 
 ## When automating mitamae, enumerate the privilege boundary at plan time
 
@@ -444,7 +441,7 @@ If you put a root-needing role behind a user-mode timer, mitamae **silently skip
 
 If your design enumerates "I need to run mitamae automatically" without spelling out which of the three rows above applies, the design is incomplete. Treat this as a plan-completeness check, equivalent to listing affected files.
 
-This rule exists because the auto-mitamae plan (PR #137, 2026-05-05) initially proposed a user-mode systemd timer modeled on `cookbooks/s3-backup`'s pattern, without auditing whether the target role had root resources. The user surfaced the gap mid-plan-review with "mitamae 実行に sudo が必要ですが、どうしますか？", costing one full plan-revision cycle. The fix landed as a 4-row decision in the plan; the rule above prevents the next planner from missing it.
+Origin: 2026-05-05 auto-mitamae plan — proposed user-mode systemd timer without auditing root resources; user surfaced gap mid-review ("mitamae 実行に sudo が必要ですが、どうしますか？").
 
 ## Docker Build in Unprivileged PVE LXC
 
@@ -463,7 +460,7 @@ end
 
 **Caveat — git context with subdirectory**: BuildKit supports `https://repo.git#ref:subdir` to make build context a subdirectory of the repo. Classic builder does NOT support that syntax. If your Dockerfile MUST be built from a subdir (e.g., a Next.js app whose `Dockerfile` does `COPY package.json` expecting `package.json` at root), you cannot use classic builder. Workarounds: (a) bind-mount a pre-cloned tree as the context, (b) move the Dockerfile to expect a wider context, or (c) put the build on a Docker host that isn't unprivileged (e.g., on the PVE host directly).
 
-This rule exists because PRs #115 → #119 in setup spent 5 PR cycles iterating through this combination during the 2026-05-04 PVE-migration session. The discovery sequence was: nesting=false → containerd rbind fail; nesting=true alone → buildkit rbind fail; nesting=true + BUILDKIT=0 → success for repo-root Dockerfiles; the weave-web subdir case forced one Dockerfile back onto BuildKit (classic doesn't support subdir context) which then needed nesting alone. Documenting the matrix prevents the next mitamae-on-PVE-LXC author from rediscovering each step.
+Origin: 2026-05-04 PVE-migration — 5 PR cycles iterating nesting × BUILDKIT (nesting=false → containerd rbind fail; nesting=true alone → buildkit rbind fail; nesting=true + BUILDKIT=0 → success for repo-root Dockerfiles; weave-web subdir forced BuildKit + nesting).
 
 ## Debian 13 Minimal LXC — Mandatory Bootstrap Packages
 
@@ -484,7 +481,7 @@ end
 
 Run before any apt repo addition, any zip extraction, or any package install that came in via custom apt sources.
 
-This rule exists because PRs #108-#110 in setup were three sequential apply cycles to fix the same class of bug — each cookbook (docker-engine, rclone, awscli) was missing the bootstrap-deps guard and failing on a different downstream step of the same root cause. A single cookbook-side check at the beginning of the PVE-LXC entry recipes would have collapsed all three PRs into zero.
+Origin: 2026-05 — three sequential apply cycles (docker-engine, rclone, awscli) each missing the bootstrap-deps guard, failing on a different downstream step of the same root cause.
 
 ## IP literal must come from contracts/devices.json (plan-phase probe)
 
@@ -499,7 +496,7 @@ This catches the **CT-ID-shaped IP confusion**: hardcoded `192.168.1.{112,113,11
 
 Hardcoded IPs are a **plan-completeness failure**, not a post-apply diagnosis. The probe is a 2-second plan-phase step.
 
-This rule exists because the 2026-05-09 ADR-0005 Phase 3b session lost ~3 hours debugging cluster discovery failures rooted in two cookbook files (`elasticsearch.yml.tmpl` seed_hosts + `pve/lxc-es-{0,1,2}.rb` `transport_host`) hardcoding CT-ID-shaped IPs. PRs #247 and #248 fixed both. `contracts/devices.json` had the correct `.77/.78/.79` values the entire session — never consulted at plan time.
+Origin: 2026-05-09 ADR-0005 Phase 3b — ~3 hrs debugging ES discovery failures from two cookbook files (`elasticsearch.yml.tmpl` seed_hosts + `pve/lxc-es-{0,1,2}.rb` `transport_host`) hardcoding CT-ID-shaped IPs; `contracts/devices.json` had the correct `.77/.78/.79` all along.
 
 ## Cookbook converge fail — diagnose all remaining resources before first fix PR
 
@@ -517,7 +514,7 @@ Why batched: each fix-PR-CI-merge-redeploy cycle takes 5-10 min. Sequential fix 
 
 **Exception**: bug B is genuinely unobservable until bug A is fixed (e.g., container won't start until cert ownership fixed → can't probe ES auth until container running). Batching the related-bug-cluster is correct, but the dependency must be genuine — not "I noticed A first so let me ship A".
 
-This rule exists because the 2026-05-09 ADR-0005 Phase 3b session shipped 6 sequential fix PRs (#242 → #243 → #244 → #245 → #247 → #248), ~30-60 min of avoidable cycle time. Bugs #5/#6 (the IP confusion above) were diagnosable from the first ES log line "No route to host" via `pct exec <vmid> -- ip neigh show` (would have shown `INCOMPLETE` immediately). Bugs #7/#8 (cert ownership + healthcheck quoting) surfaced later but were independent and could have been in the same batch as the network bugs.
+Origin: 2026-05-09 ADR-0005 Phase 3b — 6 sequential fix PRs (~30-60 min waste); the IP-confusion bugs were diagnosable from the first ES "No route to host" via `pct exec <vmid> -- ip neigh show` (`INCOMPLETE`).
 
 ## mruby API constraints — File.mtime / File.stat not available
 
@@ -550,5 +547,5 @@ Any hit inside a Proc is a mruby NoMethodError waiting to fire.
 
 **Why CI cannot catch this**: the syntax-check job uses the system Ruby (CRuby). Only running `mitamae local <role>.rb` under the real mruby binary (or `mitamae --dry-run`) on a target host exposes the missing method. `mitamae --dry-run` on the dev box also uses mruby, so a dry-run on any LXC is a faster feedback loop than waiting for a production apply failure.
 
-This rule exists because setup PR #459 (2026-06-10, KMS-reduction ES snapshot cookbook) wrote `skip_if: -> { File.exist?(sentinel) && (Time.now - File.mtime(sentinel)) < 86400 }`. CI green. Every ES-node mitamae apply in production aborted with `NoMethodError: undefined method 'mtime'`. PR #460 replaced the Proc with a `find -mmin` shell guard. CI-passing yet production-failing: the mruby runtime is the only gate that counts.
+Origin: 2026-06-10 KMS-reduction ES snapshot cookbook — `skip_if: -> { ... File.mtime(sentinel) ... }` passed CI (CRuby), every ES-node apply aborted `NoMethodError: undefined method 'mtime'` (mruby). The mruby runtime is the only gate that counts.
 

@@ -6,7 +6,7 @@ description: "AWS IAM / SSM / Terraform operational rules — perpetual drift, S
 
 ## Perpetual Drift Decision Framework
 
-`terraform plan` showing the same attribute diff on every run — especially one marked `forces replacement` — is not a one-off glitch; it is perpetual drift. Every apply replaces real resources to chase a cosmetic discrepancy. The 2026-04-22 incident session cascaded through 4 EC2 generations this way before the root cause was fixed.
+`terraform plan` showing the same attribute diff on every run — especially one marked `forces replacement` — is not a one-off glitch; it is perpetual drift. Every apply replaces real resources to chase a cosmetic discrepancy.
 
 **Trigger**: when the same diff survives a successful apply (run `terraform plan` again immediately — same attribute still shows), treat it as perpetual drift and pick a fix *before* the next apply. Do not accept "one more apply will clear it" for the third time.
 
@@ -20,6 +20,8 @@ description: "AWS IAM / SSM / Terraform operational rules — perpetual drift, S
 **Trap**: D looks the cheapest so it attracts first. It also hides future *real* drift on the same attribute (e.g., AWS deprecates the auto-assign default; you never see it). Prefer A/B/C unless the scope genuinely forbids them.
 
 **Commit-message guidance for D**: name the parent setting that forces the drift (e.g., "aws_subnet.c_public has map_public_ip_on_launch=true"), not just the symptom. The next reader needs to know which of A/B/C was rejected and why.
+
+Origin: 2026-04-22 incident cascaded through 4 EC2 generations before root cause.
 
 ### Common AWS cosmetic-drift attributes
 
@@ -44,7 +46,7 @@ Before invoking `terraform apply`, run `git branch --show-current` and confirm t
 
 Do NOT attempt `terraform apply` from a feature branch — permission gates often deny this anyway, and applying unmerged changes bypasses the review gate. The correct sequence is: PR merge → pull `main` → apply. The PR's `terraform plan` output is the pre-apply review artifact; the post-merge apply is just the execution step.
 
-This rule exists because the 2026-04-25 session attempted `terraform apply` from an unmerged feature branch in home-monitor; the permission layer correctly denied it, surfacing that the proper flow is merge-first-then-apply.
+Origin: 2026-04-25 feature-branch apply denied → merge-first flow.
 
 **Post-apply sanity check**: after `terraform apply` returns, run `terraform validate` (or a no-op `terraform plan -refresh-only`) to confirm the working tree's config files are still self-consistent. Mid-session edits, stash/pop interactions, or manual reverts can leave the tf file syntactically intact (no parse error) but resource-name-duplicated — the error surfaces only on the next operation, often hours later.
 
@@ -55,7 +57,7 @@ terraform validate   # → "Success! The configuration is valid."
 
 If validate reports `Duplicate ... configuration`, the most common cause is a stash/pop or manual edit that re-introduced an already-committed block into the working tree. `git diff HEAD -- <file>.tf` will show the duplicate hunk. Recovery: `git checkout HEAD -- <file>.tf` if the only WIP was the unintended duplication, or surgical removal of the duplicate hunk if there are other legitimate WIP changes.
 
-This second rule exists because 2026-05-11 RDS RI apply (home-monitor PR #65) was followed by `terraform output` failing with `Duplicate data "aws_rds_reserved_instance_offering" configuration` — the working tree had the RI block twice due to a stash-pop merge. `git checkout HEAD -- rds.tf` cleaned it, but a `terraform validate` immediately post-apply would have caught it in the same minute instead of surfacing on the next `terraform output` minutes later.
+Origin: 2026-05-11 RDS RI apply → `Duplicate data "aws_rds_reserved_instance_offering"` from stash-pop merge.
 
 ## AWS SSM Parameter Path Constraints
 
@@ -83,7 +85,7 @@ Reserved prefixes that fail at apply (not plan):
 
 Prefer project-scoped prefixes (`/<project>/<purpose>/...`, e.g. `/home-monitor/iam/<user>/<key-name>`) to avoid the entire class.
 
-This rule exists because home-monitor PR #12 (2026-05-06) created `aws_ssm_parameter` resources at `/aws-keys/pve-bootstrap-ssm/{access-key-id,secret-access-key}` — `terraform plan` was clean (5 to add) and `terraform apply` succeeded for the IAM user / access key / policy resources but failed both `aws_ssm_parameter` puts with `AccessDeniedException: No access to reserved parameter name: aws-keys/pve-bootstrap-ssm/access-key-id`. Hotfix PR #14 renamed to `/home-monitor/iam/pve-bootstrap-ssm/...` and the same plan re-applied cleanly. The pre-plan probe takes 5 seconds and would have caught the rejection before the IAM user was created in a half-applied state.
+Origin: 2026-05-06 `aws_ssm_parameter` at `/aws-keys/pve-bootstrap-ssm/access-key-id` → `AccessDeniedException: No access to reserved parameter name`; clean plan, apply-time failure. Renamed to `/home-monitor/iam/pve-bootstrap-ssm/...`.
 
 ## Stale Terraform State Lock Recovery
 
@@ -96,7 +98,7 @@ When `terraform plan` or `terraform apply` aborts with `Error acquiring the stat
 
 Never `force-unlock` while another apply may legitimately hold the lock — overlapping writes corrupt state. Stale locks more than ~10 min old with no visible apply process are safe to break.
 
-This rule exists because the 2026-05-04 PVE-migration session inherited a 14-hour-old lock from a yesterday-aborted apply; rediscovering the `force-unlock` path cost time. The lock's `Who: shin1ohno@pro-dev` field made it identifiable as a self-orphan.
+Origin: 2026-05-04 inherited a 14-hour-old self-orphan lock (`Who: shin1ohno@pro-dev`).
 
 ## Short-lived STS Token Refresh Before Multi-Host mitamae Apply
 
@@ -109,7 +111,7 @@ Pre-batch checklist:
 3. For batches expected to take >10 min: refresh + re-SCP at the start AND set a wakeup to re-check at half the token lifetime
 4. Prefer **IAM instance profiles** on LXCs (or workload-identity equivalents) over SCP'd temporary credentials — instance profiles auto-rotate via IMDS and never need re-SCP
 
-This rule exists because the 2026-05-04 PVE-migration session burned 4 separate refresh-and-re-SCP cycles when the token expired mid-batch. Each cycle required pausing apply, re-fetching, re-distributing, then resuming — a ~3-min loss per cycle that is fully preventable by pre-batch validation + instance profiles for steady-state.
+Origin: 2026-05-04 burned 4 refresh-and-re-SCP cycles on mid-batch token expiry.
 
 ## Multi-profile auth chain — enumerate every profile's IAM scope at design time
 
@@ -134,7 +136,7 @@ If the service profile returns `DENY` for a path the downstream cookbook needs, 
 
 This applies equally to **`kms:Decrypt`** chains for SSM SecureString (see the `EncryptionContext` rule below — even with sts identity working and ssm:GetParameter granted, missing `kms:Decrypt` on the parameter's KMS context still returns AccessDeniedException at fetch time).
 
-This rule exists because the 2026-05-11 PR #339+#340 designed a two-stage `aws login --remote → aws-credentials fetches pve-bootstrap-ssm` flow that was structurally moot: `pve-bootstrap-ssm` has `/ssh-keys/*` only, not `/cognee/*`, so even a perfectly-working sh1admn admin auth couldn't fix `aws ssm get-parameter --name /cognee/llm-endpoint --profile pve-bootstrap-ssm`. The 30-second per-profile probe at design time would have caught this. Reverted via PR #343.
+Origin: 2026-05-11 two-stage `aws login --remote → aws-credentials fetches pve-bootstrap-ssm` was structurally moot — `pve-bootstrap-ssm` has `/ssh-keys/*` only, not `/cognee/*`, so admin auth couldn't fix `aws ssm get-parameter --name /cognee/llm-endpoint --profile pve-bootstrap-ssm`.
 
 **Auto-discovery is TTY-only — fleet cookbooks MUST pin `--profile`**: the `require_external_auth` profile auto-discovery (setup, added 2026-06) runs ONLY on a TTY — in a non-TTY context the helper returns BEFORE auto-discovery executes. Fleet cookbooks run via `auto-mitamae-target` over an SSH forced-command (non-TTY), so they NEVER reach auto-discovery; a fleet cookbook with a *bare* gate silently does nothing (skips its `.env`) on a fresh/rotated LXC.
 
@@ -185,7 +187,7 @@ git grep -nE 'bootstrap_profile.*pve-bootstrap-ssm|aws sts get-caller-identity.*
 
 Any fleet-host cookbook using its OWN runtime IAM identity as `bootstrap_profile` is a candidate to verify against the home-monitor IAM policy.
 
-This rule exists because setup PR #166 (2026-05-07, aws-credentials systematic-化) included `aws-credentials` in `auto-mitamae-target` with `bootstrap_profile=pve-bootstrap-ssm`. The cookbook's `aws sts get-caller-identity` probe passed; the actual `aws ssm get-parameter` then failed with `AccessDeniedException` on `/home-monitor/iam/pve-bootstrap-ssm/access-key-id`. Recovery required revert PR #167 + manual re-apply on CT 111. The IAM policy denial is intentional — `pve-bootstrap-ssm` cannot read its own credential paths to prevent self-rotation as a privilege-escalation surface. The cookbook now uses the external `bin/bootstrap-lxc-creds` script as the systematic-化 channel instead.
+Origin: 2026-05-07 `aws-credentials` with `bootstrap_profile=pve-bootstrap-ssm` passed `sts get-caller-identity` but `aws ssm get-parameter` failed `AccessDeniedException` on `/home-monitor/iam/pve-bootstrap-ssm/access-key-id` (intentional self-rotate denial). Now uses external `bin/bootstrap-lxc-creds`.
 
 ## Fleet Cookbook SSM Gate Path Must Match the Profile's IAM Grant
 
@@ -202,7 +204,7 @@ The failure is INVISIBLE on a warm host: `skip_if: File.exist?(env_output_path)`
 
 When the IAM grant is the cited fix, verify which RESOURCE holds it: a grep hit for the path in a `tailscale.tf` `aws_iam_role_policy` is a grant to the EC2 instance ROLE, NOT to the `pve-bootstrap-ssm` IAM USER — distinct identities. Confirm against the user's own policy (`pve-bootstrap-iam.tf`) + a live probe, never a single grep hit.
 
-This rule exists because the 2026-06 setup AWS-profile review confirmed via live probe that `lxc-cognee` / `lxc-memory` / `lxc-hydra` pinned `pve-bootstrap-ssm` but gated on `/cognee/llm-endpoint` + `/memory/aurora-endpoint` — paths OUTSIDE the profile's grant (`/ssh-keys/* /monitoring/* /hydra/*`; the `/memory/*` grant in tailscale.tf was on the EC2 instance role). Fresh/rotated fleet LXCs silently skipped `.env`; warm hosts hit `skip_if` and looked healthy. Fix: a home-monitor IAM grant for `/cognee/* /memory/*` (KMS-scoped) + pinning lxc-hydra's previously-bare gate.
+Origin: 2026-06 AWS-profile review — `lxc-cognee`/`lxc-memory`/`lxc-hydra` pinned `pve-bootstrap-ssm` but gated on `/cognee/llm-endpoint` + `/memory/aurora-endpoint`, outside the grant (`/ssh-keys/* /monitoring/* /hydra/*`). Fix: IAM grant for `/cognee/* /memory/*` (KMS-scoped) + pinning lxc-hydra's bare gate.
 
 ## kms:Decrypt with EncryptionContext — wildcard `*` denies silently
 
@@ -254,15 +256,7 @@ condition {
 }
 ```
 
-**Why wildcards fail**: KMS evaluates the EncryptionContext condition
-as exact-match on each entry; the StringLike pattern is treated as a
-literal pattern that never matches a real ARN unless the wildcard
-positions align with the actual ARN structure. Even when they "could"
-align, KMS's policy engine specifically rejects wildcarded account IDs
-in EncryptionContext conditions for the SSM SecureString integration —
-the documented behavior is that the context must be an **exact** ARN,
-and `StringLike` provides forward-compat for SSM internal evolution,
-not for caller-side abbreviation.
+**Why wildcards fail**: KMS rejects wildcarded account IDs in EncryptionContext conditions for the SSM SecureString integration — the context must be an **exact** ARN. `StringLike` is for forward-compat with SSM internal evolution, not caller-side abbreviation.
 
 **Detection signal**: an IAM role that *should* have `kms:Decrypt` is
 denied on every SSM SecureString GetParameter call with `--with-decryption`,
@@ -277,16 +271,7 @@ parse time) + `${data.aws_caller_identity.current.account_id}`
 enumerate each region explicitly — never wildcard the region either,
 same evaluator restriction.
 
-This rule exists because home-monitor PR #57 (2026-05-10, KMS Decrypt
-for Tailscale rotation script) shipped wildcarded ARNs in the
-EncryptionContext condition. The on-EC2 systemd-timer rotation script
-hit `AccessDeniedException` on every SSM `GetParameter`, with no clue
-in the error message that the EncryptionContext condition was the
-cause. PR #58 replaced the wildcards with `data.aws_caller_identity.current.account_id`
-and the next timer fire (`[2026-05-10T17:32:48+00:00] Tailscale auth
-key rotated`) succeeded. The diagnostic arc cost one PR + one re-apply
-+ one wakeup wait for timer fire — all preventable by writing the
-explicit account ID at PR design time.
+Origin: 2026-05-10 KMS Decrypt for Tailscale rotation shipped wildcarded ARNs → `AccessDeniedException` on every SSM `GetParameter` with no error clue. Replaced with `data.aws_caller_identity.current.account_id`.
 
 ## Tailscale OAuth client scope — UI/API divergence requires API-side verification
 
@@ -342,13 +327,7 @@ chain before merging any TF / cookbook change that depends on the
 OAuth client minting a key. Five seconds at PR time prevents a
 multi-hour incident at apply / boot time.
 
-This rule exists because the 2026-05-10 home-monitor incident traced
-to OAuth client `kLoCzbwNyn11CNTRL` whose admin UI showed `Auth Keys:
-Read ✓ Write ✓` while the API returned `tags ... invalid or not
-permitted` for every tag combination. Recovery required generating a
-brand-new OAuth client `kBiQ8wcpEB21CNTRL`, updating SSM, and verifying
-via the curl chain above. The runbook for this failure mode is at
-`~/ManagedProjects/home-monitor/docs/runbooks/tailscale-key.md`.
+Origin: 2026-05-10 OAuth client `kLoCzbwNyn11CNTRL` UI showed `Auth Keys: Read ✓ Write ✓` but API returned `tags ... invalid or not permitted`. Fix: fresh client `kBiQ8wcpEB21CNTRL` + SSM update. Runbook: `~/ManagedProjects/home-monitor/docs/runbooks/tailscale-key.md`.
 
 ### Scope-to-endpoint reference — probe the RIGHT endpoint for each scope
 
@@ -397,15 +376,7 @@ Action gate when a fresh client reproduces the failure:
 4. If the sibling probe also returns 403, then the scope itself is not granted —
    re-check the UI checkbox state, and only then suspect drift
 
-This rule exists because the 2026-05-11 home-monitor session created a fresh
-OAuth client (`koFXKg78P311CNTRL`) with all 4 ticked scopes after the prior client
-(`kBiQ8wcpEB21CNTRL`) returned 403 on `/device/<id>/routes`. The fresh client
-returned identical 403s. I interpreted this as a tag-scope mismatch (`hnd-subnet-router`
-has only `tag:home-router`, not in the OAuth client's tag list) and burned 2-3
-round-trips before probing `POST /device/<id>/tags` and getting 200 — proving
-`Devices Core: Write` was fine and the actual missing scope was **Routes**, a
-separate top-level UI category. Two-fresh-clients-same-result was a sufficient
-signal at iteration 2 to pivot the hypothesis away from drift.
+Origin: 2026-05-11 fresh client `koFXKg78P311CNTRL` returned identical 403s on `/device/<id>/routes` as the prior client; misread as tag-scope mismatch, but `POST /device/<id>/tags` → 200 proved `Devices Core: Write` was fine and the missing scope was **Routes** (separate top-level UI category).
 
 ## Reusable Tailscale auth keys for ephemeral compute
 
@@ -453,14 +424,7 @@ The complete pattern (reusable key + 60-day rotation timer + KMS
 Decrypt with explicit account ID) is documented in
 `~/ManagedProjects/home-monitor/docs/runbooks/tailscale-key.md`.
 
-This rule exists because home-monitor's `tailscale_tailnet_key` was
-originally `reusable = false` for a defensive single-use posture
-(2025 design). The 2026-05-10 EC2 auto-recovery cycle terminated the
-running EC2 mid-incident, the new EC2 booted, and `tailscale up`
-rejected the consumed SSM key. mcp.ohno.be went DOWN for the duration
-of the recovery (~30 min including OAuth-scope-drift discovery). PR
-#56 changed to `reusable = true` and PR #57+#58 added the timer +
-Decrypt grants for the long-term fix.
+Origin: 2026-05-10 `reusable = false` key was consumed by the prior boot; EC2 auto-recovery booted a new instance, `tailscale up` rejected the SSM key, mcp.ohno.be DOWN ~30 min. Fix: `reusable = true` + rotation timer + Decrypt grants.
 
 ## Cost Table Labeling Conventions
 
@@ -475,17 +439,7 @@ When presenting AWS cost breakdowns to the user, use **explicit category labels*
 | `削減後ベース (post-action)` | Projected month-end after a fix lands (after RI / feature off / migration) |
 | `当月実績 (MTD actual)` | Cost Explorer reported amount for the partial month |
 
-**Anti-pattern**:
-
-```
-| Service       | 小計  |
-| RDS           | $20   |
-| Route53       | $1.66 |
-| ...           | ...   |
-| 合計          | $48   |
-```
-
-What does $48 cover? Recurring? With or without the annual Registrar charge? Post or pre RI? The user has to ask.
+A single line "subtotal $X" mixing recurring + annual + spike forces the user to ask "what does this cover?".
 
 **Correct shape**:
 
@@ -506,7 +460,7 @@ When the totals would mix categories, split the totals row by category — never
 
 When discussing a month where RI was purchased, present both views side by side. UnblendedCost without context looks like a cost explosion; AmortizedCost reflects the true monthly burden.
 
-This rule exists because the 2026-05-11 cost-analysis session presented 「小計 (RDS 以外) ~$20/月」 while the actual 4月 total for that group was $47.64 (containing Registrar $11 annual + ELB/WAF residue from discontinued services + Tax). The user had to ask 「これは何？」 to surface the missing context; the 5月 projection was actually $27/月 due to the annual Registrar not recurring. The vague 「小計」 label hid the discontinuity entirely.
+Origin: 2026-05-11 presented 「小計 ~$20/月」 while actual 4月 total was $47.64 (Registrar $11 annual + ELB/WAF residue + Tax); the vague 「小計」 hid the discontinuity.
 
 ## KMS request attribution — query ssm:GetParameter, not kms:Decrypt
 
@@ -532,4 +486,6 @@ Full attribution flow for "which host/script calls SSM repeatedly with decryptio
 2. Confirm the param's `Type` is `SecureString` (String reads are KMS no-ops)
 3. Cross-reference with `ps` / cron / `systemctl list-timers` on the identified host (see `~/.claude/rules/debugging.md` "Confirm the suspected driver is actually deployed")
 
-This rule exists because the 2026-06-10 KMS-reduction session queried `kms:Decrypt` events first and found only `sourceIPAddress: "AWS Internal"` on all of them. Switching to `ssm:GetParameter` with `withDecryption=true` immediately surfaced caller ARNs, parameter paths, and call frequency. KMS cost is $1/CMK/month + $0.03/10k requests beyond the 20k/month free tier.
+KMS cost is $1/CMK/month + $0.03/10k requests beyond the 20k/month free tier.
+
+Origin: 2026-06-10 `kms:Decrypt` events showed only `sourceIPAddress: "AWS Internal"`; `ssm:GetParameter` with `withDecryption=true` surfaced caller ARNs + paths.

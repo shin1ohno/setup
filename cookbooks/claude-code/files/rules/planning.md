@@ -15,7 +15,7 @@ When the task is UX revision, IA redesign, or any frontend feature with multiple
    - **Claude-runnable tests** — every check Claude can execute without the user's hardware: type checks, unit tests, integration tests against real services running locally (sqlite, docker, weave-server), API curl probes that surface the bug class, end-to-end test scripts that spin up containers / mock devices. List the exact command for each, AND the bug class it would have caught. **This subsection is mandatory** — if a bug shipped to user-hardware verification could have been caught by a script Claude could run, that script belongs here.
    - **User hardware verification** — only the steps that genuinely require a physical device (BLE press, Roon zone playback state, Hue light reaction). Number them so the user can report "step 3 failed" rather than describing the failure ad-hoc.
 
-Why the split: many bug classes (missing enum variant, dispatch routing, tile-input regressions) are observable from server logs + curl probes + state hub introspection — Claude verifies without user round-trips. Why this order: user-journey-first structure makes implementation priority obvious (primary UC → secondary UC) and prevents the plan rewrite triggered by "最初にユースケースごとの操作を書いて". Origin: 11-bug cascade where each fix lacked an autonomous test pass.
+Why the split: many bug classes (missing enum variant, dispatch routing, tile-input regressions) are observable without user round-trips. Why this order: user-journey-first makes implementation priority obvious (primary UC → secondary UC) and prevents the rewrite triggered by "最初にユースケースごとの操作を書いて". Origin: 11-bug cascade, each fix lacked an autonomous test pass.
 
 ## Design-to-Plan Transition
 
@@ -26,7 +26,7 @@ When an exploratory conversation ("考えてみてください" / "think about i
 - "X に進んでいいですか？" / "can I proceed with X?"
 - "実装に入っていいですか？" / "can I start implementing?"
 
-These are plan-mode entry triggers, not chat questions. Writing them in chat means the plan was never created. The correct sequence is: design converges → EnterPlanMode → draft plan → user approves → implement.
+These are plan-mode entry triggers, not chat questions. Writing them in chat means the plan was never created. Correct sequence: design converges → EnterPlanMode → draft plan → user approves → implement.
 
 ## Autonomous Execution Boundary
 
