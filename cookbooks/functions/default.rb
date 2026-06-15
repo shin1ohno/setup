@@ -248,8 +248,37 @@ module RecipeHelper
   # Try the ambient identity, then each configured profile, against
   # check_command. Returns "__ambient__" when the current/default identity
   # already passes, the profile name when a named profile passes, else nil.
+  # Extract the profile name a check_command pins (via `--profile X` or
+  # `AWS_PROFILE=X` env form), or nil if the command is bare. Quotes around
+  # the captured value are stripped so the result is the bare profile name.
+  # Used by _auto_select_aws_profile (to skip useless iteration on pinned
+  # gates) and _auth_diagnosis (to mirror the same identity the gate uses).
+  def _pinned_profile(check_command)
+    if check_command =~ /--profile\s+(\S+)/ || check_command =~ /AWS_PROFILE=(\S+)/
+      Regexp.last_match(1).gsub(/['"]/, "").sub(/[,)]+\z/, "")
+    end
+  end
+
   def _auto_select_aws_profile(check_command)
     return "__ambient__" if run_command(check_command, error: false).exit_status == 0
+    # When check_command pins a specific profile (via `--profile X` flag or
+    # `AWS_PROFILE=X` env form), AWS_PROFILE override is a no-op (the CLI flag
+    # wins; the env form is also overridden by the iteration's own env). Iter-
+    # ating every configured profile would produce a misleading "tried N pro-
+    # files, all failed" log — each iteration tests the SAME pinned profile.
+    # Skip the loop and tell the operator which profile needs refreshing. The
+    # pinned profile is also the one the cookbook's actual SSM calls use
+    # (enforced by the pin-match lint rule in claude-code/files/rules/ruby.md),
+    # so substituting a different profile at discovery time would just defer
+    # the failure to fetch_ssm.
+    if (pinned = _pinned_profile(check_command))
+      MItamae.logger.info(
+        "[bootstrap] check_command pins profile '#{pinned}'; auto-discovery cannot override it " \
+        "(the cookbook's actual SSM calls use the same pin). Refresh '#{pinned}' specifically, " \
+        "or press 'c' to configure it now."
+      )
+      return nil
+    end
     listed = run_command("aws configure list-profiles 2>/dev/null", error: false)
     return nil unless listed.exit_status == 0
     profiles = listed.stdout.to_s.split("\n").map { |l| l.strip }.reject { |p| p.empty? }
@@ -259,8 +288,6 @@ module RecipeHelper
     MItamae.logger.info("[bootstrap] probing #{profiles.length} configured AWS profile(s) for one that satisfies the check...")
     profiles.each do |profile|
       MItamae.logger.info("[bootstrap]   trying AWS profile '#{profile}'...")
-      # Explicit --profile in check_command wins over AWS_PROFILE, so this is a
-      # no-op (same result) for already-profiled checks — harmless to try.
       # Capture merged output (2>&1) so a failure reports WHY this profile failed.
       res = run_command("AWS_PROFILE=#{profile} #{_strip_redirect(check_command)} 2>&1", error: false)
       return profile if res.exit_status == 0
@@ -280,6 +307,11 @@ module RecipeHelper
       out = run_command("#{_strip_redirect(check_command)} 2>&1", error: false)
       return "command failed (exit #{out.exit_status}): #{_first_line(out.stdout)}"
     end
+    # Form-aware extraction — the sts probe below differs by form (flag vs
+    # env). _pinned_profile collapses both forms to one value; here we keep
+    # them separate to mirror the gate's command shape. If the regex shape
+    # ever changes (e.g., `--profile=NAME` long-opt form), update both this
+    # block AND _pinned_profile in lockstep.
     prof_flag = (check_command =~ /--profile\s+(\S+)/) ? $1 : nil
     prof_env  = (check_command =~ /AWS_PROFILE=(\S+)/) ? $1 : nil
     profile = prof_flag || prof_env || ENV["AWS_PROFILE"] || "default"
