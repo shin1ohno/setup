@@ -114,7 +114,8 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "bash /home/shin1ohno/.claude/statusline-command.sh"
+    "command": "bash ~/.claude/coralline/statusline.sh",
+    "refreshInterval": 1
   },
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true,
