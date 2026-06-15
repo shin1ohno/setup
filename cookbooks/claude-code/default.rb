@@ -126,12 +126,14 @@ remote_file "#{node[:setup][:home]}/.claude/coralline/statusline.sh" do
   action :create
 end
 
-remote_file "#{node[:setup][:home]}/.claude/coralline/themes/claude-coral.conf" do
-  source "files/coralline/themes/claude-coral.conf"
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "644"
-  action :create
+%w(claude-coral nord).each do |theme_name|
+  remote_file "#{node[:setup][:home]}/.claude/coralline/themes/#{theme_name}.conf" do
+    source "files/coralline/themes/#{theme_name}.conf"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
 end
 
 remote_file "#{node[:setup][:home]}/.claude/coralline.conf" do
