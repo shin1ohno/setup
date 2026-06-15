@@ -99,12 +99,54 @@ remote_file "#{node[:setup][:home]}/.claude/CLAUDE.md" do
   action :create
 end
 
-remote_file "#{node[:setup][:home]}/.claude/statusline-command.sh" do
-  source "files/statusline-command.sh"
+# Status line: coralline (Powerlevel10k-inspired). Vendored + pinned to commit
+# 04808390 (2026-06-14). Local-only renderer (jq + git), no network/API.
+# Layout: statusline.sh + themes/<name>.conf under ~/.claude/coralline/, with the
+# user config at ~/.claude/coralline.conf. The settings.json statusLine command
+# is set below after the merge so the home path is correct per-host.
+directory "#{node[:setup][:home]}/.claude/coralline" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
   action :create
+end
+
+directory "#{node[:setup][:home]}/.claude/coralline/themes" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+remote_file "#{node[:setup][:home]}/.claude/coralline/statusline.sh" do
+  source "files/coralline/statusline.sh"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w(claude-coral nord).each do |theme_name|
+  remote_file "#{node[:setup][:home]}/.claude/coralline/themes/#{theme_name}.conf" do
+    source "files/coralline/themes/#{theme_name}.conf"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+remote_file "#{node[:setup][:home]}/.claude/coralline.conf" do
+  source "files/coralline/coralline.conf"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  action :create
+end
+
+# Remove the legacy custom statusline (superseded by coralline above).
+file "#{node[:setup][:home]}/.claude/statusline-command.sh" do
+  action :delete
 end
 
 # Merge managed keys into settings.json, preserving unmanaged keys (e.g. mcpServers)
@@ -126,6 +168,15 @@ if existing.key?("permissions") && managed.key?("permissions")
     merged["permissions"][key] = (existing_entries | managed_entries)
   end
 end
+
+# Status line: force coralline with an absolute, per-host command. The static
+# files/settings.json value cannot interpolate $HOME, so set it here so every
+# platform resolves the correct home (a Linux path was previously hardcoded).
+merged["statusLine"] = {
+  "type" => "command",
+  "command" => "bash #{node[:setup][:home]}/.claude/coralline/statusline.sh",
+  "refreshInterval" => 1,
+}
 
 file settings_path do
   content JSON.pretty_generate(merged) + "\n"
