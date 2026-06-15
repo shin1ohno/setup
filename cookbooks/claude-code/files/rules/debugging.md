@@ -40,7 +40,7 @@ For a change to an authentication / authorization gate on a RUNNING system (JWT 
 1. Decode a real token from the actual live issuer (not a synthetic one) and confirm the new check passes for its real claim values.
 2. After deploy, round-trip a real client request and observe accept/reject on the receiving system.
 
-Synthetic-token tests encode your assumption about the token shape — the exact thing an auth tightening puts at risk. See the design-time counterpart in `~/.claude/rules/adversarial-review.md` "Live Token Round-Trip Gate". Origin: 2026-06-07 — an MCP auth-proxy audience fix passed synthetic verification but the real token carried `aud=[]`; only a live probe caught that enforcement would break production.
+Synthetic-token tests encode your assumption about the token shape — the exact thing an auth tightening puts at risk. See the design-time counterpart in `~/.claude/rules/adversarial-review.md` "Live Token Round-Trip Gate". Origin: 2026-06-07 synthetic-token PASS, real `aud=[]`.
 
 ## When to Add Observation Tooling Proactively
 
@@ -67,13 +67,7 @@ Detail (Rust example + origin): see `~/.claude/rules/debugging-detail.md#auth-bo
 
 ## Do Not Push Error Reproduction to the User
 
-The user asking "試してみてください" / "run it and check" is a fallback, not a default. Before reaching that fallback:
-
-1. Reproduce the failure yourself using the observation tool
-2. Verify your hypothesis about the cause (again via observation, not source reasoning)
-3. Apply the fix
-4. Verify the fix took effect (again via observation)
-5. Report the fix to the user with the observed state-change as evidence
+The user asking "試してみてください" / "run it and check" is a fallback, not a default. Before reaching that fallback, run the observe→fix→re-observe loop yourself (Silent Failure Detection above): reproduce the failure via the observation tool, verify the cause via observation (not source reasoning), apply the fix, verify it took effect via observation, then report with the observed state-change as evidence.
 
 Asking the user to reproduce an error they already reported is asking them to do your debugging work.
 
@@ -163,7 +157,7 @@ Probe-before-execute pairs:
 
 If the precondition is absent, do NOT run the doomed command (it fails with a misleading error — "snapshot not found", "bad revision"). Return to the user with the corrected, actually-feasible options.
 
-Origin: 2026-05-30 auto-mitamae session — user chose "restore the corrupt ES index from snapshot", but `GET _snapshot/_all` showed the index was in zero snapshots (SLM covered only `logs-rtx-*`, not `metrics-prometheus.collector-*`). The probe proved snapshot-restore impossible before executing it; the corrected options (delete data stream / allocate-empty-primary) were re-offered and the user re-chose.
+Origin: 2026-05-30 chosen snapshot-restore had zero snapshots.
 
 ## Chain verify command with the fix in the same `!` block
 
@@ -187,13 +181,9 @@ Before designing an optimization or fix for a specific process / script / cron j
 Probe sequence (30 seconds, avoids the full investigation arc on a ghost process):
 
 ```bash
-# Is the script/binary on the target?
 ssh root@<host> "find /root /etc/cron.d /etc/cron.* /var/spool/cron -name '<pattern>' 2>/dev/null"
-# Is there a running process?
 ssh root@<host> "pgrep -a -f '<script-name>' || echo NOT_RUNNING"
-# Is there a cron entry calling it?
 ssh root@<host> "grep -rs '<script-name>' /etc/cron* /var/spool/cron || echo NO_CRON"
-# Is there a systemd unit/timer?
 ssh root@<host> "systemctl list-timers --all | grep '<name>' || echo NO_TIMER"
 ```
 
@@ -201,4 +191,4 @@ If all return absent / NOT_RUNNING / NO_CRON / NO_TIMER, the suspected driver is
 
 **Trigger**: you are about to implement a cache, throttle, or rate-limit for a specific script or service based on source-code reading, without having verified it runs on the target.
 
-This rule exists because the 2026-06-10 KMS-reduction session identified `self-heal-observe.py` as a KMS Decrypt driver from source-code inspection, designed an mtime-based skip cache for it, and nearly deployed it — before the probe revealed the script had no cron entry, no process, and no deployment path on the ES-node LXCs. The actual driver was a different code path. Source-code presence alone is not evidence of runtime deployment.
+Origin: 2026-06-10 optimized a script not deployed on target.

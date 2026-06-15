@@ -10,7 +10,7 @@ If the iOS project has a `project.yml` next to `<App>.xcodeproj/`, the project f
 - ❌ Do not edit `WeaveIos/Info.plist` directly when `project.yml` declares an `info.properties` block — the plist is regenerated from it.
 - ✅ All Info.plist keys go under `targets.<name>.info.properties` in `project.yml` (e.g. `NSAppleMusicUsageDescription`, `NSBluetoothAlwaysUsageDescription`).
 - ✅ All build settings go under `targets.<name>.settings` (e.g. `DEVELOPMENT_TEAM`, `IPHONEOS_DEPLOYMENT_TARGET`).
-- ✅ After editing `project.yml`, run `cd ios && xcodegen` to regenerate.
+- ✅ After editing `project.yml`, run `cd ios && xcodegen` to regenerate. Install once per Mac: `brew install xcodegen`.
 
 `.gitignore` already excludes `*.xcodeproj/` and the regenerated Info.plist; honor that exclusion rather than trying to track the artefacts.
 
@@ -103,42 +103,15 @@ ls -la ~/.cargo/bin/edge-agent ~/Applications/EdgeAgent.app/Contents/MacOS/edge-
 
 **`OnDemand=true` in the plist** does not auto-respawn after a SIGKILL. After `pkill -f cargo/bin/edge-agent` or similar, the service stays down until `launchctl start` (or the next demand trigger). Don't assume launchd will restart the service — verify with `launchctl list` and an explicit `launchctl start` if `LastExitStatus` is set and `PID` is absent.
 
-This rule exists because the 2026-04-27 cross-edge session ran `cargo install edge-agent@0.10.0` on neo expecting the running service to pick up 0.10.0 on the next reconnect. The cargo bin updated but the launchd plist still pointed at the unmodified `.app` bundle, so neo reconnected to weave-server still announcing version 0.8.0 — invisible until the cross-edge dispatch routed a `ServerToEdge::DispatchIntent` to neo and the 0.8.0 deserializer dropped it. Two diagnostic turns lost finding the version mismatch.
+Origin: 2026-04-27 cross-edge — `cargo install` updated cargo bin but launchd plist still pointed at stale `.app` bundle; neo reconnected announcing old version 0.8.0.
 
-## Putting it all together
-
-A clean fresh-Mac bootstrap, in order:
-
-```sh
-# Once per Mac:
-brew install xcodegen
-rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-
-# Once per project:
-cd ios && xcodegen           # generates pbxproj + Info.plist from project.yml
-
-# Each build:
-./ios/build-xcframework.sh    # rust → xcframework (preflights rustup targets)
-# user-side terminal:
-! ssh -t neo.local 'security unlock-keychain ~/Library/Keychains/login.keychain-db && \
-  export PATH=/opt/homebrew/bin:$PATH && \
-  xcodebuild -project ~/ManagedProjects/edge-agent/ios/WeaveIos.xcodeproj \
-    -scheme WeaveIos -destination "id=<device-uuid>" -configuration Debug \
-    -allowProvisioningUpdates build && \
-  xcrun devicectl device install app --device <device-uuid> \
-    ~/Library/Developer/Xcode/DerivedData/WeaveIos-*/Build/Products/Debug-iphoneos/WeaveIos.app && \
-  xcrun devicectl device process launch --device <device-uuid> com.shin1ohno.weave.WeaveIos'
-```
-
-Once `DEVELOPMENT_TEAM` lands in `project.yml`, drop the per-invocation override.
-
-### `CoreDeviceError 3002 / Connection interrupted` is transient
+## `CoreDeviceError 3002 / Connection interrupted` is transient
 
 If `xcrun devicectl device install app` fails with `Error Domain=com.apple.dt.CoreDeviceError Code=3002 "Connection interrupted"` (often paired with `IXRemoteErrorDomain Code=6` "Connection with the remote side was unexpectedly closed"), retry the identical command **once** before diagnosing. This is a USB / Wi-Fi handoff transient — the build itself completed (`** BUILD SUCCEEDED **`) and the `.app` bundle is intact; only the wire transfer to the device flaked.
 
 The instinct on first sighting is to suspect codesigning or provisioning. Don't — verify it's transient by re-running the install command first. A second identical-failure means the diagnosis is real and worth a deeper look (device locked, paired-but-not-trusted, etc.).
 
-This rule exists because the 2026-04-29 weave session's first install attempt failed with this exact pair (3002 + IX domain 6); a single retry succeeded with no code change.
+Origin: 2026-04-29 weave — 3002 + IX domain 6 pair, single retry succeeded no code change.
 
 ## FFI Boundary Error Visibility
 
@@ -162,7 +135,7 @@ do {
 
 If the volume is genuinely high, log at `.debug` only the noisy successful-no-match case — never the catch branch. Same applies to `peripheral(_:didUpdateValueFor:error:)` non-nil `error`: log at `.error` so read failures from CoreBluetooth (insufficient permissions, encryption mid-handshake) surface immediately instead of disappearing.
 
-This rule exists because the 2026-04-29 weave session's PR #82 (initial battery read) shipped correctly but battery still didn't appear on hardware — a `WEAVE_DEBUG_BLE=1`-gated catch swallowed the `Uuid::parse_str` failure on Bluetooth-assigned UUIDs (see CoreBluetooth UUID encoding below). The flag-gated diagnostic was set to off in production, so the bug stayed silent through a 40-minute plan-implement-CI-deploy cycle. PR #84 fixed both the encoding and the silent-catch.
+Origin: 2026-04-29 weave — `WEAVE_DEBUG_BLE=1`-gated catch swallowed `Uuid::parse_str` failure on Bluetooth-assigned UUIDs, silent in production.
 
 ## CoreBluetooth UUID encoding — canonical 128-bit form across UniFFI
 
@@ -227,7 +200,7 @@ What the output gives you, with no further user interaction needed:
 - **toolchain presence** — `xcodegen` and `xcodebuild` paths confirmed
 - **keychain hint** — confirms the user has a login keychain (codesign will need this unlocked at deploy time, see CLI build prerequisites #4)
 
-Probe must come BEFORE any AskUserQuestion about iOS environment. The 2026-04-28 weave session burned 3 round-trips on rustup/PATH/UDID issues that this single probe would have caught at once.
+Probe must come BEFORE any AskUserQuestion about iOS environment. Origin: 2026-04-28 weave — 3 round-trips on rustup/PATH/UDID a single probe would have caught.
 
 ## Auto-resolution table — never ask, always probe
 
@@ -248,6 +221,4 @@ Escalate to AskUserQuestion only when:
 - The user has expressed a preference that overrides the probe result
 - The choice is genuinely about user intent (e.g., "install on iPhone or iPad — both connected")
 
-## Origin
-
-This rule exists because the 2026-04-26 iOS session walked the four prerequisites one error at a time, costing roughly four extra round-trips before the iPad finally received its first build. The 2026-04-28 weave session compounded this: I asked the user to copy-paste the iPad UDID after a guessed jq selector returned empty, and I AskUserQuestion'd the build host instead of probing. The user explicitly corrected me with "neo.localにsshしてUUIDを取得してください" — codifying that the value should be probed, not asked.
+Origin: 2026-04-26/04-28 iOS+weave — prerequisites walked one error at a time; UDID asked not probed ("neo.localにsshしてUUIDを取得してください").

@@ -26,9 +26,7 @@ gh api repos/<owner>/<repo>/releases/latest \
 
 # 3. (For direct-download URLs) confirm 200 status without any UA / cookie
 curl -fsI -A "Mozilla/5.0" "<url>" | head -3
-# -f: fail on 4xx/5xx (don't silently save error body)
-# -s: suppress progress meter
-# -I: HEAD only (no body download)
+# -f fail on 4xx/5xx, -s silent, -I HEAD only
 
 # 4. (For .sha256 sidecar files) inspect the format
 curl -s "<url>.sha256" | head -1
@@ -42,7 +40,7 @@ gh api repos/<owner>/<repo> --jq '.language'
 
 ## Concrete failure modes this catches
 
-PR #32 (2026-04-25 mitamae brew→mise migration) shipped 8 distinct upstream-fact bugs because this batch was skipped. Each one is invisible from web-search but obvious from the API:
+Origin: 2026-04-25 brew→mise migration shipped 8 upstream-fact bugs from skipping this batch. Each is invisible from web-search but obvious from the API:
 
 | Bug pattern | Tool example (PR #) | What the check would have shown |
 |---|---|---|
@@ -61,16 +59,6 @@ PR #32 (2026-04-25 mitamae brew→mise migration) shipped 8 distinct upstream-fa
 2. **Write phase**: only write the cookbook line after the batch has confirmed: backend type / asset name / URL status / sidecar format / repo language. Annotate the cookbook with the verified upstream fact in a comment when it's non-obvious (`# ubi can't install this — only source tarball published`).
 3. **Trust hierarchy**: `mise registry`, `gh api`, `curl -fsI` > Plan-agent output > web-search summaries. Never invert this.
 
-## When NOT to apply
-
-- Pure brew formula installs (no migration involved)
-- Existing recipes you're only restructuring without changing the install path
-- Internal tools / private registries (this protocol assumes public GitHub releases / vendor URLs)
-
-## Anti-pattern: trusting plan-agent backend mappings without verification
-
-A Plan agent may return: "xcodes → `ubi:XcodesOrg/xcodes`, aria2 → `ubi:aria2/aria2`, macism → `go:github.com/laishulu/macism`". Each mapping looks plausible but is wrong (tag format, no darwin asset, wrong language). The agent constructed the mappings from web-search summaries that did not include upstream API state. **Run the 5-check batch on each one before adopting.**
-
 ## Feasibility questions — verify before answering
 
 This rule fires for **direct user questions** ("can mise manage X?", "is X available via mise?", "what's the best way to install X via mise?"), not just cookbook-writing-time. A verbal "yes" that turns out wrong costs more than the 30-second probe — the user trusts the answer, builds on it, and discovers blockers downstream.
@@ -87,4 +75,4 @@ Apply the 5-check verification batch before answering. In addition, for **Python
 
 Concrete example: `git-remote-codecommit` needs `botocore[crt]` to read `aws login`-style session credentials. mise pipx installs the base tool fine but `pipx inject` to add `botocore[crt]` is impossible. Pyenv pip handles both in one command: `$HOME/.pyenv/shims/pip install git-remote-codecommit 'botocore[crt]'`.
 
-This rule exists because the 2026-05-04 git-remote-codecommit session answered "yes, mise can manage it via pipx backend" without probing, then hit both blockers sequentially (pipx not on PATH → install pipx → pipx inject fails → pivot to pyenv). Total cost: ~30 minutes + one full cookbook rewrite. The 5-check verification batch — extended to cover capability claims, not just URLs — would have caught at least the pipx-not-on-PATH issue in 30 seconds.
+Origin: 2026-05-04 git-remote-codecommit answered "yes mise pipx" unprobed, hit both blockers sequentially, ~30 min pivot to pyenv.

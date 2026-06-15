@@ -4,14 +4,10 @@ globs: ["*.rs"]
 
 # Rust Code Guidelines
 
-- Error handling: `thiserror` in library crates, `anyhow` in binary crates
-- Async runtime: tokio
-- Prefer `cargo clippy --workspace --tests` over `cargo clippy` alone
-
 ## Commit Gate for Rust Projects
 
 Before every git commit in a Rust workspace, run all four checks in order:
-0. `cargo fmt --check --all` — must produce no diff. Run first; it's the fastest failure to fix. Matches CI's rustfmt step. A multi-import line-break or brace-style mismatch that passes clippy will still fail CI if fmt is skipped — caught this exact failure in the 2026-04-23 weave session after clippy + test + build were all green
+0. `cargo fmt --check --all` — must produce no diff. Run first; it's the fastest failure to fix. Matches CI's rustfmt step. A multi-import line-break or brace-style mismatch that passes clippy will still fail CI if fmt is skipped. Origin: 2026-04-23 weave — fmt failed CI after clippy + test + build were green
 1. `cargo build --workspace`
 2. `cargo test --workspace`
 3. `RUSTFLAGS="-D warnings" cargo clippy --workspace --tests` — must be warning-free. Matches CI's flags; catches `dead_code` and other lints that bare `cargo clippy` surfaces only as warnings (e.g. a parametric helper committed ahead of its runtime caller)
@@ -71,7 +67,7 @@ When a release-plz run hits 403 on a crate that was previously published success
 3. For each workspace member without `publish = false` in its `Cargo.toml`, confirm it appears in the token's allow-list at https://crates.io/settings/tokens
 4. If any are missing, re-issue the token with the expanded allow-list **before** merging the release PR
 
-Two consecutive 403s on the same release (the 2026-04-25 v0.5.4 cut) cost two re-runs because edge-core and weave-ios-core were both omitted. The transitive closure rule, applied once before the first merge, would have surfaced both at the same time.
+Origin: 2026-04-25 v0.5.4 — two consecutive release 403s because edge-core and weave-ios-core were omitted from the token allow-list.
 
 **Workspace-internal crates that should be `publish = false`**: if a crate is genuinely internal (e.g. `weave-ios-core` — UniFFI binding for one specific app, "Not intended for non-Swift consumers" per its description), set `publish = false` in its `Cargo.toml` rather than adding it to the token allow-list. release-plz will then skip it cleanly. Reserve allow-list entries for crates that genuinely ship to crates.io.
 
@@ -91,7 +87,7 @@ When a Rust task targets a non-Linux platform (iOS, macOS-only, Android, WASM) a
 3. Completion requires observable evidence *from the target host*: xcframework file listing, `swiftc` compile output, device log, etc. A green `cargo build --workspace` on Linux is necessary but not sufficient
 4. If the target host is unavailable this session, write a TODO.md entry with the exact verification command and keep the task `in_progress`; do not silently mark completed
 
-This rule exists because the 2026-04-23 iOS session marked `weave-ios-core` (Phase 2) as `completed` after Linux-side build/test passed, but the plan's exit criteria required a Mac-side `xcodebuild -create-xcframework` that had not run. The user caught it with "Phase 2 は終わってますか？" — a false completion that would have silently propagated into downstream phase scheduling.
+Origin: 2026-04-23 iOS — marked `weave-ios-core` complete on green Linux build while the Mac-side `xcodebuild -create-xcframework` exit criterion was unrun.
 
 ## Cross-Platform Build Scripts — Precondition Guard
 
@@ -111,4 +107,4 @@ A prose handoff note ("初回のみ rustup target add してください") is NO
 
 Applies equally to: homebrew packages, required cargo binaries, first-run Xcode setup (`xcodebuild -runFirstLaunch`), env vars the build consumes.
 
-This rule exists because the 2026-04-23 iOS session's `build-xcframework.sh` did not check `rustup target list --installed`; the user hit `E0463 can't find crate for core` on first run and had to decode which targets were missing from the cargo error rather than from a script-owned message.
+Origin: 2026-04-23 iOS — `build-xcframework.sh` lacked a rustup-target guard; user hit `E0463 can't find crate for core`.

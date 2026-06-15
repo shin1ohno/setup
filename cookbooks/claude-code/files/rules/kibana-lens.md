@@ -16,13 +16,13 @@ State this limit to the user up front: panels can't be headlessly rendered; you 
 
 ## counter_rate — cannot ORDER a terms split by it
 
-`counter_rate` compiles to an ES **pipeline aggregation** (derivative). A `terms` / multi-terms breakdown (split series) ORDERED BY a counter_rate column fails at render: "Invalid aggregation order path [-1] ... is a pipeline aggregation and cannot be used to sort the buckets." Order the terms by the underlying `max(<counter>)` column instead (busiest first). This is NOT about the X-axis — the date_histogram X-axis is fine; only the terms `orderBy` must avoid the pipeline column. (setup PR #413, rtx-snmp-throughput/errors.)
+`counter_rate` compiles to an ES **pipeline aggregation** (derivative). A `terms` / multi-terms breakdown (split series) ORDERED BY a counter_rate column fails at render: "Invalid aggregation order path [-1] ... is a pipeline aggregation and cannot be used to sort the buckets." Order the terms by the underlying `max(<counter>)` column instead (busiest first). This is NOT about the X-axis — the date_histogram X-axis is fine; only the terms `orderBy` must avoid the pipeline column.
 
 ## last_value returns null on per-label-set federation docs
 
 The elastic-agent `prometheus.collector` federation splits each metric into a separate ES doc keyed by its unique label set (metric = `prometheus.metrics.<name>`, labels = `prometheus.labels.<name>`). SNMP info-metrics (sysName, yrfRevision) and per-interface status labels (ifOperStatus, ifAdminStatus) live on DIFFERENT docs than the gauges/counters. `last_value(prometheus.labels.X)` over a parent `terms` bucket sorts ALL docs in the bucket by `@timestamp` and takes the latest — which usually LACKS field X → **null**.
 
-Fix: give each such column a per-column Lens `filter` (`"prometheus.labels.X: *"`) so last_value only sees docs carrying that field. Use `max()` for numeric fields (it ignores null docs). Two fields from DIFFERENT label-set docs (sysName + yrfRevision; ifOperStatus + ifAdminStatus) each need their OWN per-column filter — a single shared panel query can't scope them. (setup PR #413 status table + PR #414 interfaces table.)
+Fix: give each such column a per-column Lens `filter` (`"prometheus.labels.X: *"`) so last_value only sees docs carrying that field. Use `max()` for numeric fields (it ignores null docs). Two fields from DIFFERENT label-set docs (sysName + yrfRevision; ifOperStatus + ifAdminStatus) each need their OWN per-column filter — a single shared panel query can't scope them.
 
 ## Kibana 9.4 saved-object NDJSON shapes
 
@@ -32,7 +32,7 @@ Fix: give each such column a per-column Lens `filter` (`"prometheus.labels.X: *"
 - SNMP TimeTicks (sysUpTime) = centiseconds → readable days via formula `max(...) / 8640000`
 - Import order: data view → lenses → dashboard (so references resolve). `cookbooks/lxc-kibana/files/import-saved-objects.sh` uses an explicit ordered array — register new files THERE (it is not wired into default.rb; run it manually on the Kibana CT).
 
-Origin: 2026-06-01 RTX SNMP dashboard (PRs #413/#414). Basic license + no browser meant two panels shipped with bugs the user caught visually (counter_rate terms-ordering; last_value null on fragmented docs).
+Origin: 2026-06-01 RTX SNMP dashboard, basic license bugs caught visually.
 
 ## Manual Kibana edits must be exported back to the repo
 
@@ -49,7 +49,7 @@ Register the file in `import-saved-objects.sh`'s ordered array (before the dashb
 
 **Pre-merge check** for any dashboard saved-object PR: every `id` in each dashboard's `references` array must resolve to a committed source file AND appear in the import order. A reference with no file = a panel that breaks on fresh import. To find a live-only `id`, query `.kibana*` for it (`{"query":{"ids":{"values":["lens:<id>"]}}}`, count==1) and confirm it has no matching repo file.
 
-Origin: 2026-06-01 PR #421 — rtx-overview-v2 referenced rtx-lens-events-over-time which existed only in live Kibana (manually created, never exported). A fresh import would have shown a broken "Events over time" panel; recovered via the `_export` API.
+Origin: 2026-06-01 dashboard referenced a live-only manually-created lens.
 
 ## match_only_text fields are not aggregatable — use a Discover saved-search, not a Lens
 
@@ -61,4 +61,4 @@ GET <index>/_mapping/field/<field>   # "keyword" → aggregatable; "match_only_t
 
 For a panel that lists log lines keyed by such a field (IKE/IPsec events, firewall deny lines, DHCP leases), use a **Discover saved-search** panel (`type: "search"`, KQL `<field>: *` as an exists filter), mirroring the Grafana log-stream panel it replaces — NOT a Lens. Reference it in the dashboard as `type: "search"` (ref name `"<idx>:panel_<idx>"`). Only `keyword` fields support Lens `terms` (e.g. `action`, `router`, `severity`).
 
-Origin: 2026-06-01 PR #421 — ike_event is match_only_text; the IKE/IPsec VPN panel had to be a Discover saved-search, not a Lens.
+Origin: 2026-06-01 ike_event match_only_text forced a Discover saved-search.

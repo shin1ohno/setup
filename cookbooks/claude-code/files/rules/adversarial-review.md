@@ -30,8 +30,8 @@ Before merging any change that ADDS or TIGHTENS a JWT claim check (audience, iss
 - If the real token has `aud=[]` (empty) and the validator requires a non-empty audience, the validator is WRONG — regardless of what `.well-known/oauth-protected-resource` advertises as the resource. The advertised resource indicator is what a spec-compliant client *should* request; it is not proof of what the issuer actually mints.
 - Capture the real claim by adding decode-only LOGGING (no enforcement) to the gate, triggering one real client request, reading the logged claim, THEN enforcing the observed value. Never enforce-first.
 
-Origin: 2026-06-07 setup security audit. The H2 fix enforced `audience=https://mcp.ohno.be/cognee` and PASSed source-level adversarial verification with synthetic PyJWT tokens. A pre-merge live probe revealed the real claude.ai token carries `aud=[]` — enforcing ANY audience value would have 401'd every real token and taken down cognee/memory MCP. PR #438 held the fix instead.
+Origin: 2026-06-07 synthetic-token audit missed real `aud=[]`; live probe caught it.
 
 ## Origin
 
-2026-04-28 roon-mcp OAuth session surfaced 10 pre-implementation concerns (JWKS fetch loop, audience claim mismatch, IP gate vs dual-NIC reality, token mount rw + UID) that collectively would have cost 3-5 debugging sessions to discover post-implementation.
+2026-04-28 roon-mcp OAuth review surfaced 10 pre-implementation concerns worth 3-5 debugging sessions.
