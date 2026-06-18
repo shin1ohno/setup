@@ -53,8 +53,11 @@ mcp_servers:
 
   cognee:
     type: http
-    transport: sse
-    url: "https://mcp.ohno.be/cognee/sse"
+    # cognee is FastMCP streamable-HTTP only; it exposes /cognee/mcp, NOT /cognee/sse.
+    # /cognee/sse 404s at the upstream (verified on CT 105 :8002). mcp-remote
+    # auto-negotiates http-first against the /mcp endpoint.
+    transport: http
+    url: "https://mcp.ohno.be/cognee/mcp"
     desktop: mcp-remote
 
   sage:
