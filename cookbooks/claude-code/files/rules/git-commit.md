@@ -126,18 +126,19 @@ The check above covers the start of a task. It does not cover mid-task branch dr
 
 The branch you started the task on is not the branch you are necessarily on now. Committing on the wrong branch requires a cherry-pick + reset cleanup cycle that wastes a turn and leaves a confusing history.
 
-**Required pattern** when committing to a fix/feat branch: always use `-C /absolute/path` and explicit branch verification in the SAME Bash call as the commit:
+**Never use `cd` to set git context.** `cd` does not survive the CWD reset between Bash invocations, and a bare `cd <dir>` can additionally trigger a shell `chpwd` hook (e.g. an auto-`tree`/`ls`) that floods stdout and masks the `Shell cwd was reset to ...` line you need to see. Use `git -C /absolute/path` on **every** git call — branch check, add, and commit — never a leading `cd` to "enter" the repo first.
+
+**Required pattern** when committing to a fix/feat branch: explicit branch verification + `git -C /absolute/path` in the SAME Bash call as the commit (no leading `cd`):
 
 ```bash
-cd /home/shin1ohno/ManagedProjects/setup &&
-  test "$(git -C . branch --show-current)" = "fix/X" &&
-  git -C . add <files> &&
-  git -C . commit -m "..."
+test "$(git -C /Users/sh1/ManagedProjects/setup branch --show-current)" = "fix/X" &&
+  git -C /Users/sh1/ManagedProjects/setup add <files> &&
+  git -C /Users/sh1/ManagedProjects/setup commit -m "..."
 ```
 
 If the `branch --show-current` test fails the chain aborts before staging, surfacing the drift immediately rather than after the commit lands on the wrong branch. **Do NOT** split `git checkout -b` into a separate Bash invocation from the commit — branch context does not survive the CWD reset between calls.
 
-Origin: 2026-04-22 commit on wrong branch after background `terraform apply`; strengthened 2026-05-06 after two misplaced commits where `git checkout -b` ran in a separate Bash call from `git commit` (recovery: cherry-pick + `git branch -f <branch> origin/main`).
+Origin: 2026-04-22 commit on wrong branch after background `terraform apply`; strengthened 2026-05-06 after two misplaced commits where `git checkout -b` ran in a separate Bash call from `git commit` (recovery: cherry-pick + `git branch -f <branch> origin/main`); 2026-06-19 a bare `cd <dir>` used to "enter" the repo within one Bash call still drifted at the next CWD reset AND triggered a shell tree-hook that masked the reset line — using `git -C /absolute/path` on every git call (never a leading `cd`) eliminates the ambiguity.
 
 ### Cherry-pick is a commit operation — branch check applies
 
