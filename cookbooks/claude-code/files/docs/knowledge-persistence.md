@@ -4,6 +4,21 @@
 
 If a knowledge-WRITE tool (`cognify`, `save_interaction`, `add_memories`, `delete`, `prune`) is denied in this session, a local MCP is configured on this host for writes — use the local equivalent instead: `mcp__cognee-local__cognify` / `mcp__cognee-local__save_interaction` / `mcp__memory-local__add_memories`. READS (`search`, `search_memory`, `list_data`, `list_memories`) continue to use whichever connector is available (hosted or local). On hosts where the local servers are not registered, the connector write tools are allowed and this note is a no-op.
 
+## "local" Cognee is NOT air-gapped — verify egress before routing work-sensitive data
+
+`cognee-local` / `memory-local` (127.0.0.1) name the **MCP server location**, not the LLM/embedding backend. Cognee calls an LLM for graph extraction and an embedding model for vectors; both may be **external vendor APIs** (OpenAI, etc.) depending on container config. So "local" storage can still **egress content to a third party** on every `cognify`. Before routing any work-sensitive content (employer KPIs, product metrics, internal business data) through `mcp__cognee-local__cognify`:
+
+1. Probe the actual egress:
+
+   ```bash
+   docker exec local-mcp-cognee-1 env | grep -iE 'LLM_(PROVIDER|ENDPOINT|MODEL)|EMBEDDING_(PROVIDER|ENDPOINT)|OPENAI|ANTHROPIC'
+   ```
+
+2. If any `*_ENDPOINT` points to a vendor API (`api.openai.com`, …), cognify/embedding sends the content there. Treat `cognee-local` as equivalent to that vendor for data-sensitivity purposes — route work data through it only when that vendor is sanctioned for that data class (e.g. an employer-managed OpenAI account), and **never** to a personal home-lab Cognee (`mcp.ohno.be`) / personal Notion.
+3. For structured data that only needs exact comparison (a KPI snapshot, a metrics diff), prefer a **local file (JSON)** over Cognee — zero egress, exact diff, and the semantic graph adds nothing for fixed numbers.
+
+This is the "verify-before-asserting" principle applied to data routing: the name `local` is not evidence of air-gap. Origin: 2026-06-19 kpi-delta-monitor loop — `docker exec env` showed `LLM_ENDPOINT=https://api.openai.com/v1` in `cognee-local`; routing Mercari KPI through it would have egressed to OpenAI. Snapshot moved to a local JSON file.
+
 ## Mem0
 
 Cross-project memory for user attributes, preferences, and possessions.
