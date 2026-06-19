@@ -193,7 +193,7 @@ directory "#{node[:setup][:home]}/.claude/hooks" do
   action :create
 end
 
-%w(pre-commit-test.rb check-trailing-newline.rb check-whitespace-lines.rb block-co-authored-by.rb post-compact-remind.rb).each do |file_name|
+%w(pre-commit-test.rb check-trailing-newline.rb check-whitespace-lines.rb block-co-authored-by.rb post-compact-remind.rb session-mcp-health.rb).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/hooks/#{file_name}" do
     source "files/hooks/#{file_name}"
     owner node[:setup][:user]
@@ -269,7 +269,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services ingest-batch security-review verify-cognee verify-data-integrity feature-parity verify-mise-backend bootstrap-docs-hub).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services ingest-batch security-review verify-cognee verify-data-integrity feature-parity verify-mise-backend bootstrap-docs-hub mcp-doctor).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]

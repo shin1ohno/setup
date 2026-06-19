@@ -109,6 +109,15 @@
             "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/post-compact-remind.rb"
           }
         ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/session-mcp-health.rb"
+          }
+        ]
       }
     ]
   },
