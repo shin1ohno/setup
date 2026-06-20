@@ -286,47 +286,6 @@ end
   end
 end
 
-# Deploy Google Workspace CLI (gws) skills — upstream set from
-# github.com/googleworkspace/cli (gws v0.22.5). 95 doc-only skills, one
-# SKILL.md per directory: gws-* hubs + sub-skills, persona-* role guides,
-# recipe-* task recipes. All require the `gws` binary (cookbooks/gws,
-# roles/extras) and read gws-shared/SKILL.md for auth + security rules.
-# Re-sync: re-download files/skills/{gws,persona,recipe}-*/SKILL.md and
-# regenerate the list below.
-%w(
-  gws-admin-reports gws-calendar gws-calendar-agenda gws-calendar-insert gws-chat gws-chat-send
-  gws-classroom gws-docs gws-docs-write gws-drive gws-drive-upload gws-events
-  gws-events-renew gws-events-subscribe gws-forms gws-gmail gws-gmail-forward gws-gmail-read
-  gws-gmail-reply gws-gmail-reply-all gws-gmail-send gws-gmail-triage gws-gmail-watch gws-keep
-  gws-meet gws-modelarmor gws-modelarmor-create-template gws-modelarmor-sanitize-prompt gws-modelarmor-sanitize-response gws-people
-  gws-script gws-script-push gws-shared gws-sheets gws-sheets-append gws-sheets-read
-  gws-slides gws-tasks gws-workflow gws-workflow-email-to-task gws-workflow-file-announce gws-workflow-meeting-prep
-  gws-workflow-standup-report gws-workflow-weekly-digest persona-content-creator persona-customer-support persona-event-coordinator persona-exec-assistant
-  persona-hr-coordinator persona-it-admin persona-project-manager persona-researcher persona-sales-ops persona-team-lead
-  recipe-backup-sheet-as-csv recipe-batch-invite-to-event recipe-block-focus-time recipe-bulk-download-folder recipe-collect-form-responses recipe-compare-sheet-tabs
-  recipe-copy-sheet-for-new-month recipe-create-classroom-course recipe-create-doc-from-template recipe-create-events-from-sheet recipe-create-expense-tracker recipe-create-feedback-form
-  recipe-create-gmail-filter recipe-create-meet-space recipe-create-presentation recipe-create-shared-drive recipe-create-task-list recipe-create-vacation-responder
-  recipe-draft-email-from-doc recipe-email-drive-link recipe-find-free-time recipe-find-large-files recipe-forward-labeled-emails recipe-generate-report-from-sheet
-  recipe-label-and-archive-emails recipe-log-deal-update recipe-organize-drive-folder recipe-plan-weekly-schedule recipe-post-mortem-setup recipe-reschedule-meeting
-  recipe-review-meet-participants recipe-review-overdue-tasks recipe-save-email-attachments recipe-save-email-to-doc recipe-schedule-recurring-event recipe-send-team-announcement
-  recipe-share-doc-and-notify recipe-share-event-materials recipe-share-folder-with-team recipe-sync-contacts-to-sheet recipe-watch-drive-changes
-).each do |skill_name|
-  directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "755"
-    action :create
-  end
-
-  remote_file "#{node[:setup][:home]}/.claude/skills/#{skill_name}/SKILL.md" do
-    source "files/skills/#{skill_name}/SKILL.md"
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "644"
-    action :create
-  end
-end
-
 # Deploy single-file skills (markdown-only, no SKILL.md subdirectory)
 remote_file "#{node[:setup][:home]}/.claude/skills/ingest-pdf.md" do
   source "files/skills/ingest-pdf.md"
