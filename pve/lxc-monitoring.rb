@@ -57,3 +57,8 @@ lxc_entry(tags: ["lxc", "monitoring"], elastic_agent_extra: {
 # auto-mitamae.prom into node-exporter's textfile dir (created by lxc-core
 # via lxc_entry), so it must run AFTER lxc_entry.
 include_cookbook "auto-mitamae-orchestrator"
+
+# self-heal-observer (Phase 1): read-only ES observability loop. Like the
+# orchestrator, it writes a node_exporter textfile metric into the dir created
+# by lxc_entry, so it must run AFTER lxc_entry.
+include_cookbook "self-heal-observer"
