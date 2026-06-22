@@ -1,17 +1,21 @@
 # frozen_string_literal: true
 #
-# self-heal-observer (Layer 1, minimal notification slice) — deployed to the
-# monitoring LXC (CT 111). A read-only bash poller (NOT a detector, NOT a
-# classifier): it reads the alert state Kibana already writes to the
-# alerts-as-data ES indices, dedups against the existing `self-heal-state`
-# index, and pushes NEW/RESOLVED transitions to a human via AWS SNS. It also
-# emits Prometheus textfile metrics for its own liveness.
+# self-heal-observer (Layer 1) — deployed to the monitoring LXC (CT 111).
+# A read-only bash poller (NOT a detector, NOT a classifier): it reads the
+# alert state Kibana already writes to the alerts-as-data ES indices, dedups
+# against the existing `self-heal-state` index, and records NEW/RESOLVED
+# transitions there. It does NOT notify — notification is a downstream loop
+# (self-heal-create on pro-dev syncs this state to GitHub issues). It emits
+# Prometheus textfile metrics for its own liveness.
 #
 # Why this exists: Kibana runs ~38 alerting rules but their only action is the
 # `.server-log` connector (journal, unread) — Kibana notification connectors
 # are a paid feature. So firing state lands in ES indices that nobody watches
-# (a `Process down: roon` alert sat active+unnoticed for 21 days). This closes
-# that delivery gap. See ~/self-heal-observability-loop-design.md (Layer 1).
+# (a `Process down: roon` alert sat active+unnoticed for 21+ days). This
+# observer makes that state machine-readable; the pro-dev loops turn it into
+# GitHub issues (email notification + work log) and fixes. See
+# ~/self-heal-observability-loop-design.md (Layer 1) and
+# docs/self-heal-github-issues-plan.md.
 #
 # Cron-driven (every 5 min, +2 offset from the auto-mitamae orchestrator on the
 # same host) with its own flock — mirrors cookbooks/auto-mitamae-orchestrator.
@@ -27,8 +31,7 @@ include_cookbook "awscli"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys (per
 # CLAUDE.md "Auth-check gate must match the cookbook's actual invocation
-# profile"). The runtime script uses these for both the elastic-password and
-# the SNS-topic-ARN SSM reads, and for `aws sns publish`.
+# profile"). The runtime script uses these for the elastic-password SSM read.
 ssh_keys_config = JSON.parse(
   File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")),
 )
@@ -89,15 +92,12 @@ directory "/etc/self-heal" do
 end
 
 # observer.env — bash-sourceable (the cron-invoked script `.`-sources it).
-# These are the runtime contract. The SNS ARN is read at RUNTIME from the SSM
-# path below; until home-monitor's PR-1 creates that parameter the script
-# polls + writes textfile but SKIPS publish (logs a WARN), never erroring.
+# These are the runtime contract.
 observer_env = <<~ENV
   # Managed by cookbooks/self-heal-observer. Do not edit by hand.
   SELF_HEAL_ES_HOSTS="https://es-0.home.local:9200 https://es-1.home.local:9200 https://es-2.home.local:9200"
   SELF_HEAL_ES_CA="/etc/elastic-agent/certs/ca.crt"
   SELF_HEAL_ELASTIC_PW_SSM="/monitoring/elastic/elastic-password"
-  SELF_HEAL_SNS_ARN_SSM="/monitoring/self-heal/sns-topic-arn"
   SELF_HEAL_AWS_PROFILE="#{aws_profile}"
   SELF_HEAL_AWS_REGION="#{aws_region}"
   SELF_HEAL_STATE_INDEX="self-heal-state"
