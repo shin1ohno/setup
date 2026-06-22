@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 #
-# self-heal-observer (Layer 1) — read-only ES alert reader + SNS notifier.
+# self-heal-observer (Layer 1) — read-only ES alert reader + state writer.
 # Polls the alerts-as-data indices Kibana writes, dedups against the
-# self-heal-state index, and pushes NEW/RESOLVED transitions via AWS SNS.
-# Emits Prometheus textfile metrics for its own liveness. NEVER mutates fleet
-# state. See ~/self-heal-observability-loop-design.md (Layer 1).
+# self-heal-state index, and records NEW/RESOLVED transitions there.
+# Notification + remediation are downstream loops on pro-dev (self-heal-create
+# syncs this state to GitHub issues; self-heal-resolve fixes them) — this
+# observer does NOT notify. Emits Prometheus textfile metrics for its own
+# liveness. NEVER mutates fleet state. See
+# ~/self-heal-observability-loop-design.md (Layer 1) and
+# docs/self-heal-github-issues-plan.md.
 #
 # Invoked by /etc/cron.d/self-heal-observer as:
 #   timeout 120 flock -n /var/lock/self-heal-observer.lock \
@@ -24,7 +28,6 @@ ENV_FILE="/etc/self-heal/observer.env"
 : "${SELF_HEAL_ES_HOSTS:=https://es-0.home.local:9200 https://es-1.home.local:9200 https://es-2.home.local:9200}"
 : "${SELF_HEAL_ES_CA:=/etc/elastic-agent/certs/ca.crt}"
 : "${SELF_HEAL_ELASTIC_PW_SSM:=/monitoring/elastic/elastic-password}"
-: "${SELF_HEAL_SNS_ARN_SSM:=/monitoring/self-heal/sns-topic-arn}"
 : "${SELF_HEAL_AWS_PROFILE:=pve-bootstrap-ssm}"
 : "${SELF_HEAL_AWS_REGION:=ap-northeast-1}"
 : "${SELF_HEAL_STATE_INDEX:=self-heal-state}"
@@ -114,28 +117,6 @@ es_req() {
 
 sha1_id() { printf '%s' "$1" | sha1sum | cut -d' ' -f1; }
 
-# --- SNS publish (graceful skip if topic ARN not provisioned yet) -----------
-SNS_ARN=""
-sns_init() {
-  SNS_ARN=$(aws ssm get-parameter --name "$SELF_HEAL_SNS_ARN_SSM" \
-              --query 'Parameter.Value' --output text \
-              --profile "$SELF_HEAL_AWS_PROFILE" --region "$SELF_HEAL_AWS_REGION" 2>/dev/null)
-  if [ -z "$SNS_ARN" ] || [ "$SNS_ARN" = "None" ]; then
-    SNS_ARN=""
-    log "WARN: ${SELF_HEAL_SNS_ARN_SSM} not resolvable — SNS publish disabled this cycle (poll + textfile continue). Provision the topic (home-monitor TF) to enable delivery."
-  fi
-}
-
-# sns_publish <subject> <message>
-sns_publish() {
-  local subject="$1" message="$2"
-  [ -n "$SNS_ARN" ] || return 0
-  subject=$(printf '%s' "$subject" | tr '\n\t' '  ' | cut -c1-99)
-  aws sns publish --topic-arn "$SNS_ARN" --subject "$subject" --message "$message" \
-    --profile "$SELF_HEAL_AWS_PROFILE" --region "$SELF_HEAL_AWS_REGION" >/dev/null 2>&1 \
-    || log "WARN: sns publish failed for: ${subject}"
-}
-
 # --- main -------------------------------------------------------------------
 main() {
   if [ -f "$SELF_HEAL_DISABLED_SENTINEL" ]; then
@@ -177,13 +158,10 @@ main() {
   new_keys=$(comm -23 <(printf '%s\n' "$active_keys" | grep -v '^$') <(printf '%s\n' "$state_keys" | grep -v '^$'))
   resolved_keys=$(comm -13 <(printf '%s\n' "$active_keys" | grep -v '^$') <(printf '%s\n' "$state_keys" | grep -v '^$'))
 
-  sns_init
   local ts; ts=$(now_iso)
-  local baseline=0
-  [ "$state_open_count" -eq 0 ] && [ "$active_count" -gt 0 ] && baseline=1
 
-  # Upsert NEW open issues + (baseline) collect summary lines.
-  local summary=""
+  # Upsert NEW open issues into self-heal-state. Notification is downstream
+  # (self-heal-create on pro-dev reads this state and opens GitHub issues).
   while IFS= read -r dk; do
     [ -n "$dk" ] || continue
     local line reason start id idx source doc
@@ -205,26 +183,10 @@ main() {
       status:"open", auto_remediation_allowed:false }')
     es_req PUT "/${SELF_HEAL_STATE_INDEX}/_doc/${id}" "$doc" >/dev/null \
       || log "WARN: failed to upsert self-heal-state doc for: $dk"
-    if [ "$baseline" -eq 1 ]; then
-      summary="${summary}- ${dk}"$'\n'"    ${reason}"$'\n'
-    else
-      sns_publish "[self-heal] NEW: ${dk}" "NEW active issue on the home fleet:
-
-${dk}
-${reason}
-
-(observed ${ts} from CT111; source=${idx})"
-    fi
   done <<< "$new_keys"
 
-  if [ "$baseline" -eq 1 ] && [ -n "$summary" ]; then
-    sns_publish "[self-heal] ${active_count} open issue(s) — baseline" "self-heal-observer first run / all-clear→open. Currently-open issues:
-
-${summary}
-(observed ${ts} from CT111)"
-  fi
-
-  # RESOLVED: mark resolved + notify.
+  # RESOLVED: mark resolved in self-heal-state (self-heal-create closes the
+  # corresponding GitHub issue on its next cycle).
   while IFS= read -r dk; do
     [ -n "$dk" ] || continue
     local id
@@ -232,11 +194,6 @@ ${summary}
     es_req POST "/${SELF_HEAL_STATE_INDEX}/_update/${id}" \
       "$(jq -n --arg ls "$ts" '{doc:{status:"resolved", resolved_at:$ls, last_seen:$ls}}')" >/dev/null \
       || log "WARN: failed to mark resolved: $dk"
-    sns_publish "[self-heal] RESOLVED: ${dk}" "Issue cleared on the home fleet:
-
-${dk}
-
-(resolved ${ts}; observed from CT111)"
   done <<< "$resolved_keys"
 
   # CONTINUING: bump last_seen (no notify — dedup).
@@ -248,7 +205,7 @@ ${dk}
       "$(jq -n --arg ls "$ts" '{doc:{last_seen:$ls}}')" >/dev/null 2>&1 || true
   done <<< "$(comm -12 <(printf '%s\n' "$active_keys" | grep -v '^$') <(printf '%s\n' "$state_keys" | grep -v '^$'))"
 
-  log "cycle ok: active=${active_count} open_before=${state_open_count} new=$(printf '%s\n' "$new_keys" | grep -c . || true) resolved=$(printf '%s\n' "$resolved_keys" | grep -c . || true) baseline=${baseline} sns=$([ -n "$SNS_ARN" ] && echo on || echo off)"
+  log "cycle ok: active=${active_count} open_before=${state_open_count} new=$(printf '%s\n' "$new_keys" | grep -c . || true) resolved=$(printf '%s\n' "$resolved_keys" | grep -c . || true)"
   write_textfile ok "$active_count"
 }
 
