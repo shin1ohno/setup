@@ -1,0 +1,43 @@
+groups:
+  - name: self-heal-observer
+    interval: 30s
+    rules:
+      - alert: SelfHealObserverStale
+        # The observer is a Type=oneshot timer firing every 5 min. If its
+        # last-run timestamp goes stale, the observer is NOT running — and a
+        # dead observer SILENTLY reports all-clear (no escalation metrics are
+        # produced, so every downstream "is anything broken?" check sees
+        # nothing). This is the meta-alert that guards the guard.
+        expr: time() - self_heal_observer_last_run_timestamp_seconds > 600
+        for: 5m
+        labels:
+          severity: warning
+          component: self-heal-observer
+        annotations:
+          summary: "self-heal observer has not run in 10m+ on CT 111"
+          description: |
+            self_heal_observer_last_run_timestamp_seconds is older than 10 min.
+            The observer hasn't run — every detector silently reports all-clear,
+            so real fleet issues would go unobserved. Either the timer stopped,
+            the binary is crashing, or the DISABLED sentinel is present.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "systemctl status self-heal-observer.timer; systemctl show self-heal-observer.timer --property=Trigger; journalctl -u self-heal-observer.service -n 50"'
+
+      - alert: SelfHealObserverErroring
+        # The observer ran but reported an internal error (ES unreachable,
+        # SSM password fetch failed, state-index write rejected, etc.). It is
+        # producing metrics, so SelfHealObserverStale will NOT fire — this is
+        # the complementary "ran-but-failed" signal.
+        expr: self_heal_observer_status{result="error"} == 1
+        for: 5m
+        labels:
+          severity: warning
+          component: self-heal-observer
+        annotations:
+          summary: "self-heal observer reporting error result for 5m+"
+          description: |
+            self_heal_observer_status{result="error"} == 1 for 5+ minutes.
+            The observer is running but its last cycle failed — likely ES
+            unreachable, SSM elastic-password fetch denied, or a write to the
+            self-heal-state index was rejected. Detectors are not producing
+            reliable state.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "journalctl -u self-heal-observer.service -n 80; cat /var/lib/node_exporter/textfile/self-heal-observer.prom"'

@@ -325,6 +325,19 @@ remote_file "#{deploy_dir}/alerts/elasticsearch.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
+# self-heal-observer (CT 111) liveness + error alerts. Fed by the
+# self_heal_observer_* textfile metrics that cookbooks/self-heal-observer
+# emits into node_exporter's textfile dir on the same host.
+# SelfHealObserverStale is the meta-alert: a dead observer silently
+# reports all-clear, so its own liveness must be watched.
+remote_file "#{deploy_dir}/alerts/self-heal.yml" do
+  source "files/alerts/self-heal.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # Vector (RTX syslog → Elasticsearch). Replaces the prior Promtail syslog
 # target: RTX1210/RTX830 firmware emits non-standard syslog (`<PRI>tag msg`
 # with no TIMESTAMP/HOSTNAME) that neither RFC5424 nor RFC3164 strict
