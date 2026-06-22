@@ -30,6 +30,7 @@ ENV_FILE="/etc/self-heal/observer.env"
 : "${SELF_HEAL_ELASTIC_PW_SSM:=/monitoring/elastic/elastic-password}"
 : "${SELF_HEAL_AWS_PROFILE:=pve-bootstrap-ssm}"
 : "${SELF_HEAL_AWS_REGION:=ap-northeast-1}"
+: "${SELF_HEAL_KIBANA_URL:=http://kibana.home.local:5601}"
 : "${SELF_HEAL_STATE_INDEX:=self-heal-state}"
 : "${SELF_HEAL_ALERT_INDICES:=.alerts-observability.uptime.alerts-default,.alerts-stack.alerts-default}"
 : "${SELF_HEAL_TEXTFILE:=/var/lib/node_exporter/textfile/self-heal-observer.prom}"
@@ -117,6 +118,29 @@ es_req() {
 
 sha1_id() { printf '%s' "$1" | sha1sum | cut -d' ' -f1; }
 
+# --- stale-guard: is an active alert doc orphaned? --------------------------
+# An alerts-as-data doc can stay status=active forever after its Kibana rule
+# (a) recovered but the recovery transition was missed (flap edge case), or
+# (b) was deleted/renamed (e.g. setup-process-alerts.sh prune). The rule then
+# no longer touches the doc, so a plain status=active read surfaces a phantom
+# problem. Cross-check the live rule: stale iff the rule is 404 (deleted) or its
+# execution_status is "ok" (healthy, not firing). Any other status — or any
+# uncertainty (network/5xx/unparseable) — is treated as NOT stale (fail-safe:
+# surface rather than hide a real problem).
+# rule_is_stale <rule_uuid>  -> 0 = stale (exclude), 1 = live/uncertain (keep)
+rule_is_stale() {
+  local uuid="$1" body code status
+  [ -n "$uuid" ] || return 1
+  body=$(curl -s -m 10 -w $'\n%{http_code}' -u "elastic:${ES_PW}" \
+              "${SELF_HEAL_KIBANA_URL}/api/alerting/rule/${uuid}" 2>/dev/null)
+  code=$(printf '%s' "$body" | tail -n1)
+  [ "$code" = "404" ] && return 0
+  [ "$code" = "200" ] || return 1
+  status=$(printf '%s' "$body" | sed '$d' | jq -r '.execution_status.status // "unknown"' 2>/dev/null)
+  [ "$status" = "ok" ] && return 0
+  return 1
+}
+
 # --- main -------------------------------------------------------------------
 main() {
   if [ -f "$SELF_HEAL_DISABLED_SENTINEL" ]; then
@@ -127,20 +151,42 @@ main() {
   ES_PW=$(get_pw) || die_error "could not obtain elastic password from SSM (${SELF_HEAL_ELASTIC_PW_SSM})"
 
   # Currently-active alerts across the two alerts-as-data indices.
-  local active_query active_json active_tsv active_keys state_json state_keys
-  active_query='{"size":500,"query":{"term":{"kibana.alert.status":"active"}},"_source":["kibana.alert.rule.name","kibana.alert.instance.id","kibana.alert.start","kibana.alert.reason"]}'
+  local active_query active_json active_tsv active_keys_all active_keys state_json state_keys
+  active_query='{"size":500,"query":{"term":{"kibana.alert.status":"active"}},"_source":["kibana.alert.rule.name","kibana.alert.instance.id","kibana.alert.start","kibana.alert.reason","kibana.alert.rule.uuid"]}'
   active_json=$(es_req GET "/${SELF_HEAL_ALERT_INDICES}/_search" "$active_query") \
     || die_error "ES unreachable on all hosts (${SELF_HEAL_ES_HOSTS})"
 
-  # TSV: dedup_key<TAB>start<TAB>reason(one-line). dedup_key = rule.name :: instance.id
+  # TSV: dedup_key<TAB>start<TAB>reason(one-line)<TAB>rule.uuid.
+  # dedup_key = rule.name :: instance.id
   active_tsv=$(echo "$active_json" | jq -r '
     .hits.hits[]?._source
     | [ ((."kibana.alert.rule.name" // "?") + " :: " + (."kibana.alert.instance.id" // "-")),
         (."kibana.alert.start" // ""),
-        ((."kibana.alert.reason" // "") | gsub("[\t\n]";" ")) ]
+        ((."kibana.alert.reason" // "") | gsub("[\t\n]";" ")),
+        (."kibana.alert.rule.uuid" // "") ]
     | @tsv' 2>/dev/null)
 
-  active_keys=$(printf '%s\n' "$active_tsv" | awk -F'\t' 'NF>0{print $1}' | sort -u)
+  active_keys_all=$(printf '%s\n' "$active_tsv" | awk -F'\t' 'NF>0{print $1}' | sort -u)
+
+  # Stale-guard: drop active docs whose Kibana rule is ok or deleted (orphans
+  # from a missed recovery transition or a pruned/renamed rule). Keep genuine,
+  # still-firing rules. Each active set is small (a handful), so the per-key
+  # Kibana lookup is cheap.
+  local stale_excluded=0
+  active_keys=""
+  while IFS= read -r dk; do
+    [ -n "$dk" ] || continue
+    local uuid
+    uuid=$(printf '%s\n' "$active_tsv" | awk -F'\t' -v k="$dk" '$1==k{print $4; exit}')
+    if rule_is_stale "$uuid"; then
+      log "stale-guard: excluding orphaned active alert (rule ok/absent): ${dk}"
+      stale_excluded=$((stale_excluded + 1))
+      continue
+    fi
+    active_keys="${active_keys}${dk}"$'\n'
+  done <<< "$active_keys_all"
+  active_keys=$(printf '%s' "$active_keys" | grep -v '^$' | sort -u)
+
   local active_count
   active_count=$(printf '%s\n' "$active_keys" | grep -c . || true)
 
@@ -205,7 +251,7 @@ main() {
       "$(jq -n --arg ls "$ts" '{doc:{last_seen:$ls}}')" >/dev/null 2>&1 || true
   done <<< "$(comm -12 <(printf '%s\n' "$active_keys" | grep -v '^$') <(printf '%s\n' "$state_keys" | grep -v '^$'))"
 
-  log "cycle ok: active=${active_count} open_before=${state_open_count} new=$(printf '%s\n' "$new_keys" | grep -c . || true) resolved=$(printf '%s\n' "$resolved_keys" | grep -c . || true)"
+  log "cycle ok: active=${active_count} stale_excluded=${stale_excluded} open_before=${state_open_count} new=$(printf '%s\n' "$new_keys" | grep -c . || true) resolved=$(printf '%s\n' "$resolved_keys" | grep -c . || true)"
   write_textfile ok "$active_count"
 }
 

@@ -100,6 +100,7 @@ observer_env = <<~ENV
   SELF_HEAL_ELASTIC_PW_SSM="/monitoring/elastic/elastic-password"
   SELF_HEAL_AWS_PROFILE="#{aws_profile}"
   SELF_HEAL_AWS_REGION="#{aws_region}"
+  SELF_HEAL_KIBANA_URL="http://kibana.home.local:5601"
   SELF_HEAL_STATE_INDEX="self-heal-state"
   SELF_HEAL_ALERT_INDICES=".alerts-observability.uptime.alerts-default,.alerts-stack.alerts-default"
   SELF_HEAL_TEXTFILE="/var/lib/node_exporter/textfile/self-heal-observer.prom"
