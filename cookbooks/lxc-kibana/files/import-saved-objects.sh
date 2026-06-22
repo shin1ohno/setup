@@ -150,6 +150,11 @@ ordered=(
     # Discover saved search. Single file declares both (index-pattern first,
     # search second) so references resolve within the one import.
     "${SAVED_OBJECTS_DIR}/wlx-discover.ndjson"
+    # Self-heal observer open-issue state (self-heal-state index). Single file
+    # declares the data view first, then the Lens table + metric, then the
+    # dashboard last, so all references resolve within the one import.
+    # Source: cookbooks/self-heal-observer.
+    "${SAVED_OBJECTS_DIR}/self-heal-issues.ndjson"
 )
 
 failures=0

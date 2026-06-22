@@ -1,0 +1,11 @@
+[Unit]
+Description=Run self-heal observer every 5 min (offset +2 from auto-mitamae orchestrator)
+
+[Timer]
+OnBootSec=120s
+OnCalendar=*:02/05:00
+Persistent=false
+Unit=self-heal-observer.service
+
+[Install]
+WantedBy=timers.target

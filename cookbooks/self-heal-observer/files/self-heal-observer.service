@@ -1,0 +1,17 @@
+[Unit]
+Description=Self-heal observability loop — read-only ES observer (CT111)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/self-heal/observer.env
+ExecStart=/usr/bin/flock -n /var/lock/self-heal-observer.lock /usr/local/bin/self-heal-observer --once
+TimeoutStartSec=120
+Nice=10
+# NO ProtectSystem/ProtectHome/PrivateTmp/NoNewPrivileges: these trigger
+# systemd's mount-namespace setup, which fails with status=226/NAMESPACE in
+# a privileged PVE LXC (node-exporter lesson, ~/.claude/rules/pve-lxc.md).
+# CT111 is LAN-internal and the observer is read-only, so the defense-in-depth
+# value is small relative to the cost of supporting privileged + unprivileged.
