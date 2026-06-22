@@ -4,7 +4,7 @@
   "roon":         ["RoonServer", "RoonAppliance", "RAATServer"],
   "samba":        ["smbd", "nmbd"],
   "pro-dev":      ["tailscaled", "ollama"],
-  "cognee":       ["dockerd", "uvicorn"],
+  "cognee":       ["dockerd", "gunicorn"],
   "hydra":        ["hydra"],
   "memory":       ["dockerd"],
   "roon-mcp":     ["roon-mcp", "dockerd"],
@@ -14,6 +14,6 @@
   "es-0":         ["java", "controller"],
   "es-1":         ["java", "controller"],
   "es-2":         ["java", "controller"],
-  "kibana":       ["node"],
+  "kibana":       ["MainThread"],
   "pro":          ["RoonAppliance", "prometheus", "vector", "hydra"]
 }

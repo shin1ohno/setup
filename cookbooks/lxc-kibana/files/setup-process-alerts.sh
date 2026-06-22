@@ -19,7 +19,9 @@
 # setup-alerting.sh — must run that script first).
 #
 # Idempotency: each rule has a deterministic name based on host+process.
-# Re-runs skip rules already present.
+# Re-runs skip rules already present, and PRUNE phase3 rules whose (host,
+# process) pair is no longer in expected-processes.json (so renaming a process
+# cleanly retires the old rule instead of orphaning it as a false positive).
 #
 # Environment:
 #   KIBANA_HOST       — Kibana base URL (default: http://localhost:5601)
@@ -176,8 +178,43 @@ while IFS= read -r host; do
     done <<< "${processes}"
 done <<< "${hosts}"
 
+# --------------------------------------------------------------------------
+# Prune: delete phase3 process-liveness rules whose (host, process) pair is no
+# longer in expected-processes.json. Renaming a process (e.g. cognee uvicorn ->
+# gunicorn, kibana node -> MainThread) changes the rule NAME; without pruning,
+# the old-named rule lingers and fires forever as a false positive (an orphaned
+# active alert nobody is tracking). Scoped strictly to rules tagged "phase3" so
+# synthetics / TLS / other rules are never touched.
+# --------------------------------------------------------------------------
+expected_names="$(
+    while IFS= read -r host; do
+        [[ -z "${host}" ]] && continue
+        while IFS= read -r process; do
+            [[ -z "${process}" ]] && continue
+            echo "${RULE_NAME_PREFIX}: ${host} / ${process}"
+        done <<< "$(jq -r --arg h "${host}" '.[$h][]' "${PROCESSES_JSON}")"
+    done <<< "${hosts}" | sort -u
+)"
+
+pruned=0
+all_phase3="$(curl_kib "${KIBANA_HOST}/api/alerting/rules/_find?per_page=200" \
+    | jq -r '.data[]? | select(.tags | index("phase3")) | "\(.id)\t\(.name)"')"
+
+while IFS=$'\t' read -r rid rname; do
+    [[ -z "${rid}" ]] && continue
+    if ! grep -qxF "${rname}" <<< "${expected_names}"; then
+        echo "  pruning stale rule: ${rname} (${rid})"
+        if curl_kib -X DELETE "${KIBANA_HOST}/api/alerting/rule/${rid}" >/dev/null; then
+            pruned=$(( pruned + 1 ))
+        else
+            echo "    ERROR: prune delete failed for ${rid}" >&2
+            failures=$(( failures + 1 ))
+        fi
+    fi
+done <<< "${all_phase3}"
+
 echo
-echo "Process liveness rules: created=${created} existing=${existing} failures=${failures}"
+echo "Process liveness rules: created=${created} existing=${existing} pruned=${pruned} failures=${failures}"
 
 if [[ ${failures} -gt 0 ]]; then
     exit 3
