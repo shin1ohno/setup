@@ -83,3 +83,18 @@ deployment ever becomes multi-tenant.
   fix is detection, not auto-recreation: the staleness alert above + a working
   delivery pipeline is the correct backstop. No code change until alert
   delivery (above) is confirmed working.
+
+## self-heal-loops headless auth — OAuth token expiry on pro-dev
+
+- The self-heal cron loops (`cookbooks/self-heal-loops`, CT 104) run headless
+  `claude -p` as shin1ohno using `/home/shin1ohno/.claude/.credentials.json`.
+  If that OAuth token expires and needs interactive re-auth, the cron silently
+  starts failing (logged in `~/.claude/logs/self-heal-{create,resolve}.log`,
+  `rc!=0`).
+- Reason: headless cron has no way to complete an interactive `claude` login.
+- First step for permanent unattended operation: decide whether to switch the
+  loops to an `ANTHROPIC_API_KEY` (set in the cron env / wrapper) instead of the
+  interactive OAuth token — a billing/account-policy decision. Until then,
+  monitor the loop logs and re-auth `claude` on pro-dev when a run logs an auth
+  failure. Consider a node_exporter textfile metric off `…/self-heal-*.last`
+  (last-run age) + a Prometheus staleness alert, mirroring SelfHealObserverStale.
