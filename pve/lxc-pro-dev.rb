@@ -176,4 +176,10 @@ execute "reload + enable pro-dev tailnet-routes timer" do
   action :nothing
 end
 
+# Headless cron runners for the self-heal create/resolve loops. pro-dev is the
+# only host with interactive claude creds + gh repo scope + fleet reach, so the
+# cookbook self-guards on hostname. Persists what was previously interactive
+# `/loop`. See docs/self-heal-github-issues-plan.md.
+include_cookbook "self-heal-loops"
+
 lxc_entry(tags: ["lxc", "pro-dev", "dev-workstation"])
