@@ -62,15 +62,28 @@ C で雑に restart せず、まず「本当に落ちているか／alert 自体
 
 ## 手順
 
-### Step 0. issue 選択（無ければ STOP）
+### Step 0. issue 選択 + 部分状態回復（無ければ STOP）
 
 ```bash
 gh issue list --repo shin1ohno/setup --label self-heal --state open \
   --json number,title,body,labels,comments,createdAt
 ```
 
-`self-heal-needs-human` を除外。直近で別 run が着手中（最後の comment が「🔧 着手」で 30 分以内）
-の issue も除外。残りから最古を 1 件選ぶ。ゼロなら "no actionable self-heal issues — STOP"。
+除外/分岐ルール（無人 cron 耐性。`docs/self-heal-github-issues-plan.md` の
+dup ガード + partial-state recovery）:
+
+1. **`self-heal-needs-human` 付きは除外**（人間待ち）。
+2. **open な linked PR を持つ issue は新規 PR を作らない**（重複 PR 防止）。代わりに
+   その PR の状態で分岐 — `gh pr list --repo shin1ohno/setup --search "<issue># in:body linked:issue" --state open`
+   や issue の timeline で `Fixes #<n>` の PR を特定し:
+   - CI green → **Step 4（merge + 検証）へ直行**（再調査しない）
+   - CI red / conflict → diagnose して `self-heal-needs-human`
+   - CI 進行中 → 今回はスキップ（次サイクルで再評価）
+3. **「🔧 着手」comment があるが open PR 無し**: 30 分以内なら別 run 進行中としてスキップ。
+   30 分超なら**前回 run が途中で死んだ**と判断し、その issue を優先再開（孤児 branch が
+   あれば確認して再利用 or 破棄。partial-state を放置しない）。
+4. 上記で残った actionable issue から最古を 1 件選ぶ。ゼロなら
+   "no actionable self-heal issues — STOP"。
 
 ### Step 1. 着手マーク
 
