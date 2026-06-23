@@ -132,7 +132,13 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
   end
 
   execute "rbenv-install-#{version}" do
-    command "sudo -u #{rbenv_user} -E #{env} #{node[:setup][:root]}/rbenv/rbenv install #{version} > /tmp/rbenv-install-#{version}.log 2>&1"
+    # Log path is per-user: the same Ruby version is installed both by the
+    # root auto-mitamae apply (rbenv_user resolves to root) AND by a user's
+    # manual apply (rbenv_user = the login user). /tmp has the sticky bit, so a
+    # fixed /tmp/rbenv-install-<version>.log created by whoever runs first is
+    # owned by them and the other user cannot truncate it → "Permission denied".
+    # Suffixing the user name gives each its own file and removes the collision.
+    command "sudo -u #{rbenv_user} -E #{env} #{node[:setup][:root]}/rbenv/rbenv install #{version} > /tmp/rbenv-install-#{version}-#{rbenv_user}.log 2>&1"
     not_if "test -d #{node[:rbenv][:root]}/versions/#{version}"
   end
 
