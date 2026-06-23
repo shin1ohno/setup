@@ -76,7 +76,10 @@ dup ガード + partial-state recovery）:
 2. **open な linked PR を持つ issue は新規 PR を作らない**（重複 PR 防止）。代わりに
    その PR の状態で分岐 — `gh pr list --repo shin1ohno/setup --search "<issue># in:body linked:issue" --state open`
    や issue の timeline で `Fixes #<n>` の PR を特定し:
-   - CI green → **Step 4（merge + 検証）へ直行**（再調査しない）
+   - **まず class を再判定**。linked PR が **class D（propose-only / major・破壊的変更 / body に class-D 指示）**なら
+     **絶対に auto-merge しない** → `self-heal-needs-human` を付与して STOP（dup-guard の merge は class A/B の
+     自動修正 PR に限る。CI green は merge 許可の十分条件ではない）。
+   - class A/B かつ CI green → **Step 4（merge + 検証）へ直行**（再調査しない）
    - CI red / conflict → diagnose して `self-heal-needs-human`
    - CI 進行中 → 今回はスキップ（次サイクルで再評価）
 3. **「🔧 着手」comment があるが open PR 無し**: 30 分以内なら別 run 進行中としてスキップ。
@@ -117,8 +120,12 @@ es_get "/self-heal-state/_doc/<sha1>"   # status / first_seen / flap_count / occ
   `pct exec <ct_id> -- bash -lc "systemctl restart <unit>"`（または docker compose restart）。
   issue に「restart 実行（class C, 理由 <...>）」を comment。Step 4 の検証へ（PR なし）。
   2 回目以降の同一 restart は B（恒久修正）or needs-human に格上げ。
-- **D**: 修正を**適用せず** PR（あれば diagnosis 用）または diagnosis comment を残し、
-  `gh issue edit <n> --add-label self-heal-needs-human` + 原因/候補/推奨対応を comment。STOP。
+- **D**: 修正を auto-apply せず、調査結果を残して人間に渡す。**実装 PR を作ってもよい（propose）**が、
+  作ったら**同じ run で即座に** `gh issue edit <n> --add-label self-heal-needs-human` を付与する
+  （CI 完了を待たない）。理由: needs-human を付けないと、次 run の Step 0 dup-guard が「open linked PR +
+  CI green → merge」で **class-D PR を無人 auto-merge してしまう**。needs-human → Step 0 で除外 → 再評価
+  されず、人間の review/merge を待てる。PR を作らない場合も diagnosis comment + `self-heal-needs-human`
+  を付けて STOP。いずれも原因/候補/推奨対応を comment。
 
 ### Step 4. 適用（A/B のみ）
 
