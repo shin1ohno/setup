@@ -1,4 +1,4 @@
 # frozen_string_literal: true
 
-rbenv "3.3.0"
+rbenv "4.0.5"
 

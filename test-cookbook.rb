@@ -64,7 +64,7 @@ end
 
 # Language version defaults that the platform roles set (roles/programming) but
 # a single-cookbook test bypasses. Without these, cookbooks that read
-# node[:<lang>][:versions] — nodejs (line 10), ruby33, rust, go, python — crash
+# node[:<lang>][:versions] — nodejs (line 10), ruby40, rust, go, python — crash
 # with `undefined method '[]'` on a nil node[:<lang>] before the cookbook under
 # test even runs (e.g. COOKBOOK=mcp pulls in nodejs transitively).
 # KEEP IN SYNC with roles/programming/default.rb.
