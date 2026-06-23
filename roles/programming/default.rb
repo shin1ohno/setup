@@ -10,7 +10,7 @@ include_cookbook "build-essential"
 node.reverse_merge!(
   rbenv: {
     root: "#{node[:setup][:home]}/.rbenv",
-    global_version: "3.3",
+    global_version: "4.0",
     global_gems: %w(bundler itamae ed25519 bcrypt_pbkdf)
   },
   go: {
@@ -33,7 +33,7 @@ include_cookbook "readline"
 include_cookbook "ncurses"
 include_cookbook "zlib"
 include_cookbook "rbenv"
-include_cookbook "ruby33"
+include_cookbook "ruby40"
 
 # Other programming languages
 include_cookbook "rust"

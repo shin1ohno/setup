@@ -118,6 +118,19 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
       ""
     end
 
+  # ruby-build is cloned once (the top-level git resource is guarded by
+  # `not_if test -d`) and never refreshed afterwards, so an existing checkout
+  # can lack the definition for a newly-bumped Ruby version (e.g. 4.0.5 needs
+  # ruby-build >= 20260616; a fleet host pinned to 20260503 tops out at 4.0.3).
+  # Fast-forward master only when the requested version's definition file is
+  # absent — a no-op on fresh clones, which already ship it.
+  ruby_build_dir = "#{node[:rbenv][:root]}/plugins/ruby-build"
+  execute "update ruby-build for #{version} definition" do
+    command "git -C #{ruby_build_dir} pull --ff-only origin master"
+    user rbenv_user
+    not_if "test -f #{ruby_build_dir}/share/ruby-build/#{version}"
+  end
+
   execute "rbenv-install-#{version}" do
     command "sudo -u #{rbenv_user} -E #{env} #{node[:setup][:root]}/rbenv/rbenv install #{version} > /tmp/rbenv-install-#{version}.log 2>&1"
     not_if "test -d #{node[:rbenv][:root]}/versions/#{version}"
