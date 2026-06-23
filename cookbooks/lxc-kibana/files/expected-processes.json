@@ -3,7 +3,7 @@
 
   "roon":         ["RoonServer", "RoonAppliance", "RAATServer"],
   "samba":        ["smbd", "nmbd"],
-  "pro-dev":      ["tailscaled", "ollama"],
+  "pro-dev":      ["tailscaled"],
   "cognee":       ["dockerd", "gunicorn"],
   "hydra":        ["hydra"],
   "memory":       ["dockerd"],
