@@ -1,6 +1,8 @@
 {
   "comment": "Per-host expected `process.name` patterns for the Phase 3 process-liveness alerting. Each entry maps a host (Elastic Agent's host.name short name) to the list of process.name values that should ALWAYS be visible in the metrics-system.process-default index when the service stack is healthy. Probed against live ES data 2026-05-10 — see PR #298 commit body for the per-host probe output. Hosts not listed (housekeeping = timer-only no daemons; pro-router = currently OOM-looping at 512MB, fix separately) are excluded from rules.",
 
+  "_window_minutes": { "_default": 5, "samba": 10, "memory": 10 },
+
   "roon":         ["RoonServer", "RoonAppliance", "RAATServer"],
   "samba":        ["smbd", "nmbd"],
   "pro-dev":      ["tailscaled"],

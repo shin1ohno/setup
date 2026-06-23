@@ -112,16 +112,20 @@ end
   end
 end
 
-# cron.d — create every 15 min (:00/:15/:30/:45), resolve every 30 min at +7
-# offset (:07/:37) so the two never start in the same minute. runuser -l gives
+# cron.d — high-frequency to minimise downtime. create every 2 min (matches the
+# observer cadence — it cannot surface what the observer has not yet written, so
+# 2 min is the practical floor), resolve every 5 min. Per-loop flock makes an
+# over-scheduled tick a clean no-op when the previous run is still going (or a
+# fix PR is mid-flight, caught by the resolve dup-guard), so the only cost of
+# the high frequency is extra claude sessions, not pile-up. runuser -l gives
 # each wrapper the loop user's full login env.
 cron_content = <<~CRON
   # Managed by cookbooks/self-heal-loops. Do not edit.
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   MAILTO=""
 
-  */15 * * * *  root  runuser -l #{loop_user} -c '/usr/local/bin/self-heal-create-run.sh'
-  7-59/30 * * * *  root  runuser -l #{loop_user} -c '/usr/local/bin/self-heal-resolve-run.sh'
+  */2 * * * *  root  runuser -l #{loop_user} -c '/usr/local/bin/self-heal-create-run.sh'
+  */5 * * * *  root  runuser -l #{loop_user} -c '/usr/local/bin/self-heal-resolve-run.sh'
 CRON
 
 file "#{staging_dir}/self-heal-loops.cron" do
