@@ -17,6 +17,12 @@
 
 set -uo pipefail
 
+# runuser -l spawns a NON-interactive login shell that does not source .zshrc,
+# so mise shims (~/.local/share/mise/shims) + ~/.local/bin are absent from PATH.
+# Prepend them so `node` (needed by claude's SessionEnd plugin hook) and other
+# user tools resolve; claude itself is still called by absolute path below.
+export PATH="${HOME}/.local/share/mise/shims:${HOME}/.local/bin:${PATH}"
+
 CLAUDE_BIN="${CLAUDE_BIN:-${HOME}/.local/bin/claude}"
 LOG_DIR="${HOME}/.claude/logs"
 LOG="${LOG_DIR}/self-heal-resolve.log"
