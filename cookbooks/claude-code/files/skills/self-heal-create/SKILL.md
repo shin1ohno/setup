@@ -57,6 +57,8 @@ ES_PW=$(aws ssm get-parameter --name "${SELF_HEAL_ELASTIC_PW_SSM:-/monitoring/el
 ```
 
 es-0→es-1→es-2 の順に fallback して GET する `es_get()` を使う（1 ホスト失敗で諦めない。全滅なら STOP）。
+TLS は **`curl --cacert "$SELF_HEAL_ES_CA"` で検証できる**（pro-dev / CT111 とも確認済み）。`-k`
+（証明書検証スキップ）は使わない — `--cacert` が通らない場合は CA パス/到達性の問題として STOP し調査する。
 
 ### Step 1. ES の open 集合を取得（真実源）
 
