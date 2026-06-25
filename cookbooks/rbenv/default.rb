@@ -9,6 +9,12 @@ node.reverse_merge!(
 if node[:platform] == "darwin"
   node.reverse_merge!(
     rbenv: {
+      # --disable-dtrace: the homebrew profile exports CPPFLAGS/CFLAGS with a
+      # glued `-isystem<prefix>/include`. Ruby's `make` passes $(CPPFLAGS) to
+      # dtrace when generating probes.h; dtrace can't parse the glued -isystem
+      # and dies with `invalid probe specifier system/...` → `make [probes.h]
+      # Error 1`. Disabling dtrace probes (unused here) sidesteps it without
+      # touching the global Homebrew env. See cookbooks/homebrew/environment.rb.
       ruby_configure_opts: %W[
         --with-gcc=clang CXX=clang++
         --with-out-ext=tk,tk/*
@@ -23,6 +29,7 @@ if node[:platform] == "darwin"
         --without-gmp
         --enable-shared
         --enable-pthread
+        --disable-dtrace
       ].join(" "),
     },
   )
@@ -111,12 +118,17 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
   version = params[:version] || params[:name]
   headof = params[:headof] || version[0, 3]
   bundler_version = params[:bundler]
-  env =
-    if params[:env]
-      "env #{params[:env]}"
-    else
-      ""
-    end
+  # Build environment for `rbenv install`. Wires node[:rbenv][:ruby_configure_opts]
+  # in as RUBY_CONFIGURE_OPTS — it was previously dead config (defined per-platform
+  # but never exported, so the build used ruby-build's auto-detected defaults and
+  # silently ignored --without-gmp, --disable-dtrace, etc). `env` (the command) is
+  # used rather than a bare VAR=val prefix so the assignment survives sudo's
+  # env_reset. Per-call `env:` params, if any, are preserved alongside it.
+  configure_opts = node[:rbenv][:ruby_configure_opts].to_s
+  env_assignments = []
+  env_assignments << params[:env] if params[:env]
+  env_assignments << %Q(RUBY_CONFIGURE_OPTS="#{configure_opts}") unless configure_opts.empty?
+  env = env_assignments.empty? ? "" : "env #{env_assignments.join(' ')}"
 
   # ruby-build is cloned once (the top-level git resource is guarded by
   # `not_if test -d`) and never refreshed afterwards, so an existing checkout
