@@ -67,3 +67,33 @@ Additional expression checks:
 - Is narrative prose the default? (eliminate unnecessary bullet points)
 - Where bullet points are used, are they genuinely the best format for that content?
 - For Japanese text: have politeness-driven padding words and indirect phrasing been removed in favor of clarity?
+
+### 5. Japanese AI-Slop Check (Japanese documents only)
+
+Apply only when the `phrases.md` / `structures.md` / `examples.md` references have been injected into your prompt (the orchestrator does this for Japanese documents). The thesis: AI 臭の正体は書き手の不在。記号や偏愛語は症状であって原因ではない。
+
+**5-axis scoring (採点)** — score each axis 1–10 and report every sub-score; a passing draft is total ≥ 35/50 AND no single axis < 5/10. An aggregate pass can mask one failing axis, so never report only the total.
+
+| 軸 | 問い |
+|---|---|
+| 立場 | 反証可能な具体的主張があるか |
+| リズム | 文長・語尾・トーンにムラがあるか（均一すぎないか）|
+| 主体性 | 誰が何をしたか明示されているか（false agency が無いか）|
+| 具体性 | 抽象語で終わらず固有の文脈・数値に降りているか |
+| 削減 | 削れる箇所が残っていないか |
+
+**Repair priority** — fix in this order; fixing 記号 before 立場/主体 leaves the slop intact:
+
+```
+立場 → 主体(false agency) → 構造 → 語彙 → 記号
+```
+
+1. 立場: 反証可能な主張があるか。無ければ「何が言いたいのか」を据え直す
+2. 主体: モノが主語で人間の動詞をやっていないか。主体を名指しに書き換える（structures.md 1）
+3. 構造: 命題型見出し・太字+コロン・3項目並列・リズム均一を直す（structures.md）
+4. 語彙: 偏愛語・翻訳調・-ing 付け足し・冗長婉曲を削る（phrases.md）
+5. 記号: 全角ダッシュ・装飾絵文字・`**` 残骸・中黒並列を直す
+
+**Cluster rule**: a single isolated tell (one 全角ダッシュ, one 接続詞, one 「かもしれない」used as genuine 推量) is NOT slop — do not rewrite legitimate prose. Flag clusters, not isolated occurrences. Each `phrases.md` entry carries an 例外 column; respect it.
+
+**Report**: include the per-axis score table and a banned-phrase residual list (with line numbers) in the editing report.

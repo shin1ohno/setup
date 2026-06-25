@@ -331,6 +331,25 @@ end
   end
 end
 
+# Deploy writing skill references (Japanese AI-slop removal)
+# Only the 3 reference files ship; references/fixtures/ is test-only and intentionally excluded.
+directory "#{node[:setup][:home]}/.claude/skills/writing/references" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w(phrases.md structures.md examples.md).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/skills/writing/references/#{file_name}" do
+    source "files/skills/writing/references/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
 # Deploy bootstrap-docs-hub skill templates
 %w(
   templates
