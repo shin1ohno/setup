@@ -70,7 +70,9 @@ es_get "/self-heal-state/_search" \
 ```
 
 `hits.hits[]._source` から `{dedup_key, source, severity, observed_value, first_seen, host, service}` を集める。
-`dedup_key` が空のものは無視。各 `dedup_key` の sha1 を計算（= marker key）。
+各 `dedup_key` の sha1 を計算（= marker key）。
+
+**dedup_key の妥当性ガード（必須）**: `dedup_key` が **空文字列・JSON `null`・リテラル文字列 `"null"`・空白のみ**のいずれかの doc は **skip**（issue を作らない）。`jq` 抽出は `select(.dedup_key != null and (.dedup_key|tostring|gsub("^\\s+|\\s+$";"")) != "" and .dedup_key != "null")` で弾く。これを怠ると `[self-heal] null` のような無効 issue が作られる（観測済み: malformed/部分書き込みの self-heal-state doc 由来）。skip した doc は件数だけログに残す。
 
 ### Step 2. GitHub の open self-heal issue を取得
 
