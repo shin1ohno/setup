@@ -26,6 +26,11 @@ If a template keyword was detected, also read the matching template:
 - `~/.claude/skills/writing/templates/dvq.md` for `dvq`
 - `~/.claude/skills/writing/templates/rfc.md` for `rfc`
 
+**Japanese language gate**: judge whether the prose you will write or edit is primarily Japanese (auto-detect from the task content / target document — English identifiers or code snippets inside a Japanese document still count as Japanese; skip for English documents). If Japanese, also read the AI-slop references:
+- `~/.claude/skills/writing/references/phrases.md` - banned vocabulary
+- `~/.claude/skills/writing/references/structures.md` - structural anti-patterns
+- `~/.claude/skills/writing/references/examples.md` - before/after contrast cases
+
 ## Workflow
 
 Execute 3 steps sequentially. Each step is delegated to an independent agent via the Agent tool.
@@ -62,7 +67,7 @@ Launch Agent tool:
 
 Launch Agent tool:
 
-- Persona: include marginal-utility-editor content in the prompt
+- Persona: include marginal-utility-editor content in the prompt. **If the document is Japanese, ALSO include the full contents of `references/phrases.md`, `references/structures.md`, and `references/examples.md` in the prompt** — sub-agents do not share the orchestrator's Read cache, so these must be re-injected exactly like the persona, not merely read in Preparation.
 - Pass the draft from Step 2
 - Instructions:
   - Verify Pyramid Principle structure (conclusion first, topic sentences, MECE grouping, hierarchy depth)
@@ -70,12 +75,14 @@ Launch Agent tool:
   - Check expression (adjectives → numbers, passive → active voice, eliminate "you can"/"there is" padding)
   - **Reader-level adaptation**: if the identified reader is non-technical, flag every technical term that lacks a definition on first use
   - **Scannability**: no paragraph exceeds 5 sentences; headings contain the key conclusion word (not vague labels); parallel grammatical structure in any remaining lists
+  - **Japanese AI-Slop Check** (Japanese documents only): apply the editor persona's `### 5. Japanese AI-Slop Check` using the injected references. Run the 5-axis 採点 (立場/リズム/主体性/具体性/削減, 1–10, report EACH axis sub-score), then repair in priority order 立場→主体(false agency)→構造→語彙→記号 (fixing 記号 before 立場/主体 leaves the slop intact). Apply the cluster rule (a single isolated tell is not slop). Include the per-axis score table in the editing report.
   - Check information volume (body max 6 pages; excess to appendix)
   - Output editing report + edited draft
 
 ### Step 3 Decision
 
 If the editor determines "revision needed", return to Step 1 with the editor's feedback included.
+For Japanese documents, a 採点 total below 35/50 OR any single axis below 5/10 counts as "revision needed".
 Maximum 3 cycles. Upon reaching 3 cycles, output the best draft at that point as the final version.
 
 ## Final Output
