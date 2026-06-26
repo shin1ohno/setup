@@ -1,8 +1,12 @@
 # frozen_string_literal: true
 
 # Notion - note-taking and collaboration platform
-# This cookbook installs the Notion app, the ncli CLI wrapper for Notion's
-# Remote MCP, and the Claude Code "notion" skill.
+# This cookbook installs the ncli CLI wrapper for Notion's Remote MCP and the
+# Claude Code "notion" skill.
+#
+# The Notion desktop app is intentionally NOT installed here: the app install
+# (Homebrew Cask) was dropped so this cookbook only manages CLI/skill assets.
+# Install the app manually if needed (`brew install --cask notion`).
 #
 # The hosted Notion MCP is consumed via a claude.ai connector (configured in
 # the Claude.ai connectors UI), NOT a user-scope CLI server. This cookbook
@@ -11,19 +15,6 @@
 # already-working connector.
 
 include_cookbook "mise"
-
-# Install Notion app via Homebrew Cask (macOS only).
-# `install --cask --adopt` (not `reinstall`): on a Mac where Notion was
-# installed manually, /Applications/Notion.app already exists and is NOT
-# brew-managed, so the `brew list | fgrep -q notion` guard does not skip and
-# `brew reinstall` aborts with "It seems there is already an App at
-# '/Applications/Notion.app'". `--adopt` brings the existing app under brew
-# management without re-downloading; on a clean Mac it installs normally.
-if node[:platform] == "darwin"
-  execute "brew install --cask --adopt notion" do
-    not_if "brew list | fgrep -q notion"
-  end
-end
 
 # Install ncli (CLI wrapper for Notion Remote MCP) via mise npm backend.
 # Source: https://github.com/nyosegawa/notion-cli  (npm: @sakasegawa/ncli)
