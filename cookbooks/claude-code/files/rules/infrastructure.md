@@ -61,6 +61,7 @@ Before adding to a cookbook, answer:
 2. **What OS / package manager / init system does the failing condition require?** `dpkg-divert` is Debian/Ubuntu only. `systemd-resolved` shipping a `resolvconf` shim is recent Ubuntu only. Amazon Linux 2023 doesn't have either
 3. **Does the cookbook run on hosts that don't satisfy the precondition?** If yes, gate the resource with `only_if` so it skips on non-matching hosts. Don't rely on silent failure — write an explicit guard
 4. **State the target OS in the commit message** ("Ubuntu 24.04 ships ..."), not just the symptom
+5. **Scripts shipped via `remote_file` / `files/`**: when the cookbook deploys a shell script to the target host, treat the script's external command dependencies as part of the OS scope check. Run `grep -E '\b(flock|timeout|sponge|tac|nproc|numfmt)\b' cookbooks/<name>/files/*.sh` — any hit in a cookbook targeting macOS is a portability risk. `mitamae --dry-run` does NOT execute the shipped scripts; runtime is the only gate unless you grep first. See `~/.claude/rules/shell.md` "macOS External-Command Audit for Ported Linux Scripts"
 
 Detail (anti-pattern + origin): see `~/.claude/rules/infrastructure-detail.md#cross-os-scope-gate`.
 
