@@ -213,3 +213,27 @@ Default to the **temp file pattern**. Other approaches accumulate escape complex
 **Plan-time detection**: any cookbook with a multi-line shell variable feeding `awk -v` must be tested with macOS BWK awk before merge. `bash -n` does not catch this; the failure surfaces only at runtime under mac awk. CI on Linux gawk is also blind to it.
 
 Origin: 2026-05-11 PR #330 — multi-line `awk -v` passed Linux CI, failed macOS BWK with `awk: newline in string`. Fix: temp file pattern in `cookbooks/elastic-agent/files/generate_config.sh`.
+
+## macOS External-Command Audit for Ported Linux Scripts
+
+`bash -n`, `ruby -c`, and `mitamae --dry-run` check syntax and resource placement only — they do NOT verify that external commands exist on the target OS. A script using a Linux-only command passes all static checks and misfires silently at runtime.
+
+**Trigger**: any shell script deployed by a cookbook that runs on macOS (`darwin.rb`, any `air` / `ohnos-macbook` role) that was written or tested on Linux.
+
+Before shipping, grep the script for Linux-only commands:
+
+```bash
+grep -E '\b(flock|timeout|gtimeout|sponge|tac|nproc|numfmt|realpath|readlink)\b' <script>
+```
+
+**Silent-failure trap for `flock`**: `if ! flock …` reads exit 127 (command not found) as truthy → the script logs "another run holds the lock" and silently skips. This is NOT an error; it is a false skip that persists every run (looks like normal lock contention).
+
+macOS-native replacements:
+
+- `flock` → `mkdir` + PID lock: `if ! mkdir "$LOCKDIR" 2>/dev/null; then exit 0; fi; trap 'rm -rf "$LOCKDIR"' EXIT; echo $$ > "$LOCKDIR/pid"` (stale lock: `kill -0` the recorded PID, steal only if the holder is dead)
+- `timeout N cmd` → background watchdog: `cmd & PID=$!; (sleep N; kill -TERM $PID 2>/dev/null) & wait $PID`
+- `realpath` / `readlink -f` → `$(cd "$(dirname "$f")"; pwd)/$(basename "$f")`
+
+Static check alone is insufficient — run the script once on the target OS before declaring the cookbook done.
+
+Origin: 2026-06-27 zp-SHIN issue/PR loop (mercari-setup overlay) — `flock` / `timeout` absent on macOS; `if ! flock` silently misfired as "lock held" every run; passed `bash -n` + `mitamae --dry-run`, surfaced only at runtime on `air`.
