@@ -213,3 +213,16 @@ Default to the **temp file pattern**. Other approaches accumulate escape complex
 **Plan-time detection**: any cookbook with a multi-line shell variable feeding `awk -v` must be tested with macOS BWK awk before merge. `bash -n` does not catch this; the failure surfaces only at runtime under mac awk. CI on Linux gawk is also blind to it.
 
 Origin: 2026-05-11 PR #330 — multi-line `awk -v` passed Linux CI, failed macOS BWK with `awk: newline in string`. Fix: temp file pattern in `cookbooks/elastic-agent/files/generate_config.sh`.
+
+## zsh History Expansion Mangles `!=` in Interactive jq — Avoid `!` in tested filters
+
+When writing a jq filter you will TEST interactively via the Claude Code Bash tool (which runs under the user's zsh), avoid the `!=` operator and bare `!`. zsh history expansion rewrites `!=` to `\!=` even inside a **single-quoted** multi-line variable assignment (`JQ='... .x != "y" ...'`), producing `jq: syntax error ... INVALID_CHARACTER` that does NOT reproduce in non-interactive bash (launchd, cron, `bash -c`, a `#!/usr/bin/env bash` script). The failure is therefore invisible in the actual runtime and only breaks your interactive unit test — a wasted cycle chasing a non-bug.
+
+Rewrite to drop the `!`:
+
+- `.field != "value"` → `(.field == "value" | not)`
+- any `select(... != ...)` embedded in a shell-var-held filter → phrase the negation with `| not`
+
+The deployed script (bash, no history expansion) runs the original filter fine; this is purely an interactive-test artifact, but rephrasing with `| not` makes the test match the runtime.
+
+Origin: 2026-06-28 zp-issue-loops merge-gate — `JQ='... (.mergeStateStatus != "CLEAN") ...'` was mangled to `\!=` in the Bash tool (zsh) and failed jq compile; the launchd runner ran the identical filter cleanly. Rephrased as `(.mergeStateStatus == "CLEAN" | not)`.
