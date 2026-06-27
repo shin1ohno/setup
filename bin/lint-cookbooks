@@ -68,7 +68,6 @@ ALLOW3 = %w[
 # Everything NOT listed here (and not in ALLOW3, which is skipped wholesale)
 # must pin an explicit --profile. mcp/codex-cli are already covered by ALLOW3.
 BARE_OK = %w[
-  cookbooks/local-mcp/default.rb
   cookbooks/ssh-keys/default.rb
 ].to_set
 
