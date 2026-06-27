@@ -50,6 +50,16 @@ AWS_PROFILE_="${SELF_HEAL_AWS_PROFILE:-pve-bootstrap-ssm}"
 AWS_REGION_="${SELF_HEAL_AWS_REGION:-ap-northeast-1}"
 STATE_INDEX="${SELF_HEAL_STATE_INDEX:-self-heal-state}"
 DRY_RUN="${SELF_HEAL_DRY_RUN:-0}"
+# ES password cache (cut kms:Decrypt: this loop runs every 2 min and each SSM
+# get-parameter --with-decryption is one kms:Decrypt). Mirrors the CT111
+# observer's get_pw cache, but on a per-host tmpfs path: the loop runs on pro-dev
+# via `runuser -l`, where /run/self-heal (root-owned) is not writable, while
+# $XDG_RUNTIME_DIR (=/run/user/<uid>, tmpfs, 0700 user-owned, kept alive by
+# linger=yes) is. The secret therefore never touches persistent disk and is
+# cleared on reboot. Caching is BEST-EFFORT — any failure falls back to a direct
+# SSM fetch, so a missing/unwritable runtime dir never blocks the sync.
+PW_CACHE="${SELF_HEAL_PW_CACHE:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/self-heal/elastic-pw.cache}"
+PW_CACHE_TTL="${SELF_HEAL_PW_CACHE_TTL:-1800}"  # 30 min; matches the observer
 
 CURL=/usr/bin/curl
 ts()  { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -58,12 +68,32 @@ sha1_of() { printf '%s' "$1" | sha1sum | cut -d' ' -f1; }
 
 dry() { [ "$DRY_RUN" = "1" ]; }
 
+# get_pw: serve the elastic password from the tmpfs cache when fresh, else fetch
+# from SSM (one kms:Decrypt) and refresh the cache. Empty output => unavailable.
+get_pw() {
+  local pw age
+  if [ -f "$PW_CACHE" ]; then
+    age=$(( $(date +%s) - $(stat -c %Y "$PW_CACHE" 2>/dev/null || echo 0) ))
+    if [ "$age" -ge 0 ] && [ "$age" -lt "$PW_CACHE_TTL" ]; then
+      pw=$(cat "$PW_CACHE" 2>/dev/null)
+      [ -n "$pw" ] && { printf '%s' "$pw"; return 0; }
+    fi
+  fi
+  pw=$(aws ssm get-parameter --name "$ELASTIC_PW_SSM" --with-decryption \
+        --query 'Parameter.Value' --output text \
+        --profile "$AWS_PROFILE_" --region "$AWS_REGION_" 2>/dev/null)
+  [ -n "$pw" ] && [ "$pw" != "None" ] || return 1
+  # Best-effort cache write (0600 on tmpfs). Never block the sync on failure.
+  if mkdir -p "$(dirname "$PW_CACHE")" 2>/dev/null; then
+    ( umask 077; printf '%s' "$pw" > "$PW_CACHE" 2>/dev/null ) || true
+  fi
+  printf '%s' "$pw"
+}
+
 # --- Step 0: elastic password (STOP on failure = boundary 6) -----------------
-ES_PW=$(aws ssm get-parameter --name "$ELASTIC_PW_SSM" --with-decryption \
-  --query 'Parameter.Value' --output text \
-  --profile "$AWS_PROFILE_" --region "$AWS_REGION_" 2>/dev/null)
+ES_PW=$(get_pw)
 if [ -z "$ES_PW" ] || [ "$ES_PW" = "None" ]; then
-  log "STOP: elastic pw unavailable from SSM ($ELASTIC_PW_SSM, profile=$AWS_PROFILE_)"
+  log "STOP: elastic pw unavailable (cache miss + SSM $ELASTIC_PW_SSM, profile=$AWS_PROFILE_)"
   echo "self-heal-create: STOP (elastic pw unavailable)"
   exit 0
 fi
