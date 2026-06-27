@@ -6,8 +6,9 @@
   # which back the Kibana Observability "Uptime" app
   # (https://kibana.home.local:5601/app/uptime).
   #
-  # Probe topology rationale (centralized): single host probes all 14
-  # endpoints. Distributed probing (every host probes itself) was
+  # Probe topology rationale (centralized): single host probes all
+  # endpoints (incl. the 5 et:2022 probes added in #567). Distributed
+  # probing (every host probes itself) was
   # rejected — generates per-host endpoint lists that drift from
   # cookbook source, and DNS-resolution failures become per-host noise.
   # Single probe host = Uptime blind spot if CT 111 is down, but CT 111
@@ -22,6 +23,9 @@
   #                      hydra:4445/health/alive, consent:9020/,
   #                      monitoring:3000/api/health
   #   TCP probes (5):    es-0/1/2:9200, kibana:5601, weave:1883 (MQTT)
+  #   et TCP probes:     pro-dev + mini :2022 active; air/neo :2022 registered
+  #                      but enabled:false (roaming laptops); bare-metal pro NOT
+  #                      probed (its `pro` name is the roon LXC). (#567)
   #
   # Phase 2 candidates (out of scope for v1):
   #   - HTTP probe of ES/Kibana with basic auth (creds injection)
@@ -274,6 +278,97 @@
         hosts: ["weave.home.local:1883"]
         timeout: 10s
         tags: [weave, mqtt, lan-internal]
+
+  # ===== Eternal Terminal (et) port-open probes — issue #567 =====
+  #
+  # et listener health across the fleet. The 2026-06 mini incident (etserver
+  # process alive but port 2022 not accepting) is invisible to process-presence
+  # checks; only this TCP probe catches it. A DOWN flows via the existing
+  # xpack.uptime.alerts.monitorStatus rule -> .alerts-observability.uptime ->
+  # self-heal-observer (source=uptime) -> self-heal GitHub issue, with NO
+  # observer/rule change. Local RECOVERY is handled per-host by the et-watchdog
+  # (cookbooks/eternal-terminal); this probe is the central VISIBILITY +
+  # issue-creation layer (the central self-heal-resolve loop cannot reach Macs).
+  #
+  # Active central probes: pro-dev + mini (both always-on, correctly resolvable;
+  # mini resolves only after the home-monitor devices.tf record
+  # mini = { ip = "192.168.1.97", dns = ["mini"] } is applied).
+  #
+  # air/neo are roaming laptops, shipped `enabled: false`: a closed laptop is
+  # always DOWN, which would reopen/close a self-heal issue every sleep cycle
+  # (notification churn). Their et is still recovered locally by the darwin
+  # et-watchdog; the central probe would add only low-value visibility. Flip to
+  # `enabled: true` to accept the churn in exchange for Uptime-dashboard presence.
+
+  # NOTE: bare-metal `pro` runs et but is intentionally NOT probed here — the
+  # `pro.home.local` DNS label is owned by the roon LXC (.20, no etserver) after
+  # the Phase 9 cutover, so a probe would be a permanent false-DOWN. pro's et is
+  # covered locally by the et-watchdog (recovery); it has no resolvable et name
+  # for a central probe. (#567)
+
+  - type: synthetics/tcp
+    id: synthetics-pro-dev-et-tcp
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: tcp
+        type: tcp
+        id: pro-dev-et-tcp-2022
+        name: Eternal Terminal pro-dev TCP 2022
+        enabled: true
+        schedule: "@every 60s"
+        hosts: ["pro-dev.home.local:2022"]
+        timeout: 10s
+        tags: [eternal-terminal, et, pro-dev, lan-internal]
+
+  - type: synthetics/tcp
+    id: synthetics-mini-et-tcp
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: tcp
+        type: tcp
+        id: mini-et-tcp-2022
+        name: Eternal Terminal mini TCP 2022
+        enabled: true
+        schedule: "@every 60s"
+        hosts: ["mini.home.local:2022"]
+        timeout: 10s
+        tags: [eternal-terminal, et, mini, lan-internal]
+
+  - type: synthetics/tcp
+    id: synthetics-air-et-tcp
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: tcp
+        type: tcp
+        id: air-et-tcp-2022
+        name: Eternal Terminal air TCP 2022
+        enabled: false # roaming laptop — see NOTE above (flip true to accept churn)
+        schedule: "@every 60s"
+        hosts: ["air.home.local:2022"]
+        timeout: 10s
+        tags: [eternal-terminal, et, air, roaming]
+
+  - type: synthetics/tcp
+    id: synthetics-neo-et-tcp
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: tcp
+        type: tcp
+        id: neo-et-tcp-2022
+        name: Eternal Terminal neo TCP 2022
+        enabled: false # roaming laptop — see NOTE above (flip true to accept churn)
+        schedule: "@every 60s"
+        hosts: ["neo.home.local:2022"]
+        timeout: 10s
+        tags: [eternal-terminal, et, neo, roaming]
 
   # ===== External HTTPS probes (TLS expiry coverage) =====
   #

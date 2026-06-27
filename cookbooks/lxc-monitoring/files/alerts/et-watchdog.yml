@@ -1,0 +1,59 @@
+groups:
+  - name: eternal-terminal-watchdog
+    interval: 30s
+    rules:
+      # et-watchdog (cookbooks/eternal-terminal) probes etserver's TCP listener
+      # (127.0.0.1:2022) every ~60s and exports these via node_exporter textfile.
+      # `up == 0` means etserver was not accepting AND a restart did not recover
+      # it — a real et outage on that host. This is the Prometheus/Alertmanager
+      # visibility layer (Grafana). The self-heal GITHUB-ISSUE path for et is the
+      # Kibana synthetics TCP probe (elastic-agent.synthetics-input.yml), NOT
+      # these metrics — the self-heal observer reads Kibana alerts-as-data, not
+      # Prometheus. Coverage note: et_watchdog_* reaches Prometheus only from
+      # hosts whose node-exporter is scraped (today pro-dev). mini/air/neo are
+      # covered by the Kibana synthetics probe; bare-metal pro is unscraped, so
+      # its watchdog is recovery-only. Origin: issue #567 (mini et listener wedge).
+      - alert: EternalTerminalListenerDown
+        expr: et_watchdog_up == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: eternal-terminal
+        annotations:
+          summary: "etserver listener down on {{ $labels.host }} (port {{ $labels.port }})"
+          description: |
+            et-watchdog could not connect to etserver on {{ $labels.host }} and a
+            local restart did not recover it. `et` reconnect to that host fails.
+            Check `journalctl -t et-watchdog` and `systemctl status et.service`
+            (linux) / `launchctl print system/homebrew.mxcl.et` (darwin) on the host.
+
+      # The watchdog auto-recovers wedges, so a single restart is "handled" — but
+      # a recurring restart means something keeps wedging the listener (the
+      # 2026-06 mini alive-but-not-listening class). Surface it so the auto-heal
+      # does not mask a chronic fault.
+      - alert: EternalTerminalFlapping
+        expr: increase(et_watchdog_restart_total[30m]) >= 2
+        for: 1m
+        labels:
+          severity: warning
+          component: eternal-terminal
+        annotations:
+          summary: "et-watchdog restarted etserver >=2x in 30m on {{ $labels.host }}"
+          description: |
+            The watchdog auto-recovered etserver {{ $value }} times in 30m on
+            {{ $labels.host }} — it is healing but something keeps wedging the
+            listener. Investigate before the churn hides a chronic fault.
+
+      # The watchdog itself going silent (timer dead, node-exporter down) would
+      # hide both alerts above. Treat a stale textfile as suspicious.
+      - alert: EternalTerminalWatchdogStale
+        expr: time() - et_watchdog_last_check_timestamp_seconds > 600
+        for: 5m
+        labels:
+          severity: warning
+          component: eternal-terminal
+        annotations:
+          summary: "et-watchdog has not reported in >10m on {{ $labels.host }}"
+          description: |
+            No fresh et-watchdog probe for >10m on {{ $labels.host }} — the timer
+            or node-exporter may be down, blinding the et health alerts there.
