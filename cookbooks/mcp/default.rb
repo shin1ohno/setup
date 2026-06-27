@@ -60,6 +60,28 @@ if node[:platform] == "darwin"
       command "bash #{generator_script} #{yaml_path} #{temp_path}"
       user node[:setup][:user]
     end
+
+    # Independent render of servers.yml into Claude Code USER scope — a third
+    # surface alongside Claude Desktop (above) and Codex CLI (codex-cli cookbook).
+    # Mirrors the codex idiom: reads servers.yml directly + resolves SSM itself +
+    # renders native (`claude mcp add --transport` for http/sse, `add-json` for
+    # stdio) — NOT derived from the Desktop output. Idempotent; account-connector
+    # servers (no `desktop:` flag) are skipped (they are claude.ai connectors).
+    claude_path = "#{node[:setup][:home]}/.local/bin/claude"
+    register_script = File.join(File.dirname(__FILE__), "files", "register_claude_code.sh")
+    execute "register MCP servers into Claude Code (user scope)" do
+      # bash -c for `set -o pipefail`; export mise shims + /usr/local/bin so the
+      # script finds yq/jq/node and the awscli pkg binary.
+      command <<~CMD.strip
+        bash -c '
+          set -euo pipefail
+          export PATH="#{node[:setup][:home]}/.local/share/mise/shims:/usr/local/bin:$PATH"
+          bash #{register_script} #{yaml_path}
+        '
+      CMD
+      user node[:setup][:user]
+      only_if "test -x #{claude_path}"
+    end
   end
 
   # Merge managed config into existing file, preserving user-added mcpServers.
