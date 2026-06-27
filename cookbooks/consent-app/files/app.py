@@ -299,11 +299,32 @@ async def dcr_proxy(request: Request):
     Claude rejects DCR responses containing null values or empty objects,
     so we filter them out before returning.
     """
-    body = await request.body()
+    raw = await request.body()
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+
+    # Ensure every dynamically-registered client is ALLOWED to request
+    # offline_access. Claude Code derives the DCR `scope` from the protected
+    # resource's scopes_supported (mcp:read/write/admin — no offline_access),
+    # so the Hydra client it registers cannot request offline_access; Claude's
+    # /authorize then asks for offline_access (refresh token) and Hydra rejects
+    # with `invalid_scope: ... not allowed to request scope 'offline_access'`.
+    # Injecting it into the client's allowed scope at registration time fixes
+    # the round-trip. Robust to a missing/empty scope and to non-JSON bodies
+    # (forwarded unchanged).
+    body = raw
+    try:
+        payload = json.loads(raw) if raw else {}
+    except (json.JSONDecodeError, ValueError):
+        payload = None
+    if isinstance(payload, dict):
+        scopes = (payload.get("scope") or "").split()
+        if "offline_access" not in scopes:
+            scopes.append("offline_access")
+        payload["scope"] = " ".join(scopes)
+        body = json.dumps(payload).encode()
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
