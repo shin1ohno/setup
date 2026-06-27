@@ -347,6 +347,7 @@ end
   index-template-rtx.json
   ilm-policy-wlx-7d.json
   index-template-wlx.json
+  ilm-policy-metrics-30d.json
   bootstrap-roles.json
 ].each do |f|
   remote_file "#{files_dir}/#{f}" do

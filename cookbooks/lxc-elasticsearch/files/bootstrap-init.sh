@@ -387,6 +387,16 @@ main() {
   # Idempotent infrastructure setup. Order matters: ILM → component →
   # index template → data stream (Adversarial #8).
   put_ilm_policy "logs-rtx-7d" "ilm-policy-rtx-7d.json"
+
+  # Bound the x-pack built-in `metrics` ILM policy (hot-only, no delete phase
+  # by default) with a 30d delete phase. Without this, every metrics-* data
+  # stream (prometheus.collector, system.*, elastic_agent.*, stack_monitoring.*)
+  # accumulates backing indices indefinitely — the root cause of both the live
+  # cluster disk growth and the S3 snapshot bloat (see snapshot-bootstrap.sh).
+  # PUT is idempotent and re-asserts on every converge, countering any x-pack
+  # reset on upgrade.
+  put_ilm_policy "metrics" "ilm-policy-metrics-30d.json"
+
   put_component_template "logs-rtx-mappings" \
     "${FILES_DIR}/component-templates/logs-rtx-mappings.json"
   put_component_template "logs-rtx-settings" \
