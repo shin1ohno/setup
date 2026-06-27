@@ -44,18 +44,18 @@
 
 手順:
 
-1. 各 skill フォルダを zip 化する（SKILL.md と参照ファイルが入っているフォルダを丸ごと）
+1. `build-skills.sh` で各 skill を zip 化する。`03-skills/` 配下の指定スキル（引数省略で全スキル）を検証して `zips-ready/<skill>.zip` を生成する。梱包は公式 skill-creator packager と同じ**フォルダ梱包**（zip 内に `<skill>/SKILL.md`）、`.DS_Store` / `__pycache__` / 先頭 `evals/` を除外、frontmatter を公式ルールで検証する。
 
    ```bash
-   cd ~/ManagedProjects/setup/cookbooks/claude-code/cowork-migration/03-skills
-   for skill in writing interview research; do
-     (cd "$skill" && zip -r "/tmp/${skill}.zip" .)
-   done
-   ls -la /tmp/*.zip
+   cd ~/ManagedProjects/setup/cookbooks/claude-code/cowork-migration
+   ./build-skills.sh writing interview research
+   ls -la zips-ready/*.zip
    ```
 
+   Cowork のアップローダがフォルダ梱包を受理しない場合は `LAYOUT=flat ./build-skills.sh writing interview research` で SKILL.md を zip 直下に置く形に切替えられる（`zips-ready/` は `.gitignore` 済みで成果物はコミットされない）。
+
 2. Cowork desktop アプリを開く → 左サイドバーの **Customize** → **Skills** タブ → **+** ボタン → **Upload skill**
-3. `/tmp/writing.zip` を選択してアップロード。`/tmp/interview.zip`、`/tmp/research.zip` も同様
+3. `zips-ready/writing.zip` を選択してアップロード。`zips-ready/interview.zip`、`zips-ready/research.zip` も同様
 4. アップロード後、Skills 一覧に表示され既定で有効化されている。トグルで一時無効化可能
 
 **Claude Code 環境にも入れたい場合**（CLI と Cowork を併用するなら推奨）:
@@ -90,17 +90,15 @@ cp -r ~/ManagedProjects/setup/cookbooks/claude-code/cowork-migration/03-skills/r
 5. `verify-cognee` — Cognee MCP 必須
 6. `ingest-to-cognee` — Cognee MCP + Cowork 内蔵 `pdf` skill に依存
 
-zip 化してから Customize → Skills でアップロード:
+`build-skills.sh` で zip 化してから Customize → Skills でアップロード（引数なしで全 9 スキルをまとめてビルドしても可）:
 
 ```bash
-cd ~/ManagedProjects/setup/cookbooks/claude-code/cowork-migration/03-skills
-for skill in retro research-domains feature-parity security-review verify-cognee ingest-to-cognee; do
-  (cd "$skill" && zip -r "/tmp/${skill}.zip" .)
-done
-ls -la /tmp/*.zip
+cd ~/ManagedProjects/setup/cookbooks/claude-code/cowork-migration
+./build-skills.sh retro research-domains feature-parity security-review verify-cognee ingest-to-cognee
+ls -la zips-ready/*.zip
 ```
 
-それぞれを Cowork の Customize → Skills → `+` → Upload skill でアップロード。
+それぞれを Cowork の Customize → Skills → `+` → Upload skill でアップロード（`zips-ready/<skill>.zip`）。
 
 Claude Code にも同期したい場合:
 
