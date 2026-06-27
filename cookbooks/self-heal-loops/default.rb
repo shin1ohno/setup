@@ -96,8 +96,10 @@ execute "sync self-heal skills into #{loop_user} ~/.claude/skills" do
          "diff -q #{skills_src}/self-heal-resolve/SKILL.md #{loop_home}/.claude/skills/self-heal-resolve/SKILL.md 2>/dev/null"
 end
 
-# Stage + install the two wrapper scripts to /usr/local/bin (root:root 0755).
-%w[self-heal-create-run.sh self-heal-resolve-run.sh].each do |wrapper|
+# Stage + install the scripts to /usr/local/bin (root:root 0755): the two cron
+# wrappers + the pure-shell create logic (self-heal-create.sh) the create
+# wrapper invokes instead of `claude -p`.
+%w[self-heal-create.sh self-heal-create-run.sh self-heal-resolve-run.sh].each do |wrapper|
   remote_file "#{staging_dir}/#{wrapper}" do
     source "files/#{wrapper}"
     owner node[:setup][:user]
