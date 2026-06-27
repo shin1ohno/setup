@@ -16,11 +16,13 @@ font-family             = SauceCodePro NFM
 font-size               = 16
 font-feature            = -dlig
 font-thicken            = true
-# legacy (wcwidth per-codepoint) matches zsh/zle + tmux width math; the default
-# "unicode" over-measures VS16 emoji (e.g. ☁️) and ambiguous-width glyphs
-# (⬡ ❯), desyncing the cursor and doubling characters on completion redraw
-# inside tmux. Starship's default prompt uses exactly those glyphs.
-grapheme-width-method   = legacy
+# Keep "unicode" (the default). tmux measures VS16 emoji (e.g. ☁️) as width 2,
+# so Ghostty must agree (=2) to render tmux's grid correctly. The real prompt
+# doubling on completion is a zsh-vs-tmux mismatch (zsh/glibc wcwidth counts ☁️
+# as 1, tmux as 2) — fixed at the prompt source by swapping the aws ☁️ symbol
+# for a width-1 Nerd Font cloud (see cookbooks/dot-config-starship). Do NOT set
+# "legacy" here: it makes Ghostty disagree with tmux's grid. (was: legacy, #580)
+grapheme-width-method   = unicode
 
 # ===== Shell Integration =====
 # ssh-terminfo auto-installs xterm-ghostty on remote hosts (prevents vim/tmux/clear breakage).
