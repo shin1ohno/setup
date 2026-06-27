@@ -33,6 +33,14 @@ DISABLED_LOCAL="${HOME}/.claude/self-heal-resolve.DISABLED"
 TIMEOUT="${SELF_HEAL_RESOLVE_TIMEOUT:-1800}"
 MODEL="${SELF_HEAL_RESOLVE_MODEL:-opus}"
 
+# pre-flight gate config: only spin up the (expensive) opus session when there
+# is at least one ACTIONABLE open self-heal issue (open, self-heal label, NOT
+# self-heal-needs-human). REPO/LABEL mirror the create side.
+REPO="${SELF_HEAL_REPO:-shin1ohno/setup}"
+LABEL="${SELF_HEAL_LABEL:-self-heal}"
+NEEDS_HUMAN_LABEL="${SELF_HEAL_NEEDS_HUMAN_LABEL:-self-heal-needs-human}"
+GATE_ONLY="${SELF_HEAL_GATE_ONLY:-0}"  # test hook: exit right after the gate decision
+
 mkdir -p "${LOG_DIR}" 2>/dev/null || true
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[$(ts)] $*" >> "${LOG}"; }
@@ -79,6 +87,28 @@ if ! flock -n 9; then
   log "skip: another resolve run holds the lock"
   exit 0
 fi
+
+# pre-flight gate (PURE SHELL): count actionable open self-heal issues. With
+# zero, there is nothing for the model to do, so skip the opus session entirely
+# (the previous design started a 1800s opus run every 5 min regardless). A gh
+# failure returns empty -> treat as "unknown", proceed to claude (fail-open: do
+# not silently stop healing because a gh list blipped).
+actionable=$(gh issue list --repo "${REPO}" --label "${LABEL}" --state open \
+  --json number,labels --limit 500 2>/dev/null \
+  | jq "[.[] | select(.labels|map(.name)|index(\"${NEEDS_HUMAN_LABEL}\")|not)] | length" 2>/dev/null)
+
+if [ "${GATE_ONLY}" = "1" ]; then
+  log "gate-only: actionable=${actionable:-?}"
+  ts > "${LAST}"
+  exit 0
+fi
+
+if [ -n "${actionable}" ] && [ "${actionable}" = "0" ]; then
+  log "skip: no actionable open self-heal issue (excl ${NEEDS_HUMAN_LABEL}) — not starting claude"
+  ts > "${LAST}"
+  exit 0
+fi
+log "gate: actionable=${actionable:-unknown} open self-heal issue(s) — starting claude (model=${MODEL})"
 
 timeout "${TIMEOUT}" "${CLAUDE_BIN}" -p "${PROMPT}" \
   --permission-mode bypassPermissions --model "${MODEL}" >> "${LOG}" 2>&1
