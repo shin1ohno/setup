@@ -1,0 +1,44 @@
+  # AWS billing (CloudWatch AWS/Billing EstimatedCharges + Cost Explorer
+  # GetCostAndUsage) — enabled ONLY on CT 111 (lxc-monitoring) via
+  # node[:elastic_agent][:enable_aws_billing_integration]. A single
+  # account-wide collector (NOT per-host) that populates the
+  # metrics-aws.billing-default data stream (elastic_agent_writer already
+  # holds write on metrics-*). Kibana's "[Metricbeat AWS] Billing Overview"
+  # dashboard (installed by lxc-kibana/install-monitoring-integrations.sh,
+  # package aws/6.20.2) queries data_stream.dataset: aws.billing.
+  #
+  # AUTH: a dedicated minimal-scope IAM user (elastic-billing-reader — NOT
+  # sh1admn/admin). Its access key id + secret are delivered the same way as
+  # the ES password: SSM SecureString (/monitoring/elastic/aws-billing/*) ->
+  # generate_env.sh -> /etc/elastic-agent/elastic-agent.yml.env (systemd
+  # EnvironmentFile=) -> resolved here by the agent env provider as
+  # ${AWS_ACCESS_KEY_ID} / ${AWS_SECRET_ACCESS_KEY}. Bare ${VAR} form (no
+  # :"" default) so an unresolved var fails loud instead of silently falling
+  # back to the aws-sdk default credential chain (which would pick up the
+  # pve-bootstrap-ssm profile present on CT 111).
+  #
+  # REGION: AWS publishes the CloudWatch AWS/Billing EstimatedCharges metric
+  # ONLY in us-east-1 (Cost Explorer is global); default_region MUST be
+  # us-east-1 regardless of the account's ap-northeast-1 resources, or the
+  # billing metricset returns empty.
+  #
+  # PERIOD: 24h — billing data refreshes a few times/day at most; a short
+  # period only burns paid Cost Explorer GetCostAndUsage requests.
+  #
+  # No per-input processors (account-wide metric, not host-scoped — add_host_metadata
+  # is meaningless here; matches the other opt-in input fragments).
+  - type: aws/metrics
+    id: aws-billing
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: aws.billing
+        metricsets: [billing]
+        period: 24h
+        default_region: us-east-1
+        access_key_id: ${AWS_ACCESS_KEY_ID}
+        secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+        cost_explorer_config:
+          group_by_dimension_keys:
+            - SERVICE

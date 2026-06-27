@@ -98,3 +98,24 @@ deployment ever becomes multi-tenant.
   monitor the loop logs and re-auth `claude` on pro-dev when a run logs an auth
   failure. Consider a node_exporter textfile metric off `…/self-heal-*.last`
   (last-run age) + a Prometheus staleness alert, mirroring SelfHealObserverStale.
+
+## Automate elastic-billing-reader key rotation (AWS billing → Kibana)
+
+- The `elastic-billing-reader` IAM user (home-monitor `pve-monitoring-aws-billing.tf`)
+  uses a SINGLE static access key with no automated rotation. Shipped this way
+  deliberately (read-only billing scope; matches the `elasticsearch-snapshot`
+  precedent) plus a CloudTrail→SNS audit hook on key changes.
+- Two coupled gaps to close when automating rotation:
+  1. Adopt the `pve-bootstrap-ssm` primary/secondary 2-key harness
+     (`aws_iam_access_key for_each = ["primary","secondary"]` + SSM alias swap +
+     `lifecycle { ignore_changes = [value] }`) for `elastic-billing-reader`.
+  2. The env file is WRITE-ONCE for VALUE changes. `cookbooks/elastic-agent/
+     default.rb` `require_external_auth(skip_if: ...)` is now content-aware for
+     key ADDITION (regenerates when `AWS_ACCESS_KEY_ID=` is absent on the
+     billing host), but a rotated key VALUE will NOT propagate to CT 111 until
+     `/etc/elastic-agent/elastic-agent.yml.env` is regenerated. Manual rotation
+     recovery today: `rm /etc/elastic-agent/elastic-agent.yml.env` on CT 111 +
+     `mitamae local pve/lxc-monitoring.rb`.
+- First step: lift the primary/secondary `for_each` + rotation block from
+  `home-monitor/pve-bootstrap-iam.tf` into `pve-monitoring-aws-billing.tf`, then
+  add a value-drift check to the elastic-agent env-generation `skip_if`.

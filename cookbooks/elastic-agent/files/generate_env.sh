@@ -33,4 +33,25 @@ cat > "${OUTPUT_FILE}" <<EOF
 ELASTIC_AGENT_PASSWORD=${ELASTIC_AGENT_PASSWORD}
 EOF
 
+# AWS billing credentials — appended ONLY when the cookbook exports
+# ENABLE_AWS_BILLING=1 (CT 111 / lxc-monitoring, the single host running the
+# aws/billing input). Fetched NON-FATALLY (|| VAR="") and written only when
+# BOTH values are present, so a transient SSM/CE/KMS failure on a billing
+# param degrades only billing and never aborts the ELASTIC_AGENT_PASSWORD
+# write above — which, under `set -euo pipefail`, would otherwise drop ALL
+# fleet telemetry. The aws/billing input references these as bare
+# ${AWS_ACCESS_KEY_ID} / ${AWS_SECRET_ACCESS_KEY}.
+if [ "${ENABLE_AWS_BILLING:-0}" = "1" ]; then
+    aws_akid=$(fetch_ssm "/monitoring/elastic/aws-billing/access-key-id") || aws_akid=""
+    aws_secret=$(fetch_ssm "/monitoring/elastic/aws-billing/secret-access-key") || aws_secret=""
+    if [ -n "${aws_akid}" ] && [ -n "${aws_secret}" ]; then
+        cat >> "${OUTPUT_FILE}" <<EOF
+AWS_ACCESS_KEY_ID=${aws_akid}
+AWS_SECRET_ACCESS_KEY=${aws_secret}
+EOF
+    else
+        echo "AWS_BILLING_FETCH_INCOMPLETE — skipping AWS creds (ES telemetry unaffected)" >&2
+    fi
+fi
+
 chmod 600 "${OUTPUT_FILE}"
