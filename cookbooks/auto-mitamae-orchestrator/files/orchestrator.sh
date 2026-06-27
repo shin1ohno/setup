@@ -15,11 +15,18 @@
 #    tmp textfile, atomic-mv into place.
 #
 # Status enum (matches mitamae-runner.sh):
-#   success | mitamae_fail | sha_mismatch | git_fetch_fail
+#   success | up_to_date | mitamae_fail | sha_mismatch | git_fetch_fail
 #   | lock_held | invalid_command | ssh_unreachable
 #
 # ssh_unreachable is orchestrator-side: ssh exited non-zero AND the runner
 # never produced a `status=` line. Anything else is the runner's verdict.
+#
+# up_to_date is a healthy steady-state verdict: the host is already on the
+# target SHA and the runner throttled its config-drift converge to a calmer
+# cadence (mitamae-runner.sh two-tier cadence) so the shared Proxmox host is
+# not pegged by every LXC converging on every 5-min cycle. It is treated like
+# success here — NOT a canary-blocking failure — and still refreshes the
+# per-host apply timestamp, so AutoMitamaeApplyStale never false-fires.
 #
 # 2026-05-17 stability hardening (Phase 3 of stability rollout):
 # canary deploy prevents fleet-wide propagation of cookbook bugs.
