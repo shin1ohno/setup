@@ -287,6 +287,8 @@ enable_stack_input = node[:elastic_agent] &&
                      node[:elastic_agent][:enable_stack_monitoring_integration]
 enable_es_node_input = node[:elastic_agent] &&
                        node[:elastic_agent][:enable_es_node_monitoring_integration]
+enable_aws_billing_input = node[:elastic_agent] &&
+                           node[:elastic_agent][:enable_aws_billing_integration]
 
 # Defensive directory bootstrap
 directory node[:setup][:root] do
@@ -362,6 +364,7 @@ end
   elastic-agent.synthetics-input.yml
   elastic-agent.stack-monitoring-input.yml
   elastic-agent.es-node-monitoring-input.yml
+  elastic-agent.aws-billing-input.yml
 ].each do |f|
   remote_file "#{files_dir}/#{f}" do
     source "files/#{f}"
@@ -396,10 +399,33 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "/monitoring/elastic/* in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  skip_if: -> { File.exist?(env_output_path) },
+  # Content-aware skip (per ~/.claude/rules/ruby.md "SSM-sourced .env generator:
+  # file-existence skip_if drops new KEY=VALUE lines silently"): on the billing
+  # host the env file may already exist from a prior apply that predates the AWS
+  # keys, so a bare File.exist? would never add them. Regenerate when billing is
+  # enabled but AWS_ACCESS_KEY_ID= is absent. Non-billing hosts keep the original
+  # file-existence behavior (short-circuits before File.read, so no read of the
+  # 0640 root env file is attempted where mitamae runs as a non-root user).
+  skip_if: -> {
+    env_present = File.exist?(env_output_path)
+    if !env_present
+      false
+    elsif !enable_aws_billing_input
+      true
+    else
+      begin
+        File.read(env_output_path).include?("AWS_ACCESS_KEY_ID=")
+      rescue StandardError
+        false
+      end
+    end
+  },
 ) do
   execute "generate elastic-agent.yml.env" do
+    # ENABLE_AWS_BILLING=1 only on the billing host (CT 111) so generate_env.sh
+    # fetches + appends the AWS billing creds there and nowhere else.
     command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+            "#{enable_aws_billing_input ? 'ENABLE_AWS_BILLING=1 ' : ''}" \
             "bash #{files_dir}/generate_env.sh #{env_temp_path}"
     user user
   end
@@ -493,6 +519,14 @@ es_node_sed_clause = if enable_es_node_input
                        "-e '/@@ES_NODE_MONITORING_INPUT@@/d'"
                      end
 
+aws_billing_input_path = "#{files_dir}/elastic-agent.aws-billing-input.yml"
+aws_billing_sed_clause = if enable_aws_billing_input
+                           "-e '/@@AWS_BILLING_INPUT@@/r #{aws_billing_input_path}' " \
+                           "-e '/@@AWS_BILLING_INPUT@@/d'"
+                         else
+                           "-e '/@@AWS_BILLING_INPUT@@/d'"
+                         end
+
 execute "render elastic-agent.yml" do
   # Stage in user-writable /tmp then sudo install. mitamae on dev-workstation
   # LXCs (e.g. pro-dev CT 104) runs as the regular user — direct write to
@@ -511,6 +545,7 @@ execute "render elastic-agent.yml" do
         #{synth_sed_clause} \\
         #{stack_sed_clause} \\
         #{es_node_sed_clause} \\
+        #{aws_billing_sed_clause} \\
       #{config_tmpl} \\
       | sed -e "s|@@HOSTNAME@@|#{host_name}|g" -e 's|@@TAGS@@|#{tags_json}|g' > #{staging}
     sudo install -m 0640 -o root -g root #{staging} #{config_path}
@@ -528,6 +563,7 @@ execute "render elastic-agent.yml" do
          "#{synth_sed_clause} " \
          "#{stack_sed_clause} " \
          "#{es_node_sed_clause} " \
+         "#{aws_billing_sed_clause} " \
          "#{config_tmpl} " \
          "| sed -e 's|@@HOSTNAME@@|#{host_name}|g' " \
          "-e 's|@@TAGS@@|#{tags_json}|g' > \"$rendered\" && " \

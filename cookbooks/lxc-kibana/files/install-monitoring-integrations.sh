@@ -56,7 +56,8 @@ for _ in $(seq 1 60); do
 done
 
 install_package() {
-  local pkg="$1"
+  local pkg="$1" version="${2:-}" force="${3:-true}"
+  local install_path="${KIBANA_URL}/api/fleet/epm/packages/${pkg}${version:+/${version}}"
   local status
   status=$(kbn "${KIBANA_URL}/api/fleet/epm/packages/${pkg}" 2>/dev/null \
     | sed -n 's/.*"status":"\([a-z_]*\)".*/\1/p' | head -1)
@@ -64,8 +65,8 @@ install_package() {
     echo "[monitoring-integrations] ${pkg} already installed"
     return 0
   fi
-  echo "[monitoring-integrations] installing ${pkg} ..."
-  kbn -X POST "${KIBANA_URL}/api/fleet/epm/packages/${pkg}" -d '{"force":true}' \
+  echo "[monitoring-integrations] installing ${pkg}${version:+ ${version}} (force=${force}) ..."
+  kbn -X POST "${install_path}" -d "{\"force\":${force}}" \
     | grep -q '"items"' || {
       echo "[monitoring-integrations] ${pkg} install FAILED" >&2
       return 1
@@ -75,6 +76,12 @@ install_package() {
 
 install_package "elasticsearch"
 install_package "kibana"
+# AWS integration (billing data stream). Version-pinned + signature
+# verification kept (force=false — NOT force:true, which would bypass package
+# verification). Installs the metrics-aws.billing index template + ingest
+# pipeline + the "[Metricbeat AWS] Billing Overview" dashboard that the CT 111
+# standalone aws/billing input (cookbooks/elastic-agent) feeds.
+install_package "aws" "6.20.2" "false"
 
 # On an existing cluster, data streams created before the package install use
 # the generic `metrics` template and lack the `timestamp` alias. Roll them

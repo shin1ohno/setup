@@ -51,6 +51,14 @@ lxc_entry(tags: ["lxc", "monitoring"], elastic_agent_extra: {
   # false in lxc-kibana's kibana.yml. See
   # cookbooks/elastic-agent/files/elastic-agent.stack-monitoring-input.yml.
   enable_stack_monitoring_integration: true,
+  # Enable AWS Billing collection — CT 111 is the only host in the fleet
+  # running the aws/billing input. A dedicated minimal-scope IAM user
+  # (elastic-billing-reader, home-monitor pve-monitoring-aws-billing.tf)
+  # delivers credentials via SSM -> generate_env.sh -> EnvironmentFile (same
+  # pattern as the ES password; gated by ENABLE_AWS_BILLING so only this host
+  # fetches the AWS keys). Populates metrics-aws.billing-default for Kibana's
+  # "[Metricbeat AWS] Billing Overview" dashboard.
+  enable_aws_billing_integration: true,
 })
 
 # auto-mitamae-orchestrator drives the SSH-push fleet apply. It writes
