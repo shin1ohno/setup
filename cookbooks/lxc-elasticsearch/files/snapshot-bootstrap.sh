@@ -183,14 +183,26 @@ cmd_register_slm() {
     return 0
   fi
 
-  # Broad data-stream coverage (logs-* / metrics-* / synthetics-* / traces-*)
-  # + include_global_state=true (captures cluster state AND, on 8.x, all feature
-  # states — Kibana saved objects, alerting rules, security). The prior policy
-  # covered only logs-rtx-* / synthetics-* / metrics-system.*, which left the
-  # metrics-prometheus.collector data stream (and traces-apm-*) UNbacked-up —
-  # exactly the index family that suffered irrecoverable dual-copy shard
-  # corruption in 2026-05 (no snapshot existed to restore from). Snapshots are
-  # incremental, so the broader scope adds little daily cost.
+  # DR-scoped data-stream coverage (logs-* / synthetics-* / traces-*
+  # / self-heal-state) + include_global_state=true (captures cluster state AND,
+  # on 8.x, all feature states — Kibana saved objects, alerting rules, security).
+  #
+  # metrics-* is INTENTIONALLY EXCLUDED. It was the dominant driver of S3
+  # snapshot cost: metrics-prometheus.collector / metrics-system.process /
+  # metrics-elasticsearch.stack_monitoring accounted for ~95% of the repo
+  # (~400 GiB, $10/mo trajectory). metrics are reconstructable from the live
+  # exporters, so their DR value does not justify the storage cost; the
+  # accompanying `metrics` ILM delete phase (ilm-policy-metrics-30d.json) now
+  # bounds live metrics retention at ~30d instead of unbounded growth.
+  #
+  # ACCEPTED TRADEOFF (informed decision 2026-06-27): excluding metrics-*
+  # reintroduces the 2026-05 failure mode for metrics-prometheus.collector —
+  # if both shard copies corrupt again, its history is irrecoverable (no
+  # snapshot). This was weighed against ~$8/mo of snapshot cost and the
+  # exclusion was chosen. Re-add "metrics-prometheus.collector-*" here (NOT
+  # all metrics-*) if that DR coverage is later wanted.
+  #
+  # Snapshots are incremental. Retention is 14d (see cost-vs-DR sizing).
   echo "[s3-snapshot] registering SLM policy ${SLM_POLICY}"
   es_curl -X PUT "${ES_URL}/_slm/policy/${SLM_POLICY}" \
     -H 'Content-Type: application/json' \
@@ -200,14 +212,14 @@ cmd_register_slm() {
   "name": "<daily-snap-{now/d}>",
   "repository": "s3-home-monitor",
   "config": {
-    "indices": ["logs-*", "metrics-*", "synthetics-*", "traces-*", "self-heal-state"],
+    "indices": ["logs-*", "synthetics-*", "traces-*", "self-heal-state"],
     "include_global_state": true,
     "ignore_unavailable": true
   },
   "retention": {
-    "expire_after": "30d",
+    "expire_after": "14d",
     "min_count": 7,
-    "max_count": 30
+    "max_count": 14
   }
 }
 EOF
