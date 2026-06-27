@@ -16,7 +16,11 @@ font-family             = SauceCodePro NFM
 font-size               = 16
 font-feature            = -dlig
 font-thicken            = true
-grapheme-width-method   = unicode
+# legacy (wcwidth per-codepoint) matches zsh/zle + tmux width math; the default
+# "unicode" over-measures VS16 emoji (e.g. ☁️) and ambiguous-width glyphs
+# (⬡ ❯), desyncing the cursor and doubling characters on completion redraw
+# inside tmux. Starship's default prompt uses exactly those glyphs.
+grapheme-width-method   = legacy
 
 # ===== Shell Integration =====
 # ssh-terminfo auto-installs xterm-ghostty on remote hosts (prevents vim/tmux/clear breakage).
