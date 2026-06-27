@@ -52,7 +52,7 @@ for name in $server_names; do
   # Default for HTTP servers: skip (configure them as account-level Custom
   # Connectors in the app instead). EXCEPTION: a server marked
   # `desktop: mcp-remote` in servers.yml is bridged into the Desktop config as
-  # a local stdio entry via `npx -y mcp-remote <url>` (the langmem-mcp
+  # a local stdio entry via `npx -y mcp-remote <url>` (the cognee / roon
   # pattern), making it usable in Desktop Chat WITHOUT an account connector.
   # Such bridged servers are Desktop-Chat-only — NOT visible in Cowork /
   # claude.ai, which only see account-synced Custom Connectors.
