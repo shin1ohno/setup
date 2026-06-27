@@ -312,6 +312,35 @@ cat /tmp/pr-body.md | (cd /path/to/repo && gh pr create --base main --title "...
 
 Origin: 2026-05-07 — `--body-file /tmp/...` denied right after a Write the verifier window had advanced past.
 
+### Cross-sandbox TMPDIR isolation — never reference a `$TMPDIR` file across sandbox modes
+
+The Write tool and ordinary Bash commands run in the Claude Code command sandbox, where `$TMPDIR` is remapped to a sandbox-private directory. Network commands (`gh pr create/edit`, see the next section) must run with `dangerouslyDisableSandbox: true`, where `$TMPDIR` resolves to the REAL OS temp dir (`/var/folders/.../T` on macOS) — a different path. A `cat "$TMPDIR/body.md"` inside the sandbox-disabled invocation then returns 0 bytes with NO error, and the PR is created with a silently empty body.
+
+Rule: never reference a `$TMPDIR`-relative path in a `dangerouslyDisableSandbox` invocation when the file was written under the normal command sandbox. Construct the body inline via heredoc piped to `--body-file -` in the same sandbox-disabled invocation — no file reference:
+
+```
+gh pr create --base main --title "..." --body-file - <<'EOF'
+## Summary
+- ...
+## Test plan
+- `cmd1` … `cmd2` …
+EOF
+```
+
+This sidesteps all three `--body-file` failure modes at once (backtick mis-parse, harness verifier window, cross-sandbox TMPDIR). Detection signal: the PR body is blank even though you "wrote" it and no command errored.
+
+Origin: 2026-06-26 PR #556 — body written to the command-sandbox TMPDIR, `gh pr create` ran sandbox-disabled with the real TMPDIR → `cat "$TMPDIR/body.md"` returned empty → blank PR body, no error surfaced.
+
+## gh CLI network access requires `dangerouslyDisableSandbox`
+
+Every `gh pr create / edit / merge / checks / view`, `gh api`, and `git push` over **HTTPS** fails inside the Claude Code command sandbox — the TLS root store and outbound egress are blocked (`tls: failed to verify certificate`, GraphQL POST blocked). Run these with `dangerouslyDisableSandbox: true`.
+
+`git push` over an **SSH** remote works in-sandbox (SSH egress is allowed); only HTTPS pushes and `gh` CLI calls need sandbox-disabled.
+
+When a post-commit block is planned (`push → gh pr create → gh pr checks`), run the network steps sandbox-disabled from the start rather than discovering it one failed command at a time. This is a sandbox-config fact, not a one-off — treat a `tls: failed to verify certificate` / blocked-egress error from any `gh`/HTTPS call as expected-in-sandbox and retry sandbox-disabled, per the Bash tool's sandbox-failure guidance.
+
+Origin: 2026-06-26 — every gh/HTTPS call across PR #556/#563/#564 required a sandbox-disabled retry; SSH push succeeded in-sandbox.
+
 ## GPG Signing Failures
 
 If `git commit` fails with a GPG signing error or timeout, present the user with the full cache-refresh command:
