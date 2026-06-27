@@ -29,6 +29,7 @@ include_cookbook "herdr"
 include_cookbook "fonts"
 include_cookbook "dot-config-alacritty"
 include_cookbook "dot-config-ghostty" if node[:platform] == "darwin"
+include_cookbook "dot-config-starship" # aws symbol width fix; cross-platform
 include_cookbook "fastfetch"
 include_cookbook "pbcopy" unless node[:platform] == "darwin" # OSC 52 clipboard, Linux-only
 
