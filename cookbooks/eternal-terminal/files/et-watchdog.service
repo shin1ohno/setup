@@ -1,0 +1,12 @@
+[Unit]
+Description=et-watchdog — etserver listener self-heal probe (port 2022)
+Documentation=https://github.com/shin1ohno/setup cookbooks/eternal-terminal
+After=network-online.target et.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/et-watchdog.sh
+# Never let a slow probe/restart pile up across timer fires.
+TimeoutStartSec=30
