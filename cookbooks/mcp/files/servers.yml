@@ -66,14 +66,3 @@ mcp_servers:
     url: "https://mcp.ohno.be/mcp"
     # No `desktop:` flag — endpoint currently returns empty replies (unrouted /
     # down). Re-enable by adding `desktop: mcp-remote` once it serves MCP.
-
-  langmem-mcp:
-    command: "npx"
-    args:
-      - "-y"
-      - "mcp-remote"
-      - "https://mcp-gateway-proxy.dev.citadelapps.com"
-      - "--header"
-      - "X-Mercari-MCP-name:langmem-mcp"
-      - "--header"
-      - "X-Mercari-MCP-Session-Id:yGMM21ZWwxjj1-3BeEWicXhtFmJj44pBHTlPXqObs6k"
