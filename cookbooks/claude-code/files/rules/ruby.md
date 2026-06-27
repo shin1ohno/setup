@@ -516,6 +516,14 @@ Why batched: each fix-PR-CI-merge-redeploy cycle takes 5-10 min. Sequential fix 
 
 Origin: 2026-05-09 ADR-0005 Phase 3b — 6 sequential fix PRs (~30-60 min waste); the IP-confusion bugs were diagnosable from the first ES "No route to host" via `pct exec <vmid> -- ip neigh show` (`INCOMPLETE`).
 
+## `mitamae --dry-run` requires `dangerouslyDisableSandbox`
+
+`mitamae local <role>.rb --dry-run` (and any wrapper, e.g. `./bin/apply --dry-run`) fails inside the Claude Code command sandbox with `touch: /tmp/<rand>: Operation not permitted` → `Command 'touch /tmp/<rand>' failed`. mitamae's `remote_file` resource probes writability with a `touch /tmp/<rand>` during the converge/dry-run pass, and the command sandbox only permits writes under `/tmp/claude` + `$TMPDIR`. The error aborts on the FIRST `remote_file` resource — often an unrelated cookbook (e.g. git config) — before reaching the cookbook you are validating, so it reads like a cookbook bug rather than a sandbox limit.
+
+Run mitamae dry-runs with `dangerouslyDisableSandbox: true`. This is distinct from the general "retry sandbox-disabled on a network error" rule: it fires on EVERY dry-run regardless of cookbook content or network use, purely from the `/tmp` touch probe.
+
+Origin: 2026-06-28 zp-issue-loops — `./bin/apply --overlay-only --dry-run` blocked on `touch /tmp/...: Operation not permitted` at the git cookbook until the sandbox was disabled.
+
 ## mruby API constraints — File.mtime / File.stat not available
 
 mitamae runs on **mruby**, not CRuby. The `File` class in mruby is a strict subset:

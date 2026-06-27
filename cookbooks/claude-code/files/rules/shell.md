@@ -237,3 +237,16 @@ macOS-native replacements:
 Static check alone is insufficient — run the script once on the target OS before declaring the cookbook done.
 
 Origin: 2026-06-27 zp-SHIN issue/PR loop (mercari-setup overlay) — `flock` / `timeout` absent on macOS; `if ! flock` silently misfired as "lock held" every run; passed `bash -n` + `mitamae --dry-run`, surfaced only at runtime on `air`.
+
+## zsh History Expansion Mangles `!=` in Interactive jq — Avoid `!` in tested filters
+
+When writing a jq filter you will TEST interactively via the Claude Code Bash tool (which runs under the user's zsh), avoid the `!=` operator and bare `!`. zsh history expansion rewrites `!=` to `\!=` even inside a **single-quoted** multi-line variable assignment (`JQ='... .x != "y" ...'`), producing `jq: syntax error ... INVALID_CHARACTER` that does NOT reproduce in non-interactive bash (launchd, cron, `bash -c`, a `#!/usr/bin/env bash` script). The failure is therefore invisible in the actual runtime and only breaks your interactive unit test — a wasted cycle chasing a non-bug.
+
+Rewrite to drop the `!`:
+
+- `.field != "value"` → `(.field == "value" | not)`
+- any `select(... != ...)` embedded in a shell-var-held filter → phrase the negation with `| not`
+
+The deployed script (bash, no history expansion) runs the original filter fine; this is purely an interactive-test artifact, but rephrasing with `| not` makes the test match the runtime.
+
+Origin: 2026-06-28 zp-issue-loops merge-gate — `JQ='... (.mergeStateStatus != "CLEAN") ...'` was mangled to `\!=` in the Bash tool (zsh) and failed jq compile; the launchd runner ran the identical filter cleanly. Rephrased as `(.mergeStateStatus == "CLEAN" | not)`.
