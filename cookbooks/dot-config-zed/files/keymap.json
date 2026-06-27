@@ -63,7 +63,9 @@
     "bindings": {
       // Buffer / Window
       "shift-l": "pane::ActivateNextItem",
-      "shift-h": "pane::ActivatePrevItem",
+      // pane::ActivatePrevItem was renamed to ActivatePreviousItem; the old
+      // id is silently ignored by current Zed.
+      "shift-h": "pane::ActivatePreviousItem",
       "space b d": "pane::CloseActiveItem",
       "space c": "pane::CloseActiveItem",
       "space w": "workspace::Save",
@@ -86,7 +88,33 @@
       "space l f": "editor::Format",
       "space l d": "diagnostics::Deploy",
       "space l s": "outline::Toggle",
-      "space l h": "editor::Hover"
+      "space l h": "editor::Hover",
+      // LSP navigation. `gd` (go-to-definition) already works via vim
+      // defaults, so it is not rebound here.
+      "space l R": "editor::FindAllReferences",
+      "space l t": "editor::GoToTypeDefinition",
+      "space l i": "editor::GoToImplementation",
+      "space l H": "editor::ToggleInlayHints",
+
+      // Git. `space g` is a free leader prefix (no existing single-key
+      // `space g` binding to collide with).
+      "space g n": "editor::GoToHunk",
+      "space g p": "editor::GoToPreviousHunk",
+      "space g s": "git::ToggleStaged",
+      "space g b": "git::Blame",
+      "space g g": "git_panel::ToggleFocus",
+
+      // Comment toggle, tpope-commentary style. `space c` is already the
+      // single-key CloseActiveItem binding, so a `space c`-prefixed chord
+      // would turn it into a prefix and break it — use `gcc` instead.
+      "g c c": "editor::ToggleComments"
+    }
+  },
+  {
+    // Visual mode: `gc` toggles comments on the selection.
+    "context": "vim_mode == visual",
+    "bindings": {
+      "g c": "editor::ToggleComments"
     }
   }
 ]

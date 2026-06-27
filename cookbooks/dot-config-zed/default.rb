@@ -6,11 +6,15 @@
 # mitamae apply takes effect without restarting the editor.
 #
 # Files:
-#   ~/.config/zed/settings.json                — UI, vim mode, theme
-#                                                 selector, agent_servers
-#   ~/.config/zed/keymap.json                  — tmux-style Ctrl-A
-#                                                 prefix for pane nav +
-#                                                 agent focus chord
+#   ~/.config/zed/settings.json                — UI, vim mode, theme,
+#                                                 agent_servers, format-on-save,
+#                                                 inlay hints, git blame gutter,
+#                                                 multi-language LSP (Ruby/Rust/
+#                                                 Python/TS/Go), edit predictions
+#                                                 disabled (no code egress)
+#   ~/.config/zed/keymap.json                  — tmux-style Ctrl-A prefix for
+#                                                 pane nav + agent focus chord +
+#                                                 space-leader LSP/git/comment
 #   ~/.config/zed/themes/glassy_nord.json      — vendored from
 #                                                 https://github.com/matt-gilb/zed_glassy-nord
 #                                                 (transparent / blurred
@@ -60,6 +64,23 @@ execute "gem install solargraph (rbenv active)" do
   command "#{rbenv_bin} exec gem install solargraph && #{rbenv_bin} rehash"
   user node[:setup][:user]
   not_if "test -x #{solargraph_shim}"
+end
+
+# Install gopls into ~/go/bin so Zed's Go LSP can spawn it via the absolute
+# path pinned in settings.json. Zed's own gopls auto-install shells out to
+# `go install` and is unreliable under a GUI-launched Zed's stripped PATH,
+# so install it deterministically here. Go is managed by mise (see
+# cookbooks/golang); the shim is self-contained and resolves the active go
+# without needing mise on PATH. only_if guards a fresh machine where the go
+# toolchain has not been installed yet (next apply picks it up).
+go_shim = "#{node[:setup][:home]}/.local/share/mise/shims/go"
+gopls_bin = "#{node[:setup][:home]}/go/bin/gopls"
+
+execute "go install gopls (mise go)" do
+  command %(GOPATH="#{node[:setup][:home]}/go" GOBIN="#{node[:setup][:home]}/go/bin" "#{go_shim}" install golang.org/x/tools/gopls@latest)
+  user node[:setup][:user]
+  not_if "test -x #{gopls_bin}"
+  only_if "test -x #{go_shim}"
 end
 
 remote_file "#{zed_config_dir}/keymap.json" do
