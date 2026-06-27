@@ -1,0 +1,24 @@
+# Managed by mitamae: ~/ManagedProjects/setup/cookbooks/dot-config-starship/files/starship.toml
+#
+# Minimal partial override merged on top of Starship's built-in defaults.
+# Only keys set here change; everything else stays default.
+#
+# Why this file exists — prompt cursor desync inside tmux:
+#   The Starship `aws` module's default symbol is "☁️  " (cloud +
+#   VS16 emoji-presentation selector). tmux measures that grapheme as width 2,
+#   but zsh/zle (glibc wcwidth) measures it as 1. The 1-column disagreement
+#   desyncs the cursor, so zle's full-line redraw on tab-completion repaints
+#   from the wrong column and doubles characters at the cursor.
+#
+#   zsh has no emoji-width setting (zsh-workers 2024, unresolved) and tmux's
+#   width is not configurable, so the fix is at the prompt source: use a Nerd
+#   Font cloud glyph (nf-fa-cloud, U+F0C2) instead. It is width 1 in BOTH
+#   glibc wcwidth and tmux (verified), matching the rest of the prompt's Nerd
+#   Font icons (git branch , etc.). Monochrome instead of color, but
+#   width-consistent across zsh / tmux / Ghostty / Zed.
+#
+# Font requirement: a Nerd Font (SauceCodePro NFM is configured for Ghostty and
+# Zed). U+F0C2 renders as a cloud icon there.
+
+[aws]
+symbol = " "
