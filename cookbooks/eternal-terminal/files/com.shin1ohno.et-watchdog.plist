@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- et-watchdog (darwin) — issue #567. Periodic listener probe that kickstarts
+     homebrew.mxcl.et when port 2022 stops accepting (the alive-but-not-listening
+     wedge that KeepAlive(NetworkState) cannot see). StartInterval (not KeepAlive)
+     because this is a oneshot probe that should exit and re-fire every 60s.
+     Logs via `logger -t et-watchdog` (no Standard*Path → no arch-dependent log
+     dir to template). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.shin1ohno.et-watchdog</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/et-watchdog.sh</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>60</integer>
+</dict>
+</plist>

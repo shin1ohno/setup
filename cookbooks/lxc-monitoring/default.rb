@@ -300,6 +300,18 @@ remote_file "#{deploy_dir}/alerts/unbound.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
+# Eternal Terminal listener health — fed by each et host's et-watchdog
+# node_exporter textfile metrics (cookbooks/eternal-terminal). Reaches
+# Prometheus only from scraped hosts (today pro-dev); mini/air/neo et health is
+# covered centrally by the Kibana synthetics TCP probe. Origin: issue #567.
+remote_file "#{deploy_dir}/alerts/et-watchdog.yml" do
+  source "files/alerts/et-watchdog.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # RTX SNMP scrape health (hnd .253 / itm .254). `up{job="snmp-rtx"} == 0`
 # means snmp_exporter cannot poll the router — most often the device lost its
 # `snmp host any` / `snmpv2c host any` ACL on a reboot. The ACL is declared in
