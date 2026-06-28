@@ -98,6 +98,38 @@ home-monitor (CodeCommit, profile sh1admn):
 - fix-loop escalation: 3 試行で設計前提を疑い停止
 - 初回は **インタラクティブに roon issue で 1 件 e2e 検証**してから無人 /loop に載せる
 
+## Phase 4 — Loop B のユーザー信号反応 (Layer 2-C)
+
+Loop B は本来 `self-heal-needs-human` 付き issue を恒久除外する。これだと needs-human で止まった
+issue に owner が後から「GO」「この方針で」とコメントしても永久放置される。Layer 2-C は owner の
+issue/PR コメント・更新を拾って再着手する。
+
+**核心の制約**: create/resolve ループは owner 本人 (`shin1ohno`) の gh トークンで投稿するため、
+コメント著者の login だけでは *owner の指示* と *ループ自身のコメント* を区別できない。
+
+**identity 3 分類** (`SELF_HEAL_OWNER`, 既定 `shin1ohno`):
+
+| 分類 | 判定 | 扱い |
+|---|---|---|
+| 第三者 | 著者 != owner | 完全無視 (反応しない) |
+| ループ自身 | 著者 == owner かつ body に `<!-- self-heal-bot -->` | watermark に使用 |
+| ユーザー信号 | 著者 == owner かつ マーカー無し | 再着手の引き金 (GO 承認) |
+
+**bot マーカー規約**: resolve/create の**全コメント**末尾に `<!-- self-heal-bot -->` を付与
+(create.sh は `BOT_MARKER` 定数, resolve は SKILL の規約)。忘れると自分のコメントをユーザー信号と
+誤認し無限ループする。
+
+**ステートレス watermark**: issue/PR 上で「最新のユーザー信号コメント `createdAt` > 最新の bot
+マーカーコメント `createdAt`」なら未処理信号あり。再着手時の bot ack コメントが新 watermark になり、
+追加ストレージ無しで重複処理を防ぐ。本文編集は `lastEditedAt` を best-effort 信号に、needs-human
+ラベルの除去は通常 actionable 化 (既存挙動)。
+
+**セマンティクス**: ユーザー信号は needs-human の**評価ゲートのみ**を解除する。GO 承認後は class D
+(新規 cookbook 等) でも実装まで自律で進むが、**ハード境界 (CI green 必須・破壊的/auth/secret/IAM/KMS
+の自動修正禁止・PR→auto-mitamae 経由のみ・home-monitor TF は needs-human・3 試行で停止) は一切
+waive しない**。抵触したら needs-human を再付与して停止。PR への owner レビューは PR ブランチへ push
+で反映し、CI green ＋未解決レビュー無し ＋ (class A/B または user-GO) で merge。
+
 ## 検証コマンド (Claude 実行可)
 
 - observer: `ruby -c` / `bash -n` / shellcheck / `bin/lint-cognee... lint-cookbooks` / dry-run
