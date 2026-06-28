@@ -50,6 +50,11 @@ AWS_PROFILE_="${SELF_HEAL_AWS_PROFILE:-pve-bootstrap-ssm}"
 AWS_REGION_="${SELF_HEAL_AWS_REGION:-ap-northeast-1}"
 STATE_INDEX="${SELF_HEAL_STATE_INDEX:-self-heal-state}"
 DRY_RUN="${SELF_HEAL_DRY_RUN:-0}"
+# Marker stamped on EVERY comment this loop posts, so self-heal-resolve can tell
+# loop-authored comments from a real user comment (both are authored by the same
+# `shin1ohno` gh token). resolve treats owner comments WITHOUT this marker as a
+# user GO-signal; this marker keeps create-loop comments out of that path.
+BOT_MARKER="<!-- self-heal-bot -->"
 # ES password cache (cut kms:Decrypt: this loop runs every 2 min and each SSM
 # get-parameter --with-decryption is one kms:Decrypt). Mirrors the CT111
 # observer's get_pw cache, but on a per-host tmpfs path: the loop runs on pro-dev
@@ -209,7 +214,7 @@ act_create() { # <dedup_key> <title> <body>
 act_reopen() { # <issue#> <observed_value>
   if dry; then echo "WOULD reopen: #$1 (flap)" >&2; reopened=$((reopened+1)); return; fi
   if gh issue reopen "$1" --repo "$REPO" \
-       --comment "🔁 再発（flap）: observer が再び active を報告（$(ts)）。${2}" >/dev/null 2>&1; then
+       --comment "🔁 再発（flap）: observer が再び active を報告（$(ts)）。${2} ${BOT_MARKER}" >/dev/null 2>&1; then
     reopened=$((reopened+1))
   else
     log "WARN: gh issue reopen failed for #$1 (retried next cycle)"; failures=$((failures+1))
@@ -218,7 +223,7 @@ act_reopen() { # <issue#> <observed_value>
 act_close() { # <issue#>
   if dry; then echo "WOULD close: #$1" >&2; closed=$((closed+1)); return; fi
   if gh issue close "$1" --repo "$REPO" \
-       --comment "✅ RESOLVED — observer が active を報告しなくなりました（$(ts)）。fleet 上でクリア済み。" >/dev/null 2>&1; then
+       --comment "✅ RESOLVED — observer が active を報告しなくなりました（$(ts)）。fleet 上でクリア済み。${BOT_MARKER}" >/dev/null 2>&1; then
     closed=$((closed+1))
   else
     log "WARN: gh issue close failed for #$1 (retried next cycle)"; failures=$((failures+1))
