@@ -31,14 +31,6 @@ mcp_servers:
       OBSIDIAN_API_KEY:
         ssm: "/mcp/obsidian-api-key"
 
-  notion:
-    type: http
-    transport: http
-    url: "https://mcp.notion.com/mcp"
-    # OAuth authentication via Notion.
-    # No `desktop:` flag — used as an account-level Custom Connector in Claude
-    # Desktop, so it is intentionally NOT bridged into claude_desktop_config.json.
-
   ai-memory:
     type: http
     transport: sse
