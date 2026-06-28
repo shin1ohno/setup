@@ -309,6 +309,8 @@ def chunk_text(text: str, size: int = 1200, overlap: int = 150) -> list[str]:
                     end = start + idx + len(sep)
                     break
         chunks.append(text[start:end].strip())
+        if end >= len(text):
+            break  # reached the tail; stop before overlap re-emits tiny dupes
         start = max(end - overlap, start + 1)
     return [c for c in chunks if c]
 
