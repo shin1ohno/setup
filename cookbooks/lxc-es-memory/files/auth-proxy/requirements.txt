@@ -1,0 +1,7 @@
+aiohttp>=3.9,<4
+PyJWT[crypto]>=2.8,<3
+opentelemetry-api>=1.28
+opentelemetry-sdk>=1.28
+opentelemetry-exporter-otlp-proto-grpc>=1.28
+opentelemetry-instrumentation-aiohttp-server>=0.49b0
+opentelemetry-instrumentation-aiohttp-client>=0.49b0

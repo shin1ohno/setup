@@ -1,0 +1,68 @@
+services:
+  # Unified Cognee + Mem0 MCP server backed by the ElasticSearch cluster.
+  # Serves two MCP namespaces on one port: /cognee/mcp and /memory/mcp.
+  es-memory-mcp:
+    build: ./es-memory-mcp
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      # ES_URL / ES_USER / ES_PASSWORD / OPENAI_API_KEY / EMBEDDING_* / LLM_MODEL
+      # generated from SSM by generate_env.sh
+      - .env
+    environment:
+      - ES_VERIFY_CERTS=false
+      - KNOWLEDGE_INDEX=knowledge
+      - MEMORY_INDEX=memory-user
+      - MEM0_USER=shin1ohno
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/cognee/mcp', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # SAGE-JWT auth proxy for the cognee namespace (path-transparent: forwards
+  # the full /cognee/... path to the upstream, which serves it).
+  cognee-auth-proxy:
+    build: ./auth-proxy
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      - SAGE_ISSUER=https://mcp.ohno.be
+      - SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
+      - UPSTREAM_URL=http://es-memory-mcp:8000
+      - PORT=8002
+      - PATH_PREFIX=/cognee
+    depends_on:
+      es-memory-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # SAGE-JWT auth proxy for the memory namespace.
+  memory-auth-proxy:
+    build: ./auth-proxy
+    restart: unless-stopped
+    ports:
+      - "8766:8766"
+    environment:
+      - SAGE_ISSUER=https://mcp.ohno.be
+      - SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
+      - UPSTREAM_URL=http://es-memory-mcp:8000
+      - PORT=8766
+      - PATH_PREFIX=/memory
+    depends_on:
+      es-memory-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8766/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
