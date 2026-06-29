@@ -6,12 +6,18 @@
 # hybrid search on the existing 3-node ES cluster (basic license, no ML —
 # embeddings computed externally via OpenAI text-embedding-3-small).
 #
-# Serves two MCP namespaces on one upstream so the existing claude.ai
-# connector tool names (mcp__claude_ai_cognee__*, mcp__claude_ai_ai_memory__*)
-# are preserved 1:1:  /cognee/mcp and /memory/mcp, each behind its own
-# SAGE-JWT auth proxy (reused verbatim from cookbooks/lxc-memory).
+# Runs as native systemd units + a Python venv (NOT docker). Per the PVE LXC
+# design gate (~/.claude/rules/pve-lxc.md): a single-purpose service LXC
+# prefers apt+venv+systemd over docker-compose, avoiding the docker-in-LXC bug
+# class (bind-mount UID mapping, .env shell-interpretation, BuildKit failures,
+# image pulls). Three units share one venv:
 #
-# Requires docker-engine cookbook to be included before this cookbook.
+#   es-memory-mcp.service          uvicorn server:app  (127.0.0.1:8000)
+#   es-memory-cognee-proxy.service proxy.py PATH_PREFIX=/cognee  (:8002)
+#   es-memory-memory-proxy.service proxy.py PATH_PREFIX=/memory  (:8766)
+#
+# Tool names are preserved 1:1 so the existing claude.ai connectors
+# (mcp__claude_ai_cognee__*, mcp__claude_ai_ai_memory__*) keep working.
 
 return if node[:platform] == "darwin"
 
@@ -24,68 +30,92 @@ ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "
 aws_profile = ssh_keys_config["aws_profile"]
 aws_region  = ssh_keys_config["aws_region"]
 
-deploy_dir = "#{node[:setup][:home]}/deploy/es-memory"
+base_dir = "/opt/es-memory"
+app_dir  = "#{base_dir}/app"
+venv_dir = "#{base_dir}/venv"
+env_path = "#{base_dir}/es-memory.env"
 
-directory deploy_dir do
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "755"
-  action :create
+# Debian 13 minimal LXC ships without python3-venv/pip — see
+# ~/.claude/rules/pve-lxc.md "Debian 13 Minimal LXC — Mandatory Bootstrap".
+execute "install es-memory python deps" do
+  command "apt-get update -qq && apt-get install -y python3 python3-venv python3-pip ca-certificates"
+  not_if "dpkg -s python3-venv python3-pip >/dev/null 2>&1"
 end
 
-remote_file "#{deploy_dir}/docker-compose.yml" do
-  source "files/docker-compose.yml"
-  owner node[:setup][:user]
-  group node[:setup][:group]
+[base_dir, app_dir].each do |d|
+  directory d do
+    owner "root"
+    group "root"
+    mode "755"
+    action :create
+  end
+end
+
+# Restart executes (declared early so the file resources below can notify
+# them). only_if guards the first converge, where the unit file is installed
+# later in this same recipe by systemd_unit — restart is skipped until the
+# unit exists, and systemd_unit's own activate starts it.
+%w[es-memory-mcp es-memory-cognee-proxy es-memory-memory-proxy].each do |svc|
+  execute "restart #{svc}" do
+    command "sudo systemctl restart #{svc}.service"
+    action :nothing
+    only_if "systemctl cat #{svc}.service >/dev/null 2>&1"
+  end
+end
+
+# requirements + venv -------------------------------------------------------
+remote_file "#{app_dir}/requirements.txt" do
+  source "files/requirements.txt"
+  owner "root"
+  group "root"
   mode "644"
-  notifies :run, "execute[restart es-memory]"
+  notifies :run, "execute[pip install es-memory deps]"
 end
 
-# es-memory-mcp server build context
-mcp_dir = "#{deploy_dir}/es-memory-mcp"
-directory mcp_dir do
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "755"
-  action :create
+execute "create es-memory venv" do
+  command "python3 -m venv #{venv_dir}"
+  not_if "test -x #{venv_dir}/bin/python"
+  notifies :run, "execute[pip install es-memory deps]"
 end
 
-%w[Dockerfile requirements.txt es_backend.py server.py].each do |f|
-  remote_file "#{mcp_dir}/#{f}" do
-    source "files/es-memory-mcp/#{f}"
-    owner node[:setup][:user]
-    group node[:setup][:group]
+execute "pip install es-memory deps" do
+  command "#{venv_dir}/bin/pip install --upgrade pip && " \
+          "#{venv_dir}/bin/pip install -r #{app_dir}/requirements.txt"
+  action :nothing
+  notifies :run, "execute[restart es-memory-mcp]"
+  notifies :run, "execute[restart es-memory-cognee-proxy]"
+  notifies :run, "execute[restart es-memory-memory-proxy]"
+end
+
+# Application code ----------------------------------------------------------
+{
+  "es-memory-mcp/server.py"     => "server.py",
+  "es-memory-mcp/es_backend.py" => "es_backend.py",
+}.each do |src, dest|
+  remote_file "#{app_dir}/#{dest}" do
+    source "files/#{src}"
+    owner "root"
+    group "root"
     mode "644"
-    notifies :run, "execute[restart es-memory]"
+    notifies :run, "execute[restart es-memory-mcp]"
   end
 end
 
-# Auth proxy build context (one image, two compose services with different
-# PATH_PREFIX / PORT env — see docker-compose.yml).
-auth_proxy_dir = "#{deploy_dir}/auth-proxy"
-directory auth_proxy_dir do
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "755"
-  action :create
-end
-
-%w[Dockerfile requirements.txt proxy.py].each do |f|
-  remote_file "#{auth_proxy_dir}/#{f}" do
-    source "files/auth-proxy/#{f}"
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "644"
-    notifies :run, "execute[restart es-memory]"
-  end
+remote_file "#{app_dir}/proxy.py" do
+  source "files/auth-proxy/proxy.py"
+  owner "root"
+  group "root"
+  mode "644"
+  notifies :run, "execute[restart es-memory-cognee-proxy]"
+  notifies :run, "execute[restart es-memory-memory-proxy]"
 end
 
 # Standalone ES index templates + setup script (the server self-bootstraps
-# indices on startup; these are kept for manual ops / migration use).
-es_indices_dir = "#{deploy_dir}/es-indices"
+# indices on startup; kept for manual ops / migration).
+es_indices_dir = "#{base_dir}/es-indices"
 directory es_indices_dir do
-  owner node[:setup][:user]
-  group node[:setup][:group]
+  owner "root"
+  group "root"
   mode "755"
   action :create
 end
@@ -93,16 +123,13 @@ end
 %w[knowledge.json memory-user.json setup_indices.sh].each do |f|
   remote_file "#{es_indices_dir}/#{f}" do
     source "files/es-indices/#{f}"
-    owner node[:setup][:user]
-    group node[:setup][:group]
+    owner "root"
+    group "root"
     mode(f.end_with?(".sh") ? "755" : "644")
-    notifies :run, "execute[restart es-memory]"
   end
 end
 
-# Generate .env with secrets from SSM Parameter Store. Gate on the ES password
-# path (/monitoring/* is in the pve-bootstrap-ssm grant) — a representative
-# read that fails if the profile lacks SSM access.
+# .env (EnvironmentFile) from SSM ------------------------------------------
 generated_dir = "#{node[:setup][:root]}/generated"
 directory node[:setup][:root] do
   mode "755"
@@ -116,7 +143,6 @@ end
 
 generate_env_script = File.join(File.dirname(__FILE__), "files", "generate_env.sh")
 env_temp_path = "#{generated_dir}/es-memory.env"
-env_output_path = "#{deploy_dir}/.env"
 
 require_external_auth(
   tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/elastic/* + /mcp/* SSM params",
@@ -127,7 +153,7 @@ require_external_auth(
                 "/monitoring/elastic/* and /mcp/openai-api-key in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. " \
                 "Then press Enter.",
-  skip_if: -> { File.exist?(env_output_path) },
+  skip_if: -> { File.exist?(env_path) },
 ) do
   execute "generate es-memory .env" do
     command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
@@ -136,14 +162,14 @@ require_external_auth(
   end
 end
 
-# Deploy + clean up at converge time (converge-time only_if, not compile-time
-# File.exist? — see ~/.claude/rules/ruby.md mitamae evaluation model).
-remote_file env_output_path do
+# Place the env (converge-time only_if, not compile-time File.exist? — see
+# ~/.claude/rules/ruby.md mitamae evaluation model).
+remote_file env_path do
   source env_temp_path
-  owner node[:setup][:user]
-  group node[:setup][:group]
+  owner "root"
+  group "root"
   mode "600"
-  notifies :run, "execute[restart es-memory]"
+  notifies :run, "execute[restart es-memory-mcp]"
   only_if "test -f #{env_temp_path}"
 end
 
@@ -152,17 +178,25 @@ file env_temp_path do
   only_if "test -f #{env_temp_path}"
 end
 
-# Compose orchestration via the compose_service DSL. Emits
-# `ensure es-memory running` + `restart es-memory`. build_flag true because all
-# three services build from local context; buildkit false because BuildKit's
-# mount namespacing trips up in an unprivileged PVE LXC even with
-# features_nesting=true (see ~/.claude/rules/pve-lxc.md + lxc-consent); wait
-# true so the MCP server's ES index bootstrap completes before returning.
-compose_service "es-memory" do
-  compose_path "#{deploy_dir}/docker-compose.yml"
-  deploy_dir deploy_dir
-  env_path env_output_path
-  buildkit false
-  build_flag true
-  wait true
+# systemd units -------------------------------------------------------------
+units_staging = "#{node[:setup][:root]}/es-memory"
+directory units_staging do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w[es-memory-mcp es-memory-cognee-proxy es-memory-memory-proxy].each do |svc|
+  staged = "#{units_staging}/#{svc}.service"
+  remote_file staged do
+    source "files/systemd/#{svc}.service"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+  end
+
+  systemd_unit "#{svc}.service" do
+    staging_path staged
+  end
 end

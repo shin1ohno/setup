@@ -1,0 +1,28 @@
+[Unit]
+Description=es-memory unified MCP server (Cognee+Mem0 on ElasticSearch)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/es-memory/app
+# ES_URL / ES_USER / ES_PASSWORD / OPENAI_API_KEY / EMBEDDING_* / LLM_MODEL.
+# EnvironmentFile is metacharacter-safe (no shell source) — preferred over
+# docker-compose env_file for SSM-sourced secrets (~/.claude/rules/pve-lxc.md).
+EnvironmentFile=/opt/es-memory/es-memory.env
+Environment=ES_VERIFY_CERTS=false
+Environment=KNOWLEDGE_INDEX=knowledge
+Environment=MEMORY_INDEX=memory-user
+Environment=MEM0_USER=shin1ohno
+ExecStart=/opt/es-memory/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5
+# Namespace hardening (NoNewPrivileges/ProtectSystem/ProtectHome/PrivateTmp)
+# intentionally omitted: they fail with status=226/NAMESPACE inside privileged
+# PVE LXCs (see node-exporter.service + ~/.claude/rules/pve-lxc.md). The MCP
+# server listens only on 127.0.0.1 behind the auth proxies.
+
+[Install]
+WantedBy=multi-user.target

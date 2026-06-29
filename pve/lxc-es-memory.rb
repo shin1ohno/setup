@@ -13,6 +13,7 @@
 
 include_recipe "../cookbooks/functions/default"
 
-include_cookbook "docker-engine"
+# No docker-engine: the stack runs as native systemd units + a Python venv
+# (see cookbooks/lxc-es-memory, which pulls in awscli for the SSM .env gate).
 include_cookbook "lxc-es-memory"
 lxc_entry(tags: ["lxc", "es-memory"])
