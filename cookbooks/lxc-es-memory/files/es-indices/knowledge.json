@@ -1,0 +1,28 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1,
+    "index": {
+      "similarity": {
+        "default": { "type": "BM25" }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "text":        { "type": "text" },
+      "embedding": {
+        "type": "dense_vector",
+        "dims": 1536,
+        "index": true,
+        "similarity": "cosine"
+      },
+      "dataset":     { "type": "keyword" },
+      "summary":     { "type": "text" },
+      "source_doc":  { "type": "keyword" },
+      "chunk_index": { "type": "integer" },
+      "created_at":  { "type": "date" },
+      "metadata":    { "type": "object", "enabled": true }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+[Unit]
+Description=es-memory SAGE-JWT auth proxy (memory namespace)
+After=es-memory-mcp.service network-online.target
+Wants=es-memory-mcp.service network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/es-memory/app
+Environment=SAGE_ISSUER=https://mcp.ohno.be
+Environment=SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
+Environment=UPSTREAM_URL=http://127.0.0.1:8000
+Environment=PORT=8766
+Environment=PATH_PREFIX=/memory
+ExecStart=/opt/es-memory/venv/bin/python proxy.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
