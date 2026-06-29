@@ -58,10 +58,3 @@ mcp_servers:
     transport: http
     url: "https://mcp.ohno.be/cognee/mcp"
     desktop: mcp-remote
-
-  sage:
-    type: http
-    transport: http
-    url: "https://mcp.ohno.be/mcp"
-    # No `desktop:` flag — endpoint currently returns empty replies (unrouted /
-    # down). Re-enable by adding `desktop: mcp-remote` once it serves MCP.
