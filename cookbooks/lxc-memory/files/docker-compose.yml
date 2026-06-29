@@ -18,8 +18,8 @@ services:
       # plaintext under `environment:` below.
       - .env
     environment:
-      - SAGE_ISSUER=https://mcp.ohno.be
-      - SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
+      - OIDC_ISSUER=https://mcp.ohno.be
+      - OIDC_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
       - UPSTREAM_URL=http://openmemory-api:8765
       - PORT=8766
       - PATH_PREFIX=/memory
