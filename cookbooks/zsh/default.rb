@@ -54,3 +54,24 @@ end
 execute "echo 'unsetopt GLOBAL_RCS' >> #{node[:setup][:home]}/.zshenv" do
   not_if "fgrep -q 'unsetopt GLOBAL_RCS' #{node[:setup][:home]}/.zshenv"
 end
+
+# GITHUB_TOKEN from the gh CLI's stored credential, so every tool that hits the
+# GitHub API authenticated gets the 5000 req/h limit instead of the 60 req/h
+# unauthenticated one. The original pain was `mise up` exhausting 60 req/h
+# (resolving releases via the github/ubi/aqua backends) and then 403-ing, but the
+# var is general: gh itself, ubi/aqua installs, and any gh-API script benefit too.
+# Derived from `gh auth token` so the right account is picked per machine
+# (personal vs corp) with no static PAT to store on disk.
+add_profile "github-token" do
+  bash_content <<~'EOS'
+    # Only set when unset (respects an explicit token / CI) and only when gh is
+    # present AND yields a token — never export an empty value (a blank
+    # Authorization header is worse than sending none). Interactive only: profile
+    # is sourced from ~/.zshrc, so non-interactive shells pay no `gh` cost.
+    if [ -z "${GITHUB_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
+      _sh1_gh_token="$(gh auth token 2>/dev/null)"
+      [ -n "${_sh1_gh_token}" ] && export GITHUB_TOKEN="${_sh1_gh_token}"
+      unset _sh1_gh_token
+    fi
+  EOS
+end
