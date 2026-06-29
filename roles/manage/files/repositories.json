@@ -29,10 +29,6 @@
       "uri": "git@github.com:shin1ohno/gws.nvim.git"
     },
     {
-      "name": "sage",
-      "uri": "git@github.com:shin1ohno/sage.git"
-    },
-    {
       "name": "terraform-provider-rtx",
       "uri": "git@github.com:shin1ohno/terraform-provider-rtx.git"
     },
