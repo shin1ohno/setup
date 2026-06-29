@@ -33,8 +33,15 @@ mcp_servers:
 
   ai-memory:
     type: http
-    transport: sse
-    url: "https://mcp.ohno.be/memory/mcp/claude/sse/shin1ohno"
+    # openmemory was patched to Streamable HTTP (cookbooks/lxc-memory patches/
+    # mcp-server.py mounts streamable_http_app() at /mcp, removing the old
+    # SSE-only routes). The endpoint is /memory/mcp (nginx strips the /memory
+    # prefix → auth-proxy /mcp → openmemory-api). The legacy SSE path
+    # /memory/mcp/claude/sse/shin1ohno no longer serves MCP — a client pinned to
+    # it authenticates fine but then "Failed to connect" at the SSE handshake.
+    # Mirror cognee: transport http against the /mcp endpoint.
+    transport: http
+    url: "https://mcp.ohno.be/memory/mcp"
     desktop: mcp-remote
 
   roon:
