@@ -1,0 +1,15 @@
+[
+  {
+    // create_worktree hook: runs automatically after Zed creates a linked git
+    // worktree (worktree picker, `git: worktree`, or the `zed` CLI). Delegates
+    // to files/provision-worktree.sh (env copy + `mise trust`). The script is
+    // referenced by absolute path because a GUI-launched Zed has a stripped
+    // PATH; $ZED_* are substituted by Zed at task-build time.
+    "label": "provision new git worktree",
+    "command": "<%= node[:setup][:home] %>/.config/zed/provision-worktree.sh",
+    "args": ["$ZED_MAIN_GIT_WORKTREE", "$ZED_WORKTREE_ROOT"],
+    "hooks": ["create_worktree"],
+    "reveal": "no_focus",
+    "hide": "on_success"
+  }
+]
