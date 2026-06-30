@@ -35,7 +35,7 @@ remote_file "#{deploy_dir}/docker-compose.yml" do
   notifies :run, "execute[restart memory]"
 end
 
-# Auth proxy — validates sage OAuth tokens in front of openmemory-api
+# Auth proxy — validates OIDC (Ory Hydra) tokens in front of openmemory-api
 auth_proxy_dir = "#{deploy_dir}/auth-proxy"
 directory auth_proxy_dir do
   owner node[:setup][:user]

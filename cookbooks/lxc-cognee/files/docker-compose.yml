@@ -151,7 +151,7 @@ services:
       # cognee-mcp 1.0.9 enforces MCP Host-header (DNS-rebinding) validation
       # by default, allowing only localhost. The auth-proxy reaches us as
       # Host "cognee-mcp:8000", which would 421. Disable the check: the MCP is
-      # not directly exposed (auth-proxy SAGE-JWT in front + 127.0.0.1 bind).
+      # not directly exposed (auth-proxy OIDC-JWT in front + 127.0.0.1 bind).
       - MCP_DISABLE_DNS_REBINDING_PROTECTION=true
       - API_URL=http://cognee:8000
       - API_TOKEN=${COGNEE_MCP_API_TOKEN}
@@ -192,8 +192,8 @@ services:
       # .env as the rest of the cognee stack.
       - .env
     environment:
-      - SAGE_ISSUER=https://mcp.ohno.be
-      - SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
+      - OIDC_ISSUER=https://mcp.ohno.be
+      - OIDC_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
       - UPSTREAM_URL=http://cognee-mcp:8000
       - PORT=8767
       - PATH_PREFIX=/cognee
