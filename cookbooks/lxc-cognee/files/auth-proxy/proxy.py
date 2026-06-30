@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Auth proxy for OpenMemory MCP server.
 
-Validates sage OAuth tokens (RS256 via JWKS) and proxies authenticated
+Validates OIDC (Ory Hydra) OAuth tokens (RS256 via JWKS) and proxies authenticated
 requests to the upstream openmemory-api service.
 """
 
@@ -49,9 +49,9 @@ trace.set_tracer_provider(_provider)
 AioHttpServerInstrumentor().instrument()
 AioHttpClientInstrumentor().instrument()
 
-SAGE_ISSUER = os.environ.get("SAGE_ISSUER", "https://mcp.ohno.be")
-SAGE_JWKS_URL = os.environ.get(
-    "SAGE_JWKS_URL", "https://mcp.ohno.be/.well-known/jwks.json"
+OIDC_ISSUER = os.environ.get("OIDC_ISSUER", "https://mcp.ohno.be")
+OIDC_JWKS_URL = os.environ.get(
+    "OIDC_JWKS_URL", "https://mcp.ohno.be/.well-known/jwks.json"
 )
 UPSTREAM_URL = os.environ.get("UPSTREAM_URL", "http://openmemory-api:8765")
 PORT = int(os.environ.get("PORT", "8766"))
@@ -143,7 +143,7 @@ class TokenVerifier:
             return None
 
 
-verifier = TokenVerifier(SAGE_JWKS_URL, SAGE_ISSUER)
+verifier = TokenVerifier(OIDC_JWKS_URL, OIDC_ISSUER)
 
 
 # ── CORS helpers ─────────────────────────────────────────────────────
@@ -166,8 +166,8 @@ def add_cors(headers: dict) -> dict:
 
 # ── Request handling ───────────────────────────────────────────────────
 
-# Resource identifier — distinct from sage to avoid MCP client confusion
-RESOURCE_ID = f"{SAGE_ISSUER}{PATH_PREFIX}" if PATH_PREFIX else SAGE_ISSUER
+# Resource identifier — distinct from the issuer root to avoid MCP client confusion
+RESOURCE_ID = f"{OIDC_ISSUER}{PATH_PREFIX}" if PATH_PREFIX else OIDC_ISSUER
 
 WWW_AUTH = (
     f'Bearer resource_metadata="{RESOURCE_ID}/.well-known/oauth-protected-resource"'
@@ -209,7 +209,7 @@ async def handle(request: web.Request) -> web.StreamResponse:
             return web.json_response(
                 {
                     "resource": RESOURCE_ID,
-                    "authorization_servers": [SAGE_ISSUER],
+                    "authorization_servers": [OIDC_ISSUER],
                     "scopes_supported": ["mcp:read", "mcp:write", "mcp:admin"],
                     "bearer_methods_supported": ["header"],
                 },

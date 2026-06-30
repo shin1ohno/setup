@@ -1,5 +1,5 @@
 [Unit]
-Description=es-memory SAGE-JWT auth proxy (cognee namespace)
+Description=es-memory OIDC-JWT auth proxy (cognee namespace)
 After=es-memory-mcp.service network-online.target
 Wants=es-memory-mcp.service network-online.target
 
@@ -8,8 +8,8 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/opt/es-memory/app
-Environment=SAGE_ISSUER=https://mcp.ohno.be
-Environment=SAGE_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
+Environment=OIDC_ISSUER=https://mcp.ohno.be
+Environment=OIDC_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
 Environment=UPSTREAM_URL=http://127.0.0.1:8000
 Environment=PORT=8002
 Environment=PATH_PREFIX=/cognee
