@@ -69,19 +69,25 @@ remote_file "#{app_dir}/requirements.txt" do
   owner "root"
   group "root"
   mode "644"
-  notifies :run, "execute[pip install es-memory deps]"
 end
 
 execute "create es-memory venv" do
   command "python3 -m venv #{venv_dir}"
   not_if "test -x #{venv_dir}/bin/python"
-  notifies :run, "execute[pip install es-memory deps]"
 end
 
+# Self-healing pip install: runs when the venv lacks the installed deps
+# (uvicorn absent) OR requirements.txt changed since the last install (md5
+# sentinel). NOT `action :nothing` — a notification-only install silently
+# never runs on a re-apply where the venv dir exists but packages are missing
+# (e.g. a prior interrupted install), leaving the units in an activating loop.
+# The not_if guard makes it idempotent AND self-repairing.
 execute "pip install es-memory deps" do
   command "#{venv_dir}/bin/pip install --upgrade pip && " \
-          "#{venv_dir}/bin/pip install -r #{app_dir}/requirements.txt"
-  action :nothing
+          "#{venv_dir}/bin/pip install -r #{app_dir}/requirements.txt && " \
+          "md5sum #{app_dir}/requirements.txt > #{venv_dir}/.reqs.md5"
+  not_if "test -x #{venv_dir}/bin/uvicorn && test -f #{venv_dir}/.reqs.md5 && " \
+         "md5sum -c --status #{venv_dir}/.reqs.md5"
   notifies :run, "execute[restart es-memory-mcp]"
   notifies :run, "execute[restart es-memory-cognee-proxy]"
   notifies :run, "execute[restart es-memory-memory-proxy]"
@@ -145,12 +151,12 @@ generate_env_script = File.join(File.dirname(__FILE__), "files", "generate_env.s
 env_temp_path = "#{generated_dir}/es-memory.env"
 
 require_external_auth(
-  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/elastic/* + /mcp/* SSM params",
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/elastic/* + /cognee/* SSM params",
   check_command: "aws ssm get-parameter --name /monitoring/elastic/elastic-password " \
                  "--profile #{aws_profile} --region #{aws_region} " \
                  "> /dev/null 2>&1",
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
-                "/monitoring/elastic/* and /mcp/openai-api-key in #{aws_region}. " \
+                "/monitoring/elastic/* and /cognee/llm-api-key in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. " \
                 "Then press Enter.",
   skip_if: -> { File.exist?(env_path) },
