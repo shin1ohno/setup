@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 
+from contextlib import asynccontextmanager
+
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.routing import Mount
@@ -284,7 +286,21 @@ def delete_all_memories() -> str:
 # =========================================================================== #
 # Mount both namespaces under one Starlette app
 # =========================================================================== #
-app = Starlette(routes=[
-    Mount("/cognee", app=cognee_mcp.streamable_http_app()),
-    Mount("/memory", app=memory_mcp.streamable_http_app()),
-])
+# Mounted FastMCP sub-apps do NOT get their lifespan run by the parent
+# Starlette automatically. Without running each app's StreamableHTTPSessionManager
+# via its lifespan, every request 500s ("session manager not initialized").
+# Run both session managers from the parent lifespan.
+@asynccontextmanager
+async def lifespan(_app):
+    async with cognee_mcp.session_manager.run():
+        async with memory_mcp.session_manager.run():
+            yield
+
+
+app = Starlette(
+    routes=[
+        Mount("/cognee", app=cognee_mcp.streamable_http_app()),
+        Mount("/memory", app=memory_mcp.streamable_http_app()),
+    ],
+    lifespan=lifespan,
+)
