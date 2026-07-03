@@ -16,9 +16,7 @@
   # so the blind spot is detectable.
   #
   # Endpoint inventory (v1):
-  #   HTTP probes (10):  cognee:8001/health, cognee:8767/health,
-  #                      memory:8765/docs, memory:8766/health,
-  #                      roon-mcp:8080/health (401 expected),
+  #   HTTP probes (6):   roon-mcp:8080/health (401 expected),
   #                      weave:3001/, hydra:4444/health/ready,
   #                      hydra:4445/health/alive, consent:9020/,
   #                      monitoring:3000/api/health
@@ -34,61 +32,10 @@
   #   - External dependency probes (Roon Cloud, GitHub API)
 
   # ===== HTTP probes =====
-
-  - type: synthetics/http
-    id: synthetics-cognee-api
-    use_output: default
-    data_stream:
-      namespace: default
-    streams:
-      - data_stream.dataset: http
-        type: http
-        id: cognee-api-health
-        name: Cognee API health
-        enabled: true
-        schedule: "@every 60s"
-        urls: ["http://cognee.home.local:8001/health"]
-        timeout: 10s
-        tags: [cognee, lan-internal]
-
-  - type: synthetics/http
-    id: synthetics-cognee-authproxy
-    use_output: default
-    data_stream:
-      namespace: default
-    streams:
-      - data_stream.dataset: http
-        type: http
-        id: cognee-authproxy-health
-        name: Cognee auth-proxy health
-        enabled: true
-        schedule: "@every 60s"
-        urls: ["http://cognee.home.local:8767/health"]
-        timeout: 10s
-        tags: [cognee, auth-proxy, lan-internal]
-
-  # synthetics-memory-api removed: openmemory-api on memory:8765 binds to
-  # 127.0.0.1 only (LAN-internal access goes through the auth-proxy on
-  # :8766 which is the only publicly-bound port). The auth-proxy /health
-  # probe (synthetics-memory-authproxy below) covers the memory stack
-  # liveness — if the upstream openmemory-api is down, auth-proxy's
-  # /health forwarding would surface it.
-
-  - type: synthetics/http
-    id: synthetics-memory-authproxy
-    use_output: default
-    data_stream:
-      namespace: default
-    streams:
-      - data_stream.dataset: http
-        type: http
-        id: memory-authproxy-health
-        name: Memory auth-proxy health
-        enabled: true
-        schedule: "@every 60s"
-        urls: ["http://memory.home.local:8766/health"]
-        timeout: 10s
-        tags: [memory, auth-proxy, lan-internal]
+  #
+  # cognee (:8001/:8767) + memory (:8766) probes removed in #616 decommission
+  # (CT 105/107 retired, MCP surfaces migrated to lxc-es-memory/ES). The public
+  # gateway is still covered by the external mcp.ohno.be probe below.
 
   - type: synthetics/http
     id: synthetics-roon-mcp
