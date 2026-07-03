@@ -3,8 +3,6 @@
   {"host": "192.168.1.74", "user": "root", "role": "pve/lxc-weave.rb",        "label": "weave",        "ct_id": 109},
   {"host": "192.168.1.71", "user": "root", "role": "pve/lxc-hydra.rb",        "label": "hydra",        "ct_id": 106},
   {"host": "192.168.1.75", "user": "root", "role": "pve/lxc-consent.rb",      "label": "consent",      "ct_id": 110},
-  {"host": "192.168.1.70", "user": "root", "role": "pve/lxc-cognee.rb",       "label": "cognee",       "ct_id": 105},
-  {"host": "192.168.1.72", "user": "root", "role": "pve/lxc-memory.rb",       "label": "memory",       "ct_id": 107},
   {"host": "192.168.1.73", "user": "root", "role": "pve/lxc-roon-mcp.rb",     "label": "roon-mcp",     "ct_id": 108},
   {"host": "192.168.1.20", "user": "root", "role": "pve/lxc-roon.rb",         "label": "roon",         "ct_id": 100},
   {"host": "192.168.1.62", "user": "root", "role": "pve/lxc-samba.rb",        "label": "samba",        "ct_id": 101},
