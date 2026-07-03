@@ -30,6 +30,8 @@ Before syncing a managed config file (settings.json, YAML with list fields, etc.
 - **Replace (overwrite)**: the cookbook value wholly replaces the existing value. Entries in the deploy target but absent from the cookbook are silently deleted on the next run
 - **Deep-merge (object union)**: nested objects are merged key-by-key; behavior for each leaf field still falls into one of the above
 
+**Ruby `Hash#merge` gotcha**: `existing.merge(managed)` is **shallow** — only top-level keys merge. If `existing["k"]` and `managed["k"]` are BOTH Hashes, the result's `["k"]` becomes `managed["k"]` **wholesale**; every subkey present only in `existing["k"]` is lost. This is NOT a recursive union. Any nested-Hash field written by more than one actor (a public cookbook + a private overlay + interactive UI edits) needs an EXPLICIT per-field merge — `merged["k"] = existing.fetch("k", {}).merge(managed.fetch("k", {}))` — mirroring how a sibling field like `permissions` is already special-cased. Never assume bare top-level `Hash#merge` recurses. Origin: 2026-07 `~/.claude/settings.json` `enabledPlugins` — the shallow merge silently stripped an overlay-enabled plugin on every apply (shin1ohno/setup#611 added the explicit per-field merge; the private overlay also re-asserts its own entry).
+
 In the plan, state the merge mode for every field being changed. For union fields, include the manual-cleanup command (e.g., `jq 'del(.permissions.allow[] | select(...))'`) as an explicit plan step — never assume a cookbook deploy will remove stale entries.
 
 ## Deploy-Only Change Tracking
