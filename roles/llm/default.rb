@@ -11,6 +11,7 @@ include_cookbook "mcp"
 include_cookbook "claude-code"
 include_cookbook "gemini-cli"
 include_cookbook "codex-cli"  # Uses node[:mcp_servers] from mcp cookbook
+include_cookbook "crit"       # crit review-tool binary (ubi); CC plugin via claude-code
 include_cookbook "ollama"
 include_cookbook "llama-3-elyza-jp"
 include_cookbook "tfmcp"
