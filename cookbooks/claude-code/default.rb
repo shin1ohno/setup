@@ -91,6 +91,15 @@ execute "register openai-codex marketplace" do
   not_if "test -f #{known_marketplaces} && grep -q openai-codex #{known_marketplaces}"
 end
 
+# crit — local-first code review tool (crit.md). The `crit` binary is installed
+# by the crit cookbook (mise ubi); this registers its Claude Code plugin, which
+# is enabled via enabledPlugins in files/settings.json (crit@crit).
+execute "register crit marketplace" do
+  user node[:setup][:user]
+  command "#{claude_path} plugin marketplace add tomasz-tomczyk/crit"
+  not_if "test -f #{known_marketplaces} && grep -q '\"crit\"' #{known_marketplaces}"
+end
+
 remote_file "#{node[:setup][:home]}/.claude/CLAUDE.md" do
   source "files/CLAUDE.md"
   owner node[:setup][:user]

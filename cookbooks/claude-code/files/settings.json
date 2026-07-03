@@ -150,7 +150,8 @@
     "document-skills@anthropic-agent-skills": true,
     "design-md@saladdays-skills": true,
     "roundtable@saladdays-skills": true,
-    "codex@openai-codex": true
+    "codex@openai-codex": true,
+    "crit@crit": true
   },
   "enableAllProjectMcpServers": true,
   "skipDangerousModePermissionPrompt": true,
