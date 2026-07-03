@@ -169,6 +169,17 @@ if existing.key?("permissions") && managed.key?("permissions")
   end
 end
 
+# Deep merge for enabledPlugins: preserve plugins enabled OUTSIDE the managed set
+# (e.g. the mercari-setup overlay's pjmem, or any manually-enabled plugin) instead
+# of clobbering them. The shallow merge above replaces the whole enabledPlugins
+# map with the managed one; re-merge so managed entries still win on conflict (the
+# managed set stays enforced) while live-only entries survive. Same spirit as the
+# permissions union: this map only grows — a plugin is not disabled by removing it
+# from the managed set (disable it explicitly if needed).
+if existing["enabledPlugins"].is_a?(Hash) && managed["enabledPlugins"].is_a?(Hash)
+  merged["enabledPlugins"] = existing["enabledPlugins"].merge(managed["enabledPlugins"])
+end
+
 # Status line: force coralline with an absolute, per-host command. The static
 # files/settings.json value cannot interpolate $HOME, so set it here so every
 # platform resolves the correct home (a Linux path was previously hardcoded).
