@@ -24,8 +24,14 @@ from starlette.routing import Mount
 
 import es_backend as be
 
-cognee_mcp = FastMCP("cognee", stateless_http=True)
-memory_mcp = FastMCP("ai-memory", stateless_http=True)
+# Stateful (session-based) streamable HTTP — NOT stateless_http=True. The
+# claude.ai MCP connector requires the server to issue an `Mcp-Session-Id`
+# header on initialize and to hold session state for follow-up requests;
+# stateless mode omits the session id, so the connector's handshake fails
+# after OAuth with "no MCP server found at the provided URL". Single-worker
+# uvicorn (see the unit's --workers 1) keeps session state consistent.
+cognee_mcp = FastMCP("cognee")
+memory_mcp = FastMCP("ai-memory")
 
 # Self-bootstrap the ES indices on startup (idempotent, retries on cold ES).
 be.ensure_indices()
