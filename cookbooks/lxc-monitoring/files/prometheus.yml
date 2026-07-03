@@ -316,8 +316,8 @@ scrape_configs:
       module: [tcp_connect]
     static_configs:
       - targets:
-          - 192.168.1.70:8767
-          - 192.168.1.72:8766
+          # cognee (.70:8767) + memory (.72:8766) removed in #616 decommission
+          # (CT 105/107 retired, migrated to lxc-es-memory/ES).
           - 192.168.1.73:8080
           - 192.168.1.74:8888
           - 192.168.1.71:4444
