@@ -10,7 +10,11 @@ Group=root
 WorkingDirectory=/opt/es-memory/app
 Environment=OIDC_ISSUER=https://mcp.ohno.be
 Environment=OIDC_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
-Environment=UPSTREAM_URL=http://127.0.0.1:8000
+# UPSTREAM_URL includes the /cognee prefix: the mcp.ohno.be nginx strips the
+# /cognee/ location prefix (trailing-slash proxy_pass), so this proxy receives
+# /mcp; proxy.py forwards UPSTREAM_URL + path_qs, re-mapping to the server's
+# /cognee/mcp mount. See home-monitor scripts/mcp-proxy.conf.tftpl.
+Environment=UPSTREAM_URL=http://127.0.0.1:8000/cognee
 Environment=PORT=8002
 Environment=PATH_PREFIX=/cognee
 ExecStart=/opt/es-memory/venv/bin/python proxy.py
