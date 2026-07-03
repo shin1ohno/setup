@@ -56,13 +56,19 @@
     "enabled": true                               // default false — flip on for typed languages
   },
 
-  // ── Git gutter + inline blame ──────────────────────────────────────
+  // ── Git gutter + inline blame + worktrees ──────────────────────────
   "git": {
     "git_gutter": "tracked_files",                // default; "hide" disables gutter marks
     "inline_blame": {
       "enabled": true,                            // current-line virtual-text blame
       "delay_ms": 600                             // default 0; 600 avoids flicker while moving
-    }
+    },
+    // New linked worktrees (worktree picker / `git: worktree` / Parallel
+    // Agents) land under ../worktrees relative to the repo working dir — this
+    // is Zed's own default, pinned here to document intent. Per-worktree
+    // provisioning (copy gitignored env + `mise trust`) runs via the
+    // create_worktree task hook in tasks.json.
+    "worktree_directory": "../worktrees"
   },
 
   // ── Line width / wrapping ──────────────────────────────────────────

@@ -15,6 +15,10 @@
 #   ~/.config/zed/keymap.json                  — tmux-style Ctrl-A prefix for
 #                                                 pane nav + agent focus chord +
 #                                                 space-leader LSP/git/comment
+#   ~/.config/zed/tasks.json                    — create_worktree hook task that
+#                                                 provisions new git worktrees
+#                                                 (env copy + mise trust)
+#   ~/.config/zed/provision-worktree.sh         — script the hook delegates to
 #   ~/.config/zed/themes/glassy_nord.json      — vendored from
 #                                                 https://github.com/matt-gilb/zed_glassy-nord
 #                                                 (transparent / blurred
@@ -88,6 +92,28 @@ remote_file "#{zed_config_dir}/keymap.json" do
   group node[:setup][:group]
   mode "644"
   source "files/keymap.json"
+end
+
+# Script invoked by the create_worktree hook in tasks.json. Provisions a freshly
+# created git worktree (copies gitignored env files + `mise trust`) so a Parallel
+# Agents thread can use it immediately. Always exits 0 — never blocks worktree
+# creation.
+remote_file "#{zed_config_dir}/provision-worktree.sh" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  source "files/provision-worktree.sh"
+end
+
+# Global Zed tasks. Currently just the create_worktree hook. ERB-templated so the
+# hook's command can reference the script by absolute path (GUI Zed has a stripped
+# PATH). Project-specific tasks live in each repo's .zed/tasks.json and are not
+# touched by this cookbook.
+template "#{zed_config_dir}/tasks.json" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  source "templates/tasks.json.erb"
 end
 
 remote_file "#{zed_themes_dir}/glassy_nord.json" do
