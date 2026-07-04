@@ -7,7 +7,7 @@ description: "Sub-agent design principles, bulk research pattern, and tool selec
 - 1 agent = 1 task: never give multiple roles to a single agent
 - Run parallelizable tasks in parallel (Agent tool parallel calls)
 - Review gate: always include a review step for important outputs
-- Background first: any research task that does not block the next step must use `run_in_background: true`. This includes Cognee/Mem0 searches at conversation start, web research, and catalog lookups. The main conversation should never idle while waiting for research results — either launch background agents or continue interacting with the user
+- Background first: any research task that does not block the next step must use `run_in_background: true`. This includes Cognee/memory searches at conversation start, web research, and catalog lookups. The main conversation should never idle while waiting for research results — either launch background agents or continue interacting with the user
 
 ## Parallel Stream File-Exclusivity Declaration
 

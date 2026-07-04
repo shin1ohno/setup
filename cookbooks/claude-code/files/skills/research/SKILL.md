@@ -1,6 +1,6 @@
 ---
 name: research
-description: Research a topic using Cognee, Mem0, and web search. Persists findings automatically.
+description: Research a topic using Cognee, memory, and web search. Persists findings automatically.
 user-invocable: true
 argument-hint: "[topic or question]"
 ---
@@ -9,7 +9,7 @@ argument-hint: "[topic or question]"
 
 ## Purpose
 
-Investigate a topic by searching existing knowledge stores (Cognee, Mem0) and the web, then persist findings automatically.
+Investigate a topic by searching existing knowledge stores (Cognee, memory) and the web, then persist findings automatically.
 
 ## Argument Parsing
 
@@ -26,16 +26,16 @@ Launch 2 `researcher` agents **in parallel** via the Agent tool (both with `run_
 - Use `top_k=15` for broad exploration
 - Topic: `$ARGUMENTS`
 
-**Agent B — Mem0 search:**
-- Search Mem0 for any user-related context on the topic
+**Agent B — memory search:**
+- Search memory for any user-related context on the topic
 - Topic: `$ARGUMENTS`
 
 ### Step 2: Gap Analysis and Contradiction Detection
 
 When both agents return, synthesize their results:
 
-1. List what is already known (from Cognee + Mem0)
-2. **Contradiction check**: if Cognee and Mem0 return conflicting information, flag the contradiction explicitly and investigate which is current
+1. List what is already known (from Cognee + memory)
+2. **Contradiction check**: if Cognee and memory return conflicting information, flag the contradiction explicitly and investigate which is current
 3. Identify gaps: what questions remain unanswered?
 4. If no gaps exist, skip to Step 4
 
@@ -46,7 +46,7 @@ Launch a `researcher` agent to fill identified gaps:
 - Provide the specific gaps as search targets
 - Agent uses WebSearch to find sources, WebFetch to extract details
 - **Source credibility**: tag each finding with source type (official docs / engineering blog / forum post / vendor marketing). Flag findings that rely on a single low-credibility source
-- Agent saves new findings to Cognee/Mem0 before returning
+- Agent saves new findings to Cognee/memory before returning
 
 ### Step 4: Report
 
@@ -60,7 +60,7 @@ Present findings in BLUF format:
 [Numbered list of supporting facts/evidence]
 
 ## Sources
-[Where each finding came from: Cognee, Mem0, or web URL]
+[Where each finding came from: Cognee, memory, or web URL]
 
 ## Gaps
 [What remains unknown, if anything]
