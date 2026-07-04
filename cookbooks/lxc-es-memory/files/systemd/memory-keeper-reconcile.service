@@ -12,6 +12,11 @@ User=root
 # from the mini launchd wrapper (which did `set -a; . keeper.env`) is more
 # robust: the ES password contains '(' and would break a shell source.
 EnvironmentFile=/opt/es-memory/memory-v2.env
+# claude subscription token (CLAUDE_CODE_OAUTH_TOKEN) from `claude setup-token`
+# on THIS ct. Optional (leading '-'): absent before setup-token — the timer gate
+# keeps this unit idle until the file exists, so the '-' just avoids a hard
+# start failure if the file is removed later.
+EnvironmentFile=-/opt/es-memory/keeper-claude.env
 # Index names + keeper knobs (non-secret) live in the unit per the v2 contract,
 # mirroring memory-mcp-v2.service. PROMOTE_WINDOW/NEAR_DUP_LIMIT use code defaults.
 Environment=FACT_INDEX=memory-fact

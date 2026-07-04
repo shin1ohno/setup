@@ -41,7 +41,10 @@ def _run_once(prompt, model, timeout):
         model,
         "--strict-mcp-config",
         "--mcp-config",
-        "{}",
+        # claude >=2.1 requires an mcpServers record; "{}" is rejected with
+        # "mcpServers: expected record, received undefined". Empty servers =
+        # no tools, matching the pure-inference judge contract (§6).
+        '{"mcpServers": {}}',
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:

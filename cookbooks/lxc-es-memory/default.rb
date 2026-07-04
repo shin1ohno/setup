@@ -488,14 +488,17 @@ end
   end
 end
 
-# Auth-presence gate: enable + start the timers only once `claude setup-token`
-# has authenticated this host (`claude auth status` exits 0 when authed).
-# Before that the units are installed but idle — no keeper run fires against an
-# unauthenticated claude. On the first authed apply this activates both timers.
+# Token-presence gate: enable + start the timers only once the operator has run
+# `claude setup-token` on this ct and written the token to keeper-claude.env
+# (mode 600). `claude auth status` is NOT usable as the gate — setup-token mints
+# a long-lived token consumed via CLAUDE_CODE_OAUTH_TOKEN (env, loaded by the
+# unit's second EnvironmentFile), so `auth status` still reports loggedIn:false.
+# Before the token file exists the units are installed but idle.
+keeper_token_env = "#{base_dir}/keeper-claude.env"
 %w[memory-keeper-reconcile.timer memory-consolidate.timer].each do |tmr|
   execute "ensure #{tmr} active" do
     command "systemctl enable --now #{tmr}"
-    only_if "HOME=/root #{claude_bin} auth status >/dev/null 2>&1"
+    only_if "test -s #{keeper_token_env}"
     not_if "systemctl is-active #{tmr} >/dev/null 2>&1"
   end
 end
