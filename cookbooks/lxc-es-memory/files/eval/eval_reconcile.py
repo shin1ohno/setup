@@ -109,7 +109,7 @@ def _strip_fences(text: str) -> str:
 def _invoke_claude(prompt: str, model: str) -> dict:
     """Run `claude -p` (pure inference, no tools) and parse the verdict JSON."""
     cmd = [CLAUDE_BIN, "-p", prompt, "--output-format", "json",
-           "--model", model, "--strict-mcp-config", "--mcp-config", "{}"]
+           "--model", model, "--strict-mcp-config", "--mcp-config", '{"mcpServers": {}}']
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=JUDGE_TIMEOUT)
     if proc.returncode != 0:
         raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr[:200]}")
