@@ -44,7 +44,7 @@ Before launching new research, search Cognee for proposals saved by the quarterl
 Launch the `domain-researcher` agent in the background via the Agent tool:
 
 - Pass the target domain(s) from `$ARGUMENTS`
-- The agent will query Mem0 for user context, Cognee for existing knowledge, and the web for current best practices
+- The agent will query memory for user context, Cognee for existing knowledge, and the web for current best practices
 
 ### Step 2: Present Findings
 
