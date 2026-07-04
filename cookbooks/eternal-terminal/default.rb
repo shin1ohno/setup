@@ -190,6 +190,20 @@ end
 # `et` login refused. This periodic probe restarts etserver when the listener is
 # gone. On darwin it is the ONLY recovery path: the central self-heal-resolve
 # loop restarts services via `pct exec` (LXC-only) and cannot reach Macs.
+#
+# FAILURE-CLASS DISTINCTION — do not conflate (setup #567 vs #603):
+#   - #567 REAL WEDGE: etserver alive but holds zero sockets → loopback connect
+#     REFUSED (RST), `lsof -p <pid>` shows 0 sockets; recovery needs an explicit
+#     `launchctl kickstart`. THIS watchdog is the fix.
+#   - #603 SLEEP (NOT a wedge): the Mac mini idle-slept (mac-settings' always-on
+#     `pmset -c sleep 0` was deployed but never executed, so it ran stock
+#     `sleep 1`). During sleep the net stack is down: external probes TIMEOUT
+#     (SYN drop) while ssh:22 still answers (Bonjour/Wake-on-Demand wakes ssh,
+#     not arbitrary ports); it self-recovers on wake. Fix is power management
+#     (keep the host awake), NOT this watchdog. The 2026-06-30 self-heal loop
+#     misdiagnosed #603 as a #567 wedge because its sandboxed `netstat` showed
+#     0 listeners — a tool artifact, not reality. Classify by connect behavior:
+#     refused = wedge (kickstart); timeout = sleep/network (fix power/reachability).
 if distro_platform == "darwin"
   # launchd watchdog: StartInterval=60 oneshot probing 127.0.0.1:2022.
   wd_staging = "#{node[:setup][:root]}/eternal-terminal/et-watchdog.sh"

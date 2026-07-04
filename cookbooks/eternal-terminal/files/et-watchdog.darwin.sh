@@ -9,6 +9,16 @@
 # gap. It is the ONLY recovery path that reaches darwin hosts — the central
 # self-heal-resolve loop restarts services via `pct exec` (LXC-only) and has no
 # launchctl path to Macs.
+#
+# SCOPE — what this probe does and does NOT cover (setup #567 vs #603):
+#   - COVERS #567 (real wedge): etserver holds zero sockets, so a loopback
+#     connect() is REFUSED. Detectable here → kickstart restores the listener.
+#   - DOES NOT COVER #603 (sleep): when the Mac idle-sleeps the whole net stack
+#     is down, external probes SYN-drop (timeout), and a StartInterval timer does
+#     not even fire during sleep — nothing to kickstart, and kickstarting would
+#     not help. That class is fixed by keeping the host awake (mac-settings
+#     `pmset -c sleep 0`) and observed centrally by the CT111 Kibana synthetics
+#     TCP probe — NOT by this watchdog. Do not widen this probe to chase it.
 set -uo pipefail
 
 PORT="${ET_PORT:-2022}"
@@ -18,16 +28,23 @@ LABEL="${ET_LABEL:-system/homebrew.mxcl.et}"
 # timeout, NOT the connect() timeout — it does not bound a hung SYN. That is
 # fine here because the target is loopback: 127.0.0.1 connect() resolves
 # instantly (accept or RST, no SYN retransmit), so the probe stays well under
-# the 60s StartInterval. This loopback probe confirms the listener-wedge class
-# (the observed mini failure); LAN-interface reachability is covered separately
-# by the central Kibana synthetics TCP probe from CT 111.
-if ! /usr/bin/nc -z -w 2 127.0.0.1 "${PORT}" 2>/dev/null; then
-  logger -t et-watchdog "etserver port ${PORT} not listening — launchctl kickstart -k ${LABEL}"
-  launchctl kickstart -k "${LABEL}"
+# the 60s StartInterval.
+probe() { /usr/bin/nc -z -w 2 127.0.0.1 "${PORT}" 2>/dev/null; }
+
+# Two-strike debounce before the disruptive kickstart. `kickstart -k` KILLS
+# etserver and drops every live `et` session, so a single false-negative probe
+# (a momentary loopback hiccup) must not trigger a restart. A genuine listener
+# wedge stays down across both probes; a transient clears on the second.
+if ! probe; then
   sleep 3
-  if /usr/bin/nc -z -w 2 127.0.0.1 "${PORT}" 2>/dev/null; then
-    logger -t et-watchdog "etserver kickstarted; port ${PORT} listening again"
-  else
-    logger -t et-watchdog "etserver kickstart did NOT restore port ${PORT}"
+  if ! probe; then
+    logger -t et-watchdog "etserver port ${PORT} not listening (2 probes) — launchctl kickstart -k ${LABEL}"
+    launchctl kickstart -k "${LABEL}"
+    sleep 3
+    if probe; then
+      logger -t et-watchdog "etserver kickstarted; port ${PORT} listening again"
+    else
+      logger -t et-watchdog "etserver kickstart did NOT restore port ${PORT}"
+    fi
   fi
 fi
