@@ -1,0 +1,106 @@
+# memory-keeper (unified memory MCP v2) liveness + backlog alerts.
+#
+# Fed by memory_keeper_raw_backlog + memory_keeper_stats_age_seconds, two
+# gauges written to CT 119 (es-memory)'s node_exporter textfile by
+# cookbooks/lxc-es-memory/files/memory-keeper-health.sh
+# (memory-keeper-health.timer, ~60s). The health script queries Elasticsearch:
+#   - memory_keeper_raw_backlog     = count of memory-fact docs with
+#                                     reconcile_status=raw (not superseded) —
+#                                     the reconcile backlog the keeper drains.
+#   - memory_keeper_stats_age_seconds = now - written_at of the latest
+#                                     memory-stats doc (either run_kind), i.e.
+#                                     how long since the keeper last self-reported.
+# The keeper LOOP itself (reconcile ticks + nightly consolidation) runs on
+# mini as the com.shin1ohno.memory-keeper / com.shin1ohno.memory-consolidate
+# LaunchDaemons; the health EMITTER runs on CT 119, so absent/stale of these
+# gauges is a CT-119-side (timer/node_exporter) problem while a high backlog
+# or old stats age is a mini-side (keeper loop) problem.
+#
+# The gauge is host-scoped to the single es-memory emitter, so max() is used
+# for symmetry with the sibling elasticsearch.yml (correct even if a future
+# second emitter is added).
+groups:
+  - name: memory-keeper
+    rules:
+      - alert: MemoryKeeperStatsStale
+        # The keeper on mini has not written a fresh memory-stats doc in >26h.
+        # Both the reconcile ticks and the nightly consolidation (run_kind=
+        # consolidate, fires nightly) have stopped self-reporting — the keeper
+        # LaunchDaemons are down/erroring, or `claude -p` inference is failing.
+        # 93600s = 26h gives the nightly run a >2h grace past its 24h cadence.
+        # The `< 0` leg catches the -1 "unknown/never" sentinel: when the keeper
+        # on mini has NEVER written a first memory-stats doc (crash-on-start,
+        # wrong creds), stats_age stays -1 forever and `-1 > 93600` is false, so
+        # the exact failure this alert names would otherwise be invisible.
+        expr: max(memory_keeper_stats_age_seconds) > 93600 or max(memory_keeper_stats_age_seconds) < 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "memory-keeper stats stale (>26h or never) — keeper loop not self-reporting"
+          description: >
+            No fresh memory-stats doc in 26h+ — the memory-keeper reconcile ticks
+            and nightly consolidation on mini have both stopped writing stats.
+            The reconcile/consolidation loop is not running (LaunchDaemon down,
+            `claude -p` failing, or ES writes rejected), so raw facts are no
+            longer being reconciled and episodes are not being consolidated.
+            Runbook: ssh shin1ohno@mini 'launchctl list | grep memory; ls -lt ~/.local/state/memory-keeper/ | head'
+
+      - alert: MemoryKeeperHealthAbsent
+        # The backlog gauge is gone entirely — memory-keeper-health.timer on
+        # CT 119 stopped firing, or node_exporter is down. Belt-and-suspenders
+        # for the gap the staleness alerts cannot see: with the gauge absent,
+        # MemoryKeeperStatsStale and MemoryKeeperRawBacklogHigh are both blind.
+        expr: absent(memory_keeper_raw_backlog)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "memory-keeper health metric absent (15m+) — backlog signal blind"
+          description: >
+            memory_keeper_raw_backlog is absent — CT 119's memory-keeper-health.sh
+            has stopped producing its node_exporter textfile (timer not firing,
+            script erroring against ES, or node_exporter down). While absent, the
+            MemoryKeeperStatsStale and MemoryKeeperRawBacklogHigh alerts cannot
+            fire, so the keeper is entirely unmonitored.
+            Runbook: ssh root@192.168.1.10 'pct exec 119 -- bash -lc "systemctl status node-exporter memory-keeper-health.timer; systemctl show memory-keeper-health.timer -p Trigger"'
+
+      - alert: MemoryKeeperHealthEmitterError
+        # The gauge is PRESENT but pinned at the -1 sentinel: CT 119's
+        # node_exporter is scraped fine (so MemoryKeeperHealthAbsent stays
+        # silent — absent() only fires when the series is missing entirely), but
+        # memory-keeper-health.sh cannot reach Elasticsearch from CT 119. Every
+        # ES-derived signal (backlog, stats age) is blind while this holds.
+        expr: max(memory_keeper_raw_backlog) < 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "memory-keeper health emitter can't reach ES (backlog gauge = -1)"
+          description: >
+            memory_keeper_raw_backlog is present but stuck at the -1 sentinel —
+            CT 119's memory-keeper-health.sh is running (node_exporter scrape
+            works) but its Elasticsearch queries are failing (ES down, wrong
+            creds in memory-v2.env, or network). Backlog and stats-age signals
+            are unreliable until this clears.
+            Runbook: ssh root@192.168.1.10 'pct exec 119 -- bash -lc "cat /var/lib/node_exporter/textfile/memory-keeper-health.prom; /usr/local/bin/memory-keeper-health.sh; echo rc=$?"'
+
+      - alert: MemoryKeeperRawBacklogHigh
+        # Unreconciled raw memory-fact backlog stuck >200 for 2h+. The reconcile
+        # tick (RECONCILE_BATCH=10 oldest raw facts per tick, every few min on
+        # mini) should drain this; sustained growth means the reconcile loop is
+        # stalled or `claude -p` verdicts keep erroring (guard_violations/errors).
+        # for:2h debounces a legitimate ingest burst that reconcile can catch up on.
+        expr: max(memory_keeper_raw_backlog) > 200
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "memory-keeper raw reconcile backlog high (>200 for 2h+)"
+          description: >
+            Over 200 memory-fact docs have sat in reconcile_status=raw for 2h+ —
+            the keeper's reconcile loop on mini is falling behind the write rate
+            or is stalled. New facts are stored but never merged/deduped, so
+            recall quality degrades over time. Check whether the reconcile tick
+            is running and whether `claude -p` verdicts are erroring.
+            Runbook: ssh shin1ohno@mini 'launchctl list | grep memory; tail -n 40 ~/.local/state/memory-keeper/*.log 2>/dev/null'

@@ -9,3 +9,7 @@ bin/*.zip
 .claude/plans/
 .mcp.json
 cookbooks/claude-code/cowork-migration/zips-ready/*.zip
+
+# Python bytecode from py_compile / local runs of cookbook-shipped scripts
+__pycache__/
+*.pyc

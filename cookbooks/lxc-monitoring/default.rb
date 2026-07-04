@@ -350,6 +350,17 @@ remote_file "#{deploy_dir}/alerts/self-heal.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
+# memory-keeper (unified memory MCP v2) liveness + reconcile-backlog alerts.
+# Fed by memory_keeper_raw_backlog + memory_keeper_stats_age_seconds textfile
+# gauges written by cookbooks/lxc-es-memory memory-keeper-health.timer on CT 119.
+remote_file "#{deploy_dir}/alerts/memory.yml" do
+  source "files/alerts/memory.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # Vector (RTX syslog → Elasticsearch). Replaces the prior Promtail syslog
 # target: RTX1210/RTX830 firmware emits non-standard syslog (`<PRI>tag msg`
 # with no TIMESTAMP/HOSTNAME) that neither RFC5424 nor RFC3164 strict

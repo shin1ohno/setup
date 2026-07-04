@@ -58,6 +58,20 @@ PORT = int(os.environ.get("PORT", "8766"))
 # Public path prefix used by the reverse proxy (e.g. "/memory")
 PATH_PREFIX = os.environ.get("PATH_PREFIX", "")
 
+# ── v2 identity enforcement config (env-gated) ─────────────────────────
+# All three default to empty. When MEMORY_AUDIENCES is empty the enforcement
+# matrix in handle() is INERT (old cognee/memory units are unaffected) — only
+# identity injection still runs. Comma-separated lists → sets of trimmed values.
+MEMORY_AUDIENCES = {
+    a.strip() for a in os.environ.get("MEMORY_AUDIENCES", "").split(",") if a.strip()
+}
+ALLOWED_SUBS = {
+    s.strip() for s in os.environ.get("ALLOWED_SUBS", "").split(",") if s.strip()
+}
+ALLOWED_CLIENT_IDS = {
+    c.strip() for c in os.environ.get("ALLOWED_CLIENT_IDS", "").split(",") if c.strip()
+}
+
 
 # ── JWKS-based token verifier ──────────────────────────────────────────
 
@@ -179,6 +193,10 @@ HOP_BY_HOP = frozenset(
 # with "code: Field required" before they can act on the WWW-Authenticate
 # header, so 401s must ship a JSON-RPC 2.0 envelope.
 JSONRPC_UNAUTHORIZED = -32001
+# 403 identity-enforcement rejections (v2 audience/subject matrix). Distinct
+# code so MCP clients can tell "not authenticated" (-32001) from "authenticated
+# but not permitted for this resource" (-32003).
+JSONRPC_FORBIDDEN = -32003
 
 
 def jsonrpc_error(code: int, message: str, status: int, headers: dict) -> web.Response:
@@ -254,11 +272,57 @@ async def handle(request: web.Request) -> web.StreamResponse:
 
     logger.info("Authenticated %s %s (sub=%s)", request.method, request.path, claims.get("sub", "?"))
 
+    # ── v2 identity enforcement + injection (env-gated) ────────────────────
+    # Grant classification (per contract §3):
+    #   client_credentials  ⟺  sub == client_id   (machine token, e.g. keeper)
+    #   authorization_code  ⟺  sub != client_id   (human; sub = Google email)
+    # `grant` is computed UNCONDITIONALLY so the X-Verified-* headers flow to
+    # upstream even in staging where MEMORY_AUDIENCES is unset (no enforcement).
+    #
+    # Enforcement matrix — applied ONLY when MEMORY_AUDIENCES is non-empty:
+    #   client_credentials → require (aud ∩ MEMORY_AUDIENCES) AND
+    #                        client_id ∈ ALLOWED_CLIENT_IDS  else 403 forbidden_audience
+    #   authorization_code → require sub ∈ ALLOWED_SUBS       else 403 forbidden_subject
+    # claude.ai tokens carry aud=[] → aud is NOT required for authorization_code.
+    # `aud` may be a str or a list → normalized to a list before the set test.
+    sub = claims.get("sub", "")
+    client_id = claims.get("client_id", "")
+    grant = "client_credentials" if sub == client_id else "authorization_code"
+
+    if MEMORY_AUDIENCES:
+        raw_aud = claims.get("aud", [])
+        aud = [raw_aud] if isinstance(raw_aud, str) else list(raw_aud or [])
+        if grant == "client_credentials":
+            if not (set(aud) & MEMORY_AUDIENCES) or client_id not in ALLOWED_CLIENT_IDS:
+                logger.warning(
+                    "forbidden_audience: client_id=%s aud=%s for %s %s",
+                    client_id, aud, request.method, request.path,
+                )
+                return jsonrpc_error(
+                    JSONRPC_FORBIDDEN, "forbidden_audience", 403, add_cors({})
+                )
+        else:  # authorization_code
+            if sub not in ALLOWED_SUBS:
+                logger.warning(
+                    "forbidden_subject: sub=%s for %s %s",
+                    sub, request.method, request.path,
+                )
+                return jsonrpc_error(
+                    JSONRPC_FORBIDDEN, "forbidden_subject", 403, add_cors({})
+                )
+
     # ── Proxy to upstream ──
     url = f"{UPSTREAM_URL}{request.path_qs}"
+    # Strip any inbound X-Verified-* headers (spoof defense) before injecting our
+    # own — the proxy is the only trusted source of these identity headers.
     fwd_headers = {
-        k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in HOP_BY_HOP and not k.lower().startswith("x-verified-")
     }
+    fwd_headers["X-Verified-Sub"] = sub
+    fwd_headers["X-Verified-Client-Id"] = client_id
+    fwd_headers["X-Verified-Grant"] = grant
 
     session = request.app["http_client"]
     body = await request.read() if request.can_read_body else None

@@ -1,0 +1,38 @@
+{"query": "身長は何センチ？", "expect_contains": ["160"], "type": "fact"}
+{"query": "What is my height?", "expect_contains": ["160"], "type": "fact"}
+{"query": "体重はどれくらい？", "expect_contains": ["58"], "type": "fact"}
+{"query": "使っているメインエディタは？", "expect_contains": ["neovim"], "type": "fact"}
+{"query": "好きなスノーボードの乗り方は？", "expect_contains": ["カービング"], "type": "fact"}
+{"query": "preferred snowboard riding style", "expect_contains": ["carving"], "type": "fact"}
+{"query": "メインのスノーボードの板は？", "expect_contains": ["Korua"], "type": "fact"}
+{"query": "snowboard binding brand preference", "expect_contains": ["Union"], "type": "knowledge"}
+{"query": "Korua のボードのレビュー内容", "expect_contains": ["Korua"], "type": "knowledge"}
+{"query": "Burton のバインディングの評価", "expect_contains": ["Burton"], "type": "knowledge"}
+{"query": "スノーボードのフレックスはソフトとハードどちらが好み？", "expect_contains": ["flex"], "type": "fact"}
+{"query": "CBUUID uuidString short form parse bug", "expect_contains": ["CBUUID", "128"], "type": "knowledge"}
+{"query": "なぜ Nuimo のバッテリー characteristic が Rust 側でパースできなかった？", "expect_contains": ["uuidString", "Bluetooth Base"], "type": "knowledge"}
+{"query": "why did mise pipx fail for git-remote-codecommit", "expect_contains": ["pipx", "botocore"], "type": "knowledge"}
+{"query": "cognee container illegal instruction on boot", "expect_contains": ["AVX2", "lancedb"], "type": "knowledge"}
+{"query": "grafana dashboard shows No data across all panels", "expect_contains": ["uid", "datasource"], "type": "knowledge"}
+{"query": "なぜ syslog を受ける docker コンテナが UDP を取りこぼす？", "expect_contains": ["network_mode", "host"], "type": "knowledge"}
+{"query": "kms decrypt AccessDenied on ssm SecureString GetParameter", "expect_contains": ["EncryptionContext", "account"], "type": "knowledge"}
+{"query": "accept-routes true にしたら LAN 到達性が落ちた原因", "expect_contains": ["table 52", "tailscale"], "type": "knowledge"}
+{"query": "promtail 2.9 syslog UDP drops all messages", "expect_contains": ["3.6", "promtail"], "type": "knowledge"}
+{"query": "PVE unprivileged LXC で terraform が bind mount を作れない理由", "expect_contains": ["root@pam", "bind"], "type": "knowledge"}
+{"query": "OnUnitActiveSec oneshot timer never fires Trigger n/a", "expect_contains": ["OnUnitInactiveSec"], "type": "knowledge"}
+{"query": "mitamae owner integer InvalidTypeError", "expect_contains": ["String"], "type": "knowledge"}
+{"query": "which embedding model does memory v2 use", "expect_contains": ["voyage-3-large", "1024"], "type": null}
+{"query": "memory v2 の埋め込み次元数は？", "expect_contains": ["1024"], "type": null}
+{"query": "RRF retriever license tier on Elasticsearch", "expect_contains": ["Enterprise"], "type": "knowledge"}
+{"query": "日本語アナライザ ja_en_hybrid の構成", "expect_contains": ["kuromoji"], "type": "knowledge"}
+{"query": "tailscale auth key reusable for replaceable EC2", "expect_contains": ["reusable"], "type": "knowledge"}
+{"query": "なぜ memory v2 はサーバーから LLM を全廃した？", "expect_contains": ["claude -p", "keeper"], "type": "knowledge"}
+{"query": "episode の期限管理はどうしている？", "expect_contains": ["90", "delete_by_query"], "type": "knowledge"}
+{"query": "fact の重複はどう扱う？ supersede か削除か", "expect_contains": ["supersede", "superseded_by"], "type": "knowledge"}
+{"query": "ES trial license expiry date", "expect_contains": ["2026-07-07", "basic"], "type": "fact"}
+{"query": "7月のES移行セッションで完了したこと", "expect_contains": ["ES", "移行"], "type": "episode"}
+{"query": "what did we finish in the memory v2 migration session", "expect_contains": ["memory", "migration"], "type": "episode"}
+{"query": "cognee と mem0 を統合した先のMCP名は？", "expect_contains": ["memory"], "type": "episode"}
+{"query": "近接 dedup の cosine しきい値は？", "expect_contains": ["0.95"], "type": "knowledge"}
+{"query": "voyage 障害時の recall フォールバック", "expect_contains": ["BM25"], "type": "knowledge"}
+{"query": "keeper が動くホストは？", "expect_contains": ["mini"], "type": "fact"}
