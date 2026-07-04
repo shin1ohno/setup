@@ -1,6 +1,6 @@
 # Code Behavior Debugging Protocol
 
-This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/rules/debugging-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
+This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/docs/debugging-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
 
 ## Silent Failure Detection
 
@@ -25,7 +25,7 @@ Protocol:
 3. **Only Cosmetic noise is safe to silence** — verify the silence doesn't disable the working path
 4. **State the classification to the user before proposing a fix**
 
-Detail (trap explanation + origin): see `~/.claude/rules/debugging-detail.md#noisy-non-failure-pattern`.
+Detail (trap explanation + origin): see `~/.claude/docs/debugging-detail.md#noisy-non-failure-pattern`.
 
 ## Do Not Report Success Without State Evidence
 
@@ -63,7 +63,7 @@ Trigger pattern: `verify_*` returns `Result<Claims, AuthError>` (rich enum); cal
 
 Server-side counterpart of "FFI Boundary Error Visibility" in `~/.claude/rules/ios-build.md`.
 
-Detail (Rust example + origin): see `~/.claude/rules/debugging-detail.md#auth-boundary-error-visibility`.
+Detail (Rust example + origin): see `~/.claude/docs/debugging-detail.md#auth-boundary-error-visibility`.
 
 ## Do Not Push Error Reproduction to the User
 
@@ -82,7 +82,7 @@ When the same observable symptom persists after 3 hypothesis-test cycles on the 
 
 **Batch fixes within a rebuild cycle**: when a debugging loop involves an expensive rebuild (`docker compose up --build`, `cargo build --release`, `xcodebuild`, `terraform apply` — anything >60s), collect ALL hypothesized fixes for the *current* observable failure before triggering the rebuild. Sequential evaluation of N hypotheses costs N × build time; batched evaluation costs one build.
 
-Detail (worked example + origin): see `~/.claude/rules/debugging-detail.md#fix-loop-escalation-threshold`.
+Detail (worked example + origin): see `~/.claude/docs/debugging-detail.md#fix-loop-escalation-threshold`.
 
 ## Wire-Protocol Reverse Engineering — Capture Reference Bytes First
 
@@ -106,7 +106,7 @@ Sequence:
 
 **Trigger**: "the client says NG but my server returns 200 OK". The client has format expectations your code does not satisfy yet. Stop hypothesizing; start observing.
 
-Detail (common divergence list + origin): see `~/.claude/rules/debugging-detail.md#wire-protocol-reverse-engineering`.
+Detail (common divergence list + origin): see `~/.claude/docs/debugging-detail.md#wire-protocol-reverse-engineering`.
 
 ## Read the Source Before Researching Patterns
 
@@ -121,7 +121,7 @@ Sequence:
 
 Sub-rules (Detail file): custom Terraform providers — apply-time command-string errors; tool-manager migration design — verify backend claims (cross-link to `~/.claude/rules/mise-migration.md`); CLI tool JSON output — probe schema before writing jq.
 
-Detail (sub-rules + anti-signal + origins): see `~/.claude/rules/debugging-detail.md#read-the-source-before-researching`.
+Detail (sub-rules + anti-signal + origins): see `~/.claude/docs/debugging-detail.md#read-the-source-before-researching`.
 
 ## Frame the Failure Class Before Writing the Fix
 
@@ -141,7 +141,7 @@ Protocol:
 3. If transient (network blip, race, rare external outage), non-fatal retry suffices
 4. Non-fatal + retry is a necessary piece of the structural fix, **never the complete fix** — a dead service retried against stale config stays dead
 
-Detail (anti-pattern + origin): see `~/.claude/rules/debugging-detail.md#frame-the-failure-class`.
+Detail (anti-pattern + origin): see `~/.claude/docs/debugging-detail.md#frame-the-failure-class`.
 
 ## Verify a chosen remediation is feasible before executing it
 
@@ -154,7 +154,7 @@ Probe-before-execute pairs:
 - "restore from S3 / backup" → `aws s3 ls <bucket>/<key>` before the restore
 - "roll back to version X" → confirm the tag / artifact exists before the rollback
 - "reassign to user/role Y" → confirm Y exists with the needed grant before the change
-- "share one subscription/login across two hosts" → inspect the credential file's token structure (`accessToken`/`refreshToken`/`expiresAt`) for rotating-refresh-token semantics BEFORE copying it — a shared rotating token invalidates whichever host refreshes second; the correct mechanism is an independent login per host (see `~/.claude/rules/claude-cli-headless.md`). Origin: 2026-07-04 memory-v2 keeper — probing the token structure surfaced the refresh-rotation conflict before building; a separate `claude setup-token` per host was the fix.
+- "share one subscription/login across two hosts" → inspect the credential file's token structure (`accessToken`/`refreshToken`/`expiresAt`) for rotating-refresh-token semantics BEFORE copying it — a shared rotating token invalidates whichever host refreshes second; the correct mechanism is an independent login per host (see `~/.claude/docs/claude-cli-headless.md`). Origin: 2026-07-04 memory-v2 keeper — probing the token structure surfaced the refresh-rotation conflict before building; a separate `claude setup-token` per host was the fix.
 
 If the precondition is absent, do NOT run the doomed command (it fails with a misleading error — "snapshot not found", "bad revision"). Return to the user with the corrected, actually-feasible options.
 
@@ -173,7 +173,7 @@ When presenting a credential or configuration fix to the user that must succeed 
 
 When verify cannot be composed (e.g. interactive `aws configure`): explicitly mark verify as **required before retrying the main task**, not a suggestion. "and confirm with" or "before retrying, run". Not "you can also check".
 
-Detail (anti-pattern + origin): see `~/.claude/rules/debugging-detail.md#chain-verify-with-fix`.
+Detail (anti-pattern + origin): see `~/.claude/docs/debugging-detail.md#chain-verify-with-fix`.
 
 ## Confirm the suspected driver is actually deployed before optimizing it
 

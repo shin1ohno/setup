@@ -4,7 +4,7 @@ globs: ["*.yaml", "*.yml", "*.tf", "Dockerfile", "docker-compose*.yml"]
 
 # Infrastructure File Guidelines
 
-This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/rules/infrastructure-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
+This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/docs/infrastructure-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
 
 **Topic-specific rules** (split out 2026-05-07 to keep this file scannable):
 
@@ -65,7 +65,7 @@ Before adding to a cookbook, answer:
 4. **State the target OS in the commit message** ("Ubuntu 24.04 ships ..."), not just the symptom
 5. **Scripts shipped via `remote_file` / `files/`**: when the cookbook deploys a shell script to the target host, treat the script's external command dependencies as part of the OS scope check. Run `grep -E '\b(flock|timeout|sponge|tac|nproc|numfmt)\b' cookbooks/<name>/files/*.sh` — any hit in a cookbook targeting macOS is a portability risk. `mitamae --dry-run` does NOT execute the shipped scripts; runtime is the only gate unless you grep first. See `~/.claude/rules/shell.md` "macOS External-Command Audit for Ported Linux Scripts"
 
-Detail (anti-pattern + origin): see `~/.claude/rules/infrastructure-detail.md#cross-os-scope-gate`.
+Detail (anti-pattern + origin): see `~/.claude/docs/infrastructure-detail.md#cross-os-scope-gate`.
 
 ## Per-Device Identity Probe Before Cookbook Configuration
 
@@ -83,7 +83,7 @@ Three values that diverge from cookbook assumptions most often:
 
 Never write a `node[:hostname]` match expression or `ssh_user` field from memory or earlier documentation — SSH-probe and use what it actually reports. If devices.json (or equivalent) needs to track a host whose conceptual name diverges from `hostname -s`, add an explicit override field (`hostname`, `aliases`) and document the divergence in the entry.
 
-Detail (origin): see `~/.claude/rules/infrastructure-detail.md#per-device-identity-probe`.
+Detail (origin): see `~/.claude/docs/infrastructure-detail.md#per-device-identity-probe`.
 
 ## Incident First Response
 
@@ -106,7 +106,7 @@ Required probes (run once per device family before plan, capture outputs in the 
 
 **Scrape_timeout sizing**: for a 7s walk → `scrape_timeout: 25s`, `scrape_interval: 60s`. Adding scrape_timeout as a hotfix later costs a separate PR + Prometheus reload.
 
-Detail (full bash blocks + RTX1210/RTX830 constraint table + origin): see `~/.claude/rules/infrastructure-detail.md#physical-network-device-snmp-probe`.
+Detail (full bash blocks + RTX1210/RTX830 constraint table + origin): see `~/.claude/docs/infrastructure-detail.md#physical-network-device-snmp-probe`.
 
 ## Blocked Command Boundary
 

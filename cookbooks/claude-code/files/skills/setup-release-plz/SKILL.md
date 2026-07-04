@@ -34,7 +34,7 @@ gh api repos/<owner>/<repo>/actions/permissions/workflow
 grep -rn 'path = "' crates/*/Cargo.toml
 ```
 
-Compile findings into a checklist matching `rules/release-plz.md`.
+Compile findings into a checklist matching `docs/release-plz.md`.
 
 ### Step 2: Scaffold files
 
@@ -103,7 +103,7 @@ If the repo is part of an ecosystem tracked in memory, note the setup completion
 
 ## Reference files
 
-- `rules/release-plz.md` — checklist of all 8 failure modes + pre-flight checklist
+- `docs/release-plz.md` — checklist of all 8 failure modes + pre-flight checklist
 - `rules/rust.md` — token scope section (`publish-update` vs `publish-new`)
 - `~/ManagedProjects/nuimo-rs/.github/workflows/release-plz.yml` — current-generation reference
 - `~/ManagedProjects/edge-agent/.github/workflows/release-plz.yml` — same shape
@@ -111,6 +111,6 @@ If the repo is part of an ecosystem tracked in memory, note the setup completion
 ## Anti-patterns
 
 - Skipping Step 3 (workflow permissions) — release-plz-pr job fails silently with 403 until fixed
-- Omitting `needs: release-plz-release` — race condition on first push with version bump (documented in `rules/release-plz.md`)
+- Omitting `needs: release-plz-release` — race condition on first push with version bump (documented in `docs/release-plz.md`)
 - Adding a new publishable crate to an existing setup without updating the token's allow-list — 403 on first publish
 - Using `MarcoIeni/release-plz-action@v0` — tag does not exist; must be a concrete `@v0.5.X`
