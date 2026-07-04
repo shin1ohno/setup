@@ -179,6 +179,27 @@ execute "apt-mark hold elasticsearch" do
   not_if "apt-mark showhold | grep -q '^elasticsearch$'"
 end
 
+# === analysis-kuromoji plugin (Japanese analyzer) ===
+#
+# The memory-* indices (memory-v2 contract §1) map their `content` field to
+# a custom `ja_en_hybrid` analyzer built on kuromoji_tokenizer +
+# kuromoji_baseform / kuromoji_part_of_speech / kuromoji_stemmer filters.
+# ES rejects index creation that references kuromoji_tokenizer unless the
+# analysis-kuromoji plugin is installed, so this must land (and the node
+# restart to load it) before memory-mcp v2 ensure_indices runs.
+#
+# grep-guard on `elasticsearch-plugin list` (matches the cookbook's
+# other content-aware not_if idioms). only_if gates on the plugin binary
+# so the resource is inert until the DEB install has created it.
+# The notify targets execute[restart elasticsearch] (defined below in the
+# §restart section) — a forward reference resolved at converge time.
+execute "install analysis-kuromoji plugin" do
+  command "/usr/share/elasticsearch/bin/elasticsearch-plugin install --batch analysis-kuromoji"
+  only_if "test -x /usr/share/elasticsearch/bin/elasticsearch-plugin"
+  not_if "/usr/share/elasticsearch/bin/elasticsearch-plugin list 2>/dev/null | grep -q '^analysis-kuromoji$'"
+  notifies :run, "execute[restart elasticsearch]"
+end
+
 # Re-chown bind-mount subdirs to the elasticsearch user (created by the
 # DEB postinst). Idempotent: skipped when the chown already matches.
 %w[data logs].each do |sub|
@@ -656,7 +677,12 @@ execute "elasticsearch-snapshot: ensure SLM policy registered" do
   command "ES_URL=https://#{transport_host}:9200 #{s3_snapshot_script} register-slm"
   user "root"
   only_if { node[:elasticsearch] && node[:elasticsearch][:node_name] == "es-0" }
-  not_if  "ES_URL=https://#{transport_host}:9200 #{s3_snapshot_script} slm-exists"
+  # Content-aware guard: `slm-current` returns 0 only when the live policy
+  # already lists the memory-* indices. A warm cluster whose policy predates
+  # the memory-index addition returns 1 here, so register-slm re-runs and
+  # PUTs the updated policy (ES PUT _slm/policy is a full overwrite). Using
+  # the old `slm-exists` guard would skip the update on warm clusters.
+  not_if  "ES_URL=https://#{transport_host}:9200 #{s3_snapshot_script} slm-current"
 end
 
 # === ES cluster-health node_exporter textfile metric ===
