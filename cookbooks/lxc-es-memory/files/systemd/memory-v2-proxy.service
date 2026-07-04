@@ -10,12 +10,16 @@ Group=root
 WorkingDirectory=/opt/es-memory/app-v2
 Environment=OIDC_ISSUER=https://mcp.ohno.be
 Environment=OIDC_JWKS_URL=https://mcp.ohno.be/.well-known/jwks.json
-# UPSTREAM_URL includes the /memory prefix: mcp.ohno.be nginx strips /memory-v2/
-# (trailing-slash proxy_pass) so this proxy receives /mcp; proxy.py forwards
+# UPSTREAM_URL includes the /memory prefix: mcp.ohno.be nginx strips the location
+# prefix (trailing-slash proxy_pass) so this proxy receives /mcp; proxy.py forwards
 # UPSTREAM_URL + path_qs, re-mapping to the v2 server's /memory/mcp mount on :8010.
 Environment=UPSTREAM_URL=http://127.0.0.1:8010/memory
 Environment=PORT=8767
-Environment=PATH_PREFIX=/memory-v2
+# PATH_PREFIX only sets the advertised RESOURCE_ID (OIDC_ISSUER + PATH_PREFIX) at
+# .well-known/oauth-protected-resource — NOT routing. At cutover this proxy serves
+# the production /memory/ route (nginx memory_upstream_servers -> :8767), so it must
+# advertise https://mcp.ohno.be/memory (already in MEMORY_AUDIENCES), not /memory-v2.
+Environment=PATH_PREFIX=/memory
 # v2 identity enforcement (contract §2b/§3). When MEMORY_AUDIENCES is set the
 # proxy enforces the grant matrix (client_credentials vs authorization_code) and
 # injects X-Verified-{Sub,Client-Id,Grant}. Empty would leave the block inert
