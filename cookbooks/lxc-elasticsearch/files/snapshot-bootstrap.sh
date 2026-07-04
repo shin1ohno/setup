@@ -20,6 +20,8 @@
 #   repo-exists              Exit 0 if repo already registered.
 #   register-slm             PUT /_slm/policy/daily-snapshot (idempotent).
 #   slm-exists               Exit 0 if SLM policy already registered.
+#   slm-current              Exit 0 only if the live SLM policy already lists
+#                            the memory-* indices (content-aware drift guard).
 #
 # Env (passed by mitamae execute):
 #   AWS_PROFILE, AWS_REGION
@@ -177,14 +179,31 @@ cmd_slm_exists() {
   [[ "${status}" == "200" ]]
 }
 
+cmd_slm_current() {
+  # Content-aware guard for warm-cluster propagation: returns 0 ONLY when the
+  # live SLM policy body already lists the memory-* indices (checked via the
+  # "memory-fact" sentinel, which appears only after this script's memory
+  # index coverage was added). A policy that is absent (404 → es_curl -f
+  # fails) or that predates the memory-index addition returns 1, so
+  # cmd_register_slm re-PUTs the updated policy. ES PUT _slm/policy is a full
+  # overwrite, so re-registering is idempotent.
+  local body
+  body=$(es_curl "${ES_URL}/_slm/policy/${SLM_POLICY}" 2>/dev/null) || return 1
+  case "${body}" in
+    *'"memory-fact"'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 cmd_register_slm() {
-  if cmd_slm_exists; then
-    echo "[s3-snapshot] SLM ${SLM_POLICY} already exists — skipping"
+  if cmd_slm_current; then
+    echo "[s3-snapshot] SLM ${SLM_POLICY} already lists memory-* indices — skipping"
     return 0
   fi
 
   # DR-scoped data-stream coverage (logs-* / synthetics-* / traces-*
-  # / self-heal-state) + include_global_state=true (captures cluster state AND,
+  # / self-heal-state + memory-fact / memory-knowledge / memory-episode /
+  # memory-stats) + include_global_state=true (captures cluster state AND,
   # on 8.x, all feature states — Kibana saved objects, alerting rules, security).
   #
   # metrics-* is INTENTIONALLY EXCLUDED. It was the dominant driver of S3
@@ -212,7 +231,7 @@ cmd_register_slm() {
   "name": "<daily-snap-{now/d}>",
   "repository": "s3-home-monitor",
   "config": {
-    "indices": ["logs-*", "synthetics-*", "traces-*", "self-heal-state"],
+    "indices": ["logs-*", "synthetics-*", "traces-*", "self-heal-state", "memory-fact", "memory-knowledge", "memory-episode", "memory-stats"],
     "include_global_state": true,
     "ignore_unavailable": true
   },
@@ -234,8 +253,9 @@ main() {
     repo-exists)             cmd_repo_exists ;;
     register-slm)            cmd_register_slm ;;
     slm-exists)              cmd_slm_exists ;;
+    slm-current)             cmd_slm_current ;;
     *)
-      echo "usage: $0 {keystore-add|reload-secure-settings|register-repo|repo-exists|register-slm|slm-exists}" >&2
+      echo "usage: $0 {keystore-add|reload-secure-settings|register-repo|repo-exists|register-slm|slm-exists|slm-current}" >&2
       exit 64
       ;;
   esac
