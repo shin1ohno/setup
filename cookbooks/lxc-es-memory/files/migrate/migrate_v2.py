@@ -61,7 +61,14 @@ SRC_MEMORY_INDEX = os.environ.get("SRC_MEMORY_INDEX", "memory-user")
 DST_KNOWLEDGE_INDEX = os.environ.get("KNOWLEDGE_INDEX", "memory-knowledge")
 DST_FACT_INDEX = os.environ.get("FACT_INDEX", "memory-fact")
 
-EMBED_BATCH = 128        # Voyage input cap per request (contract: <=128)
+# Voyage input cap per request is <=128 (contract), but the actual constraint
+# on a low tier is tokens-per-minute: the FREE Voyage tier (no payment method)
+# caps at 3 RPM / 10K TPM, so a 128-doc batch or a fast loop returns 429. Lower
+# EMBED_BATCH + raise EMBED_SLEEP (env) to self-throttle a one-time migration
+# onto a low tier; both default to the fast paid-tier behaviour.
+EMBED_BATCH = int(os.environ.get("EMBED_BATCH", "128"))
+EMBED_SLEEP = float(os.environ.get("EMBED_SLEEP", "0"))       # pause after each Voyage request (s)
+EMBED_MAX_RETRIES = int(os.environ.get("EMBED_MAX_RETRIES", "8"))
 SCROLL_SIZE = 500
 SCROLL_TTL = "2m"
 
@@ -91,7 +98,10 @@ def now_iso() -> str:
 def embed_documents(texts: list[str], batch: int = EMBED_BATCH) -> list[list[float]]:
     """Re-embed a list of texts with Voyage voyage-3-large (input_type=document).
 
-    Batches at <=128 inputs; one retry on 5xx/timeout per batch. Returns one
+    Retries on 429 (rate limit) AND 5xx/timeout with exponential backoff,
+    honouring the Retry-After header when present. 429 uses a 20s+ floor because
+    the Voyage limits are per-minute; 5xx/timeout back off faster. EMBED_BATCH /
+    EMBED_SLEEP (env) let a low-tier run stay under 3 RPM / 10K TPM. Returns one
     1024-dim vector per input, in the original order.
     """
     out: list[list[float]] = []
@@ -104,19 +114,36 @@ def embed_documents(texts: list[str], batch: int = EMBED_BATCH) -> list[list[flo
             "output_dimension": EMBEDDING_DIMS,
         }
         resp = None
-        for attempt in range(2):
+        for attempt in range(EMBED_MAX_RETRIES + 1):
             try:
                 resp = _voyage.post("/embeddings", json=body)
-                if resp.status_code >= 500:
-                    raise httpx.HTTPStatusError("5xx", request=resp.request, response=resp)
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    raise httpx.HTTPStatusError(
+                        str(resp.status_code), request=resp.request, response=resp)
                 break
-            except (httpx.HTTPStatusError, httpx.TimeoutException):
-                if attempt == 1:
+            except (httpx.HTTPStatusError, httpx.TimeoutException) as exc:
+                if attempt == EMBED_MAX_RETRIES:
                     raise
-                time.sleep(1.0)
+                r = getattr(exc, "response", None)
+                status = getattr(r, "status_code", None)
+                retry_after = 0.0
+                if r is not None:
+                    try:
+                        retry_after = float(r.headers.get("retry-after", "0"))
+                    except (TypeError, ValueError):
+                        retry_after = 0.0
+                if status == 429:
+                    backoff = max(retry_after, min(20.0 * (1.5 ** attempt), 90.0))
+                else:
+                    backoff = max(retry_after, min(2.0 * (2 ** attempt), 30.0))
+                print(f"  [voyage] {type(exc).__name__} status={status} "
+                      f"retry {attempt + 1}/{EMBED_MAX_RETRIES} in {backoff:.0f}s", flush=True)
+                time.sleep(backoff)
         resp.raise_for_status()
         data = sorted(resp.json()["data"], key=lambda d: d["index"])
         out.extend(item["embedding"] for item in data)
+        if EMBED_SLEEP:
+            time.sleep(EMBED_SLEEP)
     return out
 
 
