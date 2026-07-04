@@ -60,6 +60,9 @@ fleet = {
   "pro" => {},
   "air" => { "hostname_override" => "xmhtm6qvqx" }, # MacBook Air factory serial
   "neo" => { "aliases" => ["ohnos-macbook"] },      # ohnos-macbook OS hostname
+  # mini — always-on Mac hosting the memory-keeper worker. `hostname -s` == "mini"
+  # (probed live), so no hostname_override; ip carried for LAN reachability.
+  "mini" => { "ip" => "192.168.1.97" },
   # ES cluster nodes — `ip` is the node's own LAN transport_host, sourced here
   # so pve/lxc-es-{0,1,2}.rb stop hardcoding it. Canonical IP source remains
   # home-monitor contracts/devices.json (es-{0,1,2} entries).

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- memory-keeper reconcile daemon (mini). LaunchDaemon (root:wheel in
+     /Library/LaunchDaemons) because mini has no GUI/Aqua session. Runs AS
+     shin1ohno (UserName) so the wrapper can reach ~/.claude credentials +
+     ~/.local/bin/claude and ~/.config/memory-keeper/keeper.env. StartInterval
+     60 = re-run the reconcile tick every 60s (each run is a fresh, short-lived
+     python process; the wrapper self-exits when keeper.env is absent). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.shin1ohno.memory-keeper</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/memory-keeper-run.sh</string>
+  </array>
+
+  <key>UserName</key>
+  <string>shin1ohno</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/shin1ohno/.local/state/memory-keeper/reconcile.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/shin1ohno/.local/state/memory-keeper/reconcile.err</string>
+</dict>
+</plist>

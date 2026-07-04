@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- memory-keeper nightly consolidation daemon (mini). Same LaunchDaemon +
+     UserName shin1ohno posture as the reconcile daemon, but fires once nightly
+     at 03:30 local time via StartCalendarInterval (RunAtLoad false so loading
+     the daemon does not trigger an off-schedule consolidation run). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.shin1ohno.memory-consolidate</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/memory-consolidate-run.sh</string>
+  </array>
+
+  <key>UserName</key>
+  <string>shin1ohno</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/shin1ohno/.local/state/memory-keeper/consolidate.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/shin1ohno/.local/state/memory-keeper/consolidate.err</string>
+</dict>
+</plist>
