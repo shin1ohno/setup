@@ -39,9 +39,13 @@
       "mcp__claude_ai_Cognee__cognify_status",
       "mcp__claude_ai_Cognee__save_interaction",
       "mcp__claude_ai_Cognee__list_data",
-      "mcp__claude_ai_memory__search_memory",
-      "mcp__claude_ai_memory__add_memories",
-      "mcp__claude_ai_memory__list_memories"
+      "mcp__claude_ai_memory__recall",
+      "mcp__claude_ai_memory__remember",
+      "mcp__claude_ai_memory__ingest",
+      "mcp__claude_ai_memory__revise",
+      "mcp__claude_ai_memory__get",
+      "mcp__claude_ai_memory__browse",
+      "mcp__claude_ai_memory__memory_stats"
     ],
     "ask": [
       "Bash(git push:*)"

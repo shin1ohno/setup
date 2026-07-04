@@ -1,8 +1,8 @@
-# Knowledge Persistence: Mem0 / Cognee Details
+# Knowledge Persistence: Memory (v2) / Cognee Details
 
 ## Local write fallback (host-agnostic)
 
-If a knowledge-WRITE tool (`cognify`, `save_interaction`, `add_memories`, `delete`, `prune`) is denied in this session, a local MCP is configured on this host for writes — use the local equivalent instead: `mcp__cognee-local__cognify` / `mcp__cognee-local__save_interaction` / `mcp__memory-local__add_memories`. READS (`search`, `search_memory`, `list_data`, `list_memories`) continue to use whichever connector is available (hosted or local). On hosts where the local servers are not registered, the connector write tools are allowed and this note is a no-op.
+If a knowledge-WRITE tool (`cognify`, `save_interaction`, `remember`, `delete`, `prune`) is denied in this session, a local MCP is configured on this host for writes — use the local equivalent instead: `mcp__cognee-local__cognify` / `mcp__cognee-local__save_interaction` / `mcp__memory-local__add_memories` (the local memory MCP still exposes the mem0-era tool names). READS (`search`, `recall`, `list_data`, `browse`) continue to use whichever connector is available (hosted or local). On hosts where the local servers are not registered, the connector write tools are allowed and this note is a no-op.
 
 ## "local" Cognee is NOT air-gapped — verify egress before routing work-sensitive data
 
@@ -19,18 +19,30 @@ If a knowledge-WRITE tool (`cognify`, `save_interaction`, `add_memories`, `delet
 
 This is the "verify-before-asserting" principle applied to data routing: the name `local` is not evidence of air-gap. Origin: 2026-06-19 kpi-delta-monitor loop — `docker exec env` showed `LLM_ENDPOINT=https://api.openai.com/v1` in `cognee-local`; routing Mercari KPI through it would have egressed to OpenAI. Snapshot moved to a local JSON file.
 
-## Mem0
+## Memory (unified v2 MCP)
 
-Cross-project memory for user attributes, preferences, and possessions.
-Available via MCP tools: `add_memories`, `search_memory`, `list_memories`.
+Cross-project memory for user attributes, preferences, possessions, and durable
+facts. The claude.ai `memory` connector serves the unified v2 MCP (ElasticSearch
++ Voyage embeddings, hybrid BM25 + kNN recall). The old mem0 tool names
+(`add_memories` / `search_memory` / `list_memories`) are RETIRED — use:
+
+- `recall(query, type?, top_k?, filters?)` — hybrid search over all memory (was `search_memory`). `type` optionally scopes to `fact` / `knowledge` / `episode`.
+- `remember(content, type, tags?)` — persist a memory; `type` MUST be explicit: `fact` (atomic durable fact — the `add_memories` replacement), `knowledge` (a document/chunk), or `episode` (session summary).
+- `browse(type?, filters?, sort?, limit?)` + `memory_stats()` — list + counts (was `list_memories`).
+- `ingest(document, dataset, doc_key)` (upsert a whole document), `revise(id, content)`, `forget(id)`, `get(id)` — document/edit ops.
+
+Async write model: a `fact` is written immediately as `raw`, then a keeper (on
+the es-memory host, `claude -p`) reconciles it (ADD/UPDATE/NOOP dedup) within a
+tick or two. Transparent to callers — keep saving; a just-remembered fact
+becomes searchable in its reconciled form shortly after.
 
 ### When to Search
 
-Run search_memory in parallel with Cognee at conversation start. Always search when the topic relates to user attributes (possessions, preferences, body measurements).
+Run `recall` in parallel with Cognee at conversation start. Always search when the topic relates to user attributes (possessions, preferences, body measurements).
 
 ### When to Save
 
-Save immediately when user attributes are revealed during conversation — do not wait to be asked. Targets: body measurements, owned devices/gear, food preferences, riding style, workflow preferences, relationships/roles.
+Save immediately when user attributes are revealed during conversation — do not wait to be asked, via `remember(content, type='fact')`. Targets: body measurements, owned devices/gear, food preferences, riding style, workflow preferences, relationships/roles.
 
 ## Cognee Knowledge Graph
 
@@ -97,7 +109,7 @@ When a `cognify` MCP call returns a timeout error (typically after ~60s waiting 
 3. Do NOT block the current task on Cognee recovery — the fallback file is the durable artifact
 4. On next session start, before running `cognify` for new content, drain `~/.claude/pending-cognify/*.md` first
 
-**When to use Mem0 fallback instead**: if the content is short (1-2 sentences, single fact about user attribute or possession), the Mem0 `add_memories` MCP tool is faster and has different infrastructure. Cross-session knowledge that's larger (debug pattern, architectural decision, multi-paragraph rationale) belongs in cognify even if it has to wait for re-ingest.
+**When to use the memory MCP fallback instead**: if the content is short (1-2 sentences, single fact about user attribute or possession), the memory MCP `remember` (`type='fact'`) is faster and has different infrastructure. Cross-session knowledge that's larger (debug pattern, architectural decision, multi-paragraph rationale) belongs in cognify even if it has to wait for re-ingest.
 
 Origin: 2026-04-29 two cognify saves lost to back-to-back timeouts, invisible to graph search until re-ingested.
 
