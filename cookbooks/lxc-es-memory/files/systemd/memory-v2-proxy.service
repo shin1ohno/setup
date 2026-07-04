@@ -21,7 +21,11 @@ Environment=PATH_PREFIX=/memory-v2
 # injects X-Verified-{Sub,Client-Id,Grant}. Empty would leave the block inert
 # (the shared proxy.py serves the v1 cognee/memory namespaces unaffected).
 Environment=MEMORY_AUDIENCES=https://mcp.ohno.be/memory,memory
-Environment=ALLOWED_SUBS=cwyrpgggwf@privaterelay.appleid.com
+# authorization_code sub = the Google login email the consent app writes as the
+# Hydra subject (userinfo.email), gated by SSM /hydra/allowed-emails — NOT the
+# Anthropic-account (Apple relay) address. A mismatch here 403s every claude.ai
+# request once /memory/ is served by this proxy (enforcement is inert on v1).
+Environment=ALLOWED_SUBS=shin1ohno@gmail.com,sh1@mercari.com
 Environment=ALLOWED_CLIENT_IDS=memory-keeper,monitoring-prober
 ExecStart=/opt/es-memory/venv/bin/python proxy.py
 Restart=on-failure
