@@ -8,13 +8,25 @@
 # config.
 #
 # Rendering (native — Claude Code supports http/sse directly, no mcp-remote bridge):
-#   - http/sse server WITH `desktop: mcp-remote`  -> `claude mcp add --transport`
+#   - server WITH `account_connector: true`       -> skipped (a claude.ai
+#                                                    account connector already
+#                                                    synced into Claude Code as
+#                                                    "claude.ai <name>"; a
+#                                                    user-scope add would be a
+#                                                    "Needs authentication" dup)
+#   - http/sse server (not an account connector)  -> `claude mcp add --transport`
 #   - stdio server (platform-matched)             -> `claude mcp add-json` ({command,args,env})
-#   - http/sse WITHOUT `desktop:` flag            -> skipped (claude.ai account
-#                                                    connector, configured in-app)
 #
-# Idempotent: skips any server already in `claude mcp list` (any scope), so
-# re-runs and the account connectors are left untouched.
+# NOTE: `desktop: mcp-remote` is an INDEPENDENT axis (it bridges the server into
+# Claude *Desktop*, which cannot use account connectors). It does NOT decide
+# Claude Code registration — an earlier version keyed off it and produced
+# duplicate user-scope entries for every Desktop-bridged account connector.
+#
+# Idempotent, two guards: (1) skip any server whose name OR url already appears
+# in `claude mcp list` (any scope) — the url guard catches account connectors
+# listed under the "claude.ai <name>" label, whose name never matches the yml
+# key; (2) skip `account_connector: true` even before it is listed, so a fresh
+# machine never adds the dup in the first place.
 #
 # bash 3.2 compatible (macOS default): no arrays / mapfile.
 set -euo pipefail
@@ -55,6 +67,14 @@ echo "$json_config" | jq -r '.mcp_servers // {} | keys[]' | while IFS= read -r n
 
   server="$(echo "$json_config" | jq -c ".mcp_servers[\"$name\"]")"
 
+  # claude.ai account connectors sync into Claude Code automatically (listed as
+  # "claude.ai <name>"). Never register a user-scope duplicate — it would show
+  # "Needs authentication" (no cached OAuth token) and shadow the working one.
+  if [ "$(echo "$server" | jq -r '.account_connector // empty')" = "true" ]; then
+    echo "register_claude_code: '$name' is a claude.ai account connector — skipping user-scope registration"
+    continue
+  fi
+
   # Platform gate (servers may pin platforms: [darwin]).
   platforms="$(echo "$server" | jq -r '.platforms // empty')"
   if [ -n "$platforms" ]; then
@@ -64,10 +84,15 @@ echo "$json_config" | jq -r '.mcp_servers // {} | keys[]' | while IFS= read -r n
   stype="$(echo "$server" | jq -r '.type // "stdio"')"
 
   if [ "$stype" = "http" ] || [ "$stype" = "sse" ]; then
-    # Only render servers meant for local config; skip account connectors.
-    desktop="$(echo "$server" | jq -r '.desktop // empty')"
-    [ "$desktop" = "mcp-remote" ] || continue
     url="$(echo "$server" | jq -r '.url')"
+    # URL-level dedup: skip when this url is already registered under ANY name.
+    # `claude mcp list` prints "<label>: <url> - <status>", so an account
+    # connector shown as "claude.ai memory: https://mcp.ohno.be/memory/mcp"
+    # is caught here even though its label never matches the yml key "ai-memory".
+    if printf '%s\n' "$existing" | grep -qF "$url"; then
+      echo "register_claude_code: '$name' url already registered ($url) — skipping"
+      continue
+    fi
     transport="$(echo "$server" | jq -r '.transport // "sse"')"
     echo "register_claude_code: adding '$name' ($transport) to Claude Code user scope"
     "$CLAUDE" mcp add -s user --transport "$transport" "$name" "$url" \
