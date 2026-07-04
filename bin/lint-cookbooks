@@ -375,6 +375,48 @@ recipe_files.each do |file|
   end
 end
 
+# --- check 6: claude-code deploy-list drift --------------------------------
+#
+# cookbooks/claude-code/default.rb deploys rules/docs/workflows/agents via
+# EXPLICIT %w(...) lists, not Dir.glob. A file dropped into files/<dir>/ is
+# NOT deployed until its name is added to the matching list — the silent
+# orphan class (debugging-detail.md / mcp-deployment.md / release-plz.md sat
+# undeployed for weeks, breaking the "load on demand via Read" pointers in
+# debugging.md / infrastructure.md). This check flags any file present on
+# disk under files/{rules,docs,workflows,agents}/ but absent from the
+# corresponding deploy array.
+cc_default = "cookbooks/claude-code/default.rb"
+if File.file?(cc_default)
+  cc_src = File.read(cc_default)
+  # Tie each %w(...) list DIRECTLY to the files/<dir>/ it sources, by matching
+  # the fixed 3-line block shape (%w line, remote_file line, source line). This
+  # avoids a greedy match grabbing an earlier unrelated %w (e.g. the hooks list).
+  # Flat per-file deploy dirs only; skills/ is directory-based + templated.
+  wanted = %w[rules docs workflows agents].to_set
+  deployed = Hash.new { |h, k| h[k] = [] }
+  cc_src.scan(
+    /%w\(([^)]*)\)\.each do \|file_name\|\s*\n\s*remote_file[^\n]*\n\s*source "files\/(\w+)\/\#\{file_name\}"/,
+  ) do |names, dir|
+    deployed[dir] = names.split if wanted.include?(dir)
+  end
+  wanted.each do |dir|
+    listed = deployed[dir]
+    disk = Dir["cookbooks/claude-code/files/#{dir}/*"]
+             .select { |p| File.file?(p) }
+             .map { |p| File.basename(p) }
+             .sort
+    (disk - listed).each do |missing|
+      idx = cc_src.index("files/#{dir}/\#{file_name}") || 0
+      lineno = cc_src[0...idx].count("\n") + 1
+      add(violations, cc_default, lineno,
+          "files/#{dir}/#{missing} exists but is NOT in the #{dir} deploy " \
+          "%w() list — it will never reach ~/.claude/#{dir}/. Add it to the " \
+          "list, or delete the orphan file. (Explicit-list deploy, not glob: " \
+          "dropping a file in files/#{dir}/ does not wire it.)")
+    end
+  end
+end
+
 # --- report ----------------------------------------------------------------
 
 puts "cookbook lint (#{recipe_files.size} recipes scanned)"

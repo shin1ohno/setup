@@ -260,9 +260,27 @@ directory "#{node[:setup][:home]}/.claude/docs" do
   action :create
 end
 
-%w(knowledge-persistence.md).each do |file_name|
+%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
     source "files/docs/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+# Deploy workflows (multi-agent orchestration scripts, loaded by name via the Workflow tool)
+directory "#{node[:setup][:home]}/.claude/workflows" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w(claude-md-audit.js).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/workflows/#{file_name}" do
+    source "files/workflows/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
@@ -278,7 +296,7 @@ directory "#{node[:setup][:home]}/.claude/agents" do
   action :create
 end
 
-%w(mitamae-validator.md researcher.md session-retrospective.md claude-docs-researcher.md domain-researcher.md).each do |file_name|
+%w(mitamae-validator.md researcher.md session-retrospective.md claude-docs-researcher.md domain-researcher.md service-health-monitor.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/agents/#{file_name}" do
     source "files/agents/#{file_name}"
     owner node[:setup][:user]
