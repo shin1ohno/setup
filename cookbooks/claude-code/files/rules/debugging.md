@@ -154,6 +154,7 @@ Probe-before-execute pairs:
 - "restore from S3 / backup" → `aws s3 ls <bucket>/<key>` before the restore
 - "roll back to version X" → confirm the tag / artifact exists before the rollback
 - "reassign to user/role Y" → confirm Y exists with the needed grant before the change
+- "share one subscription/login across two hosts" → inspect the credential file's token structure (`accessToken`/`refreshToken`/`expiresAt`) for rotating-refresh-token semantics BEFORE copying it — a shared rotating token invalidates whichever host refreshes second; the correct mechanism is an independent login per host (see `~/.claude/rules/claude-cli-headless.md`). Origin: 2026-07-04 memory-v2 keeper — probing the token structure surfaced the refresh-rotation conflict before building; a separate `claude setup-token` per host was the fix.
 
 If the precondition is absent, do NOT run the doomed command (it fails with a misleading error — "snapshot not found", "bad revision"). Return to the user with the corrected, actually-feasible options.
 
