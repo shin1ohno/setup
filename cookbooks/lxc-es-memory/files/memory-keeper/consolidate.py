@@ -203,11 +203,29 @@ def _near_dup(es, now):
     errors = 0
     reports = []
 
+    # ES 9.x excludes dense_vector from _source, so the stored vectors are not
+    # retrievable. Re-embed every fact's content once (batched) into an
+    # id -> vector map; near-dup then computes cosine locally from the map.
+    _pairs = [(h["_id"], (h.get("_source", {}).get("content") or "").strip()) for h in facts]
+    _texts = [c for _, c in _pairs if c]
+    vmap = {}
+    if _texts:
+        try:
+            _vecs = voyage_client.embed_documents(_texts)
+        except voyage_client.VoyageUnavailable as exc:
+            print(f"consolidate: voyage down for near-dup re-embed: {exc}; skipping near-dup", file=sys.stderr)
+            return 0, 1
+        _i = 0
+        for _fid, _c in _pairs:
+            if _c:
+                vmap[_fid] = _vecs[_i]
+                _i += 1
+
     for h in facts:
         fid = h["_id"]
         if fid in superseded_now:
             continue
-        emb = h.get("_source", {}).get("embedding")
+        emb = vmap.get(fid)
         if not emb:
             continue
         knn_body = {
@@ -231,7 +249,7 @@ def _near_dup(es, now):
             nid = n["_id"]
             if nid == fid or nid in superseded_now:
                 continue
-            nemb = n.get("_source", {}).get("embedding")
+            nemb = vmap.get(nid)
             if not nemb:
                 continue
             cos = cosine(emb, nemb)

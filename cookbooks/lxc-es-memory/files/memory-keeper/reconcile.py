@@ -122,7 +122,20 @@ def main():
         src = hit.get("_source", {})
         embedding = src.get("embedding")
         if not embedding:
-            print(f"reconcile: fact {fid} has no embedding; marking reconciled", file=sys.stderr)
+            # ES 9.x excludes dense_vector from _source by default, so the
+            # stored vector is not retrievable here. Re-embed the fact's content
+            # (same voyage-3-large / document input_type as the server's remember
+            # path -> equivalent vector) to drive the kNN candidate lookup.
+            content = (src.get("content") or "").strip()
+            if content:
+                try:
+                    embedding = voyage_client.embed_documents([content])[0]
+                except voyage_client.VoyageUnavailable as exc:
+                    print(f"reconcile: voyage down re-embedding {fid}: {exc}; leaving raw", file=sys.stderr)
+                    errors += 1
+                    continue
+        if not embedding:
+            print(f"reconcile: fact {fid} has no content/embedding; marking reconciled", file=sys.stderr)
             try:
                 _mark_reconciled(es, fid)
             except ESError:
