@@ -409,3 +409,93 @@ execute "ensure memory-keeper-health.timer active" do
   command "systemctl daemon-reload && systemctl enable --now memory-keeper-health.timer"
   not_if "systemctl is-active memory-keeper-health.timer >/dev/null 2>&1"
 end
+
+# ==========================================================================
+# v2 write-intelligence keeper (reconcile + nightly consolidate) — ON THIS CT.
+#
+# The v2 server has NO LLM; fact reconciliation (ADD/UPDATE/NOOP) + nightly
+# consolidation run `claude -p` on the Claude subscription. Consolidated here
+# onto es-memory (was mini/launchd) per the 2026-07-04 decision — removes the
+# cross-host dependency. The keeper python (files/memory-keeper/) is REUSED
+# VERBATIM from the mini worker: stdlib-only (urllib, /usr/bin/python3), every
+# path __file__-relative or env-driven. Auth is a one-time operator step
+# (`claude setup-token` on this CT); the timers stay stopped until it succeeds.
+# ==========================================================================
+keeper_dir = "#{base_dir}/keeper"
+claude_bin = "/root/.local/bin/claude"
+
+# claude CLI (standalone binary — no node). Idempotent; on an already-installed
+# host the not_if skips the network fetch.
+execute "install claude CLI for memory-keeper" do
+  command "curl -fsSL https://claude.ai/install.sh | bash"
+  not_if "test -x #{claude_bin}"
+end
+
+directory keeper_dir do
+  owner "root"
+  group "root"
+  mode "755"
+  action :create
+end
+
+directory "#{keeper_dir}/prompts" do
+  owner "root"
+  group "root"
+  mode "755"
+  action :create
+end
+
+# keeper python + prompts. A changed .py is picked up on the NEXT timer fire
+# (each tick is a fresh /usr/bin/python3 process) — no unit restart needed.
+{
+  "reconcile.py"         => "reconcile.py",
+  "consolidate.py"       => "consolidate.py",
+  "claude_judge.py"      => "claude_judge.py",
+  "es_client.py"         => "es_client.py",
+  "voyage_client.py"     => "voyage_client.py",
+  "prompts/reconcile.md" => "prompts/reconcile.md",
+  "prompts/promote.md"   => "prompts/promote.md",
+}.each do |src, dest|
+  remote_file "#{keeper_dir}/#{dest}" do
+    source "files/memory-keeper/#{src}"
+    owner "root"
+    group "root"
+    mode "644"
+  end
+end
+
+# systemd units: 2 oneshot services + 2 timers. Services are driven solely by
+# their timers (a timer's Unit= starts its service without the service being
+# `enable`d), so they are only INSTALLED here — nothing fires at boot. NOT via
+# the systemd_unit helper: its .timer branch auto-enables + starts the companion
+# service, which would fire reconcile/consolidate before `claude setup-token`.
+%w[
+  memory-keeper-reconcile.service memory-keeper-reconcile.timer
+  memory-consolidate.service memory-consolidate.timer
+].each do |unit|
+  staged = "#{units_staging}/#{unit}"
+  remote_file staged do
+    source "files/systemd/#{unit}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+  end
+
+  execute "install #{unit}" do
+    command "cp #{staged} /etc/systemd/system/#{unit} && systemctl daemon-reload"
+    not_if "test -f /etc/systemd/system/#{unit} && " \
+           "diff -q #{staged} /etc/systemd/system/#{unit} >/dev/null 2>&1"
+  end
+end
+
+# Auth-presence gate: enable + start the timers only once `claude setup-token`
+# has authenticated this host (`claude auth status` exits 0 when authed).
+# Before that the units are installed but idle — no keeper run fires against an
+# unauthenticated claude. On the first authed apply this activates both timers.
+%w[memory-keeper-reconcile.timer memory-consolidate.timer].each do |tmr|
+  execute "ensure #{tmr} active" do
+    command "systemctl enable --now #{tmr}"
+    only_if "HOME=/root #{claude_bin} auth status >/dev/null 2>&1"
+    not_if "systemctl is-active #{tmr} >/dev/null 2>&1"
+  end
+end

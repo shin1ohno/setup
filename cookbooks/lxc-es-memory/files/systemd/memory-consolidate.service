@@ -1,0 +1,26 @@
+[Unit]
+Description=memory-keeper nightly consolidation — episode expiry, promotion, near-dup, stats
+Documentation=https://github.com/shin1ohno/setup cookbooks/lxc-es-memory
+After=network-online.target memory-mcp-v2.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+# Shared ES + Voyage secrets (metacharacter-safe EnvironmentFile — see
+# memory-keeper-reconcile.service).
+EnvironmentFile=/opt/es-memory/memory-v2.env
+Environment=FACT_INDEX=memory-fact
+Environment=EPISODE_INDEX=memory-episode
+Environment=STATS_INDEX=memory-stats
+Environment=CONSOLIDATE_MODEL=opus
+Environment=KEEPER_HOST=es-memory
+Environment=HOME=/root
+Environment=CLAUDE_BIN=/root/.local/bin/claude
+Environment=PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 /opt/es-memory/keeper/consolidate.py
+# Nightly batch (promotion loop calls claude -p per candidate); cap at 1h.
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target
