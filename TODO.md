@@ -119,3 +119,19 @@ deployment ever becomes multi-tenant.
 - First step: lift the primary/secondary `for_each` + rotation block from
   `home-monitor/pve-bootstrap-iam.tf` into `pve-monitoring-aws-billing.tf`, then
   add a value-drift check to the elastic-agent env-generation `skip_if`.
+
+## mini always-on power: enforce durability across macOS updates (Low)
+
+Status 2026-07-04: fixed the #603 root cause (mini idle-slept because
+`mac-settings` deployed but never executed `pmset -c sleep 0`). Added an
+idempotent enforce-execute in `cookbooks/mac-settings/default.rb`, so a
+`darwin.rb` apply now converges the always-on power settings.
+
+- RESIDUAL GAP: Macs are outside the auto-mitamae fleet (manual apply only), and
+  a macOS **major update** can reset pmset. Between the reset and the next manual
+  `darwin.rb` apply, mini would idle-sleep again and #603-class alerts would flap.
+- First step when revisiting: decide the enforcement channel — either (a) bring
+  mini under a periodic self-apply (a user-mode launchd timer running
+  `mitamae local darwin.rb`, per `~/.claude/rules/ruby.md` "automating mitamae"),
+  or (b) a tiny standalone launchd job that re-asserts `pmset -c sleep 0` on load.
+  (a) is broader but keeps mini current with all cookbooks; (b) is minimal.
