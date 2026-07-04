@@ -191,6 +191,24 @@ body の `dedup_key` / `self-heal-source` を読む:
   **「本当に down か」「alert が stale か（プロセス名変更・metric path 変更で誤発火）」を切り分ける。**
 - `source=uptime`（monitor/TLS down）→ 対象エンドポイントへ実際に到達確認（curl / tailscale ping）。
 
+**port/listener down 系の観測 caveat（sandbox 盲目化 + sleep 誤診防止, setup #603 由来）:**
+
+- `netstat` / `lsof` / `launchctl list` / `log show` の**空結果を「listener 無し」の証拠にしない**。
+  sandbox 化された Bash tool では実在の listener（`nc` で応答する ssh:22 すら）が 0 件で返る。
+  listener 存否は `nc -z <host> <port>` の実 connect で判定し、**既知の閉ポートが refused に
+  なること**で probe 自体が本物だと確認してから結論する。
+- **connect 挙動で故障を分類**:
+  - `refused`（RST / 即時 / `nc` exit 1）= ホスト稼働・listener 無し → **実 wedge 候補**
+    （etserver #567 型。`launchctl kickstart -k` / `systemctl restart` で回復）。
+  - `timeout`（SYN drop / `nc` exit 124）= 当該ポート不到達 → **sleep / firewall / LAN 経路**の
+    可能性大。必ずしも wedge でない（多くは自己回復 = flap）。
+- **macOS ホストは sleep を先に疑う**: `pmset -g log | grep -E '\+[0-9]{4}[[:space:]]+(Sleep|DarkWake)'`
+  でアラート時刻に sleep / Maintenance Sleep 遷移が重なるか確認。sleep 窓に一致し「ssh:22 は
+  通るが監視ポートは timeout」なら真因は sleep（Bonjour/Wake-on-Demand が wake させるのは ssh 等の
+  登録済みサービスのみで、任意ポートの SYN は drop される）。remediation はサービス再起動でなく
+  **電源管理（常時起動化）** = class D（darwin, 要 root）。cookbook は `mac-settings` の
+  always-on power enforce（`pmset -c sleep 0`）。#603 はこの sleep を #567 の wedge と誤診した。
+
 ES の現状も確認（まだ active か、resolved に転じていないか）:
 ```bash
 # dedup_key の sha1 = self-heal-state の _id
