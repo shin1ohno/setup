@@ -21,6 +21,18 @@
 #   Desktop-Chat-only and are NOT visible in Cowork / claude.ai — those surfaces
 #   only see account-synced Custom Connectors. Codex CLI always receives http
 #   servers natively (type=http in config.toml), independent of this flag.
+#
+# Claude Code registration (`account_connector`):
+#   `desktop:` and Claude Code user-scope registration are INDEPENDENT axes.
+#   Servers that are also registered as claude.ai account-level Custom Connectors
+#   (memory / cognee / roon) sync into Claude Code AUTOMATICALLY (shown as
+#   "claude.ai <name>"). Registering them again with `claude mcp add -s user`
+#   produces a broken duplicate ("Needs authentication" — the CLI has no cached
+#   OAuth token). Mark such servers `account_connector: true`: the Claude Code
+#   registrar (register_claude_code.sh) then skips them, while `desktop:` still
+#   bridges them into Claude Desktop (which cannot use account connectors).
+#   Codex CLI is unaffected — it has no account sync, so it keeps registering
+#   these http servers natively.
 
 mcp_servers:
   obsidian-mcp-tools:
@@ -43,12 +55,17 @@ mcp_servers:
     transport: http
     url: "https://mcp.ohno.be/memory/mcp"
     desktop: mcp-remote
+    # Also a claude.ai account connector ("claude.ai memory") — synced into
+    # Claude Code automatically. Skip user-scope registration (see header).
+    account_connector: true
 
   roon:
     type: http
     transport: sse
     url: "https://mcp.ohno.be/roon/sse"
     desktop: mcp-remote
+    # claude.ai account connector ("claude.ai roon") — see header.
+    account_connector: true
 
   cognee:
     type: http
@@ -58,3 +75,5 @@ mcp_servers:
     transport: http
     url: "https://mcp.ohno.be/cognee/mcp"
     desktop: mcp-remote
+    # claude.ai account connector ("claude.ai cognee") — see header.
+    account_connector: true
