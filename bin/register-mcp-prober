@@ -70,7 +70,7 @@ SECRET=$(openssl rand -base64 64 | tr -d '/+=' | head -c 48)
 [[ ${#SECRET} -ge 32 ]] || fail "openssl produced a too-short secret: ${#SECRET} chars"
 
 # 4. Register the client via Hydra admin API.
-log "registering $CLIENT_ID with audience [cognee, memory, roon-mcp]..."
+log "registering $CLIENT_ID with audience [memory, roon-mcp]..."
 register_payload=$(cat <<JSON
 {
   "client_id": "$CLIENT_ID",
@@ -79,7 +79,7 @@ register_payload=$(cat <<JSON
   "grant_types": ["client_credentials"],
   "response_types": [],
   "scope": "mcp.read",
-  "audience": ["cognee", "memory", "roon-mcp"],
+  "audience": ["memory", "roon-mcp"],
   "token_endpoint_auth_method": "client_secret_basic"
 }
 JSON
