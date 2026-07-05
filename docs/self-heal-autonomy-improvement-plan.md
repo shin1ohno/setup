@@ -9,8 +9,15 @@ owner 決定（#642）:
 1. 4 軸すべてを対象（基盤の堅牢化 / 診断精度 / remediation allowlist 拡張 / infra 経路）。
 2. Phase 3 = **案 B**（可逆な CT `memory`/`cores` resize のみ完全自動、それ以外は needs-human）。
 3. 追加原則: **曖昧な二択は両候補を PR まで作って人間が選ぶ**（cross-cutting）。
+4. 各 Phase に **black/white の完了条件**（Claude が実行して一意に pass/fail 判定できる形）を付す。
 
-このドキュメントは**プランのみ**。実装着手は別途 owner 承認を要する。
+## 完了条件の書式（全 Phase 共通）
+
+各 Phase の「完了条件（DONE gate）」は次の性質を満たす。Claude はこの gate を順に実行し、**全項目 pass で初めてその Phase を「完了」と報告する**。
+
+- 各項目は 1 本のコマンド or grep で **exit code / 件数 / 文字列一致** に還元でき、主観判断を含まない。
+- 「コードが compile した」「dry-run が通った」は必要条件だが、fleet 適用を要する項目は **merge + auto-mitamae 適用後の観測**（metric 存在・機能 probe）まで含める。
+- 1 つでも fail なら Phase 未完。fix→再実行、3 回で設計前提を疑う（`~/.claude/rules/debugging.md`）。
 
 ---
 
@@ -49,12 +56,15 @@ Phase 0/1 は境界内で自律の**質**を上げる（新境界を作らない
    - `SelfHealLoopAuthExpired`: `self_heal_loop_status{result="auth"} == 1`。
    - `SelfHealLoopErroring`: `self_heal_loop_status{result="error"} == 1`（claude rc≠0 が継続）。
 
-### 検証（Claude 実行可）
+### 完了条件（black/white — DONE gate）
 
-- `bash -n` / shellcheck（両 wrapper + metric helper）、`bin/lint-cookbooks`、mitamae dry-run。
-- 適用後 pro-dev で `curl -s localhost:9100/metrics | grep self_heal_loop` が両ループ分を返す。
-- `promtool test rules` で 3 alert。
-- token 切替後 `.credentials.json` を rename しても loop が回る（auth pre-check が token file を見る）。
+1. `bash -n` が `self-heal-metric.sh` / `self-heal-create-run.sh` / `self-heal-resolve-run.sh` で exit 0、`shellcheck -S error` が 3 本すべて exit 0。
+2. `bin/lint-cookbooks` と `bin/audit-cookbook-reachability` が exit 0。
+3. `./bin/mitamae local pve/lxc-pro-dev.rb --dry-run` が exit 0（self-heal-loops リソースがエラーなく plan される）。
+4. PR CI（syntax-check / test-linux / test-macos / ssm-validation / error-simulation）すべて `pass`。
+5. **merge + auto-mitamae 適用後**、pro-dev で `curl -s localhost:9100/metrics | grep -c '^self_heal_loop_last_run_timestamp_seconds'` == **2**、`grep -c '^self_heal_loop_status'` ≥ **2**。
+6. `promtool test rules <fixture>` が exit 0（`SelfHealLoopStale`/`AuthExpired`/`Erroring` の pass/fail 両ケースを含む）。
+7. auth pre-check: `~/.claude/self-heal-token.env` を退避 → create wrapper を手動 1 回実行 → ログに `result=auth` 記録かつ **claude 未起動**（`=== create cycle start ... claude` 行が増えない）。token を戻すと通常サイクルに戻る。
 
 ### PR
 
@@ -78,11 +88,14 @@ Phase 0/1 は境界内で自律の**質**を上げる（新境界を作らない
    - class-D needs-human 診断を書く前に **positive な観測エビデンス**を要求。唯一の根拠が sandbox-blind な空結果なら low-confidence とみなし (a) `pct exec`/ssh で実 connect し直す、(b) 無理なら「needs-human: 観測不能（原因未確定）」として**誤った root cause を書かない**。
    - Step 2 は散文の遵守任せをやめ `self-heal-probe.sh` の呼出を必須手順にする。
 
-### 検証（Claude 実行可）
+### 完了条件（black/white — DONE gate）
 
-- probe helper に #603 signature（`timeout` exit 124 + ssh:22 open）を食わせ "sleep 疑い" に分類。
-- 空 `netstat` 単独で "listener 無し" 断定を出さない（unit-test 的に helper 出力を assert）。
-- `bash -n` / shellcheck / lint / dry-run。
+1. `bash -n self-heal-probe.sh` exit 0、`shellcheck -S error` exit 0。
+2. `self-heal-probe.sh classify_port 127.0.0.1 22` → stdout `open`。既知の閉ポート `self-heal-probe.sh classify_port 127.0.0.1 9` → `refused`。SYN drop するポート → `timeout`。3 分類すべて期待値一致（exit 0）。
+3. `self-heal-probe.sh --self-test` が exit 0。内部に #603 fixture（target port timeout かつ ssh:22 open, darwin）を含み `sleep-suspect` を返すこと、空 `netstat` 入力で「listener 無し」断定を返さないことを assert。
+4. `grep -c 'self-heal-probe.sh' cookbooks/claude-code/files/skills/self-heal-resolve/SKILL.md` ≥ 1（Step 2 が probe helper 呼出を必須化）。
+5. SKILL に confidence gate 文言が存在（`grep -Ec '空.*netstat|観測不能|positive.*エビデンス' SKILL.md` ≥ 1）。
+6. `bin/lint-cookbooks` exit 0、`./bin/mitamae local pve/lxc-pro-dev.rb --dry-run` exit 0、PR CI 全 `pass`。
 
 ### PR
 
@@ -106,12 +119,15 @@ darwin remediation（`launchctl kickstart`、et wedge 回復）は全て class D
    - class 表に C'（known-safe kick, allowlist 一致時のみ PR 無し自律）を追加。テーブル外は class D のまま。破壊的/auth/secret は allowlist に載せない。
    - allowlist は PR review で増やすデータ（`bin/lint-cookbooks` に JSON schema チェックを足すか検討）。
 
-### 検証（Claude 実行可）
+### 完了条件（black/white — DONE gate）
 
-- allowlist にある service を落とし→helper が kick→機能 probe green→close の e2e（pro-dev の et などで）。
-- テーブル外 service は helper が拒否し class D のまま。
-- flap 2 回目が B/needs-human に格上げ。
-- `jq` で JSON schema、`bash -n`/shellcheck/lint/dry-run。
+1. `jq empty cookbooks/self-heal-loops/files/remediation-allowlist.json` exit 0（valid JSON）。schema 検証（必須キー host/service/recovery_command/flap_window_min/max_kicks_per_window の存在）を `jq` one-liner で assert し exit 0。
+2. `self-heal-remediate.sh --dry-run <in-table-host> <in-table-service>` → exit 0、stdout がテーブルの `recovery_command` と完全一致。
+3. `self-heal-remediate.sh --dry-run bogus-host bogus-svc` → exit≠0（テーブル外拒否＝任意コマンド実行不可をコードで強制）。
+4. flap-guard: `max_kicks` 超過を模した状態で `self-heal-remediate.sh <in-table>` → stdout `escalate`、recovery_command を実行しない（distinct exit code）。
+5. `grep -c "class C'" cookbooks/claude-code/files/skills/self-heal-resolve/SKILL.md` ≥ 1。
+6. `bin/lint-cookbooks` exit 0、dry-run exit 0、PR CI 全 `pass`。
+7. **e2e（機能）**: allowlist の 1 サービスを pro-dev で意図的に停止 → helper kick → `self-heal-probe.sh classify_port` が `open` に復帰。初回は対話 run で確認してから無人化。
 
 ### PR
 
@@ -148,12 +164,17 @@ darwin remediation（`launchctl kickstart`、et wedge 回復）は全て class D
 3. **境界更新**（SKILL §不変の安全境界 #8）
    - 「home-monitor TF は常に needs-human」→「案 B: infra-resize-allowlist 内の可逆 resize は plan-gate 通過時のみ自律 apply、それ以外の home-monitor TF は needs-human」。
 
-### 検証
+### 完了条件（black/white — DONE gate）
 
-- #557 相当（CT107 相当の RAM resize）で plan が in-place のみ・`0 to destroy` を示すこと。
-- destroy/replacement を含む plan で helper が abort→needs-human。
-- allowlist キャップ超過の resize を helper が拒否。
-- adversarial review が blocker ゼロ。
+1. **PR-3a（前提ゲート）**: adversarial review レポートが committed、末尾に `blockers: 0`（全 blocker 解消 or 該当なし）。capability probe 結果（`terraform plan` 到達可否・PVE provider token 供給元・採用 profile）が doc に記録。**この項目が pass するまで PR-3b の実装コードを書かない。**
+2. `jq empty infra-resize-allowlist.json` exit 0、各エントリに `ct`/`allow_fields`/`max_memory_mb`/`max_cores`、`grep -c 'rootfs' infra-resize-allowlist.json` == **0**（rootfs 非対象）。
+3. plan-gate helper のフィクスチャテスト（`self-heal-infra-apply.sh --self-test` or CI, exit 0）:
+   - fixture A（対象 CT の memory のみ in-place update, 0 destroy）→ `approve`, exit 0。
+   - fixture B（`delete`/`replace`/対象外リソース変化を含む）→ `abort→needs-human`, exit≠0。
+   - fixture C（allowlist キャップ超過）→ `refuse`, exit≠0。
+4. `grep -c '案 B' cookbooks/claude-code/files/skills/self-heal-resolve/SKILL.md` ≥ 1（§不変の安全境界 #8 更新）。
+5. `bin/lint-cookbooks` exit 0、dry-run exit 0、PR CI 全 `pass`。
+6. **e2e（機能, 対話 run で 1 回）**: #557 相当の可逆 resize を実行 → 対象 CT の実 memory が反映（`pct config <ct> | grep memory`）→ 対象サービス機能復帰。plan に destroy が出れば abort→needs-human することを別途 dry で確認。
 
 ### PR
 
@@ -170,6 +191,15 @@ darwin remediation（`launchctl kickstart`、et wedge 回復）は全て class D
 - **人間の解決**: owner が採用側にコメント（既存 user-signal 経路 / Phase 2-C）→ GO 承認。採用 PR は CI green かつ envelope 内なら merge→検証→close（Phase3-B infra なら案 B 規則）。非採用 PR は close。
 - **不変ガード**: どちらの候補も**人間が選ぶまで auto-merge しない**（両方 class-D/needs-human）。**Step 0 dup-guard を「複数 open linked PR + needs-human → skip（片方を勝手に merge しない）」に対応**させる。envelope を跨ぐ候補は PR 化せず診断内で言及のみ。両 PR 作成は当該 run の 1-issue 予算を消費、3-try escalation は据え置き。
 
+### 完了条件（black/white — DONE gate）
+
+1. `grep -c 'multi-candidate' cookbooks/claude-code/files/skills/self-heal-resolve/SKILL.md` ≥ 1（モード節が存在）。
+2. Step 0 dup-guard が「複数 open linked PR + needs-human → skip」を明記（`grep -Ec '複数.*linked PR|片方を.*merge しない' SKILL.md` ≥ 1）。
+3. ガード 3 文言がすべて grep で存在: 「両 PR に…needs-human」「人間が選ぶまで…auto-merge しない」「envelope 外…materialize しない」。
+4. resolve-run.sh の pre-flight gate が複数 linked-PR issue で誤 merge を誘発しない: 当該 needs-human issue が gate の actionable カウントに入らないことを `SELF_HEAL_GATE_ONLY=1 self-heal-resolve-run.sh` + 複数 linked-PR fixture で確認（gate ログ `actionable=0`）。
+5. **e2e（対話 run で 1 回）**: 二択が成立するテスト issue で両候補 PR が作られ両方に needs-human が付き、どちらも auto-merge されないこと、owner コメントで片方が採用されもう片方が close されることを確認。
+6. `bin/lint-cookbooks` exit 0、PR CI 全 `pass`。
+
 ### PR
 
 - **PR-X**: SKILL の multi-candidate propose モード + Step 0 dup-guard の複数 linked-PR 対応（setup）。Phase 2 完了後（class C' と整合させる）に実装。
@@ -184,6 +214,7 @@ PR-0a/0b (基盤)  →  PR-1 (診断)  →  PR-2 (allowlist) + PR-X (multi-candi
 - **home-monitor repo**（CodeCommit, user-gated）: Phase 3 の TF backend/権限整備が必要な場合のみ。
 - 0/1/2 は既存境界を緩めない → 先行して安全に merge・fleet 適用（auto-mitamae canary→pro-dev）。
 - 3 は security 前提（§4 の adversarial review + capability probe）通過後にのみ実装着手。
+- 各 Phase は自身の「完了条件（DONE gate）」を全 pass してから次 Phase に進む。
 
 ## 7. Owner 手動ステップ（`!` 実行）
 
