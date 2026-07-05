@@ -10,5 +10,16 @@
     "max_cores": "ceiling",
     "per_ct_daily_budget": "max autonomous resizes per CT per UTC day (cooldown vs oversubscription, review 3d)"
   },
-  "resizable": []
+  "resizable": [
+    {
+      "ct": "monitoring",
+      "ct_id": 111,
+      "allow_fields": ["memory", "cores"],
+      "min_memory_mb": 2048,
+      "max_memory_mb": 4096,
+      "min_cores": 2,
+      "max_cores": 4,
+      "per_ct_daily_budget": 2
+    }
+  ]
 }

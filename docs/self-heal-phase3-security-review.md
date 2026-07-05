@@ -2,8 +2,17 @@
 
 **Date**: 2026-07-05
 **Issue**: shin1ohno/setup#642 Phase 3
-**Status**: 案B-as-specced = **blockers: 3**（実装不可）。owner 決定（2026-07-05）= **hardening 込みで案B 実装**。
-本 doc の「hardened 案B」が blockers を 0 にする設計。**この設計に沿って初めて PR-3b の実装コードを書く。**
+**Status**: 案B-as-specced = **blockers: 3**（実装不可）→ hardened 案B → **実装時に PVE-API-direct へ pivot（owner 承認, 2026-07-05, LIVE 稼働）**。
+
+> **⚠️ 実装は PVE-API-direct（下記）。terraform-based 案B + state 分離は採用しなかった。** 実装中に、scoped PVE
+> token が PVE API を直接叩けることが判明 → wrapper は terraform でなく **PVE API を scoped token で直接叩く**設計に
+> 変更。これで **state 分離（本番 17 LXC の state surgery, 最高リスク）が丸ごと不要**になり、blocker 2c（state read
+> による secret 漏洩）は「wrapper が terraform state を一切読まない」ことで自明に消滅。硬い境界は **PVE token の
+> scope 自体**（role SelfHealResize = VM.Config.Memory/CPU/Audit, per-CT ACL）— wrapper がバグ/注入されても memory/cpu
+> 以外・allowlist 外 CT を物理的に触れない。**LIVE 検証済み**: pve-resize identity は main state を 403 で読めず
+> （item4）、CT111(monitoring) を 2048→2304MB に scoped token で resize 成功、devices.json sync commit（item6）。
+> 以下の「hardened 案B（terraform）」節は経緯として残すが、実装は PVE-API-direct。残タスク: pve-resize IAM の
+> S3/DynamoDB grant を trim（PVE-API-direct では未使用の over-grant。無害だが least-priv 純化のため follow-up）。
 
 `docs/self-heal-autonomy-improvement-plan.md` §4 を本 doc で上書きする。
 
