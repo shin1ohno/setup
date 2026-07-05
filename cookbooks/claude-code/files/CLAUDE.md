@@ -171,6 +171,11 @@ Applies to any prose output — formal docs AND chat replies (structural enforce
 - **Reference, don't reproduce**: cite "see `Japanese Output Discipline`" or "see `rules/debugging.md`" instead of pasting protocol text inline — long extracted text is reading-cost with no marginal utility.
 - **Length scales to the question**: a 3-line factual question gets a 3-line answer; a multi-faceted plan question gets the full structure. Apply the marginal-utility test sentence-by-sentence.
 - **Japanese prose**: clarity over politeness; the canonical style rules are the `Japanese Output Discipline` section above (single source of truth — do not restate).
+- **Self-review pass before presenting a multi-line Plan / report** (Plan, analysis, retro, research summary — *whether or not* it is written to `.md`): the bullets above are "while writing"; this is a mandatory pass over the finished draft *before* it reaches the user. Not optional polish — apply the discipline in full, no half-measures:
+  1. Delete every `Japanese Output Discipline` 禁止表現 (hedge / suggest-直訳 / 確認伺い / 後送り); replace with the action itself or a numeric/conditional statement.
+  2. Compress verbose phrasing; replace adjectives/adverbs with numbers or facts (`Japanese Output Discipline` 圧縮 / 具体性).
+  3. Re-confirm BLUF and one topic sentence per paragraph.
+  For a substantial draft, `Read` `~/.claude/skills/writing/references/phrases.md` + `structures.md` and check against the full lists rather than from memory. Do NOT spawn the 3-agent `/writing` skill for these inline reports — self-apply the same discipline. Single-line factual answers are exempt. Origin: issue #640.
 
 ## Session Retrospective
 
