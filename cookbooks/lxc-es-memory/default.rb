@@ -1,23 +1,22 @@
 # frozen_string_literal: true
 
-# es-memory-mcp — unified Cognee + Mem0 MCP server backed by the ElasticSearch
-# cluster (es-0/1/2). Replaces the Cognee (RDS pgvector / kuzu) and Mem0
-# (Qdrant / Aurora pgvector) storage stacks with BM25 + dense_vector kNN
-# hybrid search on the existing 3-node ES cluster (basic license, no ML —
+# es-memory-mcp — Mem0-compatible MCP server backed by the ElasticSearch
+# cluster (es-0/1/2). Replaces the prior knowledge-graph (RDS pgvector / kuzu)
+# and Mem0 (Qdrant / Aurora pgvector) storage stacks with BM25 + dense_vector
+# kNN hybrid search on the existing 3-node ES cluster (basic license, no ML —
 # embeddings computed externally via OpenAI text-embedding-3-small).
 #
 # Runs as native systemd units + a Python venv (NOT docker). Per the PVE LXC
 # design gate (~/.claude/rules/pve-lxc.md): a single-purpose service LXC
 # prefers apt+venv+systemd over docker-compose, avoiding the docker-in-LXC bug
 # class (bind-mount UID mapping, .env shell-interpretation, BuildKit failures,
-# image pulls). Three units share one venv:
+# image pulls). Two units share one venv:
 #
 #   es-memory-mcp.service          uvicorn server:app  (127.0.0.1:8000)
-#   es-memory-cognee-proxy.service proxy.py PATH_PREFIX=/cognee  (:8002)
 #   es-memory-memory-proxy.service proxy.py PATH_PREFIX=/memory  (:8766)
 #
-# Tool names are preserved 1:1 so the existing claude.ai connectors
-# (mcp__claude_ai_cognee__*, mcp__claude_ai_ai_memory__*) keep working.
+# Tool names are preserved 1:1 so the existing claude.ai connector
+# (mcp__claude_ai_ai_memory__*) keeps working.
 
 return if node[:platform] == "darwin"
 
@@ -57,7 +56,7 @@ end
 # unit exists, and systemd_unit's own activate starts it. The v2 units
 # (memory-mcp-v2 / memory-v2-proxy) are included so the v2 file resources below
 # can notify them the same way.
-%w[es-memory-mcp es-memory-cognee-proxy es-memory-memory-proxy memory-mcp-v2 memory-v2-proxy].each do |svc|
+%w[es-memory-mcp es-memory-memory-proxy memory-mcp-v2 memory-v2-proxy].each do |svc|
   execute "restart #{svc}" do
     command "sudo systemctl restart #{svc}.service"
     action :nothing
@@ -91,7 +90,6 @@ execute "pip install es-memory deps" do
   not_if "test -x #{venv_dir}/bin/uvicorn && test -f #{venv_dir}/.reqs.md5 && " \
          "md5sum -c --status #{venv_dir}/.reqs.md5"
   notifies :run, "execute[restart es-memory-mcp]"
-  notifies :run, "execute[restart es-memory-cognee-proxy]"
   notifies :run, "execute[restart es-memory-memory-proxy]"
 end
 
@@ -114,7 +112,6 @@ remote_file "#{app_dir}/proxy.py" do
   owner "root"
   group "root"
   mode "644"
-  notifies :run, "execute[restart es-memory-cognee-proxy]"
   notifies :run, "execute[restart es-memory-memory-proxy]"
 end
 
@@ -153,12 +150,12 @@ generate_env_script = File.join(File.dirname(__FILE__), "files", "generate_env.s
 env_temp_path = "#{generated_dir}/es-memory.env"
 
 require_external_auth(
-  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/elastic/* + /cognee/* SSM params",
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/elastic/* + /memory/openai-api-key SSM params",
   check_command: "aws ssm get-parameter --name /monitoring/elastic/elastic-password " \
                  "--profile #{aws_profile} --region #{aws_region} " \
                  "> /dev/null 2>&1",
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
-                "/monitoring/elastic/* and /cognee/llm-api-key in #{aws_region}. " \
+                "/monitoring/elastic/* and /memory/openai-api-key in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. " \
                 "Then press Enter.",
   skip_if: -> { File.exist?(env_path) },
@@ -195,7 +192,7 @@ directory units_staging do
   action :create
 end
 
-%w[es-memory-mcp es-memory-cognee-proxy es-memory-memory-proxy].each do |svc|
+%w[es-memory-mcp es-memory-memory-proxy].each do |svc|
   staged = "#{units_staging}/#{svc}.service"
   remote_file staged do
     source "files/systemd/#{svc}.service"
@@ -207,6 +204,17 @@ end
   systemd_unit "#{svc}.service" do
     staging_path staged
   end
+end
+
+# Retire the v1 /cognee proxy: the cognee MCP namespace was removed from
+# server.py, so es-memory-cognee-proxy is no longer staged above. Cookbook
+# file removal does NOT stop an already-running unit — disable + remove it
+# explicitly (idempotent: fires only while the unit still exists on the host).
+execute "retire es-memory-cognee-proxy" do
+  command "systemctl disable --now es-memory-cognee-proxy.service && " \
+          "rm -f /etc/systemd/system/es-memory-cognee-proxy.service && " \
+          "systemctl daemon-reload"
+  only_if "systemctl cat es-memory-cognee-proxy.service >/dev/null 2>&1"
 end
 
 # ==========================================================================
