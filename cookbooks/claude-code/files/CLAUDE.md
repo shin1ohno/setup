@@ -58,12 +58,14 @@ When adding or extending a rule, place it by these criteria:
 | Target | Use when |
 |---|---|
 | `~/.claude/CLAUDE.md` (always loaded) | Applies every conversation; fits in 1-3 sentences; or is a navigational pointer |
-| `~/.claude/rules/<topic>.md` `@`-imported (always loaded) | Broadly applicable; >3 sentences; multiple sub-cases. Currently reserved for sub-agents, plugins, writing, knowledge-persistence |
-| `~/.claude/rules/<topic>.md` on-demand (loaded via Read) | Task-specific playbook. Open with a `Load when …` trigger line |
+| `~/.claude/rules/<topic>.md` (always loaded — every rules/ file is auto-loaded) | Broadly-applicable core rule or load-bearing safety gate that fires in most sessions; >3 sentences; multiple sub-cases |
+| `~/.claude/docs/<topic>.md` (on-demand — loaded via Read, NOT auto-loaded) | Task-specific playbook, or the detail/origin half of a split rule. Reached via a CLAUDE.md "Detail playbooks" row or an inline `Detail: see …` pointer from its always-loaded summary. Open with a `Load when …` trigger line |
 
-Default to on-demand. Promote to `@`-import only when the rule genuinely applies to every conversation; promote to main CLAUDE.md only for 1-3 sentence steering rules.
+`docs/knowledge-persistence.md` is the one `docs/` file still `@`-imported (so always-loaded despite living in `docs/`); everything else in `docs/` is genuinely on-demand.
 
-When extending an existing rule, keep it in place unless cumulative size grew past ~10 lines or 3+ sub-cases diverge by task type — then split to a new on-demand file.
+Default to `docs/` (on-demand). Promote to `rules/` only when the rule genuinely fires in most sessions; promote to main CLAUDE.md only for 1-3 sentence steering rules.
+
+When extending an existing rule, keep it in place unless cumulative size grew past ~10 lines or 3+ sub-cases diverge by task type — then split the detail half into a `docs/<name>-detail.md` (always-loaded summary keeps the rule statement + a `Detail: see …` pointer).
 
 ## Japanese Output Discipline
 
@@ -128,26 +130,40 @@ When responding in Japanese (default), follow these. They override English-rule 
 - **Auto mode ≠ skipping plan** for non-trivial work
 - **State archaeology before reusing a TF resource type**: `terraform state show`, `aws iam get-user-policy`, `pct config <existing-vmid>`, `cat cookbooks/<existing>/default.rb`. Origin: 2026-05-06 CT 111 lost ~45 min to 2 blockers visible from a 2-min archaeology
 
-### Detail playbooks (load on demand)
+### Detail playbooks (load on demand — Read when the task matches)
+
+These are `docs/` files (not auto-loaded). `Read` the file when the task matches its trigger. Always-loaded `rules/` summaries (ruby, aws-iam, pve-lxc, docker-compose, …) point to their own `docs/<name>-detail.md` inline — those are not indexed here.
 
 | Topic | File |
 |---|---|
-| UX/IA/frontend plan structure, Design-to-Plan transition, Autonomous Execution Boundary table, Research-to-Plan pipeline | `~/.claude/rules/planning.md` |
-| FFI boundary audit (UniFFI / JNI / WASM) | `~/.claude/rules/ffi-audit.md` |
-| Adversarial plan review (OAuth / JWT / secrets / auth-request) | `~/.claude/rules/adversarial-review.md` |
-| Pre-PR cookbook implementation checklist | `~/.claude/rules/cookbook-prs.md` |
+| Pre-PR cookbook implementation checklist (IP literal / healthcheck quoting / bind-mount UID / UDP host-net) | `~/.claude/docs/cookbook-prs.md` |
+| Homebrew→mise / direct-download migration — 5-check upstream verification | `~/.claude/docs/mise-migration.md` |
+| iOS build (XcodeGen + Rust UniFFI): fresh-Mac prereqs, keychain, deploy probe | `~/.claude/docs/ios-build.md` |
+| Kibana Lens visualization / saved-object NDJSON gotchas | `~/.claude/docs/kibana-lens.md` |
+| RemoteTrigger API field reference + scheduled-trigger design | `~/.claude/docs/remote-trigger.md` |
+| Tailscale `accept-routes` vs LAN-supernet routing conflict | `~/.claude/docs/tailscale.md` |
+| Frontend (Next.js / Vite) dev-server / HMR gotchas | `~/.claude/docs/frontend-dev.md` |
+| Data-collection failure-escalation + transient-retry ladder | `~/.claude/docs/data-collection.md` |
+| Weave protocol publish → feedback shape contract | `~/.claude/docs/weave-protocol.md` |
 
 ## Sub-agent Design Principles
 
-See @~/.claude/rules/sub-agents.md.
+See `~/.claude/rules/sub-agents.md` (always-loaded via `rules/`; no `@`-import needed).
 
 ## Claude Code Plugins
 
-Official plugins auto-registered; most self-describe triggers. See @~/.claude/rules/claude-code-plugins.md for plugin-vs-cookbook integration rules.
+Official plugins auto-registered; most self-describe triggers. See `~/.claude/rules/claude-code-plugins.md` (always-loaded) for plugin-vs-cookbook integration rules.
 
 ## Writing
 
-See @~/.claude/rules/writing.md
+Applies to any prose output — formal docs AND chat replies (structural enforcement scales with length; philosophy + Japanese rules are constant).
+
+- **Before writing**: identify the reader — what they already know, and what decision they'll make from this text. Marginal utility varies per reader; information obvious to the reader adds zero value.
+- **BLUF is mandatory** in every reply. Lead with the conclusion.
+- **Chat ≠ full Pyramid**: 1-2 levels is fine (constraint is "topic sentence per paragraph"), not the strict 3-level hierarchy.
+- **Reference, don't reproduce**: cite "see `Japanese Output Discipline`" or "see `rules/debugging.md`" instead of pasting protocol text inline — long extracted text is reading-cost with no marginal utility.
+- **Length scales to the question**: a 3-line factual question gets a 3-line answer; a multi-faceted plan question gets the full structure. Apply the marginal-utility test sentence-by-sentence.
+- **Japanese prose**: clarity over politeness; the canonical style rules are the `Japanese Output Discipline` section above (single source of truth — do not restate).
 
 ## Session Retrospective
 

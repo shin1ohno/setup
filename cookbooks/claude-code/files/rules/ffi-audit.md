@@ -15,7 +15,7 @@ Include as a plan section, with concrete answer per item:
 5. **Char limits / truncation**: filename / identifier length caps that differ between sides (e.g., HFS+ vs APFS, FAT32, registry hives)
 6. **Numeric ranges**: signed/unsigned coercion at the boundary (e.g., u8 ↔ Int, i64 ↔ Number lossy past 2^53)
 
-For each item, write down the **observed value on each side** and mark **DIVERGE** when they don't match (e.g., `CBUUID.uuidString` short-form vs `Uuid::parse_str` 128-bit form — see `~/.claude/rules/ios-build.md` "CoreBluetooth UUID encoding").
+For each item, write down the **observed value on each side** and mark **DIVERGE** when they don't match (e.g., `CBUUID.uuidString` short-form vs `Uuid::parse_str` 128-bit form — see `~/.claude/docs/ios-build.md` "CoreBluetooth UUID encoding").
 
 ## Origin
 

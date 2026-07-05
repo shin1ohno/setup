@@ -90,7 +90,7 @@ file "#{deploy_dir}/docker-compose.yml" do
         # DCR proxy POST → claude.ai sees 500 on /oauth2/register → MCP
         # connect fails with "Couldn't reach the MCP server". The same
         # name + IP is in `local.devices.hydra` in home-monitor devices.tf;
-        # hardcoded here per ~/.claude/rules/cookbook-prs.md (IP literals
+        # hardcoded here per ~/.claude/docs/cookbook-prs.md (IP literals
         # in cookbooks must match contracts/devices.json — verified).
         extra_hosts:
           - "hydra.home.local:192.168.1.71"
