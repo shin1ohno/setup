@@ -1,0 +1,13 @@
+{
+  "_comment": "self-heal-resolve class C' known-safe remediation allowlist. Data, grown ONLY via PR review. self-heal-remediate.sh executes an entry's recovery_command ONLY when (host, service) matches EXACTLY here — anything not listed stays class D (needs-human). Never add destructive / auth / secret / IAM commands. Each recovery_command embeds its own transport (ssh/pct) and must run WITHOUT interactive sudo (headless). host = logical key the resolve SKILL derives from the alert; service = the unit/label; flap_window_min + max_kicks_per_window bound re-kicks before escalating to a permanent fix (class B) / needs-human.",
+  "remediations": [
+    {
+      "host": "mini",
+      "service": "homebrew.mxcl.et",
+      "recovery_command": "ssh -o ConnectTimeout=10 -o BatchMode=yes mini.home.local 'launchctl kickstart -k system/homebrew.mxcl.et'",
+      "flap_window_min": 60,
+      "max_kicks_per_window": 1,
+      "notes": "etserver alive-but-not-listening wedge (#567). launchctl kickstart -k restores the :2022 listener; verified reachable as shin1ohno without sudo (2026-07-05). ONLY apply on a wedge-suspect verdict (target refused, ssh:22 open) from self-heal-probe.sh — a target-TIMEOUT verdict on mini is auto-sleep (#603, class D power mgmt), NOT a wedge."
+    }
+  ]
+}
