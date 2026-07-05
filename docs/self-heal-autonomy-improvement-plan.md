@@ -136,6 +136,11 @@ darwin remediation（`launchctl kickstart`、et wedge 回復）は全て class D
 
 ## 4. Phase 3 — infra/home-monitor 経路（案 B、境界を跨ぐ・最高リスク）
 
+> **⚠️ この §4 は `docs/self-heal-phase3-security-review.md` で上書きされた**（2026-07-05）。adversarial review が
+> 案B-as-specced に **blockers: 3**（floor 無し縮小 OOM / admin-gate は境界でない / PVE token 未スコープ）を検出。
+> owner 決定 = **hardening 込みで案B 実装**。実際の設計・実装内訳・DONE gate・owner provision 前提は
+> security-review doc を参照。以下の初版 §4 は歴史的経緯として残す。
+
 ### 問題
 
 境界 #8 が home-monitor TF を人間 apply 固定。#557（RAM resize）は owner GO 後もループに TF 変更を用意する手段すら無く放置。
@@ -224,5 +229,7 @@ PR-0a/0b (基盤)  →  PR-1 (診断)  →  PR-2 (allowlist) + PR-X (multi-candi
 
 ## 8. 未決事項
 
-- Phase 3 の apply 用に sh1admn 全権を使うか、resize 専用の最小権限サブ profile を切るか（§4-3、adversarial review の結論待ち）。
+- ~~Phase 3 の apply 用に sh1admn 全権を使うか、resize 専用の最小権限サブ profile を切るか~~ → **決定済み**:
+  専用 non-admin `pve-resize` sub-profile + スコープ化 PVE token/role（`docs/self-heal-phase3-security-review.md` §B）。
+  adversarial review が sh1admn 直用を blocker 2a として却下。
 - `bin/lint-cookbooks` に allowlist JSON schema チェックを足すか（Phase 2）。
