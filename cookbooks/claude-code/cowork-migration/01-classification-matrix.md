@@ -49,7 +49,7 @@
 | ファイル | 判定 | 理由 | 移行先 |
 |---|---|---|---|
 | `rules/writing.md` | **Bundle**（writing skill 内へ） | writing skill と内容が重複。skill 側に集約 | writing skill の reference 節 |
-| `rules/architecture.md` | **Preference** | OS 非依存の設計原則 | preferences に統合 |
+| `rules/planning.md` (Architecture Discussion Gates; ex-architecture.md) | **Preference** | OS 非依存の設計原則 | preferences に統合 |
 | `rules/debugging.md` | **Preference** + **Skill** に分割 | Silent failure / Fix-loop escalation などコア原則は preference。"Read source before researching"・"Frame the failure class" 等の長文プロトコルは skill `debugging-protocol` 化を検討 | preference に圧縮抜粋 + 詳細は skill 候補（任意） |
 | `rules/editing.md` | **Code-only** | Edit tool race condition / git mv の Read キャッシュ — Claude Code の Edit ツール固有 | 持ち込まない |
 | `rules/git-commit.md` | **Code-only** | PR ワークフロー詳細・gh CLI 前提・branch hygiene。Cowork から git 操作は限定的 | 持ち込まない（Cowork で git する時は project memory に必要部分のみ） |

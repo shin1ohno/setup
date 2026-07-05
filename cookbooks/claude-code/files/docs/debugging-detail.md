@@ -42,7 +42,7 @@ The cost of a silent auth gate: every wrong-token / wrong-issuer / expired-token
 
 **Don't** log the full token (logs end up in centralized aggregation; tokens are credentials). DO log: the variant, the kid extracted from the JWT header, the expected issuer/audience/scope from server config, a 16-char token prefix to disambiguate concurrent requests. Never the full Authorization header value.
 
-This rule is the server-side counterpart to the iOS rule "FFI Boundary Error Visibility" (`~/.claude/rules/ios-build.md`) — both codify that the boundary between trusted-caller and untrusted-input must surface its rejection variant, not just its rejection.
+This rule is the server-side counterpart to the iOS rule "FFI Boundary Error Visibility" (`~/.claude/docs/ios-build.md`) — both codify that the boundary between trusted-caller and untrusted-input must surface its rejection variant, not just its rejection.
 
 This rule exists because roon-mcp's `verify_bearer` (in `crates/roon-mcp/src/auth.rs`) returned `Result<Claims, AuthError>` with rich variants but the call site at /sse just emitted HTTP 401 invalid_token — every reject looked identical. The 2026-05-05 session debug arc spanned PR #128 (RUST_LOG=info,roon_mcp::auth=debug, no effect because the Err arm had no debug! either), through the present session's debug branch with added `tracing::warn!` at line 240, before the actual variant (`AuthError::WrongAudience`) was visible. With unconditional logging the diagnosis would have been minutes, not the 3-session arc it became.
 
@@ -102,7 +102,7 @@ Run each one before writing the cookbook line. Web summaries cannot detect:
 
 These all look identical from a plan-agent's web summary. They diverge only when you query the actual API or URL.
 
-This rule exists because PR #32 (2026-04-25 brew→mise migration in `~/ManagedProjects/setup`) shipped 8 of these failure modes in a single PR, producing 6 cleanup PRs (#33, #34, #36, #37, #38, #41) over the same session. The full pre-migration checklist is in `~/.claude/rules/mise-migration.md`; the executable batch is the `/verify-mise-backend` skill.
+This rule exists because PR #32 (2026-04-25 brew→mise migration in `~/ManagedProjects/setup`) shipped 8 of these failure modes in a single PR, producing 6 cleanup PRs (#33, #34, #36, #37, #38, #41) over the same session. The full pre-migration checklist is in `~/.claude/docs/mise-migration.md`; the executable batch is the `/verify-mise-backend` skill.
 
 ### CLI tool JSON output — probe schema before writing jq
 

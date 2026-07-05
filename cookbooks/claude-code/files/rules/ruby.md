@@ -8,28 +8,11 @@ globs: "*.rb"
 - Prefer symbols over strings for hash keys in DSL code
 - mitamae runs without sudo. Never use `owner node[:setup][:system_user]` on file/remote_file resources — it triggers an internal `sudo chown` that fails without a terminal. Instead, stage files in user space (`node[:setup][:root]`) and use `execute` with explicit `sudo cp` to place them in system directories
 
+This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/docs/ruby-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
+
 ## Grep for in-codebase resource pattern before writing custom `execute`
 
-Before writing an `execute` resource to perform a filesystem operation (`mkdir`, `chown`, `chmod`, `cp`, `install -d`, `install -m`, `ln -s`), grep the cookbook tree for an existing `directory` / `file` / `remote_file` resource that achieves the same effect. The DSL resource is preferable to a shell `execute` because it is idempotent by default, carries type checking, is visible to `mitamae --dry-run`, and survives audit greps for "what creates `/var/lib/foo`".
-
-**Probe before writing custom shell**:
-
-```bash
-# Existing user-attribute precedents on directory resources
-awk '/^[[:space:]]*directory /,/^end$/' cookbooks/*/default.rb | grep -B5 'user '
-
-# Existing sudo-execute precedents (when DSL resource genuinely insufficient)
-grep -rn 'sudo install\|sudo cp\|sudo mkdir' cookbooks/*/default.rb
-```
-
-**Resource attributes that solve common-execute cases**:
-
-- Need to create a root-owned directory from a non-root mitamae context → `directory "/path" do; user "root"; owner "root"; group "root"; mode "0755"; end`. The base resource (`itamae/resource/base.rb:92`) defines `:user` on every resource; `run_specinfra` propagates it as `sudo -u <user>` to the underlying `mkdir`/`chown`. See `cookbooks/lazygit/default.rb:17-22` for precedent.
-- Need to copy a file into a system path → `remote_file` for the staging copy + `execute "sudo install -m ..."` for the system move (the system-path part genuinely needs sudo — the DSL has no `user` shortcut equivalent for a `remote_file` writing into `/etc`, so split staging from install).
-
-Custom `execute` is the fallback when the DSL resource cannot express the operation, NOT the reflex.
-
-Origin: 2026-05-07 node-exporter — reached for `execute "sudo install -d ..."` when `directory ... user "root"` precedent existed.
+Detail: see `~/.claude/docs/ruby-detail.md#grep-existing-resource`.
 
 ## Mitamae evaluation model — top-level Ruby is compile-time
 
@@ -153,210 +136,27 @@ Origin: 2026-04-25 — `require_external_auth` helper hung 3 CI runs 1+ hr each 
 
 ## sudo `secure_path` strips user home — symlink user-space tools into /usr/local/bin
 
-`mitamae` execute resources with a `user` attribute run under `sudo -H -u <user> -- /bin/sh -c …`, which sanitizes PATH to sudoers' `secure_path` (typically `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`). Tools installed under the user's home — `~/.pyenv/shims/`, `~/.cargo/bin/`, `~/.local/bin/`, `~/.local/share/mise/shims/` — are NOT on `secure_path` and therefore invisible to that subshell. The user's own login shell finds them only because `.zshrc` / `.profile` prepended them; sudo bypasses that init.
-
-This trap is invisible at recipe-write time: the cookbook's install resource succeeds, the verification probe via `which <tool>` (run in the user's shell) succeeds, and the failing consumer surfaces only when a sibling cookbook (or even the same cookbook) invokes the binary inside a sudo-wrapped execute.
-
-**Fix**: symlink the binary into `/usr/local/bin/` so any PATH chain — sudo subshell, system-level service, cron — can resolve it:
-
-```ruby
-execute "symlink <tool> into /usr/local/bin" do
-  command "ln -sf #{node[:setup][:home]}/.pyenv/shims/<tool> /usr/local/bin/<tool>"
-  user node[:setup][:system_user]
-  not_if "test -L /usr/local/bin/<tool> && " \
-         "test \"$(readlink /usr/local/bin/<tool>)\" = " \
-         "\"#{node[:setup][:home]}/.pyenv/shims/<tool>\""
-end
-```
-
-Use the shim (not the resolved binary) so pyenv/mise version switches still take effect. The shim itself is a thin bash wrapper that finds the actual binary at exec time.
-
-**When to apply this**: any cookbook installing a binary that will be invoked from a sudo-wrapped execute resource — including `git_clone` of a `codecommit::` URL (which spawns `git remote-codecommit` via its own subprocess), service unit files that call user-installed tools, cron jobs, etc.
-
-**Detection**: when designing a cookbook that installs a Python/Rust/Node CLI tool, ask: "Will any privileged code path invoke this tool?" If yes, plan the symlink in the same cookbook.
-
-Origin: 2026-05-04 git-remote-codecommit — pyenv-installed shim invisible to sudo-wrapped `git_clone`; `git: 'remote-codecommit' is not a git command`. Fixed via `/usr/local/bin/git-remote-codecommit` symlink.
+Detail: see `~/.claude/docs/ruby-detail.md#secure-path-symlink`.
 
 ## docker-compose service restart `execute` must guard on the config file existence
 
-Cookbooks that drop a docker-compose service (hydra / cognee / ai-memory / hydra-server / etc.) typically have a `remote_file` for `.env` and a `docker compose up -d --build` execute that depends on it. The `.env` itself is usually generated by an SSM-gated execute that may legitimately skip on a fresh host without AWS credentials. When the gate is skipped, downstream notifies still fire the restart resource, which then attempts `docker compose up` without an `.env` and either fails the container at runtime (silent until logs are checked) or aborts the entire mitamae run.
-
-**Fix**: gate the restart `execute` itself on `.env` existence, not just rely on the upstream gate:
-
-```ruby
-execute "docker compose restart hydra" do
-  command "docker compose -f #{deploy_dir}/docker-compose.yml up -d --build"
-  user node[:setup][:user]
-  action :nothing
-  only_if "test -f #{env_output_path}"
-end
-```
-
-The guard is NOT an idempotency check — `not_if` would block re-runs after `.env` is in place. It is a fresh-machine safety check: skip the restart entirely on hosts that haven't completed the auth-gated bootstrap yet, with the expectation that the next mitamae run (after the operator configures auth) will pick up the restart on its own.
-
-**Applies to**: any cookbook with both a) an SSM/secret-gated config file generation step, and b) a service restart that consumes that config file. The guard goes on the consumer, not the generator.
-
-**Detection grep** — when modifying a docker-compose cookbook:
-
-```
-git grep -nE 'docker compose.*up' cookbooks/ | xargs -I{} grep -L only_if {}
-```
-
-Any restart resource without an `only_if "test -f <env>"` is a candidate, especially if it has `action :nothing` (notifies fire from upstream `remote_file` resources that don't themselves know about `.env` state).
-
-Origin: 2026-05-04 linux.rb LXC bootstrap — `docker compose restart hydra` fired despite skipped `.env` generator (no AWS auth) → `hydra-migrate` hit Aurora with empty credentials.
+Detail: see `~/.claude/docs/ruby-detail.md#dc-restart-only-if-guard`.
 
 ## Cookbook skip-paths must log at WARN, not INFO
 
-When a cookbook exits early because a precondition is not met (hostname not in devices list, auth gate fails, SSM parameter absent, file not found), log at `MItamae.logger.warn(...)`, not `MItamae.logger.info(...)`. An `info`-level skip line is invisible at default log levels — the operator sees the cookbook "succeed" while observing zero effect, so the gap persists undetected until something downstream fails.
-
-```ruby
-# WRONG — silent skip, operator never notices
-unless devices.key?(current_hostname)
-  MItamae.logger.info("ssh-keys: #{current_hostname} not in devices.json, skipping")
-  return
-end
-
-# RIGHT — visible skip; operator can grep "WARN" in the run log
-unless devices.key?(current_hostname)
-  MItamae.logger.warn(
-    "ssh-keys: #{current_hostname} not in devices.json — no authorized_keys " \
-    "written. Add this host to files/devices.json (or set its `hostname` " \
-    "override field) if ssh-key distribution is intended."
-  )
-  return
-end
-```
-
-Include the **consequence** in the warn message ("no authorized_keys written"), not just the guard condition. This makes the skip distinguishable from a benign no-op (e.g., "package already installed") at a glance.
-
-The same WARN-vs-INFO discipline applies to any auth-gate fall-through, missing-config bypass, or `client_only`-style early return that an operator might want to know about. INFO is for "I did the thing successfully and here's a status note"; WARN is for "I did NOT do the thing and you might care."
-
-Origin: 2026-05-06 — `air` missing pubkeys; ssh-keys `info`-level skip (`hostname '<serial>' not in devices.json`) invisible in apply output, persisted for sessions.
+Detail: see `~/.claude/docs/ruby-detail.md#warn-vs-info-skip`.
 
 ## Rescue EPERM/EACCES on user-local override file reads
 
-Cookbooks that read optional user-local override files (`*.local.json`, `*.local.md`, `*.local.rb`, user-supplied YAML) MUST rescue `Errno::EPERM` and `Errno::EACCES` and treat them as "file absent". On macOS, users frequently symlink these files into iCloud Drive (`~/Library/Mobile Documents/`). When mitamae runs without a desktop session (launchd timer, SSH from another host, remote apply), the macOS sandbox denies the symlink traversal with `EPERM` — even though the file is "there" from the user's perspective.
-
-```ruby
-# WRONG — hard crash when the symlink target is iCloud-sandboxed
-local_overrides = JSON.parse(File.read("#{home}/.config/myapp/config.local.json"))
-
-# RIGHT — graceful fallback; warn so the operator knows the override was skipped
-local_overrides = begin
-  if File.exist?("#{home}/.config/myapp/config.local.json")
-    JSON.parse(File.read("#{home}/.config/myapp/config.local.json"))
-  else
-    {}
-  end
-rescue Errno::EPERM, Errno::EACCES => e
-  MItamae.logger.warn(
-    "myapp: cannot read local override (#{e.class}: #{e.message}) — " \
-    "file may be a sandboxed iCloud symlink or have restrictive permissions; " \
-    "using defaults."
-  )
-  {}
-rescue JSON::ParserError => e
-  MItamae.logger.warn("myapp: invalid JSON in local override (#{e.message}); using defaults.")
-  {}
-end
-```
-
-The same guard applies to any `File.read` that crosses a symlink the cookbook doesn't control — even `File.exist?` can raise `EPERM` on a sandboxed iCloud symlink in some macOS versions rather than returning `false`.
-
-**Detection** — when adding any optional-override file read to a cookbook:
-
-```
-git grep -nE 'File\.read.*\.local\.|JSON\.parse.*\.local\.' cookbooks/ roles/
-```
-
-Any hit without a `rescue Errno::EPERM` (or wrapping `begin`/`rescue` block) is a candidate.
-
-Origin: 2026-05-06 — `roles/manage` on `air` raised `EPERM` on a `repositories.local.json` symlinked into iCloud Drive (`~/Library/Mobile Documents/.../securebu/repositories.local.json`); unhandled exception halted entire `darwin.rb` chain downstream of `roles/manage`.
+Detail: see `~/.claude/docs/ruby-detail.md#rescue-eperm-icloud`.
 
 ## remote_file idempotency guard — file-existence vs content-aware
 
-`not_if "test -f #{path}"` on a `remote_file` resource guards against re-downloading on every run, but it does NOT detect when the cookbook source has changed since the file was first placed. During migrations (endpoint changes, address rotations, URL rewrites) the deployed file persists indefinitely with the old value — cookbook updates never propagate to existing hosts and the migration silently fails on the consumer side.
-
-**Default for static configs**: `test -f` is fine. Use it when the cookbook's value for the file is not expected to change (e.g., a one-shot fetch of an upstream binary, a license file).
-
-**When content drift matters** — config holds addresses, URLs, ports, or keys that the cookbook owns and may rewrite — switch to a content-aware guard:
-
-```ruby
-# grep-based: re-deploy whenever the expected new value is absent
-remote_file config_path do
-  source "files/config.toml"
-  not_if "grep -qF '#{expected_value}' #{config_path} 2>/dev/null"
-end
-```
-
-**Migration-specific pattern**: when a cookbook is mid-migration from an old value to a new one, write the guard against the *old* value with negation. This re-deploys exactly the hosts still pinned to the old value, leaves migrated hosts untouched, and self-heals across the fleet without flag days:
-
-```ruby
-remote_file config_path do
-  source "files/config-#{variant}.toml"
-  # Skip when the file exists AND no longer references the old endpoint.
-  # Hosts still pinned to the old value get re-deployed on next mitamae apply.
-  not_if "test -f #{config_path} && " \
-         "! grep -q 'OLD_ENDPOINT' #{config_path}"
-end
-```
-
-After all hosts have migrated, simplify the guard back to `test -f` in a follow-up commit. Leaving the migration-specific grep permanently is harmless but adds noise for the next maintainer.
-
-Origin: 2026-05-05 — edge-agent `config_server_url` migration `192.168.1.20:3101` → `weave.home.local:8888` (CT 109); `not_if "test -f #{config}"` would have left neo/air pinned to the dead endpoint.
+Detail: see `~/.claude/docs/ruby-detail.md#remote-file-content-aware-guard`.
 
 ## SSM-sourced `.env` generator: file-existence skip_if drops new KEY=VALUE lines silently
 
-When a cookbook uses `require_external_auth(skip_if: -> { File.exist?(env_output_path) })` (or `not_if "test -f #{env_path}"` on the `execute "generate ... .env"` resource) to avoid re-fetching from SSM on every apply, ADDING a new key to the underlying `generate_env.sh` script does NOT take effect on existing hosts. The skip_if returns true (`.env` already exists), the generate execute is skipped, no new content is produced, and the running container's `env_file` continues to load the OLD `.env` that lacks the new key. Cookbook apply reports success; the container's env is silently incomplete.
-
-The trap is invisible at code-review time (the generator change is correct) and at dry-run time (no resource fails). It surfaces only at functional verification — `docker exec <container> env | grep NEW_KEY` is empty even after a green apply.
-
-**Default for static credentials**: file-existence skip_if is fine when the generator's output shape is stable (e.g., `.env` holds only `LLM_API_KEY` + `DB_PASSWORD` and that set never grows). Saves redundant SSM round-trips on re-apply.
-
-**When generator content drifts** — adding a new SSM-sourced key, restructuring lines — use a content-aware guard that checks for the expected new key:
-
-```ruby
-require_external_auth(
-  tool_name: "AWS CLI for /<service>/* SSM params",
-  check_command: "aws ssm get-parameter --name /<service>/<probe-key> ...",
-  # Skip only when .env exists AND already contains every key generate_env.sh
-  # writes. Adding a new line to the generator → File.read mismatch →
-  # block fires → fresh fetch.
-  skip_if: -> {
-    File.exist?(env_output_path) &&
-      File.read(env_output_path).include?("OTEL_EXPORTER_OTLP_HEADERS=") &&
-      File.read(env_output_path).include?("APM_API_KEY=")
-  },
-) do
-  execute "generate <service> .env" do
-    command "AWS_PROFILE=... bash #{generate_env_script} #{env_temp_path}"
-  end
-end
-```
-
-For the simple case (one canonical key per generator change), single-key check is enough. For multi-key generators, list every key the generator writes — adding a key to the list when adding to the script is the discipline that keeps drift detection accurate.
-
-**Alternative — drop skip_if + let mitamae's `remote_file` diff handle no-ops**: regenerate `.env` to a temp path on every apply, then `remote_file env_output_path source env_temp_path`. mitamae's remote_file already content-diffs — same `.env` → no notify, no restart. Cost: every apply pays the SSM round-trip (1-5s per key); benefit: zero drift class.
-
-**Detection grep** for reviewing other cookbooks:
-
-```bash
-git grep -B2 -A1 'skip_if.*File.exist' cookbooks/ | grep -B2 'env_output_path\|\.env'
-```
-
-Any hit that doesn't check additional content beyond file existence is a candidate, especially if the cookbook's `generate_env.sh` fetches more than one SSM key.
-
-**Recovery procedure** on affected hosts (existing `.env` predates the new key):
-
-```bash
-# Per affected host (CT 105 / 107 in the originating incident).
-pct exec <ct> -- bash -c 'mv /root/deploy/<service>/.env /root/deploy/<service>/.env.bak-pre-<feature>-$(date +%F)'
-pct exec <ct> -- bash -lc 'cd /root/setup && ./bin/mitamae local pve/lxc-<service>.rb'
-# Verify: docker exec <container> env | grep <NEW_KEY> must show the value.
-```
-
-Origin: 2026-05-12 APM Phase 5 (cognee/ai-memory) — added `OTEL_EXPORTER_OTLP_HEADERS=` to `generate_env.sh`, but `skip_if: -> { File.exist?(env_output_path) }` made the generator a no-op on hosts whose `.env` predated it → OTLP exports unauthenticated → apm-server silently rejected → service.name absent from `traces-apm-default`.
+Detail: see `~/.claude/docs/ruby-detail.md#ssm-env-skip-if-drift`.
 
 ## mitamae directory/file `owner`/`group` MUST be String, not Integer
 
@@ -396,92 +196,19 @@ Origin: 2026-05-05 — `owner 1000` (Integer) for `/var/lib/roon-mcp/state/`; CI
 
 ## Defensive `directory` resource for `node[:setup][:root]` and its subdirs
 
-Any cookbook that places files (`remote_file`, `file`) under `node[:setup][:root]` (typically `~/.setup_shin1ohno`) MUST declare a `directory` resource for the parent path BEFORE the first write — even though most existing LXCs already have the directory from a prior cookbook run.
-
-```ruby
-directory node[:setup][:root] do
-  mode "755"
-end
-
-directory "#{node[:setup][:root]}/<cookbook-name>" do
-  mode "755"
-end
-
-remote_file "#{node[:setup][:root]}/<cookbook-name>/<artifact>" do
-  source "files/<artifact>"
-  mode "755"
-end
-```
-
-Why both the parent and a per-cookbook subdirectory:
-- **Parent**: the `node[:setup][:root]` directory is *conventionally* expected to exist, but no single cookbook owns its creation. It happens to exist on dev boxes from prior mitamae runs; on a freshly-bootstrapped LXC (`apt install git curl && git clone && ./bin/setup && ./bin/mitamae local pve/lxc-<name>.rb`) the first cookbook to write under it sees a missing parent and fails with `cp: cannot create regular file '...': No such file or directory`.
-- **Per-cookbook subdir**: matches the `cookbooks/awscli` and `cookbooks/eternal-terminal` convention and keeps each cookbook's staged artifacts in their own namespace, simplifying cleanup and audit.
-
-The dry-run gate does NOT catch this — `mitamae local --dry-run` on the dev box reports the file resource as "exist will change from false to true" because it only previews, and the directory existence on the dev box hides the runtime mkdir need.
-
-Detection: `git grep -nE 'node\[:setup\]\[:root\]' cookbooks/ | grep -v 'directory '` — any hit not associated with a `directory` resource is a candidate.
-
-Origin: 2026-05-05 auto-mitamae — placed `auto-mitamae.sh` under `node[:setup][:root]` without a `directory` resource; dev-box dry-run passed, CT 109 bootstrap failed `cp: cannot create regular file '/root/.setup_shin1ohno/auto-mitamae.sh'`.
+Detail: see `~/.claude/docs/ruby-detail.md#setup-root-directory`.
 
 ## When automating mitamae, enumerate the privilege boundary at plan time
 
-Any cookbook that schedules `mitamae local <role>.rb` (systemd timer, cron, launchd LaunchAgent, CI runner) MUST answer this question in the plan BEFORE writing the timer unit:
-
-> Does the target role include resources that need root? Check for: `sudo` in `execute` commands, system package installs (`apt install`, `brew --root` paths), service restarts that touch `/etc/systemd/system/`, file resources writing under `/etc/`, `/usr/`, `/var/lib/`, or any path outside the user's home.
-
-The answer determines the timer's privilege model:
-
-| Need root? | Timer model |
-|---|---|
-| Yes (cookbook touches /etc, /usr, services) | systemd **system** timer (`/etc/systemd/system/`, `User=root`) — bootstrap requires 1-time `sudo mitamae`, all subsequent fires run as root |
-| No (user-space only: dotfiles, mise, ~/.config/*) | systemd **user** timer (`~/.config/systemd/user/`, `loginctl enable-linger <user>`) — never needs sudo |
-| Mixed | Split the role into a user-mode subset (`roles/auto-mitamae-userspace.rb`) for the timer + keep the full role for manual `sudo mitamae` |
-
-If you put a root-needing role behind a user-mode timer, mitamae **silently skips or partially fails** root resources (`Permission denied`) without raising — drift accumulates invisibly until something breaks.
-
-If your design enumerates "I need to run mitamae automatically" without spelling out which of the three rows above applies, the design is incomplete. Treat this as a plan-completeness check, equivalent to listing affected files.
-
-Origin: 2026-05-05 auto-mitamae plan — proposed user-mode systemd timer without auditing root resources; user surfaced gap mid-review ("mitamae 実行に sudo が必要ですが、どうしますか？").
+Detail: see `~/.claude/docs/ruby-detail.md#automate-mitamae-privilege`.
 
 ## Docker Build in Unprivileged PVE LXC
 
-`docker build` / `docker compose up --build` inside an unprivileged PVE LXC requires **two** prerequisites to be true simultaneously:
-
-1. `features_nesting=true` on the LXC config (Terraform: `features_nesting = true`). Without it the containerd overlayfs snapshotter cannot rbind-mount image layers and aborts during pull / extract with `permission denied` / `failed to mount /var/lib/containerd/tmpmounts/...`. This is a PVE-side change — `pct set <vmid> --features nesting=1` or via the bpg/proxmox provider — and requires LXC restart.
-
-2. `DOCKER_BUILDKIT=0` prefix on every `docker compose up --build` and `docker build` invocation. BuildKit's mount namespacing fails inside the container even with nesting enabled (`failed to mount … rbind ro: permission denied` in the buildkit-mount step). The classic builder is happy with the same setup. Cookbook pattern:
-
-```ruby
-execute "ensure <stack> running" do
-  command "DOCKER_BUILDKIT=0 docker compose -f #{compose_path} up -d --build"
-  user user
-end
-```
-
-**Caveat — git context with subdirectory**: BuildKit supports `https://repo.git#ref:subdir` to make build context a subdirectory of the repo. Classic builder does NOT support that syntax. If your Dockerfile MUST be built from a subdir (e.g., a Next.js app whose `Dockerfile` does `COPY package.json` expecting `package.json` at root), you cannot use classic builder. Workarounds: (a) bind-mount a pre-cloned tree as the context, (b) move the Dockerfile to expect a wider context, or (c) put the build on a Docker host that isn't unprivileged (e.g., on the PVE host directly).
-
-Origin: 2026-05-04 PVE-migration — 5 PR cycles iterating nesting × BUILDKIT (nesting=false → containerd rbind fail; nesting=true alone → buildkit rbind fail; nesting=true + BUILDKIT=0 → success for repo-root Dockerfiles; weave-web subdir forced BuildKit + nesting).
+Detail: see `~/.claude/docs/ruby-detail.md#docker-build-unprivileged-lxc`.
 
 ## Debian 13 Minimal LXC — Mandatory Bootstrap Packages
 
-PVE Debian 13 (`bookworm` / `trixie`) **unprivileged LXC templates ship without** `gnupg`, `unzip`, and `ca-certificates`, and the apt index is not populated until first `apt-get update`. Cookbooks targeting fresh LXCs that omit any of these will fail in non-obvious ways:
-
-- `gnupg` missing → `gpg --dearmor` step in any apt-key import (Docker, NodeSource, Postgres) errors with `gpg: command not found`. Recovery requires apt-installing gnupg, but the install needs apt index, and the index needs the repo, and the repo needs the key…
-- `unzip` missing → installer scripts that fetch a zipped release (rclone `install.sh`, awscli `awscliv2.zip`) abort with cryptic "no extractor found" errors
-- Stale apt index → `apt-get install <pkg>` succeeds for things in the base image's dpkg cache and silently misses anything published after image build
-
-**Required first resource** in any cookbook targeting Debian 13 unprivileged LXCs:
-
-```ruby
-execute "install bootstrap deps" do
-  command "apt-get update -qq && apt-get install -y gnupg unzip ca-certificates curl"
-  not_if "dpkg -s gnupg unzip ca-certificates curl >/dev/null 2>&1"
-end
-```
-
-Run before any apt repo addition, any zip extraction, or any package install that came in via custom apt sources.
-
-Origin: 2026-05 — three sequential apply cycles (docker-engine, rclone, awscli) each missing the bootstrap-deps guard, failing on a different downstream step of the same root cause.
+Detail: see `~/.claude/docs/ruby-detail.md#debian13-bootstrap-deps`.
 
 ## IP literal must come from contracts/devices.json (plan-phase probe)
 
@@ -500,21 +227,7 @@ Origin: 2026-05-09 ADR-0005 Phase 3b — ~3 hrs debugging ES discovery failures 
 
 ## Cookbook converge fail — diagnose all remaining resources before first fix PR
 
-When `mitamae apply` (or `docker compose up + bootstrap script`) fails on a target host, **DO NOT** open a fix PR for the first error. Instead:
-
-1. Let the apply complete (or kill it cleanly)
-2. Probe the full state:
-   ```
-   ssh root@<vmid> 'systemctl --failed; docker ps -a; docker logs <container> --tail 80 2>&1 | grep -iE "ERROR|FATAL|denied"; ls -la /data/<service>/ 2>&1'
-   ```
-3. Collect every fail signal (resource state mismatches, container exit codes, log error patterns, file permission issues)
-4. Open one fix PR addressing all of them
-
-Why batched: each fix-PR-CI-merge-redeploy cycle takes 5-10 min. Sequential fix PRs for diagnosable-in-one-pass bugs multiply waste.
-
-**Exception**: bug B is genuinely unobservable until bug A is fixed (e.g., container won't start until cert ownership fixed → can't probe ES auth until container running). Batching the related-bug-cluster is correct, but the dependency must be genuine — not "I noticed A first so let me ship A".
-
-Origin: 2026-05-09 ADR-0005 Phase 3b — 6 sequential fix PRs (~30-60 min waste); the IP-confusion bugs were diagnosable from the first ES "No route to host" via `pct exec <vmid> -- ip neigh show` (`INCOMPLETE`).
+Detail: see `~/.claude/docs/ruby-detail.md#converge-fail-batch-diagnose`.
 
 ## `mitamae --dry-run` requires `dangerouslyDisableSandbox`
 
@@ -556,4 +269,3 @@ Any hit inside a Proc is a mruby NoMethodError waiting to fire.
 **Why CI cannot catch this**: the syntax-check job uses the system Ruby (CRuby). Only running `mitamae local <role>.rb` under the real mruby binary (or `mitamae --dry-run`) on a target host exposes the missing method. `mitamae --dry-run` on the dev box also uses mruby, so a dry-run on any LXC is a faster feedback loop than waiting for a production apply failure.
 
 Origin: 2026-06-10 KMS-reduction ES snapshot cookbook — `skip_if: -> { ... File.mtime(sentinel) ... }` passed CI (CRuby), every ES-node apply aborted `NoMethodError: undefined method 'mtime'` (mruby). The mruby runtime is the only gate that counts.
-

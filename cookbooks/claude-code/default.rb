@@ -242,7 +242,7 @@ directory "#{node[:setup][:home]}/.claude/rules" do
   action :create
 end
 
-%w(ruby.md shell.md infrastructure.md aws-iam.md pve-lxc.md docker-compose.md tailscale.md writing.md sub-agents.md git-commit.md remote-trigger.md mcp-config.md rust.md architecture.md data-collection.md debugging.md claude-code-plugins.md editing.md frontend-dev.md mise-migration.md ios-build.md weave-protocol.md planning.md ffi-audit.md adversarial-review.md cookbook-prs.md kibana-lens.md).each do |file_name|
+%w(ruby.md shell.md infrastructure.md aws-iam.md pve-lxc.md docker-compose.md sub-agents.md git-commit.md mcp-config.md rust.md debugging.md claude-code-plugins.md editing.md planning.md ffi-audit.md adversarial-review.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
     source "files/rules/#{file_name}"
     owner node[:setup][:user]
@@ -260,7 +260,7 @@ directory "#{node[:setup][:home]}/.claude/docs" do
   action :create
 end
 
-%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md).each do |file_name|
+%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md remote-trigger.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md rust-detail.md claude-code-plugins-detail.md planning-detail.md aws-iam-detail.md pve-lxc-detail.md docker-compose-detail.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
     source "files/docs/#{file_name}"
     owner node[:setup][:user]

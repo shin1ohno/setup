@@ -1,6 +1,6 @@
 # Elasticsearch gotchas
 
-Load when working with Elasticsearch queries, mappings, `dense_vector`, or kNN. (Kibana-Lens/visualization gotchas live in `~/.claude/rules/kibana-lens.md` — this file is the query/index layer.)
+Load when working with Elasticsearch queries, mappings, `dense_vector`, or kNN. (Kibana-Lens/visualization gotchas live in `~/.claude/docs/kibana-lens.md` — this file is the query/index layer.)
 
 ## ES 9.x excludes `dense_vector` from `_source` by default
 
