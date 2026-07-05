@@ -89,7 +89,7 @@ services:
       - "127.0.0.1:9221:9221"
 
   # blackbox_exporter probes external + internal HTTP endpoints. Used for
-  # MCP fleet edge health (mcp.ohno.be/cognee/health, /memory/health, etc.)
+  # MCP fleet edge health (mcp.ohno.be/memory/health, etc.)
   # and per-LXC backend reachability (192.168.1.x:port). Module config in
   # blackbox.yml; scrape targets defined in prometheus.yml's
   # `mcp-blackbox-{external,internal}` jobs via the standard target/relabel

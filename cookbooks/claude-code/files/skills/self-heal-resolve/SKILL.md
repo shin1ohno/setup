@@ -248,7 +248,7 @@ fleet 全体への誤適用を 1 段で止める**ので、merge 後は適用完
 ### Step 5. 機能検証 → close（境界 7）
 
 適用後、**機能**で検証する（artifact でなく）:
-- es-query 系: 対象サービスの機能 probe（プロセス稼働 + 実機能。例 cognee なら `/health`、
+- es-query 系: 対象サービスの機能 probe（プロセス稼働 + 実機能。例 hydra なら `/health`、
   roon なら zone 応答）。
 - ES の当該 dedup_key が `status:resolved` に転じるか（observer の次サイクル ≤5 分待って再確認）。
 

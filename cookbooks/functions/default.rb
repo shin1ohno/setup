@@ -38,7 +38,7 @@ module RecipeHelper
   # calling this.
   #
   # Usage:
-  #   lxc_entry(tags: ["lxc", "cognee"])
+  #   lxc_entry(tags: ["lxc", "hydra"])
   #   lxc_entry(tags: ["lxc", "monitoring"], elastic_agent_extra: { enable_prometheus_integration: true })
   def lxc_entry(tags:, elastic_agent_extra: {})
     include_role "lxc-core"
@@ -610,7 +610,7 @@ end
 #   for cookbooks shipping pre-built images (ai-memory).
 #
 # Usage:
-#   compose_service "cognee" do
+#   compose_service "hydra" do
 #     compose_path "#{deploy_dir}/docker-compose.yml"
 #     deploy_dir deploy_dir
 #     env_path env_output_path           # optional; enables env-gate
@@ -778,17 +778,17 @@ end
 # predates the change; the content check forces a re-fetch instead.
 #
 # Usage:
-#   deploy_with_ssm_env "cognee" do
-#     tool_name        "AWS CLI (profile=#{aws_profile}) for /cognee/* SSM"
-#     check_command    "aws ssm get-parameter --name /cognee/llm-endpoint " \
+#   deploy_with_ssm_env "hydra" do
+#     tool_name        "AWS CLI (profile=#{aws_profile}) for /hydra/* SSM"
+#     check_command    "aws ssm get-parameter --name /hydra/llm-endpoint " \
 #                      "--profile #{aws_profile} --region #{aws_region} >/dev/null 2>&1"
-#     instructions     "Configure '#{aws_profile}' with ssm:GetParameter on /cognee/*."
+#     instructions     "Configure '#{aws_profile}' with ssm:GetParameter on /hydra/*."
 #     generate_command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
 #                      "bash #{generate_env_script} #{env_temp_path}"
 #     temp_path        env_temp_path
 #     output_path      env_output_path
 #     expected_keys    %w[LLM_API_KEY OTEL_EXPORTER_OTLP_HEADERS]
-#     restart_resource "execute[restart cognee]"   # notified on output change
+#     restart_resource "execute[restart hydra]"   # notified on output change
 #   end
 #
 # IMPORTANT: keep :expected_keys in sync with every key the generator writes —

@@ -5,7 +5,7 @@ description: |
   夜間 scheduled workflow の失敗）を横断収集し、優先度つきのローカル triage ledger に書き出す
   Loop Engineering の capstone オーケストレータ skill。CI 失敗には pr-ci-medic を呼ぶ（既定 diagnose）、
   well-scoped な修正は worktree で起案し検証サブエージェント（作成/検査分離）に通す。merge は一切しない・出力はローカル。
-  末尾で knowledge-drain も回す。「朝の triage」「morning triage」「夜間の開発状況まとめて」「daily triage」でトリガー。
+  「朝の triage」「morning triage」「夜間の開発状況まとめて」「daily triage」でトリガー。
   注: 自動 merge・自動デプロイはしない。triage と（propose 時の）修正起案までが責務。
 user-invocable: true
 ---
@@ -19,7 +19,7 @@ pr-ci-medic に委譲する。Addy Osmani の朝ルーチン実例の実装。**
 ## 安全境界
 
 - **merge しない・自動デプロイしない**（pr-ci-medic の境界を継承）。
-- **出力はローカル**（dated Markdown ledger）。個人 home-lab Cognee / 個人 Notion に業務データを出さない。
+- **出力はローカル**（dated Markdown ledger）。個人 home-lab の memory MCP / 個人 Notion に業務データを出さない。
   通知が要るなら Mercari 公認チャネルのみ（未設定ならローカルファイル止まり）。
 - allowlist リポ（既定: `kouzoh/zp-SHIN`, `shin1ohno/setup`）。
 - propose（worktree 修正起案）は opt-in。既定は diagnose（収集＋委譲＋記録のみ）。
@@ -49,9 +49,8 @@ well-scoped な P0 修正について:
   sub-agents ルール準拠）。検査を通ったものだけ pr-ci-medic 経由で PR ブランチに push。merge しない。
 - レビュー依頼 PR（他人の）は**コメント下書きを ledger に置くだけ**（自動投稿しない）。
 
-### Step 4. サマリ＋知識配管
-ledger 末尾に P0-P3 件数と処理状況のサマリ。最後に knowledge-drain skill を回して
-`~/.claude/pending-cognify/*.md` を回収（CHUNKS 検証後のみ削除）。
+### Step 4. サマリ
+ledger 末尾に P0-P3 件数と処理状況のサマリ。
 
 ## ループ化（substrate B）
 
@@ -63,4 +62,4 @@ CronCreate(cron="33 9 * * 1-5", durable=true,
 ```
 
 CronCreate は 7 日失効・同席前提。propose を無人で回さない。恒久・無人化は自律コード push を含むため設計外
-（人の監督下に置く）。検証後に default.rb 登録で `/morning-triage` 化。再利用: [pr-ci-medic], [knowledge-drain]。
+（人の監督下に置く）。検証後に default.rb 登録で `/morning-triage` 化。再利用: [pr-ci-medic]。

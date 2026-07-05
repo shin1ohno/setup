@@ -1,44 +1,40 @@
 # TODO
 
-## H2: MCP auth-proxy resource isolation (HELD — audience enforcement infeasible)
+## H2: MCP auth-proxy resource isolation (REVIEW NEEDED — post-cognee-decommission)
 
-Status 2026-06-07: investigated via live log-first observation; **audience
-enforcement is NOT viable** with current token issuance. Held as Low-risk
-known-limitation in this single-user deployment. Re-evaluate if the
-deployment ever becomes multi-tenant.
+Status 2026-07-05: the cognee LXC/cookbook was decommissioned and the
+surviving shared auth-proxy is `cookbooks/lxc-es-memory/files/auth-proxy/
+proxy.py` (es-memory / v2 "memory" MCP). This item was written 2026-06-07
+against the now-deleted cognee + ai-memory proxies and its earlier "audience
+enforcement infeasible" conclusion PRE-DATES the es-memory rewrite — the
+surviving proxy has since grown a v2 audience/subject enforcement matrix, so
+the security posture must be RE-AUDITED before acting. FLAGGED for human review.
 
-- Vuln: the cognee + ai-memory auth-proxies pass `options={"verify_aud":
-  False}` — no resource isolation. Confirmed live: `cognee/mcp` accepts a
-  `roon-mcp`-audience token (HTTP 200). Files:
-  `cookbooks/{cognee,ai-memory}/files/auth-proxy/proxy.py`.
-- WHY ENFORCEMENT IS INFEASIBLE (log-first observation, aud-logging temped
-  into the cognee proxy then reverted): the real claude.ai token carries an
-  **empty** aud — `Authenticated POST /mcp (sub=sh1@mercari.com aud=[])`.
-  The monitoring prober (client_credentials) carries `aud=["cognee"]`
-  (bare). PyJWT `jwt.decode(audience=X)` requires the aud claim present and
-  containing X, so ANY enforced value (full-URL OR bare) raises
-  MissingRequiredClaim → 401 → breaks the user's cognee/memory MCP access.
-  The strict full-URL fix is preserved on git tag `h2-audience-fix` but must
-  NOT be deployed.
-- WHY LOW NOW: only `sh1@mercari.com` passes the consent ALLOWED_EMAILS
-  gate, so the cross-resource-reuse gap (a cognee token also works on
-  memory) requires a token leak AND a second principal to isolate from —
-  the latter does not exist. Defense-in-depth gap, not a multi-tenant
-  isolation failure.
-- OPTIONS to actually close it (pick when revisiting; each needs design):
+- Original concern: the auth-proxies pass `options={"verify_aud": False}` on
+  the raw JWT signature-decode path (still present in the es-memory proxy at
+  ~lines 134/147), i.e. the decode itself does not check audience.
+- Surviving state: the es-memory proxy now DOES add a v2 audience/subject
+  enforcement matrix at authorization time — `client_credentials` grants
+  require `aud ∩ MEMORY_AUDIENCES` AND `client_id ∈ ALLOWED_CLIENT_IDS`
+  (else 403 forbidden_audience); `authorization_code` claude.ai tokens carry
+  `aud=[]` so aud is not required on that path. Whether this already closes
+  the original cross-resource-reuse gap needs a fresh audit against the
+  current code.
+- WHY LOW: only `sh1@mercari.com` passes the consent ALLOWED_EMAILS gate, so
+  the cross-resource-reuse gap requires a token leak AND a second principal
+  to isolate from — the latter does not exist. Defense-in-depth gap, not a
+  multi-tenant isolation failure.
+- OPTIONS if a gap remains after the re-audit (each needs design):
   1. RFC-8707: make claude.ai send `resource=https://mcp.ohno.be/<svc>` and
      hydra/consent populate aud from `grant_access_token_audience`, THEN
-     enforce `audience` in the proxies. Correct but largest scope.
+     enforce `audience` in the proxy. Correct but largest scope.
   2. Scope-based isolation (mint/enforce a per-resource scope claim) — first
      confirm what `scope` a real claude.ai token carries.
-  3. Keep as documented known-limitation (current choice).
-- First step when revisiting: re-run the log-first probe to confirm aud is
-  still empty, then pursue option 1 or 2. Probe recipe: on CT111 source
-  `/etc/mcp-probe/probe.env`, mint via client_credentials, base64-decode the
-  JWT middle segment; for a REAL token, temp-add aud logging to the cognee
-  proxy `handle()` Authenticated log line and trigger one claude.ai request.
-- Note (separate, pre-existing): memory MCP (CT107) was observed DOWN
-  (HTTP 000 at /memory/mcp) during this session — unrelated to H2.
+  3. Keep as documented known-limitation.
+- First step when revisiting: re-run the log-first probe against the
+  es-memory proxy to confirm current claim shapes (aud/scope on a REAL
+  claude.ai token vs the monitoring `client_credentials` prober), then decide
+  whether the v2 matrix already suffices or option 1/2 is still wanted.
 
 ## Fix RTX1210 DNS proxy AAAA NODATA
 

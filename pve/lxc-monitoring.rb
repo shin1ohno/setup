@@ -25,8 +25,8 @@ include_recipe "../cookbooks/functions/default"
 
 # Service LXCs do not include the ssh-keys cookbook — login keys are
 # injected at LXC provision time via the home-monitor terraform
-# `local.ssh_devices` for_each loop (matches pve/lxc-cognee.rb /
-# pve/lxc-weave.rb / pve/lxc-hydra.rb convention). Operator direct SSH
+# `local.ssh_devices` for_each loop (matches pve/lxc-weave.rb /
+# pve/lxc-hydra.rb convention). Operator direct SSH
 # uses the SSM-stored private key for /ssh-keys/devices/monitoring/private.
 include_cookbook "lxc-monitoring"
 lxc_entry(tags: ["lxc", "monitoring"], elastic_agent_extra: {

@@ -92,7 +92,7 @@ If this is a workspace with a never-published crate, surface the `publish-new` s
 2. Commit the scaffolded files on a branch and open a PR (`gh pr create`). Do not push to main directly
 3. After PR merge: check the release-plz run completed green — both `release` and `release-pr` jobs success
 
-### Step 6: Record the setup in TODO.md / Cognee
+### Step 6: Record the setup in TODO.md / the memory MCP
 
 If the repo is part of an ecosystem tracked in memory, note the setup completion with:
 

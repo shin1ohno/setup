@@ -2,13 +2,13 @@
 
 Site-specific rules for adding a new OAuth-protected MCP service to
 `https://mcp.ohno.be/`. Codifies the precedent established by the
-`/cognee/`, `/memory/`, and `/roon/` deployments so subsequent services do
+`/memory/` and `/roon/` deployments so subsequent services do
 not re-derive the conventions through trial and error.
 
 ## Client-facing URL pattern
 
 Services here use one of two transports. The existing services
-(`cognee` / `memory` / `roon`) use **legacy MCP SSE transport** (MCP
+(`memory` / `roon`) use **legacy MCP SSE transport** (MCP
 spec 2024-11-05); services added from 2026-07 onward (`es-memory` and
 later) use **streamable HTTP** — for those, see the FastMCP section
 below, and note the `/sse` URL pattern in this section applies to the
@@ -101,7 +101,7 @@ passes RFC 8707 `resource=...`. Anthropic's Claude.ai connector does
 not, so MCP servers behind this gateway must skip audience verification
 in token validation:
 
-- Python (cognee/openmemory auth-proxy precedent): `jwt.decode(...,
+- Python (es-memory auth-proxy precedent): `jwt.decode(...,
   options={"verify_aud": False})`
 - Rust (rmcp auth via `jsonwebtoken`): `validation.validate_aud =
   false;`
@@ -131,7 +131,7 @@ return unless roon_core_listening
 ```
 
 Apply the same pattern for any MCP service that depends on a colocated
-backend (Cognee API, OpenMemory port, etc.) — gate on the colocated
+backend (OpenMemory port, es-memory port, etc.) — gate on the colocated
 service's listening port, not on the device map's expected IP.
 
 ## nginx upstream resilience
@@ -139,7 +139,7 @@ service's listening port, not on the device map's expected IP.
 The `home-monitor/devices.tf` derived `<service>_upstream_servers` lists
 should fan out across all `pro_*` devices, not pin to one. Listing all
 three IPs gives nginx automatic failover if a NIC flips and matches the
-existing pattern for `mcp_upstream_servers`, `cognee_mcp_upstream_servers`,
+existing pattern for `mcp_upstream_servers`, `memory_upstream_servers`,
 etc. The container itself runs on a single host (network_mode: host); the
 fan-out is purely a network-availability hedge.
 

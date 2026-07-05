@@ -32,7 +32,7 @@ browser step.
    - `Connected` → **CONNECTED**
    - `Failed to connect` / `Connection error` → **DOWN**
 
-Match names case-insensitively (casing drifts: `Cognee`/`cognee`,
+Match names case-insensitively (casing drifts: `Structured`/`structured`,
 `memory`/`ai_memory`). `claude mcp get` / `claude mcp login` need the **exact
 name as printed**, including any `claude.ai ` prefix.
 
@@ -40,7 +40,7 @@ Present a short status table to the user before acting.
 
 ## 2. Re-authenticate, one server at a time (sequential — never parallel)
 
-### OAuth connectors (cognee, roon, ai memory, Structured — the ones in `claude mcp list`)
+### OAuth connectors (roon, ai memory, Structured — the ones in `claude mcp list`)
 
 1. Run `claude mcp login "<exact name>"` **in the background**
    (`run_in_background: true`) so the callback wait does not hang the turn.

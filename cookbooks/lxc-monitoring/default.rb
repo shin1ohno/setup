@@ -418,7 +418,7 @@ execute "download dbip-city-lite GeoIP DB" do
   notifies :run, "execute[restart monitoring]"
 end
 
-# Generate .env from SSM (Grafana admin password). Mirror cognee pattern:
+# Generate .env from SSM (Grafana admin password). Mirror lxc-hydra pattern:
 # stage in setup_root/generated, then move to deploy_dir/.env. require_external_auth
 # pauses on a fresh host until AWS auth is configured (or skip in non-TTY).
 generated_dir = "#{node[:setup][:root]}/generated"
@@ -452,7 +452,7 @@ require_external_auth(
 end
 
 # Place .env at converge time (only_if test -f), then clean up the staged
-# copy. Same compile-vs-converge guard pattern as cookbooks/cognee.
+# copy. Same compile-vs-converge guard pattern as cookbooks/lxc-hydra.
 remote_file env_output_path do
   source env_temp_path
   owner user
@@ -545,7 +545,7 @@ end
 
 # Initial render at converge time when both inputs exist but the rendered
 # file is absent (fresh host after first .env generation). Same idempotency
-# pattern as cookbooks/cognee's docker-compose restart guard.
+# pattern as cookbooks/lxc-hydra's docker-compose restart guard.
 execute "ensure snmp.yml exists" do
   command <<~SH.strip
     set -euo pipefail
@@ -615,7 +615,7 @@ execute "restart monitoring" do
   # with empty admin password would leave Grafana unmanageable; missing
   # snmp.yml would leave snmp-exporter crash-looping; missing
   # elastic-ca.crt would leave Vector crash-looping with tls.ca_file
-  # pointing at a directory. Same guard pattern as cookbooks/cognee.
+  # pointing at a directory. Same guard pattern as cookbooks/lxc-hydra.
   only_if "test -f #{env_output_path} && test -f #{snmp_yml_path} && test -f #{elastic_ca_target}"
 end
 

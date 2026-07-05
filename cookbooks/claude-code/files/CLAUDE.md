@@ -49,10 +49,10 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - **Non-trivial → plan mode**. Non-trivial = 2+ files, 2+ repos, deploy steps, new agent/hook/skill. Exception: hardware/protocol debugging with unknown root cause → hypothesis iteration until cause found, then plan mode
 - **Misclassified as trivial — still need plan mode**: cross-crate enum variant, UI fix requiring contract sibling, fix requiring service restart, hardware verification loops, plugin lockfile bumps with runtime steps (`:Lazy sync`, `npm install`, parser rebuild). Origin: 2026-05-01 AstroNvim ^5→^6 missed cross-machine cleanup
 - **Inverse — NOT new plan triggers**: a mechanical sweep applying a validated fix shape across N files in one repo. Trigger plan mode only if first instance not yet validated, or sweep crosses repos / adds new behavior
-- **Every conversation start**: background Cognee/memory search + read project `TODO.md`. Skip for trivial edits, typos, git ops
+- **Every conversation start**: background memory search + read project `TODO.md`. Skip for trivial edits, typos, git ops
 - **Deferred work / RAG gap → TODO.md** with description, reason, concrete first step. Delete the entry in the resolving commit
 - **First turn ambiguity → AskUserQuestion**. Background launch ≠ clarified intent
-- **Every conclusion**: save to Cognee/memory; verify with `search_type: CHUNKS` on key terms. See `@~/.claude/docs/knowledge-persistence.md`
+- **Every conclusion**: save to memory; verify with `recall` on key terms. See `@~/.claude/docs/knowledge-persistence.md`
 - **Every meaningful unit of work**: commit immediately
 - **Dual-managed file**: source `~/ManagedProjects/setup/cookbooks/claude-code/files/CLAUDE.md`, deploy `~/.claude/CLAUDE.md`. Update both, `diff` to verify
 
@@ -119,7 +119,7 @@ When responding in Japanese (default), follow these. They override English-rule 
 - **Verify functional state, not deployment artifacts**: `systemctl is-active` (artifact) vs `show --property=Trigger` future timestamp (functional). Layer-specific examples: `~/.claude/rules/infrastructure.md`, `docker-compose.md`, `tailscale.md`. Origin: PR #253 → #257 → #259 — 3 iterations from artifact-shaped verification
 - **Scope-before-done**: verify every plan deliverable attempted. Failed first try → retry alternative or AskUserQuestion. Never unilaterally shrink scope
 - **Hotfix layering**: evaluate change frequency vs resource recreation; place fix at the appropriate layer, not where it was edited on the server
-- **Blocked on manual → immediate background**: signals — "読んでいる" / "確認する" / "試してみる" / "待って", presenting `! sudo`, asking restart, delivering spec. Fire background Agent in the same response (retro / Cognee save / memory / TODO cleanup)
+- **Blocked on manual → immediate background**: signals — "読んでいる" / "確認する" / "試してみる" / "待って", presenting `! sudo`, asking restart, delivering spec. Fire background Agent in the same response (retro / memory save / TODO cleanup)
 - **Stale wakeup guard**: `ScheduleWakeup` fires regardless of completion. Probe state (`git log -5`, `gh pr view <n>`, output file). If done: "stale wakeup — `<task>` completed in `<commit/PR>`" and stop. Embed state-check at the start of the wakeup prompt
 - **Progress-ledger stale facts**: environmental constraints recorded in plan.md / HANDOFF.md / progress docs (SSH failures, auth expiry, network unreachability, tool unavailability) are snapshots from the session that wrote them — re-probe before treating one as still-blocking, especially when it would trigger user `!` round-trips: `ssh -o ConnectTimeout=5 root@<host> hostname`, `aws sts get-caller-identity --profile P`, `ping -c1 -W2 <IP>`. If the probe succeeds, delete the stale line from the doc and proceed. Do not ask the user to run `!` for something a 2-second probe disproves. Origin: 2026-06-13 propagated stale plan.md ssh-fail line unverified.
 - **Long-running background polls emit progress every 2-3 iterations** for waits >2 min. Silent foreground loops >5 min look like hangs + trigger ssh idle timeouts. Prefer `run_in_background: true`

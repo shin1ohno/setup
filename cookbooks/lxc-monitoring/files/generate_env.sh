@@ -2,7 +2,7 @@
 # Generate .env for monitoring Docker Compose from AWS SSM Parameter Store
 # Usage: generate_env.sh <output_path>
 #
-# Mirrors cookbooks/cognee/files/generate_env.sh with a single secret
+# Mirrors cookbooks/lxc-kibana/files/generate_env.sh with a single secret
 # (Grafana admin password). AWS_PROFILE + AWS_REGION are passed in by the
 # default.rb caller (sourced from cookbooks/ssh-keys/files/devices.json) so
 # the script always targets the same IAM principal as the require_external_auth
