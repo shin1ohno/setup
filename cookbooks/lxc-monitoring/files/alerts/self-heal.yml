@@ -41,3 +41,76 @@ groups:
             self-heal-state index was rejected. Detectors are not producing
             reliable state.
             Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "journalctl -u self-heal-observer.service -n 80; cat /var/lib/node_exporter/textfile/self-heal-observer.prom"'
+
+  - name: self-heal-loops
+    interval: 30s
+    rules:
+      - alert: SelfHealLoopStale
+        # The create/resolve loops run headless via cron on pro-dev (CT 104):
+        # create every 2 min (ES self-heal-state -> GitHub issues), resolve every
+        # 5 min (works open self-heal issues). If a loop's last-run timestamp
+        # goes stale it is NOT running — a dead create loop means fleet alerts
+        # never become issues; a dead resolve loop means open issues never get
+        # worked. Thresholds are 15m (create, ~7 missed ticks) / 40m (resolve,
+        # ~8 missed ticks) to avoid flapping on one skipped tick. The DISABLED
+        # kill-switch intentionally stops metric emission, so a deliberate
+        # disable also fires this (matching the observer convention — a stopped
+        # healing loop is worth surfacing).
+        expr: |
+          (time() - self_heal_loop_last_run_timestamp_seconds{loop="create"} > 900)
+          or
+          (time() - self_heal_loop_last_run_timestamp_seconds{loop="resolve"} > 2400)
+        for: 5m
+        labels:
+          severity: warning
+          component: self-heal-loops
+        annotations:
+          summary: "self-heal {{ $labels.loop }} loop stale on pro-dev (CT 104)"
+          description: |
+            self_heal_loop_last_run_timestamp_seconds{loop="{{ $labels.loop }}"}
+            is stale (create > 15m or resolve > 40m). The headless cron loop is
+            not running — fleet alerts stop becoming issues (create) or open
+            self-heal issues stop being worked (resolve). Either the cron
+            stopped, claude / self-heal-create.sh is broken, or the DISABLED
+            sentinel is present.
+            Runbook: ssh pro-dev 'tail -30 ~/.claude/logs/self-heal-create.log ~/.claude/logs/self-heal-resolve.log; ls -la ~/.claude/*.DISABLED 2>/dev/null; sudo cat /etc/cron.d/self-heal-loops'
+
+      - alert: SelfHealLoopAuthExpired
+        # The resolve loop found no usable claude auth (neither the long-lived
+        # setup-token env file nor legacy ~/.claude/.credentials.json) and
+        # skipped starting claude. Headless `claude -p` cannot re-auth
+        # interactively, so a human must run `claude setup-token`. Distinct from
+        # Stale (the loop IS running, it just can't auth) — surfaces the exact
+        # remediation instead of a generic "not running".
+        expr: self_heal_loop_status{result="auth"} == 1
+        for: 5m
+        labels:
+          severity: warning
+          component: self-heal-loops
+        annotations:
+          summary: "self-heal {{ $labels.loop }} loop has no usable claude auth"
+          description: |
+            self_heal_loop_status{loop="{{ $labels.loop }}",result="auth"} == 1.
+            The headless loop cannot authenticate claude and is skipping cycles.
+            Run `claude setup-token` on pro-dev as shin1ohno and write
+            CLAUDE_CODE_OAUTH_TOKEN into ~/.claude/self-heal-token.env (mode 600).
+            See docs/self-heal-autonomy-improvement-plan.md §7.
+
+      - alert: SelfHealLoopErroring
+        # The loop ran but its last cycle exited non-zero (self-heal-create.sh
+        # failure, gh/aws error, or claude -p rc!=0). It is emitting metrics so
+        # SelfHealLoopStale won't fire — this is the complementary
+        # ran-but-failed signal. for: 10m so a single transient gh/ES blip
+        # (retried every 2-5 min) doesn't page; a real fault persists.
+        expr: self_heal_loop_status{result="error"} == 1
+        for: 10m
+        labels:
+          severity: warning
+          component: self-heal-loops
+        annotations:
+          summary: "self-heal {{ $labels.loop }} loop erroring for 10m+"
+          description: |
+            self_heal_loop_status{loop="{{ $labels.loop }}",result="error"} == 1
+            for 10+ min. The loop is running but its cycle failed
+            (self-heal-create.sh error, gh/aws failure, or claude -p non-zero).
+            Runbook: ssh pro-dev 'tail -40 ~/.claude/logs/self-heal-create.log ~/.claude/logs/self-heal-resolve.log'
