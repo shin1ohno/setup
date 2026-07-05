@@ -74,8 +74,9 @@ Compute a stable key per candidate: the **normalized URL** (strip fragments/trac
 
 For each candidate not already known:
 
-1. **Dedup check** — `recall(query=<url or title>, filters={tags:[<target-name>]}, top_k=5)`. If a prior memory clearly covers this URL/item, skip it (count as skipped). Also skip if its key is in the in-session seen-set.
-2. **Persist** — `remember(content=<concise summary: title, 1–2 line gist, url>, type='knowledge', tags=[<target-name>, 'web-crawl', <YYYY-MM-DD>])`.
+1. **Dedup check** — `recall(query="<normalized-url> <title>", top_k=5)` and treat the candidate as already captured if any hit's content contains the same normalized URL (or is unmistakably the same item); count it as skipped. Also skip if its key is already in the in-session seen-set.
+   - Do **not** rely on a `tags` filter to narrow this. In memory-v2, `recall(query=…, filters={tags:[…]})` returns nothing until the async keeper has reconciled the write, so it misses same-run and just-written items (verified empty 2026-07-05, seconds *and* minutes after the write, while the same content was found immediately by a plain semantic query). Dedup correctness therefore comes from the semantic query + normalized-URL match + the in-session seen-set — not from tag filtering.
+2. **Persist** — `remember(content=<concise summary: title, 1–2 line gist, url>, type='knowledge', tags=[<target-name>, 'web-crawl', <YYYY-MM-DD>])`. Tags are still set here for human browsing / later filtered `browse`, just not depended on for near-real-time dedup.
 3. Add the key to the seen-set.
 
 ### sink: `es` (future — stub)
@@ -108,4 +109,4 @@ Checklist when registering:
 - **cron in UTC** (convert from Asia/Tokyo = UTC+9). One routine = one job.
 - Attach the **memory MCP** in the routine's `mcp_connections` so `recall`/`remember` work in the cloud environment.
 - **Graceful empty-state**: no new items → finish successfully, do not error.
-- **Verify after registering**: run the routine once immediately (`/schedule … run`), then `recall(filters={tags:['web-crawl', <today>]})` to confirm the cloud write landed before trusting the schedule.
+- **Verify after registering**: run the routine once immediately (`/schedule … run`), then `recall(query="web-crawl <target-name> <today>", top_k=5)` and confirm a hit whose content is the just-crawled item — proof the cloud write landed — before trusting the schedule. (Query semantically; a `tags` filter is unreliable right after a write, per Step 3.)
