@@ -1,0 +1,14 @@
+{
+  "_comment": "self-heal Phase 3B hardened 案B — reversible CT resize allowlist. Data, grown ONLY via PR review. self-heal-infra-apply.sh resizes a CT's memory/cores ONLY when the CT (logical devices.json key) is listed here, the target value is within [min,max], the change is an INCREASE (never a shrink — a shrink below live usage OOM-kills the workload, review blocker 1a), and the per-CT daily budget is not exhausted. Empty by default = fail-closed (nothing auto-resizes until an owner adds a CT via PR). rootfs is intentionally NOT resizable here (ZFS refquota non-reversibility). Apply runs under the non-admin pve-resize AWS profile + a scoped PVE token (docs/self-heal-phase3-security-review.md §B), never sh1admn.",
+  "_schema": {
+    "ct": "logical devices.json key (e.g. 'monitoring')",
+    "ct_id": "PVE CT id, for the terraform address + PVE per-CT ACL cross-check",
+    "allow_fields": ["memory", "cores"],
+    "min_memory_mb": "floor (never resize below this; also blocks shrink below floor)",
+    "max_memory_mb": "ceiling",
+    "min_cores": "floor",
+    "max_cores": "ceiling",
+    "per_ct_daily_budget": "max autonomous resizes per CT per UTC day (cooldown vs oversubscription, review 3d)"
+  },
+  "resizable": []
+}
