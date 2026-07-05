@@ -43,10 +43,11 @@ Phase 0/1 は境界内で自律の**質**を上げる（新境界を作らない
      - メトリクス: `self_heal_loop_last_run_timestamp_seconds{loop="…"}` + `self_heal_loop_status{loop="…",result="ok|error|auth"}`。
    - **ループ毎に別ファイル**にして 2 cron の write レースを避ける（node-exporter textfile collector はディレクトリ内 `*.prom` を merge）。
    - `self-heal-create-run.sh` / `self-heal-resolve-run.sh` を改修し全 exit path（DISABLED skip / gate skip=0 / claude rc / auth-fail）で metric を書く。
-2. **textfile dir への loop-user 書込権限**（`cookbooks/self-heal-loops/default.rb`）
-   - ループは `runuser -l shin1ohno` で走る非 root。`/var/lib/node_exporter/textfile`（root 所有）に atomic write（tmp+rename）するにはディレクトリ書込が要る。
-   - 採用: cookbook が textfile dir を loop-user の group 所有 + `g+w,g+s`（setgid で新ファイルが group 継承）に設定。root（observer/orchestrator）の書込は影響なし。**この 1 点だけが perms 緩和**で、対象は metrics dir のみ。
-   - 却下案: root 所有 staging + sudo move（ヘッドレス cron で sudo 依存は脆い）。
+2. **loop-user 所有の `.prom` を事前作成**（`cookbooks/self-heal-loops/default.rb`, 実装時に確定した最終形）
+   - ループは `runuser -l shin1ohno` で走る非 root。node-exporter が実際に scrape する `/var/lib/node_exporter/textfile`（pro-dev では `root:root 0755`）に書く必要がある。
+   - **採用（dir 権限は無変更）**: cookbook が `self-heal-create.prom` / `self-heal-resolve.prom` を **loop-user 所有（0644）で事前作成**（`install /dev/null`, first-apply のみ・not_if で owner 一致を確認）。wrapper は**ファイルを所有**するので dir 書込不要、単一 `printf` redirection で in-place 更新する。node-exporter が後段（lxc_entry）で dir を再確保しても衝突しない。
+   - 却下案: (a) textfile dir を group 所有 + `g+w,g+s` に変更 — node-exporter が self-heal-loops の後に走り dir を root:root へ戻すため ordering 衝突、かつ共有 dir の perms 緩和になる。(b) root 所有 staging + sudo move — ヘッドレス cron で sudo 依存は脆い。
+   - 非 atomic 性（tmp+rename 不可）は許容: payload 8 行・単一 write で実質 atomic、node-exporter は稀な partial read を次 scrape で self-correct。
 3. **OAuth 失効を silent fail にしない**
    - 根本策: interactive `.credentials.json`（失効する）→ `claude setup-token` の長寿命 `CLAUDE_CODE_OAUTH_TOKEN`（`~/.claude/rules/claude-cli-headless.md`）。token は mode-600 の `~/.claude/self-heal-token.env` に置き、両 wrapper が source。auth presence gate は `test -s <token-file>`（`claude auth status` は setup-token では `loggedIn:false` を返すため使わない）。
    - `claude setup-token` は対話が要る → owner が 1 回実行する `!` ステップとしてプランに明記（後述 §7）。

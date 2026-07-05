@@ -9,8 +9,9 @@
 # invoked the model every cycle; that was pure waste — the logic carries no model
 # judgment). Read-only on ES; only touches self-heal-labelled issues; never
 # closes self-heal-needs-human. flock-guarded, timeout-capped, kill-switch-aware,
-# logs to ~/.claude/logs. Never fails the cron (the log + .last timestamp are the
-# liveness signal). See docs/self-heal-github-issues-plan.md.
+# logs to ~/.claude/logs. Never fails the cron (the log + .last timestamp + the
+# node_exporter textfile metric are the liveness signal). See
+# docs/self-heal-github-issues-plan.md + docs/self-heal-autonomy-improvement-plan.md.
 #
 # runuser -l spawns a NON-interactive login shell that does not source .zshrc, so
 # prepend the user tool dirs for aws/gh/jq/curl resolution.
@@ -20,6 +21,7 @@ set -uo pipefail
 export PATH="${HOME}/.local/share/mise/shims:${HOME}/.local/bin:${PATH}"
 
 CREATE_BIN="${SELF_HEAL_CREATE_BIN:-/usr/local/bin/self-heal-create.sh}"
+METRIC_HELPER="${SELF_HEAL_METRIC_HELPER:-/usr/local/bin/self-heal-metric.sh}"
 LOG_DIR="${HOME}/.claude/logs"
 LOG="${LOG_DIR}/self-heal-create.log"
 LAST="${LOG_DIR}/self-heal-create.last"
@@ -32,6 +34,14 @@ mkdir -p "${LOG_DIR}" 2>/dev/null || true
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[$(ts)] $*" >> "${LOG}"; }
 
+# Liveness metric (best-effort; no-op if the helper isn't installed yet).
+# shellcheck source=/dev/null
+[ -f "${METRIC_HELPER}" ] && . "${METRIC_HELPER}"
+emit() { command -v emit_loop_metric >/dev/null 2>&1 && emit_loop_metric create "$1"; return 0; }
+
+# DISABLED sentinel: intentional kill-switch. Do NOT emit a metric (a fresh
+# timestamp would hide the paused loop) — SelfHealLoopStale firing is the
+# intended signal, matching the observer's DISABLED convention.
 if [ -f "${DISABLED_GLOBAL}" ] || [ -f "${DISABLED_LOCAL}" ]; then
   log "skip: DISABLED sentinel present"
   exit 0
@@ -39,6 +49,7 @@ fi
 
 if [ ! -x "${CREATE_BIN}" ]; then
   log "ERROR: self-heal-create.sh not executable at ${CREATE_BIN} — skipping"
+  emit error
   exit 0
 fi
 
@@ -48,6 +59,7 @@ log "=== create cycle start ==="
 exec 9>"${LOCK}"
 if ! flock -n 9; then
   log "skip: another create run holds the lock"
+  emit ok   # the holding run is alive; this overlapped tick is a healthy no-op
   exit 0
 fi
 
@@ -56,5 +68,6 @@ rc=$?
 
 dur=$(( $(date +%s) - start ))
 ts > "${LAST}"
+if [ "${rc}" -eq 0 ]; then emit ok; else emit error; fi
 log "=== create cycle end rc=${rc} dur=${dur}s ==="
 exit 0

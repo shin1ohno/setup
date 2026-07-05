@@ -12,8 +12,10 @@
 # kill-switch + the auto-mitamae canary gate, NOT by interactive approval.
 #
 # flock-guarded, timeout-capped, kill-switch-aware, opus-pinned for reasoning.
-# Never fails the cron (log + .last are the liveness signal). claude is invoked
-# by ABSOLUTE path (see self-heal-create-run.sh header for why).
+# Never fails the cron (log + .last + node_exporter textfile metric are the
+# liveness signal). claude is invoked by ABSOLUTE path (see
+# self-heal-create-run.sh header for why). See
+# docs/self-heal-autonomy-improvement-plan.md.
 
 set -uo pipefail
 
@@ -24,6 +26,7 @@ set -uo pipefail
 export PATH="${HOME}/.local/share/mise/shims:${HOME}/.local/bin:${PATH}"
 
 CLAUDE_BIN="${CLAUDE_BIN:-${HOME}/.local/bin/claude}"
+METRIC_HELPER="${SELF_HEAL_METRIC_HELPER:-/usr/local/bin/self-heal-metric.sh}"
 LOG_DIR="${HOME}/.claude/logs"
 LOG="${LOG_DIR}/self-heal-resolve.log"
 LAST="${LOG_DIR}/self-heal-resolve.last"
@@ -32,6 +35,12 @@ DISABLED_GLOBAL="${HOME}/.claude/self-heal-loops.DISABLED"
 DISABLED_LOCAL="${HOME}/.claude/self-heal-resolve.DISABLED"
 TIMEOUT="${SELF_HEAL_RESOLVE_TIMEOUT:-1800}"
 MODEL="${SELF_HEAL_RESOLVE_MODEL:-opus}"
+
+# Durable headless auth: a long-lived setup-token (CLAUDE_CODE_OAUTH_TOKEN) in
+# this env file does not expire, unlike ~/.claude/.credentials.json — see
+# ~/.claude/rules/claude-cli-headless.md.
+TOKEN_ENV="${SELF_HEAL_TOKEN_ENV:-${HOME}/.claude/self-heal-token.env}"
+CREDS_JSON="${HOME}/.claude/.credentials.json"
 
 # pre-flight gate config: only spin up the (expensive) opus session when there
 # is at least one ACTIONABLE open self-heal issue. Actionable =
@@ -51,6 +60,12 @@ mkdir -p "${LOG_DIR}" 2>/dev/null || true
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[$(ts)] $*" >> "${LOG}"; }
 
+# Liveness metric (best-effort; no-op if the helper isn't installed yet).
+# shellcheck source=/dev/null
+[ -f "${METRIC_HELPER}" ] && . "${METRIC_HELPER}"
+emit() { command -v emit_loop_metric >/dev/null 2>&1 && emit_loop_metric resolve "$1"; return 0; }
+
+# DISABLED sentinel: intentional kill-switch. Do NOT emit (see create wrapper).
 if [ -f "${DISABLED_GLOBAL}" ] || [ -f "${DISABLED_LOCAL}" ]; then
   log "skip: DISABLED sentinel present"
   exit 0
@@ -58,6 +73,25 @@ fi
 
 if [ ! -x "${CLAUDE_BIN}" ]; then
   log "ERROR: claude not executable at ${CLAUDE_BIN} (HOME=${HOME}) — skipping"
+  emit error
+  exit 0
+fi
+
+# Auth pre-check for the headless `claude -p` below. Prefer the long-lived
+# setup-token; fall back to interactive credentials; if NEITHER is configured,
+# do not start claude (it would fail auth and burn a cycle) — emit an `auth`
+# metric so SelfHealLoopAuthExpired pages a human to (re-)auth.
+if [ -s "${TOKEN_ENV}" ]; then
+  # shellcheck source=/dev/null
+  . "${TOKEN_ENV}"                 # defines CLAUDE_CODE_OAUTH_TOKEN
+  export CLAUDE_CODE_OAUTH_TOKEN   # ensure the child claude inherits it
+elif [ -s "${CREDS_JSON}" ]; then
+  :  # legacy interactive credentials present; cannot verify expiry here — the
+     # setup-token migration is the durable fix. Proceed best-effort.
+else
+  log "skip: no claude auth configured (neither ${TOKEN_ENV} nor ${CREDS_JSON}) — not starting claude"
+  emit auth
+  ts > "${LAST}"
   exit 0
 fi
 
@@ -98,6 +132,7 @@ log "=== resolve cycle start (model=${MODEL}) ==="
 exec 9>"${LOCK}"
 if ! flock -n 9; then
   log "skip: another resolve run holds the lock"
+  emit ok   # the holding run is alive; this overlapped tick is a healthy no-op
   exit 0
 fi
 
@@ -121,12 +156,14 @@ actionable=$(gh issue list --repo "${REPO}" --label "${LABEL}" --state open \
 if [ "${GATE_ONLY}" = "1" ]; then
   log "gate-only: actionable=${actionable:-?}"
   ts > "${LAST}"
+  emit ok
   exit 0
 fi
 
 if [ -n "${actionable}" ] && [ "${actionable}" = "0" ]; then
   log "skip: no actionable open self-heal issue (non-needs-human OR owner-unblocked) — not starting claude"
   ts > "${LAST}"
+  emit ok   # healthy no-op: the loop ran, there was simply nothing to do
   exit 0
 fi
 log "gate: actionable=${actionable:-unknown} open self-heal issue(s) — starting claude (model=${MODEL})"
@@ -137,5 +174,6 @@ rc=$?
 
 dur=$(( $(date +%s) - start ))
 ts > "${LAST}"
+if [ "${rc}" -eq 0 ]; then emit ok; else emit error; fi
 log "=== resolve cycle end rc=${rc} dur=${dur}s ==="
 exit 0
