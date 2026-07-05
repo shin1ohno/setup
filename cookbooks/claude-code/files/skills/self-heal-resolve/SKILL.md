@@ -41,8 +41,13 @@ Addy Osmani「無人ループは無人でミスするループ」への答え＝
    needs-human で停止（`~/.claude/rules/debugging.md` の escalation threshold）。
 7. **観測でのみ「解決」を判定**（artifact でなく機能）。「`systemctl is-active`」や「PR merged」は
    解決の証拠にならない。ES の当該 dedup_key が `resolved` に転じる／機能 probe が通ることが証拠。
-8. home-monitor（CodeCommit / terraform）への変更は **PR/diff を残して needs-human**。
-   このループは setup cookbook の範囲で自律する（AWS infra は人間 apply）。
+8. home-monitor（CodeCommit / terraform）への変更は原則 **PR/diff を残して needs-human**。
+   **唯一の例外 = 案B-hardened の CT memory/cores resize**: `infra-resize-allowlist.json` に載る CT の
+   **increase-only** な resize に限り、**非LLM wrapper `self-heal-infra-apply.sh` 経由でのみ**自律 apply 可
+   （後述 Step 3 D の Phase 3 case）。**このループ自身は `terraform apply` を直接打たない** — wrapper に
+   `{ct, target_mb, target_cores}` を渡すだけ。wrapper が least-priv（pve-resize、admin 拒否）+ floor/ceiling +
+   increase-only + budget + fail-closed plan-gate を強制する（`docs/self-heal-phase3-security-review.md`）。
+   IAM/SG/リソース作成削除/rootfs/decrease/その他 TF は needs-human のまま。それ以外は setup cookbook の範囲で自律。
 
 ## remediation class と自律可否
 
@@ -298,6 +303,17 @@ es_get "/self-heal-state/_doc/<sha1>"   # status / first_seen / flap_count / occ
   `pct exec <ct_id> -- bash -lc "systemctl restart <unit>"`（または docker compose restart）。
   issue に「restart 実行（class C, 理由 <...>）<!-- self-heal-bot -->」を comment。Step 4 の検証へ（PR なし）。
   2 回目以降の同一 restart は B（恒久修正）or needs-human に格上げ。
+- **Phase 3（infra resize, 案B-hardened）**: 根本原因が「対象 CT の memory/cores 不足」で、その CT が
+  `infra-resize-allowlist.json` に載っていて **increase（増加）** の場合に限る。**`terraform apply` を自分で打たず**、
+  必要な目標値を決めて **非LLM wrapper に委譲する**:
+  ```bash
+  /usr/local/bin/self-heal-infra-apply.sh --dry-run <ct> <target_mb> <target_cores>   # plan-gate 確認
+  /usr/local/bin/self-heal-infra-apply.sh <ct> <target_mb> <target_cores>             # commit + apply
+  ```
+  wrapper が allowlist∩[min,max]∩increase-only∩budget∩least-priv(pve-resize)∩fail-closed plan-gate を強制する。
+  exit 2=off-list/least-priv 不成立、3=plan-gate 失敗、4=budget、5=decrease/floor、6=tfvars 無し → いずれも
+  **needs-human**（wrapper が拒否した = 自律 envelope 外）。exit 0 で apply 成功。apply 後は機能検証（Step 5、
+  対象サービス復帰 + `pct config <ct_id> | grep memory`）。allowlist 外 CT / decrease / rootfs / IAM 等は **D**。
 - **D**: 修正を auto-apply せず、調査結果を残して人間に渡す。**実装 PR を作ってもよい（propose）**が、
   作ったら**同じ run で即座に** `gh issue edit <n> --add-label self-heal-needs-human` を付与する
   （CI 完了を待たない）。理由: needs-human を付けないと、次 run の Step 0 dup-guard が「open linked PR +

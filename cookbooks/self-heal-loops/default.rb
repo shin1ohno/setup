@@ -101,8 +101,10 @@ end
 # liveness-metric helper (self-heal-metric.sh) both wrappers load + the
 # observation helper (self-heal-probe.sh) the resolve SKILL calls for
 # connect-classification / sleep-vs-wedge diagnosis + the class C' remediation
-# executor (self-heal-remediate.sh) that runs ONLY allowlisted known-safe kicks.
-%w[self-heal-create.sh self-heal-create-run.sh self-heal-resolve-run.sh self-heal-metric.sh self-heal-probe.sh self-heal-remediate.sh].each do |wrapper|
+# executor (self-heal-remediate.sh) that runs ONLY allowlisted known-safe kicks +
+# the Phase 3B infra-resize executor (self-heal-infra-apply.sh) — the ONLY holder
+# of the terraform apply verb, fail-closed + least-priv (pve-resize) only.
+%w[self-heal-create.sh self-heal-create-run.sh self-heal-resolve-run.sh self-heal-metric.sh self-heal-probe.sh self-heal-remediate.sh self-heal-infra-apply.sh].each do |wrapper|
   remote_file "#{staging_dir}/#{wrapper}" do
     source "files/#{wrapper}"
     owner node[:setup][:user]
@@ -133,6 +135,24 @@ execute "install remediation-allowlist.json" do
           "sudo install -m 0644 -o root -g root " \
           "#{staging_dir}/remediation-allowlist.json /usr/local/share/self-heal/remediation-allowlist.json"
   not_if "diff -q #{staging_dir}/remediation-allowlist.json /usr/local/share/self-heal/remediation-allowlist.json 2>/dev/null"
+end
+
+# Install the Phase 3B infra-resize allowlist (DATA, 0644). Empty by default =
+# fail-closed (nothing auto-resizes until an owner adds a CT via PR). Read by
+# self-heal-infra-apply.sh, which additionally enforces increase-only / floor /
+# ceiling / daily-budget / least-priv identity / a fail-closed plan-JSON gate.
+remote_file "#{staging_dir}/infra-resize-allowlist.json" do
+  source "files/infra-resize-allowlist.json"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "0644"
+end
+
+execute "install infra-resize-allowlist.json" do
+  command "sudo install -d -m 0755 -o root -g root /usr/local/share/self-heal && " \
+          "sudo install -m 0644 -o root -g root " \
+          "#{staging_dir}/infra-resize-allowlist.json /usr/local/share/self-heal/infra-resize-allowlist.json"
+  not_if "diff -q #{staging_dir}/infra-resize-allowlist.json /usr/local/share/self-heal/infra-resize-allowlist.json 2>/dev/null"
 end
 
 # Pre-create the two loop liveness .prom files OWNED BY THE LOOP USER inside the
