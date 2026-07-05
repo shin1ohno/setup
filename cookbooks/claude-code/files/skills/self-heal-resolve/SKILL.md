@@ -58,6 +58,32 @@ Addy Osmani「無人ループは無人でミスするループ」への答え＝
 
 **判定に迷ったら D**（needs-human）。長期間（数週間）`active` の alert は transient ではない —
 C で雑に restart せず、まず「本当に落ちているか／alert 自体が stale か」を観測で切り分ける。
+**ただし class D の中でも「原因は特定できたが remediation が 2 つあり優劣を付けられない」ケースは、
+診断だけ残さず両候補を PR まで作って owner に選ばせる**（下記 multi-candidate propose）。
+
+### multi-candidate propose（曖昧な二択は両候補を PR 化して owner が選ぶ）
+
+class D の「原因は分かるが remediation の候補が複数あり確信を持って優劣を付けられない」ケースは、診断だけ
+残して needs-human にせず、**両候補を実装して PR まで作り owner に選ばせる**（人間の仕事を「自分で実装」から
+「出来上がった 2 本の PR のどちらかを選ぶ」に縮める）。
+
+**発火条件**（すべて満たす時のみ）:
+- 候補が **2 件（最大 3）**、各々 **viable かつ envelope 内**（非破壊・auth/secret/IAM/KMS 非該当・
+  setup cookbook か Phase3-B の可逆 infra allowlist の範囲）。
+- **確信を持って優劣を付けられない**（明確に一方が良いなら普通に class A/B でその 1 本を出す）。
+- 「何が壊れているか分からない」= 対象外（従来どおり診断のみ needs-human。**候補を捏造しない**）。
+
+**動作**:
+1. 各候補を独立 branch → PR 化（PR body に実装計画＝変更内容・理由・sibling との trade-off、`Fixes #<n>`）。
+   **2 本は同一 run で作る**（以後 Step 0 dup-guard の複数-linked-PR ガードが skip する）。
+2. PR 同士 + issue を相互リンク。issue と**両 PR に `self-heal-needs-human`** を付与。
+3. issue に 1 コメント: 候補 A(#PRx) / B(#PRy) の trade-off 表 + 「採用する方を選んでください（他方は close）」
+   `<!-- self-heal-bot -->`。
+4. **どちらも owner が選ぶまで auto-merge しない**（両方 class-D/needs-human）。owner が採用側 PR に付けた
+   採用コメント = user-GO（その PR 限定）→ Step 4 で merge → 検証 → close、非採用 PR は close。採用候補が
+   Phase3-B infra なら案 B 規則を適用。
+5. **envelope を跨ぐ候補は PR 化せず**、診断コメント内で言及のみ（materialize しない）。両 PR 作成は当該 run の
+   1-issue 予算を消費、3-try escalation は据え置き。
 
 ### class C'（known-safe kick）— allowlist ゲート付き自動回復
 
@@ -169,6 +195,11 @@ dup ガード + partial-state recovery）:
 2. **open な linked PR を持つ issue は新規 PR を作らない**（重複 PR 防止）。代わりに
    その PR の状態で分岐 — `gh pr list --repo shin1ohno/setup --search "<issue># in:body linked:issue" --state open`
    や issue の timeline で `Fixes #<n>` の PR を特定し:
+   - **複数（≥2）の open linked PR がある = multi-candidate propose 状態**（後述「multi-candidate propose」）。
+     この場合 **どの PR も auto-merge しない** — owner が採用する 1 本を選ぶまで待つ owner-choice 状態。
+     owner が特定 PR に付けた採用コメント（user-GO、その PR に限定）を検出したら、その PR を Step 4 で merge し、
+     もう一方を close。owner 未選択なら今回はスキップ（needs-human 維持）。CI green は複数 linked PR の
+     どれかを勝手に merge する理由にならない。
    - **owner の未処理レビュー/コメントがあるか先に確認**（owner 著・マーカー無し・最新 bot 活動より新しい）。
      あれば最優先で反映する: 指摘を読み、**PR ブランチに修正を push**（新規 PR は作らない）、CI を再実行、
      bot マーカー付きで「反映しました」コメント。**merge は CI green ＋未解決の owner レビュー無し ＋
