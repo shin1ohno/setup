@@ -52,11 +52,38 @@ Addy Osmani「無人ループは無人でミスするループ」への答え＝
 |---|---|---|
 | **A. 既知サービスの再収束** | crashed systemd/docker サービスを cookbook 再適用で復旧（cookbook の notify→restart 経由）、設定 drift の再適用 | ✅ 自律（merge→auto-mitamae） |
 | **B. cookbook 設定修正** | 誤った閾値 / stale な process 名で es-query rule が誤発火 → cookbook/alert rule を修正 | ✅ 自律（merge→auto-mitamae） |
+| **C'. known-safe kick（allowlist）** | `self-heal-probe.sh` が `wedge-suspect`（target refused, ssh open）= listener 無しと判定した既知サービスを、allowlist の recovery_command で kick（etserver wedge #567 の `launchctl kickstart -k` 等） | ✅ 限定自律（**PR 無し**、`self-heal-remediate.sh <host> <service>` 経由のみ、後述） |
 | **C. transient restart** | OOM 等で一時 crash、再起動で復旧かつ flap でない既知サービス | ⚠️ 限定自律（`pct exec systemctl restart`、前後 comment + 機能 verify、flap_count を見て 2 回目以降は B/needs-human） |
 | **D. 新規設計 / 破壊的 / auth / infra / 原因不明 / 複数候補** | 新コンポーネント追加、IAM、データ移行、home-monitor TF、原因が割れる | ❌ needs-human（PR/診断を残す） |
 
 **判定に迷ったら D**（needs-human）。長期間（数週間）`active` の alert は transient ではない —
 C で雑に restart せず、まず「本当に落ちているか／alert 自体が stale か」を観測で切り分ける。
+
+### class C'（known-safe kick）— allowlist ゲート付き自動回復
+
+`self-heal-probe.sh` の verdict が `wedge-suspect`（listener が落ちた既知サービス）のとき、**checked-in の
+allowlist に載っている (host, service) に限り** PR 無しで回復コマンドを打てる。フェンスはコード
+（`self-heal-remediate.sh`）が強制する — ループは任意コマンドを実行できず、(host, service) キーだけを渡す。
+
+```bash
+# 実行（allowlist 厳密一致時のみ recovery_command を実行、前後に機能 probe）:
+/usr/local/bin/self-heal-remediate.sh <host> <service>
+# 事前確認（何が実行されるか／flap で escalate か）:
+/usr/local/bin/self-heal-remediate.sh --dry-run <host> <service>
+```
+
+手順:
+
+1. verdict が `wedge-suspect` であることを確認（`sleep-suspect`/`timeout` 系は C' 対象外 — restart しない）。
+2. `self-heal-remediate.sh <host> <service>` を実行。
+   - exit 0 = kick 実行。exit 2 = allowlist 外（→ class D / needs-human）。exit 3 = flap（同一 window で
+     `max_kicks` 超過）→ **恒久修正（class B）か needs-human に格上げ**、再 kick しない。
+3. kick 後、`self-heal-probe.sh classify_port <host> <port>` が `open` に復帰したことを**機能 verify**（Step 5）。
+   復帰しなければ C' の再試行でなく class B/needs-human へ（原因が listener 単独でない）。
+4. issue に「class C' kick 実行（(host,service)、verdict=wedge-suspect、probe 復帰）`<!-- self-heal-bot -->`」を comment。
+
+**allowlist（`cookbooks/self-heal-loops/files/remediation-allowlist.json`）はデータ**。エントリ追加は PR review
+のみ（破壊的 / auth / secret / IAM は載せない）。テーブル外は class D のまま。allowlist に無い＝自動 kick しない。
 
 ## 設定（env で上書き可）
 
