@@ -191,23 +191,35 @@ body の `dedup_key` / `self-heal-source` を読む:
   **「本当に down か」「alert が stale か（プロセス名変更・metric path 変更で誤発火）」を切り分ける。**
 - `source=uptime`（monitor/TLS down）→ 対象エンドポイントへ実際に到達確認（curl / tailscale ping）。
 
-**port/listener down 系の観測 caveat（sandbox 盲目化 + sleep 誤診防止, setup #603 由来）:**
+**port/listener down 系は `self-heal-probe.sh` で必ず分類する（散文の遵守任せをやめる, setup #603 由来）:**
 
-- `netstat` / `lsof` / `launchctl list` / `log show` の**空結果を「listener 無し」の証拠にしない**。
-  sandbox 化された Bash tool では実在の listener（`nc` で応答する ssh:22 すら）が 0 件で返る。
-  listener 存否は `nc -z <host> <port>` の実 connect で判定し、**既知の閉ポートが refused に
-  なること**で probe 自体が本物だと確認してから結論する。
-- **connect 挙動で故障を分類**:
-  - `refused`（RST / 即時 / `nc` exit 1）= ホスト稼働・listener 無し → **実 wedge 候補**
-    （etserver #567 型。`launchctl kickstart -k` / `systemctl restart` で回復）。
-  - `timeout`（SYN drop / `nc` exit 124）= 当該ポート不到達 → **sleep / firewall / LAN 経路**の
-    可能性大。必ずしも wedge でない（多くは自己回復 = flap）。
-- **macOS ホストは sleep を先に疑う**: `pmset -g log | grep -E '\+[0-9]{4}[[:space:]]+(Sleep|DarkWake)'`
-  でアラート時刻に sleep / Maintenance Sleep 遷移が重なるか確認。sleep 窓に一致し「ssh:22 は
-  通るが監視ポートは timeout」なら真因は sleep（Bonjour/Wake-on-Demand が wake させるのは ssh 等の
-  登録済みサービスのみで、任意ポートの SYN は drop される）。remediation はサービス再起動でなく
-  **電源管理（常時起動化）** = class D（darwin, 要 root）。cookbook は `mac-settings` の
-  always-on power enforce（`pmset -c sleep 0`）。#603 はこの sleep を #567 の wedge と誤診した。
+`netstat` / `lsof` / `launchctl list` / `log show` の**空結果を「listener 無し」の証拠にしない** —
+sandbox 化された Bash tool では実在の listener（ssh:22 すら）が 0 件で返る。listener 存否は
+手打ちの `nc` や空 netstat で結論せず、**必ず `self-heal-probe.sh` の実 connect 分類で判定する**
+（helper は既知の閉ポートが refused になることで probe 自体の妥当性も確認する）:
+
+```bash
+# 単発分類（refused=wedge候補 / timeout=sleep・fw・route / open=稼働）:
+/usr/local/bin/self-heal-probe.sh classify_port <host> <port>
+# 完全診断（target + ssh:22 + darwin なら sleep 相関 → verdict を返す）:
+/usr/local/bin/self-heal-probe.sh diagnose_port_down <host> <port> [1=darwin]
+```
+
+verdict と対応:
+- `wedge-suspect`（target refused, ssh open）= listener 無し = 実 wedge（#567 型）→ **class C'**（allowlist の
+  `launchctl kickstart -k` / `systemctl restart` — 後述 class 表）。
+- `sleep-suspect`（darwin, target timeout, sleep 遷移あり）= 真因は sleep（#603）→ remediation は再起動でなく
+  **電源管理（常時起動化）** = class D（`mac-settings` の `pmset -c sleep 0`）。**timeout を wedge と誤診しない。**
+- `filter-or-route-suspect` / `sleep-or-filter-suspect`（timeout, sleep 未確認）= 必ずしも wedge でない（多くは
+  自己回復 = flap）→ restart しない。
+- `host-unreachable`（ssh:22 も open でない）= 単一サービス wedge でなくホスト自体の問題。
+- `service-up`（target open）= alert が stale の可能性 → Step 5 で close 判断。
+
+**confidence gate（class-D needs-human 診断を書く前に必須）**: root cause の唯一の根拠が sandbox-blind な
+空結果（空 netstat/lsof/launchctl）なら、その診断は low-confidence。(a) `pct exec`/ssh で
+`self-heal-probe.sh` を実行し直して positive な観測（refused/timeout/open の verdict）を得る、(b) それも無理なら
+診断を「**needs-human: 観測不能（原因未確定）**」とし、**誤った root cause（wedge 等）を断定して書かない**。
+空の netstat は「listener 無し」の証拠ではない（#603 の教訓）。
 
 ES の現状も確認（まだ active か、resolved に転じていないか）:
 ```bash
