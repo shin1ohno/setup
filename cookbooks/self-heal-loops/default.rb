@@ -100,8 +100,9 @@ end
 # wrappers + the pure-shell create logic (self-heal-create.sh) + the sourced
 # liveness-metric helper (self-heal-metric.sh) both wrappers load + the
 # observation helper (self-heal-probe.sh) the resolve SKILL calls for
-# connect-classification / sleep-vs-wedge diagnosis.
-%w[self-heal-create.sh self-heal-create-run.sh self-heal-resolve-run.sh self-heal-metric.sh self-heal-probe.sh].each do |wrapper|
+# connect-classification / sleep-vs-wedge diagnosis + the class C' remediation
+# executor (self-heal-remediate.sh) that runs ONLY allowlisted known-safe kicks.
+%w[self-heal-create.sh self-heal-create-run.sh self-heal-resolve-run.sh self-heal-metric.sh self-heal-probe.sh self-heal-remediate.sh].each do |wrapper|
   remote_file "#{staging_dir}/#{wrapper}" do
     source "files/#{wrapper}"
     owner node[:setup][:user]
@@ -114,6 +115,24 @@ end
             "#{staging_dir}/#{wrapper} /usr/local/bin/#{wrapper}"
     not_if "diff -q #{staging_dir}/#{wrapper} /usr/local/bin/#{wrapper} 2>/dev/null"
   end
+end
+
+# Install the class C' remediation allowlist (DATA, 0644 root:root) to a stable
+# path self-heal-remediate.sh reads. The helper executes an entry's
+# recovery_command only on an exact (host, service) match here — the fence that
+# keeps the loop from running an arbitrary command. Grown only via PR review.
+remote_file "#{staging_dir}/remediation-allowlist.json" do
+  source "files/remediation-allowlist.json"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "0644"
+end
+
+execute "install remediation-allowlist.json" do
+  command "sudo install -d -m 0755 -o root -g root /usr/local/share/self-heal && " \
+          "sudo install -m 0644 -o root -g root " \
+          "#{staging_dir}/remediation-allowlist.json /usr/local/share/self-heal/remediation-allowlist.json"
+  not_if "diff -q #{staging_dir}/remediation-allowlist.json /usr/local/share/self-heal/remediation-allowlist.json 2>/dev/null"
 end
 
 # Pre-create the two loop liveness .prom files OWNED BY THE LOOP USER inside the
