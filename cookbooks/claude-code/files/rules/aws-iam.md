@@ -109,6 +109,26 @@ Detail: see `~/.claude/docs/aws-iam-detail.md#iam-cannot-self-rotate`.
 
 Detail: see `~/.claude/docs/aws-iam-detail.md#fleet-ssm-gate-path`.
 
+### Fleet cookbook profile-gate patterns (post-#503)
+
+Do NOT re-propose "every fleet cookbook must pin `--profile`" — that guidance predates #503 and is now stale (stale rules are the vector by which future sessions re-suggest an already-rejected pin-everything design). Three current patterns for how a cookbook resolves its AWS profile:
+
+- **darwin / TTY (manual operator)** — bare gate + `require_external_auth` auto-discovery (Pattern B; e.g. `mcp`, `local-mcp`)
+- **fleet / non-TTY** — bare gate + `mitamae-runner.sh` presets `export AWS_PROFILE=pve-bootstrap-ssm` before apply (lint `BARE_OK` category)
+- **explicit `--profile` pin** — only the residual cookbooks not yet on the runner preset
+
+Full mechanics (auto-discovery TTY-only behavior, lint checks) live in `~/.claude/docs/aws-iam-detail.md#multi-profile-auth-chain`; the pre-#503 "MUST pin" wording there still needs the same correction. Origin: #503 moved fleet gating to the runner preset.
+
+## Probe preconditions on the real host with the real credential resolution chain
+
+Before asserting a precondition (SSM grant present, terraform runnable, "auth unavailable"), probe the ACTUAL condition on the ACTUAL execution host — credential fall-through produces false positives.
+
+1. **SSM grant probe must run on the target host, not the admin terminal.** A probe with the correct `--profile <target>` still false-positives when run from a different host: that host's credential resolution chain (`~/.aws` cache, `source_profile`, `credential_process`) can fall through to an admin identity (`sh1admn` etc.) and succeed. Probe success only proves "this identity on this host" can read. Verify a fleet cookbook's gate path from the actual target CT/LXC, and confirm the identity ARN from `aws sts get-caller-identity` matches the intended principal before concluding "IAM grant not needed". Origin: 2026-06 es-memory — a `--profile pve-bootstrap-ssm` probe from `mini` succeeded on the `sh1admn` cache, "grant not needed" was wrongly concluded, CT119 hit a real AccessDenied post-deploy; fixed by path change.
+
+2. **Probe `test -f terraform.tfvars` on the executing host before `terraform plan/apply`.** `*.tfvars` is gitignored and present only on ops hosts; on a host without it, apply falls through to an interactive prompt for every variable (`Enter a value:`), inviting hand-entry of secrets like `break_glass_pubkey` (a mistyped value can propagate via SSM). Origin: 2026-06-27 apply on `mini` dropped into `var.aws_profile` / `var.break_glass_pubkey` prompts, Ctrl-C aborted.
+
+3. **Don't assert sandbox AWS-auth absence as an un-reprobable hard boundary.** `aws login` writes the `~/.aws` file cache, so re-probe after the user logs in. A bare `aws` CLI rc=1 is not proof of "no auth" — the sandbox zsh's compdef bug can kill the CLI itself (see auto-memory `aws-cli-needs-bash-c-wrapper`). Probe via `/bin/bash -c 'aws sts get-caller-identity --profile <P>'` or a read-only `terraform plan`; if the plan passes, the apply can run in-session too. Origin: 2026-06-27 — asserted "hard boundary, only runnable on your machine", then a read-only plan succeeded and apply completed in-sandbox.
+
 ## kms:Decrypt with EncryptionContext — wildcard `*` denies silently
 
 When granting `kms:Decrypt` to a role that needs to read SSM SecureString

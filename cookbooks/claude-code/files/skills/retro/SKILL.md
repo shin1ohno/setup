@@ -33,6 +33,18 @@ Before launching the agent, gather quantitative metrics:
 
 Include these metrics in the agent prompt as structured data.
 
+### Step 0: Sweep Deflected / Dropped Review Findings
+
+Before launching the agent, sweep the session for review findings that were surfaced but never acted on, so they are not silently lost:
+
+1. `security-guidance` PreToolUse warnings that were acknowledged but not fixed (the edit went through anyway)
+2. `code-reviewer` / `silent-failure-hunter` / `security-review` findings marked out-of-scope, deferred, or "later"
+3. `ReportFindings` items the user deferred, and any "I'll note this for follow-up" the session made but never wrote down
+
+For each surviving finding, capture it into `TODO.md` (project memory, or `~/.claude/pending-cognify/TODO.md` if no project context) with: what the finding was, which reviewer/hook surfaced it, why it was deflected, and a concrete first step to close it. Include these captured items in the agent prompt so the retrospective can decide whether any warrant a rule/hook change.
+
+If the sweep finds nothing, note "no deflected findings this session" and continue.
+
 ### Step 1: Launch Retrospective Agent
 
 Launch the `session-retrospective` agent in the background using the Agent tool:

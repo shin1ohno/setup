@@ -7,10 +7,17 @@ not re-derive the conventions through trial and error.
 
 ## Client-facing URL pattern
 
-Every MCP service deployed here uses **legacy MCP SSE transport** (MCP
-spec 2024-11-05): a `GET /sse` endpoint that opens an event stream and a
-`POST /messages/` endpoint that delivers JSON-RPC client messages. The URL
-to register in Claude.ai (or any MCP client) is always:
+Services here use one of two transports. The existing services
+(`cognee` / `memory` / `roon`) use **legacy MCP SSE transport** (MCP
+spec 2024-11-05); services added from 2026-07 onward (`es-memory` and
+later) use **streamable HTTP** — for those, see the FastMCP section
+below, and note the `/sse` URL pattern in this section applies to the
+legacy SSE services only.
+
+A legacy SSE service exposes a `GET /sse` endpoint that opens an event
+stream and a `POST /messages/` endpoint that delivers JSON-RPC client
+messages. The URL to register in Claude.ai (or any MCP client) is
+always:
 
 ```
 https://mcp.ohno.be/<service>/sse
@@ -27,6 +34,37 @@ When a deployment is functionally complete (auth + container running +
 **finishing step** for the user is a single line stating the exact URL to
 paste into Claude.ai. Do not sign off on the deployment with "the service
 is running at /<service>/" — surface the `/sse` suffix explicitly.
+
+## FastMCP streamable-HTTP: two claude.ai connector gotchas
+
+When a service uses FastMCP over **streamable HTTP** (rather than legacy
+SSE), two failure modes block registration as a claude.ai remote
+connector. Both surface with healthy-looking startup logs, so neither is
+visible without the checks below.
+
+1. **Do not use `stateless_http=True`.** A stateless FastMCP server never
+   issues the `Mcp-Session-Id` response header, and connector
+   registration fails with `Your account was authorized, but no MCP
+   server was found at the provided URL`. Stateful streamable HTTP with a
+   **single uvicorn worker** is required. Pre-cutover check — confirm the
+   header is present:
+
+   ```
+   curl -si -X POST <url> \
+     -H 'Content-Type: application/json' \
+     -H 'Accept: application/json, text/event-stream' \
+     -d '<initialize request>' | grep -i mcp-session-id
+   ```
+
+2. **Mounting multiple FastMCP apps in one process** (Starlette `Mount`)
+   requires the parent Starlette `lifespan` to start each sub-app's
+   `session_manager.run()`, nested with `async with`. Omit it and startup
+   logs stay clean while every request returns 500 `session manager not
+   initialized`.
+
+Origin: 2026-07-02 es-memory cutover #1 — shipped `stateless_http`, no
+`Mcp-Session-Id` header, gateway reverted within minutes; PR #613 made it
+stateful.
 
 ## ALLOWED_EMAILS expansion is a manual SSM put
 

@@ -154,6 +154,45 @@ Detail: see `~/.claude/docs/ruby-detail.md#rescue-eperm-icloud`.
 
 Detail: see `~/.claude/docs/ruby-detail.md#remote-file-content-aware-guard`.
 
+## Guard must be evaluatable under mitamae's actual runtime privilege
+
+A `not_if` / `only_if` / `skip_if` guard MUST succeed under the privilege mitamae actually runs with (typically a **non-root operator user** — `mitamae runs without sudo`, see the top of this file). A guard that reads a **root-owned file** (`/etc/sudoers.d/*` = `0440 root:wheel`, `0600` credentials, `/etc/ssl/private/*`) via `diff -q` / `cmp` / `grep -q` hits a read error as non-root → non-zero exit → the guard evaluates false. The failure mode depends on the guard type, and both are silent:
+
+- **`not_if`**: always false → the resource re-runs on **every apply** (`visudo` + `sudo install` fire each time — silent non-idempotency; the apply still reports success)
+- **`only_if`**: always false → the resource is **permanently, silently skipped** (worse — the config that should be placed is never updated)
+
+`2>/dev/null` only hides the read error; it does NOT change the exit code. And a `0755` parent directory does not help — the **file's own mode** decides readability ("sudoers.d is 0755 so the diff needs no sudo" is the exact misconception that ships this bug).
+
+**Probe before writing the guard** — as the operator user, not just `ls -la` (which misses group membership):
+
+```bash
+test -r <path> && echo READABLE || echo NOT_READABLE
+```
+
+**If NOT_READABLE, in order of preference:**
+
+1. **Hash sentinel (preferred — privilege-free)**: in the same placement `execute`, write a hash of the staged content to a user-space sentinel, and guard on the sentinel vs the staging file — works even on non-TTY fleet hosts:
+
+   ```ruby
+   execute "install setup-sudo-timestamp" do
+     command "sudo install -m 0440 -o root -g wheel #{staging} #{dest} && " \
+             "shasum -a 256 #{staging} > #{sentinel}"
+     not_if "test -f #{sentinel} && shasum -a 256 -c #{sentinel} >/dev/null 2>&1"
+   end
+   ```
+
+2. **`sudo diff -q`** (darwin **interactive** apply only): relies on a warm sudo timestamp (mac-sudo global timestamp / `bin/apply` keepalive). Non-TTY runs (launchd timer, auto-mitamae) cannot prompt for sudo, so this fails there — never use it in a fleet cookbook.
+
+**Detection grep** (cookbook review / `lint-cookbooks` candidate check):
+
+```bash
+git grep -nE '(not_if|only_if).*(diff -q|cmp |grep -q).*(/etc/sudoers|/etc/ssl/private|\.d/)' cookbooks/
+```
+
+Any hit — check the placement mode (the `install -m` argument). If it is `0440` / `0400` / `0600`, this rule applies.
+
+Origin: 2026-06-15 mac-sudo (PR #428/#505) — `not_if "diff -q <staging> /etc/sudoers.d/setup-sudo-timestamp 2>/dev/null"` could not read its own `install -m 0440 -o root -g wheel` destination as non-root, so it was always false; live-confirmed NOT_READABLE + re-install-every-apply on a real host 2026-07-05. The in-cookbook comment "sudoers.d is 0755 so the diff itself needs no sudo" was the root misconception.
+
 ## SSM-sourced `.env` generator: file-existence skip_if drops new KEY=VALUE lines silently
 
 Detail: see `~/.claude/docs/ruby-detail.md#ssm-env-skip-if-drift`.

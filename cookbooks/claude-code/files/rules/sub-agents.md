@@ -69,6 +69,24 @@ If the agent concludes it MUST mutate a production service to resolve an ambigui
 
 Detail (why "no immediate error" is insufficient + origins): see `~/.claude/docs/sub-agents-detail.md#analysis-only-agent-scope`.
 
+## Auto-Launched Review Agent — Dedupe + Completion by Findings Return
+
+Auto-launched security/code-review agents (the claude.ai-side auto-review that fires on a diff — NOT a hook in this repo, so this is a behavioral rule) can double-fire on the same change and can die mid-review. Two guards:
+
+1. **Dedupe by prompt/diff hash within a short window**: hash the review prompt (which embeds the target diff); if an identical-hash review already returned findings OR is currently in-flight within the last ~10 min, skip the re-launch. Two full reviews of a byte-identical diff are pure double-consumption — each carries full context plus the always-loaded rules.
+2. **Judge "completed" by findings RETURN, never by session end**: a review counts as done ONLY when it returned findings via `ReportFindings` / `StructuredOutput`. A session that ended with zero assistant entries (never ran) or died mid-`tool_use` (no findings returned) is NOT "reviewed" — re-run it or leave a WARN. Critically, a mid-death session must NOT be treated as complete for dedupe purposes: doing so suppresses the re-fire that may be the only valid review of that diff.
+
+Origin: 2026-06/07 — 7 byte-identical double-fire pairs (10-96 s apart) plus ~10 findings-never-returned sessions; one AWS_PROFILE-global diff died 76 s in and was never re-reviewed, and one pair's only valid review was the 2nd fire after the 1st died at 96 s.
+
+## Review Agent Out-of-Scope Findings — Capture, Don't Drop
+
+When a review agent (security-review, code-review) surfaces a correctness / idempotency / stale-reference finding that is outside the review's declared scope, capture it — do NOT let it evaporate into review prose that then returns `findings: []`. A security review that prose-notes "this is a correctness wart, not a security exposure" and returns an empty findings array silently drops a real, unfixed bug.
+
+- If reporting via `ReportFindings`, include the out-of-scope finding under `category: "correctness"` (an example category the tool explicitly permits) rather than omitting it.
+- Otherwise, surface it as an "Out-of-scope observations" note AND transcribe it to TODO.md in the same turn (description / reason / concrete first step; delete the entry in the resolving commit).
+
+Origin: 2026-06-15 — a security-review sub-agent prose-noted a `not_if "diff -q …"` idempotency bug in `cookbooks/mac-sudo` (0440 file unreadable without sudo → re-installs every apply) then returned `findings: []`; the bug sat unfixed for ~3 weeks.
+
 ## Fleet Status Verification — Functional Probe in the Agent Prompt
 
 When dispatching an agent to verify health across fleet hosts, the prompt MUST name the FUNCTIONAL probe, not leave the agent to infer it. Agents default to artifact-level checks (`systemctl is-active`, `docker ps`, "process running") that return healthy even for a degraded service — producing false-positive HEALTHY reports that can close an incident prematurely.
@@ -120,23 +138,24 @@ When a sub-agent needs to execute a task that runs longer than a few minutes (st
 - **Never delegate monitoring to a detached script**: if the task requires periodic checks, error recovery, or metric collection, the agent must stay alive to perform these — a fire-and-forget bash script cannot recover from failures or report intermediate results
 - **Timeout awareness**: if a task exceeds the agent's practical execution window, break it into phases — the agent completes phase 1, reports results, and the parent schedules phase 2
 
-## Background Agent Deadline Tracking
+## Background Agent Progress Tracking
 
-When launching a background sub-agent (foreground Agent, Ultraplan, remote research) for planning or research, set an internal deadline and remember to check it:
+Background / long-running work (>10 min — workflow batch, Ultraplan, remote research, multi-agent fan-out) is fire-and-forget-PROHIBITED. Launching one and closing the turn with "完了時に通知が来ます" is a violation: a completion notification is NOT a reliable terminal signal — sub-agents die silently on rate-limit / `Connection closed` with no notification. Instead:
+
+1. **On launch**: state the expected duration in one line.
+2. **During the run**: poll observable state (`journal.jsonl`, `TaskList`, output file) every 5-10 min via a Monitor / until-loop and emit a 1-line progress note — done N/M, most-recent completed stream, last-activity time. Do not go silent.
+3. **On a user "status?" / "止まってませんか"**: answer immediately with concrete progress BEFORE resuming other work — never defer to "next turn", never fall back to passive "完了したら通知が来ます".
+4. **Stall detection**: if the same stream shows no progress across 2 consecutive probes, switch from waiting to recovery — `TaskStop` → probe state → restart or narrow scope. Do not keep waiting on a silently-dead agent.
+
+Deadline guide — set an internal deadline and, if it passes without completion, escalate in the next turn via AskUserQuestion (wait longer with a stated minute count / restart with a narrower scope / proceed without the agent's output):
 
 - Research / codebase audit: **15 min**
 - Plan-level analysis (Ultraplan, multi-repo design): **30 min**
 - Large multi-repo audit or domain research: **60 min**
 
-If the deadline passes without a completion notification, do NOT wait silently. Escalate in the next user-facing turn:
+Do not re-launch the same agent with the same prompt expecting a different result. If it silently fails once, the second attempt usually fails the same way — narrow the scope or switch tools.
 
-1. State the timeout explicitly: e.g. "Ultraplan が 35 分経過しても未完了です"
-2. Offer concrete alternatives via AskUserQuestion:
-   - wait longer (specify minutes)
-   - restart with a narrower scope
-   - proceed with available information without the agent's output
-
-Do not re-launch the same agent with the same prompt expecting a different result. If the agent silently fails once, the second attempt usually fails the same way — instead narrow the scope or switch tools.
+Origin: 2026-07 aa4b0e75 (status? asked 3× + 2 stall reports in one session) / 29d690f1 (30 min silent, user prompted "止まってませんか") / 2ec1c07b.
 
 Detail (origin): see `~/.claude/docs/sub-agents-detail.md#background-agent-deadline-tracking`.
 
