@@ -61,7 +61,7 @@ Trigger pattern: `verify_*` returns `Result<Claims, AuthError>` (rich enum); cal
 
 **Don't** log the full token. **Do** log: variant, kid from JWT header, expected issuer/audience/scope, 16-char token prefix.
 
-Server-side counterpart of "FFI Boundary Error Visibility" in `~/.claude/rules/ios-build.md`.
+Server-side counterpart of "FFI Boundary Error Visibility" in `~/.claude/docs/ios-build.md`.
 
 Detail (Rust example + origin): see `~/.claude/docs/debugging-detail.md#auth-boundary-error-visibility`.
 
@@ -119,7 +119,7 @@ Sequence:
 3. Read 30-50 lines around the emit site, trace guard back to API surface
 4. Form a hypothesis grounded in source, **then** research if needed
 
-Sub-rules (Detail file): custom Terraform providers — apply-time command-string errors; tool-manager migration design — verify backend claims (cross-link to `~/.claude/rules/mise-migration.md`); CLI tool JSON output — probe schema before writing jq.
+Sub-rules (Detail file): custom Terraform providers — apply-time command-string errors; tool-manager migration design — verify backend claims (cross-link to `~/.claude/docs/mise-migration.md`); CLI tool JSON output — probe schema before writing jq.
 
 Detail (sub-rules + anti-signal + origins): see `~/.claude/docs/debugging-detail.md#read-the-source-before-researching`.
 

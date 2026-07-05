@@ -114,4 +114,4 @@ The harness should match this skill against requests like:
 
 ## Reference
 
-Full failure-mode catalog and rationale: `~/.claude/rules/mise-migration.md`. PR #32 (2026-04-25 brew→mise) shipped 8 distinct bugs from skipping this protocol. PRs #33, #34, #36, #37, #38, #41 are the post-merge cleanup.
+Full failure-mode catalog and rationale: `~/.claude/docs/mise-migration.md`. PR #32 (2026-04-25 brew→mise) shipped 8 distinct bugs from skipping this protocol. PRs #33, #34, #36, #37, #38, #41 are the post-merge cleanup.

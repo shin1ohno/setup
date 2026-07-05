@@ -1,12 +1,14 @@
-# Knowledge Persistence: Memory (v2) / Cognee Details
+# Knowledge Persistence: Memory (v2) / Cognee
+
+Doctrine for when and how to search + save durable knowledge. `@`-imported by CLAUDE.md, so this file is always-loaded. Self-hosted-Cognee container operations (REST `localhost:8001`, ChromaDB, `docker compose cognee`, `bulk_ingest`, the deprecated `~/ingest/drop/` watcher) were retired with the move to the memory-v2 stack and are no longer here — the successor keeps the old MCP tool interface, so the search/save doctrine below is unchanged.
 
 ## Local write fallback (host-agnostic)
 
-If a knowledge-WRITE tool (`cognify`, `save_interaction`, `remember`, `delete`, `prune`) is denied in this session, a local MCP is configured on this host for writes — use the local equivalent instead: `mcp__cognee-local__cognify` / `mcp__cognee-local__save_interaction` / `mcp__memory-local__add_memories` (the local memory MCP still exposes the mem0-era tool names). READS (`search`, `recall`, `list_data`, `browse`) continue to use whichever connector is available (hosted or local). On hosts where the local servers are not registered, the connector write tools are allowed and this note is a no-op.
+If a knowledge-WRITE tool (`cognify`, `save_interaction`, `remember`, `delete`, `prune`) is denied in this session, a local MCP may be registered on this host for writes — use the local equivalent instead (`mcp__cognee-local__cognify` / `mcp__cognee-local__save_interaction` / `mcp__memory-local__*`). READS (`search`, `recall`, `browse`) continue to use whichever connector is available (hosted or local). On hosts where the local servers are not registered, the connector write tools are allowed and this note is a no-op.
 
-## "local" Cognee is NOT air-gapped — verify egress before routing work-sensitive data
+## "local" is NOT air-gapped — verify egress before routing work-sensitive data
 
-`cognee-local` / `memory-local` (127.0.0.1) name the **MCP server location**, not the LLM/embedding backend. Cognee calls an LLM for graph extraction and an embedding model for vectors; both may be **external vendor APIs** (OpenAI, etc.) depending on container config. So "local" storage can still **egress content to a third party** on every `cognify`. Before routing any work-sensitive content (employer KPIs, product metrics, internal business data) through `mcp__cognee-local__cognify`:
+`cognee-local` / `memory-local` (127.0.0.1) name the **MCP server location**, not the LLM/embedding backend. Graph extraction + embedding may call **external vendor APIs** (OpenAI, etc.) depending on container config, so "local" storage can still **egress content to a third party** on every write. Before routing any work-sensitive content (employer KPIs, product metrics, internal business data) through a local MCP:
 
 1. Probe the actual egress:
 
@@ -14,41 +16,33 @@ If a knowledge-WRITE tool (`cognify`, `save_interaction`, `remember`, `delete`, 
    docker exec local-mcp-cognee-1 env | grep -iE 'LLM_(PROVIDER|ENDPOINT|MODEL)|EMBEDDING_(PROVIDER|ENDPOINT)|OPENAI|ANTHROPIC'
    ```
 
-2. If any `*_ENDPOINT` points to a vendor API (`api.openai.com`, …), cognify/embedding sends the content there. Treat `cognee-local` as equivalent to that vendor for data-sensitivity purposes — route work data through it only when that vendor is sanctioned for that data class (e.g. an employer-managed OpenAI account), and **never** to a personal home-lab Cognee (`mcp.ohno.be`) / personal Notion.
-3. For structured data that only needs exact comparison (a KPI snapshot, a metrics diff), prefer a **local file (JSON)** over Cognee — zero egress, exact diff, and the semantic graph adds nothing for fixed numbers.
+2. If any `*_ENDPOINT` points to a vendor API (`api.openai.com`, …), treat that MCP as equivalent to that vendor for data-sensitivity purposes — route work data through it only when the vendor is sanctioned for that data class, and **never** to a personal home-lab / personal Notion.
+3. For structured data that only needs exact comparison (a KPI snapshot, a metrics diff), prefer a **local file (JSON)** — zero egress, exact diff, and the semantic graph adds nothing for fixed numbers.
 
-This is the "verify-before-asserting" principle applied to data routing: the name `local` is not evidence of air-gap. Origin: 2026-06-19 kpi-delta-monitor loop — `docker exec env` showed `LLM_ENDPOINT=https://api.openai.com/v1` in `cognee-local`; routing Mercari KPI through it would have egressed to OpenAI. Snapshot moved to a local JSON file.
+The name `local` is not evidence of air-gap. Origin: 2026-06-19 kpi-delta-monitor loop — `docker exec env` showed `LLM_ENDPOINT=https://api.openai.com/v1`; routing Mercari KPI through it would have egressed to OpenAI. Snapshot moved to a local JSON file.
 
 ## Memory (unified v2 MCP)
 
-Cross-project memory for user attributes, preferences, possessions, and durable
-facts. The claude.ai `memory` connector serves the unified v2 MCP (ElasticSearch
-+ Voyage embeddings, hybrid BM25 + kNN recall). The old mem0 tool names
-(`add_memories` / `search_memory` / `list_memories`) are RETIRED — use:
+Cross-project memory for user attributes, preferences, possessions, and durable facts. The claude.ai `memory` connector serves the unified v2 MCP (ElasticSearch + Voyage embeddings, hybrid BM25 + kNN recall). The old mem0 tool names (`add_memories` / `search_memory` / `list_memories`) are RETIRED — use:
 
 - `recall(query, type?, top_k?, filters?)` — hybrid search over all memory (was `search_memory`). `type` optionally scopes to `fact` / `knowledge` / `episode`.
 - `remember(content, type, tags?)` — persist a memory; `type` MUST be explicit: `fact` (atomic durable fact — the `add_memories` replacement), `knowledge` (a document/chunk), or `episode` (session summary).
 - `browse(type?, filters?, sort?, limit?)` + `memory_stats()` — list + counts (was `list_memories`).
 - `ingest(document, dataset, doc_key)` (upsert a whole document), `revise(id, content)`, `forget(id)`, `get(id)` — document/edit ops.
 
-Async write model: a `fact` is written immediately as `raw`, then a keeper (on
-the es-memory host, `claude -p`) reconciles it (ADD/UPDATE/NOOP dedup) within a
-tick or two. Transparent to callers — keep saving; a just-remembered fact
-becomes searchable in its reconciled form shortly after.
+Async write model: a `fact` is written immediately as `raw`, then a keeper (on the es-memory host, `claude -p`) reconciles it (ADD/UPDATE/NOOP dedup) within a tick or two. Transparent to callers — keep saving; a just-remembered fact becomes searchable in its reconciled form shortly after.
 
-### When to Search
+### When to Search (memory)
 
 Run `recall` in parallel with Cognee at conversation start. Always search when the topic relates to user attributes (possessions, preferences, body measurements).
 
-### When to Save
+### When to Save (memory)
 
 Save immediately when user attributes are revealed during conversation — do not wait to be asked, via `remember(content, type='fact')`. Targets: body measurements, owned devices/gear, food preferences, riding style, workflow preferences, relationships/roles.
 
 ## Cognee Knowledge Graph
 
-Cross-project knowledge store for technical knowledge, product reviews, business insights, and reference documents.
-Available via MCP tools: `search`, `cognify`, `save_interaction`, `list_data`.
-If Cognee MCP is not connected in this session, skip all Cognee operations silently.
+Cross-project knowledge store for technical knowledge, product reviews, business insights, and reference documents. Available via MCP tools: `search`, `cognify`, `save_interaction`. If Cognee MCP is not connected in this session, skip all Cognee operations silently.
 
 ### When to Search (READ)
 
@@ -70,88 +64,29 @@ Use `top_k=5` for focused queries, `top_k=15` for broad exploration.
 
 When a research, review, or analysis task reaches a conclusion (summary or comparison table produced), save immediately **before** moving to the next task. Do not wait for the user to ask.
 
-**Debugging sessions**: the save trigger is **root cause identification**, not task completion. When you identify the root cause of a non-obvious bug with confidence, save it to Cognee immediately — before implementing the fix. The root cause and the failed hypotheses both have future value.
+**Debugging sessions**: the save trigger is **root cause identification**, not task completion. When you identify the root cause of a non-obvious bug with confidence, save it immediately — before implementing the fix. The root cause and the failed hypotheses both have future value.
 
-**`cognify` (durable insight)** for the lasting stuff: bug root-causes + fixes, architectural decisions + rationale, product reviews/comparisons, API gotchas/workarounds, infra patterns, cross-project conventions, user attributes/possessions/preferences (save proactively when revealed). **`save_interaction` (light)** for troubleshooting steps, quick impressions, project setup notes. **Never save** secrets/credentials/tokens, routine refactors, info already in README, or temporary state (branch/WIP).
+**`cognify` (durable insight)** for the lasting stuff: bug root-causes + fixes, architectural decisions + rationale, product reviews/comparisons, API gotchas/workarounds, infra patterns, cross-project conventions, user attributes/possessions/preferences. **`save_interaction` (light)** for troubleshooting steps, quick impressions, project setup notes. Short atomic user-attribute facts go to memory `remember(type='fact')` instead. **Never save** secrets/credentials/tokens, routine refactors, info already in README, or temporary state (branch/WIP).
 
 ### Save Format
 
 Structure each `cognify` note as a self-contained block: Topic / Context (project, stack) / Problem / Solution / Why. (Adapt the labels for reviews — Rating/Pros/Cons/Verdict — or analyses — Findings/Recommendation/Risks.)
 
-### Post-Cognify Verification
+### Post-Save Verification
 
-After every `cognify` or `save_interaction` call via MCP, verify the data was actually persisted:
-
-1. Wait for background processing (cognify runs asynchronously)
-2. Search with `search_type: CHUNKS` using 2-3 key terms from the saved content
-3. If results are empty, check Cognee container logs for errors (`docker compose logs cognee --tail 20`)
-4. If the error is `'NoneType' object has no attribute 'keys'`, this is a ChromaDB client/server version mismatch — see Troubleshooting below
-
-This applies to all cognify calls, not just PDF ingestion. MCP cognify returns success even when the background pipeline fails silently.
+MCP `cognify` returns success even when the background pipeline fails silently. After a save, wait for background processing, then `search` (`search_type: CHUNKS`) using 2-3 key terms from the saved content. If results are empty, the save did not land — retry.
 
 ### Cognify Timeout Fallback
 
-When a `cognify` MCP call returns a timeout error (typically after ~60s waiting for the LLM extraction step), do NOT silently drop the knowledge — the commit log is not a substitute for graph search. Two cognify timeouts in the same session = the graph won't ever ingest these findings without manual intervention.
+When a `cognify` MCP call returns a timeout (typically ~60s waiting on LLM extraction), do NOT silently drop the knowledge — the commit log is not a substitute for graph search. Two timeouts on the same content in one session = it won't ingest without intervention:
 
-**Fallback procedure** when cognify times out twice on the same content:
+1. Write the structured note to `~/.claude/pending-cognify/<YYYY-MM-DD>-<topic-slug>.md` (same Save Format, full body — not abbreviated).
+2. Add a TODO.md entry (project memory, or `~/.claude/pending-cognify/TODO.md`) with a concrete re-ingest note.
+3. Do NOT block the current task on recovery — the fallback file is the durable artifact.
+4. On next session start, drain `~/.claude/pending-cognify/*.md` before cognifying new content (the `knowledge-drain` skill automates this).
 
-1. Write the structured note to `~/.claude/pending-cognify/<YYYY-MM-DD>-<topic-slug>.md` using the same format from "Save Format" above (preserved cognify body, not abbreviated)
-2. Add a TODO.md entry in the project memory (or `~/.claude/pending-cognify/TODO.md` if no project context) with the concrete re-ingest command:
-   ```
-   ## Re-ingest pending cognify: <topic>
-   **File**: ~/.claude/pending-cognify/2026-04-29-cbuuid-uniffi.md
-   **Command**:
-       cat ~/.claude/pending-cognify/2026-04-29-cbuuid-uniffi.md | \
-         curl -s -X POST http://localhost:8001/api/v1/add \
-         -H "Authorization: Bearer $TOKEN" \
-         -F "data=@-" -F "datasetName=main_dataset"
-   ```
-3. Do NOT block the current task on Cognee recovery — the fallback file is the durable artifact
-4. On next session start, before running `cognify` for new content, drain `~/.claude/pending-cognify/*.md` first
+**Short content** (1-2 sentences, single user-attribute fact) → prefer memory `remember(type='fact')` (faster, different infra). Larger cross-session knowledge (debug pattern, architectural decision) belongs in cognify even if it waits for re-ingest. Origin: 2026-04-29 two cognify saves lost to back-to-back timeouts, invisible until re-ingested.
 
-**When to use the memory MCP fallback instead**: if the content is short (1-2 sentences, single fact about user attribute or possession), the memory MCP `remember` (`type='fact'`) is faster and has different infrastructure. Cross-session knowledge that's larger (debug pattern, architectural decision, multi-paragraph rationale) belongs in cognify even if it has to wait for re-ingest.
+### PDF / Document Ingestion
 
-Origin: 2026-04-29 two cognify saves lost to back-to-back timeouts, invisible to graph search until re-ingested.
-
-### Ingestion Method Selection
-
-| Data | Method | When |
-|------|--------|------|
-| Single insight (< 500 words) | `cognify` MCP tool | During conversation |
-| Interaction log | `save_interaction` MCP tool | End of meaningful exchange |
-| PDF/document | `/ingest-pdf` skill | When user provides a file |
-| Large batch (10+ files) | `bulk_ingest.py` via docker | One-time imports |
-
-### PDF and Document Ingestion
-
-Use the `/ingest-pdf` skill. Manual procedure if needed:
-
-1. Attempt text extraction with PyPDF2. If extracted characters < pages × 100, classify as image-based PDF
-2. Image-based PDF: render each page as an image with PyMuPDF (DPI=200) → extract text via Claude's vision
-3. Upload with a unique filename via REST API `POST /api/v1/add` (use `datasetName` parameter to create a dedicated dataset)
-4. `POST /api/v1/cognify` (specify target with `datasets` parameter)
-5. Verify ingestion with MCP `search` (`GRAPH_COMPLETION`)
-6. **Verification loop**: after cognify returns, wait for background processing to complete (check `cognify_status`), then search for key terms from the ingested document using CHUNKS mode. If results are empty or sparse, re-run cognify
-7. **Gap audit**: compare source directory file list against Cognee search results for each group/brand. Re-ingest any files with zero matching chunks. Use `/verify-cognee` skill for systematic audits
-
-**Watcher (`~/ingest/drop/`) is deprecated**: it ingests files mid-write and causes data_id collisions on duplicate filenames. Use the REST API for uploads instead.
-
-### Cognee Operational Notes
-
-- **Filename uniqueness**: `/api/v1/add` generates data_id deterministically from the filename. Duplicate filenames are treated as the same record — use unique names like `<category>_<name>_<detail>_text.txt`
-- **Dataset isolation**: prefer per-domain datasets (e.g., `snowboard_<brand>`) over aggregating into main_dataset. Enables independent rebuilds on container failure
-- **Container restart risk**: restarts can lose internal `text_<hash>.txt` files. If cognify returns 409, this is the cause. Fix by re-uploading data and re-running cognify
-- **API info**: Base URL `http://localhost:8001`, auth via `POST /api/v1/auth/login` (form: `username=default_user@example.com&password=default_password`)
-
-### Troubleshooting
-
-**Cognify succeeds but search returns no results:**
-1. Check cognee container logs: `docker compose -f ~/deploy/cognee/docker-compose.yml logs cognee --tail 30`
-2. Look for `'NoneType' object has no attribute 'keys'` in ChromaDBAdapter — this means client/server version mismatch
-3. Compare versions: `docker compose exec cognee python3 -c "import chromadb; print(chromadb.__version__)"` vs `docker compose images chromadb`
-4. Fix: update ChromaDB server image in `cookbooks/cognee/files/docker-compose.yml` to match the client version, then `docker compose up -d chromadb && docker compose restart cognee cognee-mcp`
-
-**REST API add returns 500 "datasetName must be provided":**
-- Cognee 0.5.8+ requires `datasetName` in the add request body
-- MCP cognify handles this automatically via the cognee_client's default `dataset_name="main_dataset"`
-- For direct REST API calls: use multipart form with `-F "data=@file.txt" -F "datasetName=main_dataset"`
+Use the `/ingest-pdf` skill (PyPDF2 text extraction; image-based PDFs render each page via PyMuPDF and extract text via Claude vision). After ingest, verify with `search` (CHUNKS) on key terms; re-run if sparse. Use `/verify-cognee` for systematic gap audits (source-dir file list vs Cognee chunks).

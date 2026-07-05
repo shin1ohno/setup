@@ -22,7 +22,7 @@
 | 11 | `hooks/check-whitespace-lines.rb` | Code-only | ✅ E 節 |
 | 12 | `hooks/post-compact-remind.rb` | Code-only | ✅ E 節 |
 | 13 | `hooks/pre-commit-test.rb` | Code-only | ✅ E 節 |
-| 14 | `rules/architecture.md` | Preference | ✅ C 節 |
+| 14 | `rules/planning.md` (Architecture Discussion Gates; ex-architecture.md) | Preference | ✅ C 節 |
 | 15 | `rules/claude-code-plugins.md` | Code-only | ✅ C 節 |
 | 16 | `rules/data-collection.md` | Preference | ✅ C 節 |
 | 17 | `rules/debugging.md` | Preference + Skill 候補 | ✅ C 節 |

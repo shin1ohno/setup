@@ -1,21 +1,6 @@
 # Plan-Phase Rules
 
-Detailed structures for non-trivial planning. Load on demand when the current task is UX/IA design, autonomous execution boundary review, or research-heavy work.
-
-## Plan File Structure for UX / IA / Frontend Tasks
-
-When the task is UX revision, IA redesign, or any frontend feature with multiple user-facing behaviors, the plan file MUST follow this section order:
-
-1. **Context** — problem statement + user-confirmed constraints (1 paragraph)
-2. **ユースケース別 操作フロー (use-case flows)** — for each primary use case, show the actor + goal + concrete step-by-step interaction. Side-by-side "いま / 新しく" table when revising existing behavior. This section comes FIRST because it forces the IA shape to emerge from user goals, not from file boundaries
-3. **Scope / Out-of-scope** — explicit boundaries
-4. **構造変更 (structural changes)** — code-level changes grouped by module, derived from the use cases above
-5. **ファイル一覧 + 既存ユーティリティの再利用**
-6. **Verification** — split into two subsections:
-   - **Claude-runnable tests** — every check Claude can execute without the user's hardware: type checks, unit tests, integration tests against real services running locally (sqlite, docker, weave-server), API curl probes that surface the bug class, end-to-end test scripts that spin up containers / mock devices. List the exact command for each, AND the bug class it would have caught. **This subsection is mandatory** — if a bug shipped to user-hardware verification could have been caught by a script Claude could run, that script belongs here.
-   - **User hardware verification** — only the steps that genuinely require a physical device (BLE press, Roon zone playback state, Hue light reaction). Number them so the user can report "step 3 failed" rather than describing the failure ad-hoc.
-
-Why the split: many bug classes (missing enum variant, dispatch routing, tile-input regressions) are observable without user round-trips. Why this order: user-journey-first makes implementation priority obvious (primary UC → secondary UC) and prevents the rewrite triggered by "最初にユースケースごとの操作を書いて". Origin: 11-bug cascade, each fix lacked an autonomous test pass.
+Always-loaded planning discipline. The detailed UX / IA plan-file structure lives in `~/.claude/docs/planning-detail.md` (on-demand — Read it when the task is UX/IA/frontend design).
 
 ## Design-to-Plan Transition
 
@@ -55,3 +40,32 @@ When a task requires research before planning, run research and planning in para
 4. Present the completed plan for user approval
 
 **Anti-pattern**: launching research, then announcing "I'll plan when results arrive" and waiting. This is idle time that violates the planning rule.
+
+## Architecture Discussion Gates
+
+### Cross-Repo Design Decisions
+
+When a task spans 2+ repositories and involves shared contracts (protocol schemas, MQTT topic structure, API interfaces, event formats, shared data models), stop before implementing and use AskUserQuestion to surface the design decision.
+
+Trigger: before writing code that defines a shared contract, ask:
+"This defines a shared contract between [A] and [B]. Proposed design: [x]. Adjust before I implement?"
+
+### Architecture Before Implementation
+
+When creating a new system layer (binary, service, routing engine):
+1. Name the component
+2. Define its single responsibility
+3. Define inputs, outputs, and interaction with existing components
+4. AskUserQuestion to confirm — then implement
+
+Architecture reviews are free. Post-implementation redesigns cost sessions.
+
+### SDK vs. Consumer Distinction
+
+SDK must be independently useful without any specific consumer.
+Consumer-specific logic belongs in the consumer binary, not the SDK.
+When unsure which layer a feature belongs to, ask before placing it.
+
+## UX / IA / Frontend Plan File Structure
+
+When the task is UX revision, IA redesign, or any frontend feature with multiple user-facing behaviors, the plan file MUST follow a fixed section order — use-case flows FIRST (so the IA shape emerges from user goals, not file boundaries), and a Verification section split into **Claude-runnable tests** (mandatory — every check Claude can run without the user's hardware) + **User hardware verification** (numbered, only genuinely-device steps). Full section order + rationale: see `~/.claude/docs/planning-detail.md#ux-ia-plan-file-structure`.

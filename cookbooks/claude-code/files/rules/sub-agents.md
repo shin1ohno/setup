@@ -4,6 +4,8 @@ description: "Sub-agent design principles, bulk research pattern, and tool selec
 
 # Sub-agent Design Principles
 
+This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/docs/sub-agents-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
+
 - 1 agent = 1 task: never give multiple roles to a single agent
 - Run parallelizable tasks in parallel (Agent tool parallel calls)
 - Review gate: always include a review step for important outputs
@@ -23,7 +25,7 @@ When launching 3+ sub-agents in parallel over the same repository, declare which
    - **Split the file**: split the cookbook / module so each stream owns a distinct file (e.g., `cookbooks/elastic-agent/files/elastic-agent.linux.yml.tmpl` vs `elastic-agent.darwin.yml.tmpl`)
 4. State the exclusivity decision in each stream's prompt: "You will write to FILES X, Y, Z. DO NOT modify any file under cookbooks/foo/ — Stream <name> owns it."
 
-Origin: 2026-05-09 two parallel streams both created the same cookbook file; one full PR cycle wasted on the merge conflict.
+Detail (origin): see `~/.claude/docs/sub-agents-detail.md#parallel-stream-file-exclusivity`.
 
 ## Sub-agent Destructive-Operation Scope Boundary
 
@@ -44,7 +46,7 @@ Applies to:
 - **Database tables / collections / indices**
 - **Cloud resources** (S3 buckets, IAM users, KMS keys)
 
-Origin: 2026-05-09 an agent read "consolidate dashboards" as license to delete predecessor saved objects outside its task scope.
+Detail (origin): see `~/.claude/docs/sub-agents-detail.md#destructive-operation-scope-boundary`.
 
 ## Analysis-only Agent Scope — No File Edits Without Explicit Authorization
 
@@ -58,10 +60,6 @@ When a sub-agent's (or workflow agent's) task is framed as **analysis, design, o
 2. Verify the edit is correct against the FULL problem specification — not just "does it make the immediate error stop?"
 3. Only then keep it; otherwise discard and apply the correct fix yourself
 
-**Why "no immediate error" is insufficient**: an agent fixing a collection/serialization bug in a typed framework (Terraform provider, GraphQL resolver, protobuf/JSON codec) may eliminate the observable crash while introducing a subtler invariant violation — wrong list order, missing element, schema mismatch — that fails differently on a different code path. An adversarial verifier that only checks "did the panic go away?" misses it; it must check the framework's actual contract (e.g. for a Terraform list of a Required attribute, the applied value must equal the plan element-by-element in order and count).
-
-Origin: 2026-05-31 an analysis agent stopped a panic but broke the plan-order contract; the adversarial Verify phase accepted it.
-
 **Production service boundary** — when an analysis/synthesis-phase agent's task touches a RUNNING service (docker container, systemd unit, `elastic-agent`, the auto-mitamae orchestrator, any PVE LXC service), the read-only default applies EVEN IF the parent prompt omitted the verbatim sentence above. Default in these contexts:
 
 - Read config/log files, `systemctl status`, `elastic-agent status`, `docker compose ps` — allowed
@@ -69,7 +67,7 @@ Origin: 2026-05-31 an analysis agent stopped a panic but broke the plan-order co
 
 If the agent concludes it MUST mutate a production service to resolve an ambiguity, it surfaces the proposed change as text + stops — it does not execute. An orchestrator / auto-mitamae auto-revert is NOT a safety net: it catches the action only AFTER the service was already restarted with an untested config.
 
-Origin: 2026-06-01 a synthesis agent restarted a production service with an unvalidated config during the analysis phase.
+Detail (why "no immediate error" is insufficient + origins): see `~/.claude/docs/sub-agents-detail.md#analysis-only-agent-scope`.
 
 ## Fleet Status Verification — Functional Probe in the Agent Prompt
 
@@ -84,7 +82,7 @@ When dispatching an agent to verify health across fleet hosts, the prompt MUST n
 
 Prompt line to include: "Report each host's FUNCTIONAL health via `<specific-command>`, NOT `systemctl is-active`. A host is HEALTHY only when the functional check confirms behavior (data flowing, components active), not just that the process runs."
 
-Origin: 2026-06-01 a fleet agent reported 19/19 HEALTHY via `systemctl is-active` while emission had stopped.
+Detail (origin): see `~/.claude/docs/sub-agents-detail.md#fleet-status-verification`.
 
 ## Tool Availability — ToolSearch Before Claiming Unavailable
 
@@ -101,7 +99,7 @@ Sequence:
 
 Parent prompts for sessions involving deferred tools should explicitly include: "If a tool appears unavailable, call `ToolSearch('<tool>')` before reporting the blockage." For sub-agent prompts that depend on `SendMessage`, `EnterPlanMode`, or skill invocation, name the ToolSearch query directly: "ToolSearch with `select:SendMessage` to load the SendMessage schema."
 
-Origin: 2026-05-09 a stream blocked itself reporting SendMessage/EnterPlanMode unavailable — both reachable via ToolSearch.
+Detail (origin): see `~/.claude/docs/sub-agents-detail.md#tool-availability-toolsearch`.
 
 ## Bulk Research Pattern
 
@@ -112,11 +110,7 @@ When collecting information from multiple sources (URLs, products, brands, categ
 3. **Each agent's responsibility**: WebFetch reviews → fetch specs from manufacturer sites → save to Cognee via cognify
 4. **Progress reporting**: show a progress table with agent status (researching... / **done**) and update it as each agent completes
 
-```
-Example: "Save all reviews from this page" → launch sub-agents per category in background
-Example: "Look up all reviews for this brand" → 1 agent per brand in background
-Example: "Find bindings for this board" → 1 agent per brand group in background
-```
+Detail (examples): see `~/.claude/docs/sub-agents-detail.md#bulk-research-pattern`.
 
 ## Long-Running Tasks
 
@@ -144,7 +138,7 @@ If the deadline passes without a completion notification, do NOT wait silently. 
 
 Do not re-launch the same agent with the same prompt expecting a different result. If the agent silently fails once, the second attempt usually fails the same way — instead narrow the scope or switch tools.
 
-Origin: 2026-04-23 two consecutive Ultraplan agents failed silently; the user had to notice and restart.
+Detail (origin): see `~/.claude/docs/sub-agents-detail.md#background-agent-deadline-tracking`.
 
 ## Tool Selection Guide
 
@@ -171,4 +165,4 @@ Commands that always qualify:
 
 Pattern: launch the sub-agent with `run_in_background: true`, emit one short user-facing line ("Deploy in background, waiting for completion notification"), and continue interacting with the user. Feed results back when the completion notification arrives. Multiple such tasks can and should run in parallel when independent.
 
-Origin: 2026-04-23 attempted `docker compose up -d --build` inline as a foreground Bash call; user corrected "時間がかかるタスクは SubAgent で".
+Detail (origin): see `~/.claude/docs/sub-agents-detail.md#60-second-rule`.
