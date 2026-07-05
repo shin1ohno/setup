@@ -97,9 +97,9 @@ execute "sync self-heal skills into #{loop_user} ~/.claude/skills" do
 end
 
 # Stage + install the scripts to /usr/local/bin (root:root 0755): the two cron
-# wrappers + the pure-shell create logic (self-heal-create.sh) the create
-# wrapper invokes instead of `claude -p`.
-%w[self-heal-create.sh self-heal-create-run.sh self-heal-resolve-run.sh].each do |wrapper|
+# wrappers + the pure-shell create logic (self-heal-create.sh) + the sourced
+# liveness-metric helper (self-heal-metric.sh) both wrappers load.
+%w[self-heal-create.sh self-heal-create-run.sh self-heal-resolve-run.sh self-heal-metric.sh].each do |wrapper|
   remote_file "#{staging_dir}/#{wrapper}" do
     source "files/#{wrapper}"
     owner node[:setup][:user]
@@ -111,6 +111,25 @@ end
     command "sudo install -m 0755 -o root -g root " \
             "#{staging_dir}/#{wrapper} /usr/local/bin/#{wrapper}"
     not_if "diff -q #{staging_dir}/#{wrapper} /usr/local/bin/#{wrapper} 2>/dev/null"
+  end
+end
+
+# Pre-create the two loop liveness .prom files OWNED BY THE LOOP USER inside the
+# root-owned node_exporter textfile dir. The wrappers run as the loop user
+# (runuser -l) and rewrite these files in place (single printf redirection); they
+# own the FILE so they need no write access to the DIR — which stays root:root
+# and is (re-)ensured by the node-exporter cookbook included later via lxc_entry.
+# This avoids relaxing the shared textfile dir's perms (no ordering conflict with
+# node-exporter). `install /dev/null` only runs on first apply (the not_if
+# short-circuits once the files are loop-user-owned), so it never truncates a
+# live metric on steady-state applies.
+textfile_dir = "/var/lib/node_exporter/textfile"
+%w[self-heal-create self-heal-resolve].each do |loop|
+  prom = "#{textfile_dir}/#{loop}.prom"
+  execute "seed #{loop} liveness metric file (loop-user owned)" do
+    command "sudo install -d -m 0755 -o root -g root #{textfile_dir} && " \
+            "sudo install -m 0644 -o #{loop_user} -g #{loop_user} /dev/null #{prom}"
+    not_if "test \"$(stat -c '%U' #{prom} 2>/dev/null)\" = \"#{loop_user}\""
   end
 end
 
