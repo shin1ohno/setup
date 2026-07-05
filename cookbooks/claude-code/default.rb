@@ -213,7 +213,7 @@ directory "#{node[:setup][:home]}/.claude/hooks" do
   action :create
 end
 
-%w(pre-commit-test.rb check-trailing-newline.rb check-whitespace-lines.rb block-co-authored-by.rb post-compact-remind.rb mcp-health-check.rb).each do |file_name|
+%w(pre-commit-test.rb check-trailing-newline.rb check-whitespace-lines.rb block-co-authored-by.rb post-compact-remind.rb mcp-health-check.rb detect-prose-menu.rb).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/hooks/#{file_name}" do
     source "files/hooks/#{file_name}"
     owner node[:setup][:user]

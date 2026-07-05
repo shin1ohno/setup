@@ -17,6 +17,8 @@ Do NOT silently fall back to a hand-rolled approximation — the user expects th
 
 Applies equally to commands and agents from plugins. Built-in Claude Code slash commands (`/help`, `/clear`, etc.) are not covered by this rule.
 
+Applies equally to **MCP tools / tool-groups the user explicitly asked for** (e.g. a browser-operation request → `mcp__claude-in-chrome__*`). If a `ToolSearch` probe (see `~/.claude/rules/sub-agents.md`) also shows the tool absent, state the absence in one line, then AskUserQuestion offering: (a) proceed with a degraded substitute (e.g. `open <url>` — note click / form-input is unavailable), or (b) re-enable and do the intended operation (check `/mcp`, run the `mcp-auth` skill, reconnect the extension) before proceeding. Running a degraded substitute without consent is the same opaque-substitution violation. Origin: 2026-06 sage 635f5a9c — declared the tool absent, then ran an `open` substitute without consent and offered no re-enable path.
+
 ## Skill Creation
 
 When the user asks to create a new skill (model-invocable behavior, not plain slash-command), **invoke the `skill-creator` skill** rather than hand-writing a `SKILL.md`. `skill-creator` runs evals, comparisons, and description-tuning — outputs higher-quality skills than a draft-then-commit loop.
