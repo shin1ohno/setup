@@ -39,6 +39,18 @@ Origin: 2026-05-05 PVE migration — asked PR-vs-direct ceremony when git-log al
 
 **CodeCommit (and other non-`origin` remote URL forms) also bypass the deny entry**: when the remote URL is `codecommit::ap-northeast-1://<profile>@<repo>` instead of `origin → github.com:...`, the command shape `git push origin <branch>` for that repo translates into the codecommit transport at the remote-helper layer — but in some sessions the deny matcher did NOT intercept the push and it ran inline as a regular Bash call (the 2026-05-06 retro session pushed a recovery branch directly to a CodeCommit remote without `!` confirmation). The orphaned-commit recovery accidentally became auto-execute. The fix is behavioral, not a regex change: **for any push to a non-GitHub remote — CodeCommit, GitLab via custom remote, internal Gitea — apply the same `! git push <remote> <branch>` user-authorization rule manually.** Treat the deny entry as a backstop that catches GitHub-flavored pushes, not a complete safety net. When the URL form is exotic, the rule lives in the assistant's behavior, not the deny config.
 
+## Merge Execution Default — self-execute, plan-scoped authorization
+
+When a PR you created has all required checks green, do NOT present `! gh pr merge …` for the user to run — `Bash(gh pr …)` is allow-listed, so the `!` prefix is not a permission gate. If the approved plan already names the merge, self-execute it (`gh pr merge`, sandbox-disabled). If the plan does not cover the merge, take approval once via AskUserQuestion — an explicit chat instruction ("merge 624" / "632 をマージして" / "許可するからマージして進めて") also counts as approval — then self-execute.
+
+**Plan-scoped authorization**: once merge approval is granted during an approved multi-PR plan, it extends to every subsequent green-CI PR in the *same plan, same repo, plan-internal branch* — re-confirmation is not required per PR. This is the merge-specific form of "Steps inside an approved plan don't need individual confirmation"; a plan-internal merge is NOT a "Before destructive operations → pause" case.
+
+**Invariant guards, kept every time**: (a) confirm all required checks green via `gh pr checks`; (b) run the Stacked PR Merge Guard (`gh pr list --base <head>` for downstreams) before `--delete-branch`; (c) probe merge state immediately before merging (`gh pr view <n> --json state,mergeStateStatus`). Re-confirm via AskUserQuestion only OUTSIDE the plan scope: a different repo, a plan-external branch, a base change, or a merge needing admin/force.
+
+**Fallback**: only when `gh pr merge` is denied by project-local settings (deny/ask) do you revert to presenting `! gh pr merge <n> --squash --delete-branch` for the user.
+
+Origin: 2026-07 — 3 sessions / 2 repos (setup #624, #632; sage #11→#21) each re-presented `! gh pr merge` after the user had already authorized merging in chat, forcing a re-authorization round-trip; #13–#21 merged autonomously with no objection once the pattern was corrected.
+
 ## Branch Check Before First Commit
 
 Before writing any file or running `git add` in a repo that is part of the current task, run `git branch --show-current` and `git log --oneline -3`. If the current branch is not `main` and was not created for this task, stop and create a new branch from `origin/main`:
@@ -238,6 +250,15 @@ EOF
 This sidesteps all three `--body-file` failure modes at once (backtick mis-parse, harness verifier window, cross-sandbox TMPDIR). Detection signal: the PR body is blank even though you "wrote" it and no command errored.
 
 Origin: 2026-06-26 PR #556 — body written to the command-sandbox TMPDIR, `gh pr create` ran sandbox-disabled with the real TMPDIR → `cat "$TMPDIR/body.md"` returned empty → blank PR body, no error surfaced.
+
+**User-run `!` commands are outside the isolation boundary too**: the scratchpad (`/private/tmp/claude-501/...`) and the command-sandbox `$TMPDIR` are invisible from the user's terminal. The moment you write one of those paths into a `!` command you present for the user to run — `git commit -F <path>`, an `scp`/`rsync` copy source, any command taking `-f`/`-F`/`--file` — it is a composition bug: the user's run fails with `fatal: could not read log file <path>: No such file or directory`. Fix, in order:
+
+1. **Inline it** — if the content is short, use no file: write `git commit -F - <<'EOF' … EOF` (or `gh pr create --body-file - <<'EOF' … EOF`) directly in the `!` block, same heredoc solution as above.
+2. **Put it on a user-visible path** — for long multi-line content, `Write` it under the target repo's `.git/` (e.g. `.git/<topic>-commit-msg.txt`, the same convention as `COMMIT_EDITMSG`), then present the relative-path form `! git commit -F .git/<topic>-commit-msg.txt` (the user `cd`s into the repo first). `.git/` is not tracked, so it does not dirty `git status`; do NOT use a bare tmp file inside the repo tree — that adds untracked noise and mis-commit risk.
+
+Pre-emit check: before writing out any `!` block, scan it for a `/private/tmp/claude-501` or sandbox-`$TMPDIR` path. If one is present, do not present it — switch to option 1 or 2.
+
+Origin: 2026-07 session 031f3049 — a `git commit -F <scratchpad path>` presented for the user (GPG signing) failed with `could not read log file`; recovered by moving the message under `.git/`.
 
 ## gh CLI network access requires `dangerouslyDisableSandbox`
 

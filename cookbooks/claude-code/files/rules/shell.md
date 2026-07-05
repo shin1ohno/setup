@@ -20,6 +20,47 @@ Rule: whenever a user message mentions a host by name (`pro`, `air`, `$service.h
 
 Origin: 2026-04-23 weave — ssh'd to a host the session already ran on.
 
+## SSH Reachability Probe Before Delegating or Claiming "No Key"
+
+Trigger: you are about to (a) frame a step as "please run this on <host>" / present `! ssh/scp ...`, (b) claim "no key for <host>" / "this shell cannot reach <host>", or (c) design a flow around <host> being unreachable.
+
+1. **Resolve what plain ssh would actually do — zero network, 1 second**:
+   ```bash
+   ssh -G <host> | grep -iE '^(hostname|user|identityfile) '  # effective config incl. ~/.ssh/config aliases
+   ssh-keygen -F <host>                                        # known_hosts registration (first-contact check)
+   ```
+   `ssh -G` shows the IdentityFile plain ssh will use; it supersedes guessing from `ls ~/.ssh`.
+
+2. **Probe once**, letting the user's config + agent work, with hang guards only:
+   ```bash
+   ssh -o ConnectTimeout=5 <host> hostname
+   ```
+   Add `-o StrictHostKeyChecking=accept-new` for a first-contact host. A failed `-o BatchMode=yes` run with hand-enumerated `-i` keys proves "these keys failed" — NEVER "no credential exists". Do not claim "鍵がない" from it.
+
+3. **`Too many authentication failures`** (server disconnects mid-auth) = the agent/config offered too many keys, not a missing key. Retry once with `-o IdentitiesOnly=yes -i ~/.ssh/<host>_ed25519` (key path from step 1).
+
+4. **Write ssh options as literal argv tokens.** `KEY="-i ~/.ssh/x"; ssh $KEY host` makes ssh parse the whole string as one token (`hostname contains invalid characters`). Never pack option+path into one shell variable.
+
+5. **Probe failed → report the exact error class** (auth vs network vs host-key), record the host reachability map to project memory (cf. `session-shell-ssh-access`), and present the fallback as ONE composed `! ssh/scp ...` command — not a sequence of retries for the user.
+
+Origin: 2026-07-04 ×2 — three delegations + a "鍵がない" claim the user disproved with plain ssh/scp; a separate session's 5 ssh attempts (incl. Too-many-auth-failures + the `-i`-in-variable token bug) all compressible to one step-1+2 probe.
+
+## Bash Tool Runs in the User's Login zsh (darwin) — bash/Linux idiom traps
+
+The Claude Code Bash tool executes through the user's **login zsh** on darwin, not bash. bash/Linux one-liners that look correct fail in zsh-specific ways that are invisible to `bash -n` and usually surface as a *silent* wrong result, not an error. Five recurring traps:
+
+1. **Unquoted `$var` is NOT word-split.** `for r in $REGIONS; do …` iterates ONCE over the whole string — zsh does not field-split unquoted parameters (the opposite of bash). Enumerate elements literally, use an array, or wrap the loop in `/bin/bash -c '…'`.
+2. **Unmatched glob aborts the whole script.** zsh `nomatch` makes an unmatched `*.foo` a hard error that kills a multi-line script mid-run — earlier loop output is discarded with it. Quote globs you don't want expanded, or run under bash.
+3. **zsh builtins shadow `/usr/bin` commands.** `log …` hits the zsh `log` builtin (`too many arguments`), not `/usr/bin/log`. Verify with `type <cmd>`; call the full path (`/usr/bin/log show …`) when a builtin shadows the binary you meant.
+4. **A broken `.zshrc` compdef makes `aws` silently exit 1** (git/gh/curl unaffected). Wrap `aws` in `/bin/bash -c '…'` — see memory `aws-cli-needs-bash-c-wrapper`.
+5. **History expansion mangles `!`** (e.g. `!=` inside an interactive jq filter) — see the `zsh History Expansion Mangles !=` section below.
+
+**Default policy**: write any command containing a loop, a glob, or multi-line structure as `/bin/bash -c '…'` or `bash -s <<'EOF' … EOF` from the start. Observing ONE zsh-dialect error is the signal to switch the whole command to bash — do not patch it token by token.
+
+**Verification discipline**: before reporting "0 results", drop `2>/dev/null` and re-run one representative case bare to confirm no zsh error was hidden (general form: `~/.claude/rules/debugging.md` Silent Failure Detection). A command that succeeds once but fails inside a loop → suspect the word-split trap (#1) before any external cause. Inline diagnostic one-liners are also subject to the macOS external-command audit (`timeout` / `flock` → exit 127; see below), not just cookbook-distributed scripts.
+
+Origin: 2026-07-04 — `$REGIONS` / `$repos` word-split misdiagnosed as throttling / reported a false "0"; `log` builtin `too many arguments`; `timeout` exit 127.
+
 ## Never Chain Two `sudo` Calls in a `!` Block
 
 When presenting a `!` command for the user to run, do NOT chain two separate `sudo` invocations with `&&`:

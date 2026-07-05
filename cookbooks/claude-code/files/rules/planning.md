@@ -41,6 +41,20 @@ When a task requires research before planning, run research and planning in para
 
 **Anti-pattern**: launching research, then announcing "I'll plan when results arrive" and waiting. This is idle time that violates the planning rule.
 
+## Parallel-Stream Decomposition — Default Plan Shape
+
+For a large rewrite, migration, or multi-module / multi-repo implementation with 3+ independent delivery units, default the plan to a contracts-first parallel shape — do NOT default to a serial phase plan:
+
+1. **Wave 0 (serial, minimal)**: freeze the shared types, interfaces, and schemas first
+2. **N parallel streams**: declare each stream's file exclusivity (per `sub-agents.md` "Parallel Stream File-Exclusivity Declaration")
+3. **Parallelism is an explicit plan decision**: state the concurrent-stream-count vs review-load tradeoff in the plan so the user can choose it
+
+Propose the decomposition BEFORE the user asks for parallelism — shipping a serial phase plan and getting a "make it parallel where possible" re-request (an ExitPlanMode reject) wastes a round-trip.
+
+**Exception**: when the dependency graph is genuinely serial (each stage's output is the next stage's input), a serial plan is fine — but write one line stating why parallel decomposition isn't offered. Never default to serial silently. (The CLAUDE.md "Inverse — NOT new plan triggers" mechanical-sweep case is out of scope for this rule.)
+
+Origin: 2026-06-15 sage TS→Rust full rewrite — serial phase plan rejected at ExitPlanMode, the only revision request was "make it parallel where possible" (Claude re-shaped it to Wave 0 contract freeze → 9 File-Exclusivity streams); recurred 2026-07-04 in a separate project with the same up-front instruction.
+
 ## Architecture Discussion Gates
 
 ### Cross-Repo Design Decisions
