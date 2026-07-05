@@ -155,6 +155,24 @@ execute "install infra-resize-allowlist.json" do
   not_if "diff -q #{staging_dir}/infra-resize-allowlist.json /usr/local/share/self-heal/infra-resize-allowlist.json 2>/dev/null"
 end
 
+# Pin the PVE root CA (PUBLIC cert, not a key) so self-heal-infra-apply.sh
+# verifies the PVE API TLS cert (--cacert) instead of `-k`. The PVE cert's SAN
+# includes the LAN IP, so verification works by IP. Without this file the wrapper
+# fails closed on TLS (unless SELF_HEAL_ALLOW_INSECURE_PVE=1 is explicitly set).
+remote_file "#{staging_dir}/pve-ca.pem" do
+  source "files/pve-ca.pem"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "0644"
+end
+
+execute "install pve-ca.pem" do
+  command "sudo install -d -m 0755 -o root -g root /etc/self-heal && " \
+          "sudo install -m 0644 -o root -g root " \
+          "#{staging_dir}/pve-ca.pem /etc/self-heal/pve-ca.pem"
+  not_if "diff -q #{staging_dir}/pve-ca.pem /etc/self-heal/pve-ca.pem 2>/dev/null"
+end
+
 # Pre-create the two loop liveness .prom files OWNED BY THE LOOP USER inside the
 # root-owned node_exporter textfile dir. The wrappers run as the loop user
 # (runuser -l) and rewrite these files in place (single printf redirection); they

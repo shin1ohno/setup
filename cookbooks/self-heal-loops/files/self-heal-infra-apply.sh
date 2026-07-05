@@ -36,6 +36,11 @@ AWS_PROFILE_RESIZE="${SELF_HEAL_INFRA_AWS_PROFILE:-pve-resize}"
 RESIZE_TOKEN_SSM="${SELF_HEAL_RESIZE_TOKEN_SSM:-/pve/resize-token}"
 AWS_REGION_RESIZE="${SELF_HEAL_INFRA_AWS_REGION:-ap-northeast-1}"
 PVE_NODE="${SELF_HEAL_PVE_NODE:-pro}"
+# TLS: verify the PVE API cert against the pinned PVE root CA (the cert's SAN
+# includes the LAN IP, so --cacert verifies by IP with no --resolve). Fail-closed
+# if the CA is absent, UNLESS SELF_HEAL_ALLOW_INSECURE_PVE=1 is explicitly set
+# (bootstrap-only opt-in; production runs must have the CA and verify).
+PVE_CA="${SELF_HEAL_PVE_CA:-/etc/self-heal/pve-ca.pem}"
 
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 refuse() { echo "refuse: $*" >&2; exit "${2:-2}"; }
@@ -93,12 +98,21 @@ _pve_endpoint() {
 # _pve_curl <token> <method> <path> [data]  -> response body on stdout
 _pve_curl() {
   local tok="$1" method="$2" path="$3" data="${4:-}" cfg rc
+  local -a tls
+  if [ -f "${PVE_CA}" ]; then
+    tls=(--cacert "${PVE_CA}")            # verify against the pinned PVE root CA
+  elif [ "${SELF_HEAL_ALLOW_INSECURE_PVE:-0}" = "1" ]; then
+    tls=(-k)                              # explicit bootstrap opt-in ONLY
+  else
+    echo "refuse: PVE CA ${PVE_CA} absent and SELF_HEAL_ALLOW_INSECURE_PVE!=1 — fail-closed on TLS" >&2
+    return 7
+  fi
   cfg=$(mktemp); chmod 600 "${cfg}"
   printf 'header = "Authorization: PVEAPIToken=%s"\n' "${tok}" > "${cfg}"
   if [ -n "${data}" ]; then
-    curl -sk --max-time 20 -K "${cfg}" -X "${method}" --data "${data}" "$(_pve_endpoint)${path}"; rc=$?
+    curl -s --max-time 20 "${tls[@]}" -K "${cfg}" -X "${method}" --data "${data}" "$(_pve_endpoint)${path}"; rc=$?
   else
-    curl -sk --max-time 20 -K "${cfg}" -X "${method}" "$(_pve_endpoint)${path}"; rc=$?
+    curl -s --max-time 20 "${tls[@]}" -K "${cfg}" -X "${method}" "$(_pve_endpoint)${path}"; rc=$?
   fi
   rm -f "${cfg}"
   return "${rc}"
