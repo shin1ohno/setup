@@ -54,7 +54,7 @@ IMPORTANT: AskUserQuestion is the highest-priority rule. When in doubt, ask.
 - **Misclassified as trivial — still need plan mode**: cross-crate enum variant, UI fix requiring contract sibling, fix requiring service restart, hardware verification loops, plugin lockfile bumps with runtime steps (`:Lazy sync`, `npm install`, parser rebuild). Origin: 2026-05-01 AstroNvim ^5→^6 missed cross-machine cleanup
 - **Inverse — NOT new plan triggers**: a mechanical sweep applying a validated fix shape across N files in one repo. Trigger plan mode only if first instance not yet validated, or sweep crosses repos / adds new behavior
 - **Every conversation start**: background memory search + read project `TODO.md`. Skip for trivial edits, typos, git ops
-- **Deferred work / RAG gap → TODO.md** with description, reason, concrete first step. Delete the entry in the resolving commit
+- **Deferred work / RAG gap → TODO.md** with description, reason, concrete first step. Delete the entry in the resolving commit. No-repo / cross-project / personal TODOs → memory `remember(tags:["todo"])` + close condition (work-derived → memory-local, never personal ai-memory); echo a one-line receipt (destination + close condition) after every capture. Full routing + collect/reconcile loops: `~/.claude/docs/todo-management.md`
 - **First turn ambiguity → AskUserQuestion**. Background launch ≠ clarified intent
 - **Every conclusion**: save to memory; verify with `recall` on key terms. See `@~/.claude/docs/knowledge-persistence.md`
 - **Every meaningful unit of work**: commit immediately
@@ -165,6 +165,7 @@ These are `docs/` files (not auto-loaded). `Read` the file when the task matches
 | Claude Code plugin integration rules — skill availability check, hookify vs Ruby hooks, plugin-vs-cookbook | `~/.claude/docs/claude-code-plugins.md` |
 | PVE LXC operational gotchas — unprivileged bind-mount UID mapping, `pct exec` non-TTY, Docker-in-LXC design gate | `~/.claude/docs/pve-lxc-detail.md` |
 | Headless / scheduled `claude -p` runner — auth-token gate, runner death / silent-failure detection, fail-closed pre-gate, permission-mode probe | `~/.claude/docs/claude-cli-headless.md` |
+| TODO capture routing, stores, collect / reconcile loops (`/todo-collect`, `/todo-reconcile`) | `~/.claude/docs/todo-management.md` |
 
 ## Sub-agent Design Principles
 
