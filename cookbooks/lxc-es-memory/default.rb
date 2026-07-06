@@ -35,7 +35,7 @@ venv_dir = "#{base_dir}/venv"
 env_path = "#{base_dir}/es-memory.env"
 
 # Debian 13 minimal LXC ships without python3-venv/pip — see
-# ~/.claude/docs/pve-lxc-detail.md "Debian 13 Minimal LXC — Mandatory Bootstrap".
+# ~/.claude/docs/ruby-detail.md "Debian 13 Minimal LXC — Mandatory Bootstrap".
 execute "install es-memory python deps" do
   command "apt-get update -qq && apt-get install -y python3 python3-venv python3-pip ca-certificates"
   not_if "dpkg -s python3-venv python3-pip >/dev/null 2>&1"

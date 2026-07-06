@@ -166,7 +166,7 @@ end
 # (cookbooks/functions/default.rb). buildkit: false forces
 # DOCKER_BUILDKIT=0 because consent runs in an unprivileged LXC where
 # BuildKit's mount namespacing trips up despite features_nesting=true
-# (see ~/.claude/docs/pve-lxc-detail.md "Docker Build in Unprivileged PVE
+# (see ~/.claude/docs/ruby-detail.md "Docker Build in Unprivileged PVE
 # LXC"). The compose spec has only one local-build service
 # (consent-app/Dockerfile) with no #ref:subdir context, so the classic
 # builder is sufficient.
