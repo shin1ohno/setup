@@ -12,6 +12,14 @@
 
 input=$(cat)
 
+# ── local patch (setup) ──────────────────────────────────────────────────────
+# `git status` refreshes and rewrites the index by default, taking .git/index.lock.
+# With refreshInterval:1 this statusline runs `git status` every second in the
+# session's cwd; a process killed mid-write orphans .git/index.lock and blocks the
+# user's next `git add/commit`. GIT_OPTIONAL_LOCKS=0 makes every git call here
+# read-only (no index write, no lock). Re-apply if re-vendoring from upstream.
+export GIT_OPTIONAL_LOCKS=0
+
 # ── Defaults (every value can be overridden by the config file) ──────────────
 VL_STYLE="pill"                 # pill: powerline pills · lean: p10k-lean flat text
 VL_LEAN_SEP=""                  # lean only — extra text between segments, e.g. "·"
