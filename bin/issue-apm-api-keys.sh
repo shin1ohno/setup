@@ -3,13 +3,13 @@
 # the base64-encoded forms in SSM /monitoring/apm/api-keys/<svc>.
 #
 # Phase 3 of the standalone APM Server plan
-# (~/.claude/plans/scalable-noodling-pearl.md). The 5 home-fleet
+# (~/.claude/plans/scalable-noodling-pearl.md). The 4 home-fleet
 # services use these keys as `Authorization: ApiKey <encoded>` headers
 # on OTLP traffic to apm-server.home.local:8200.
 #
 # Per-service keys (vs a single shared secret_token) localize the
-# rotation blast radius — if cognee's auth-proxy is compromised, only
-# its key needs invalidation; the other 4 keep running.
+# rotation blast radius — if one service's auth-proxy is compromised, only
+# its key needs invalidation; the other 3 keep running.
 #
 # Idempotency: this script is NOT idempotent. Re-running creates new
 # API keys with new IDs (Elastic does not deduplicate by name), leaving
@@ -27,13 +27,12 @@ AWS_REGION="${AWS_REGION:-ap-northeast-1}"
 AWS_PROFILE="${AWS_PROFILE:-sh1admn}"
 ES_URL="${ES_URL:-https://es-0.home.local:9200}"
 
-# Services that will send OTLP — keep in sync with the 5 OTel-instrumented
+# Services that will send OTLP — keep in sync with the 4 OTel-instrumented
 # services in Phases 4 and 5 of the plan.
 SERVICES=(
   weave-server
   edge-agent
   roon-mcp
-  cognee-auth-proxy
   ai-memory-auth-proxy
 )
 

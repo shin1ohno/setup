@@ -28,7 +28,7 @@ These are plan-mode entry triggers, not chat questions. Writing them in chat mea
 | `gh pr checks --watch` exits non-zero with `HTTP 504` / `Bad Gateway` / `no checks reported on the '<branch>' branch` (early race) | Transient GitHub graphql / API error — re-launch the same `gh pr checks <n> --watch` once. Inspect `gh pr view <n> --json statusCheckRollup` only on second consecutive failure. Do NOT treat single exit-1 as a CI failure verdict |
 | Unit of work committed, more items remain | Proceed to next item immediately |
 | All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
-| Blocked waiting for manual user action (sudo, restart, deploy) | Launch background retro/Cognee/TODO agents immediately |
+| Blocked waiting for manual user action (sudo, restart, deploy) | Launch background retro/memory/TODO agents immediately |
 
 ## Research-to-Plan Pipeline
 

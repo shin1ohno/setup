@@ -32,7 +32,7 @@
 
 `.claude/skills/` `.claude/agents/` `.claude/rules/` への新規追加を行う前に、対象が要求する外部依存を確認する:
 
-- Cognee、memory、ローカルだけで動く個人 MCP サーバ等の依存があるか
+- memory、ローカルだけで動く個人 MCP サーバ等の依存があるか
 - 社内ツール（ncli、kouzoh/notion-cli 等）以外の前提があるか
 - ユーザー個人のホスト名・パス・認証情報を仮定していないか
 

@@ -39,8 +39,8 @@ In the plan, state the merge mode for every field being changed. For union field
 When modifying files directly in `~/deploy/` (not managed by a cookbook):
 
 1. **Prefer cookbook**: if a cookbook exists for the service, make the change there instead
-2. **If no cookbook exists**: make the change in `~/deploy/`, but immediately save the change details to Cognee (what was changed, why, and the file path) so it can be reproduced if the deploy directory is rebuilt
-3. **Flag for future cookbookification**: note in the cognify entry that this change is unmanaged and should be moved to a cookbook when one is created
+2. **If no cookbook exists**: make the change in `~/deploy/`, but immediately save the change details to the memory MCP via `ingest` (what was changed, why, and the file path) so it can be reproduced if the deploy directory is rebuilt
+3. **Flag for future cookbookification**: note in the memory entry that this change is unmanaged and should be moved to a cookbook when one is created
 
 Deploy directories can be rebuilt from scratch. Untracked changes there are silently lost.
 

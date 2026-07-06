@@ -9,7 +9,7 @@ This file is the always-loaded summary. Long examples + origin notes are in `~/.
 - 1 agent = 1 task: never give multiple roles to a single agent
 - Run parallelizable tasks in parallel (Agent tool parallel calls)
 - Review gate: always include a review step for important outputs
-- Background first: any research task that does not block the next step must use `run_in_background: true`. This includes Cognee/memory searches at conversation start, web research, and catalog lookups. The main conversation should never idle while waiting for research results — either launch background agents or continue interacting with the user
+- Background first: any research task that does not block the next step must use `run_in_background: true`. This includes memory searches at conversation start, web research, and catalog lookups. The main conversation should never idle while waiting for research results — either launch background agents or continue interacting with the user
 
 ## Parallel Stream File-Exclusivity Declaration
 
@@ -125,7 +125,7 @@ When collecting information from multiple sources (URLs, products, brands, categ
 
 1. **Split by independence**: divide targets so each agent's work is self-contained — 1 agent = 1 brand, category, or theme
 2. **Launch all agents in background in parallel**: use `run_in_background: true` for all agents in a single message
-3. **Each agent's responsibility**: WebFetch reviews → fetch specs from manufacturer sites → save to Cognee via cognify
+3. **Each agent's responsibility**: WebFetch reviews → fetch specs from manufacturer sites → save to the memory MCP (`remember` / `ingest`)
 4. **Progress reporting**: show a progress table with agent status (researching... / **done**) and update it as each agent completes
 
 Detail (examples): see `~/.claude/docs/sub-agents-detail.md#bulk-research-pattern`.

@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 #
 # lxc-apm-server (CT 116): standalone Elastic APM Server 8.x for OTLP
-# ingestion. Receives traces / metrics / logs from 5 home-fleet services
-# (weave-server, edge-agent, roon-mcp, cognee-auth-proxy,
-# ai-memory-auth-proxy) on :8200, writes traces-apm-* / logs-apm-* /
+# ingestion. Receives traces / metrics / logs from 4 home-fleet services
+# (weave-server, edge-agent, roon-mcp, ai-memory-auth-proxy) on :8200,
+# writes traces-apm-* / logs-apm-* /
 # metrics-apm-* data streams to the 3-node ES cluster.
 #
 # Stack:

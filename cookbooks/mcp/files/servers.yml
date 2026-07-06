@@ -25,7 +25,7 @@
 # Claude Code registration (`account_connector`):
 #   `desktop:` and Claude Code user-scope registration are INDEPENDENT axes.
 #   Servers that are also registered as claude.ai account-level Custom Connectors
-#   (memory / cognee / roon) sync into Claude Code AUTOMATICALLY (shown as
+#   (memory / roon) sync into Claude Code AUTOMATICALLY (shown as
 #   "claude.ai <name>"). Registering them again with `claude mcp add -s user`
 #   produces a broken duplicate ("Needs authentication" — the CLI has no cached
 #   OAuth token). Mark such servers `account_connector: true`: the Claude Code
@@ -51,7 +51,7 @@ mcp_servers:
     # prefix → auth-proxy /mcp → openmemory-api). The legacy SSE path
     # /memory/mcp/claude/sse/shin1ohno no longer serves MCP — a client pinned to
     # it authenticates fine but then "Failed to connect" at the SSE handshake.
-    # Mirror cognee: transport http against the /mcp endpoint.
+    # transport http against the /mcp endpoint.
     transport: http
     url: "https://mcp.ohno.be/memory/mcp"
     desktop: mcp-remote
@@ -65,15 +65,4 @@ mcp_servers:
     url: "https://mcp.ohno.be/roon/sse"
     desktop: mcp-remote
     # claude.ai account connector ("claude.ai roon") — see header.
-    account_connector: true
-
-  cognee:
-    type: http
-    # cognee is FastMCP streamable-HTTP only; it exposes /cognee/mcp, NOT /cognee/sse.
-    # /cognee/sse 404s at the upstream (verified on CT 105 :8002). mcp-remote
-    # auto-negotiates http-first against the /mcp endpoint.
-    transport: http
-    url: "https://mcp.ohno.be/cognee/mcp"
-    desktop: mcp-remote
-    # claude.ai account connector ("claude.ai cognee") — see header.
     account_connector: true

@@ -23,7 +23,7 @@ Environment=PATH_PREFIX=/memory
 # v2 identity enforcement (contract §2b/§3). When MEMORY_AUDIENCES is set the
 # proxy enforces the grant matrix (client_credentials vs authorization_code) and
 # injects X-Verified-{Sub,Client-Id,Grant}. Empty would leave the block inert
-# (the shared proxy.py serves the v1 cognee/memory namespaces unaffected).
+# (the shared proxy.py serves the v1 memory namespace unaffected).
 Environment=MEMORY_AUDIENCES=https://mcp.ohno.be/memory,memory
 # authorization_code sub = the Google login email the consent app writes as the
 # Hydra subject (userinfo.email), gated by SSM /hydra/allowed-emails — NOT the

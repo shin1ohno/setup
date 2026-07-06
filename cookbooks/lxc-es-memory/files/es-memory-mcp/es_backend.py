@@ -1,6 +1,6 @@
 """ElasticSearch backend for es-memory-mcp.
 
-Replaces Cognee (knowledge graph / RAG) and Mem0 (user memory) storage with a
+Replaces the prior knowledge-graph/RAG and Mem0 (user memory) storage with a
 single 3-node ES cluster (basic license, no ML). Embeddings are computed
 externally via OpenAI (text-embedding-3-small, 1536-dim) and stored as
 `dense_vector`; search is BM25 + kNN hybrid.

@@ -17,7 +17,7 @@ Systematically identify performance limits of a Docker-based service, find the b
 
 | Format | Example | Interpretation |
 |--------|---------|----------------|
-| Service name | `cognee` | Auto-detect Docker container and API endpoint |
+| Service name | `hydra` | Auto-detect Docker container and API endpoint |
 | URL | `http://localhost:8001/api/v1/datasets` | Direct endpoint |
 | Docker container | `docker:my-container-1` | Container name for log/stats analysis |
 

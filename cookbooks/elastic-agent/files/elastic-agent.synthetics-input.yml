@@ -319,8 +319,8 @@
 
   # ===== External HTTPS probes (TLS expiry coverage) =====
   #
-  # mcp.ohno.be is the public OAuth-protected MCP gateway (cognee /
-  # roon-mcp / openmemory backends accessed by claude.ai). HTTPS probe
+  # mcp.ohno.be is the public OAuth-protected MCP gateway (roon-mcp /
+  # openmemory backends accessed by claude.ai). HTTPS probe
   # populates the synthetics-http-default `tls.*` fields, which the
   # Synthetics TLS rule (Phase 2 setup-alerting.sh) watches for cert
   # expiry within 30 days.
