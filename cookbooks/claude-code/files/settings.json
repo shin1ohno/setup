@@ -70,6 +70,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/block-co-authored-by.rb"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/warn-loop-repo-shared-tree.rb"
           }
         ]
       }

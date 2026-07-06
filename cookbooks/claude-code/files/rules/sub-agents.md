@@ -69,6 +69,18 @@ If the agent concludes it MUST mutate a production service to resolve an ambigui
 
 Detail (why "no immediate error" is insufficient + origins): see `~/.claude/docs/sub-agents-detail.md#analysis-only-agent-scope`.
 
+## Agent-Team Messaging Contract — SendMessage delivery, single-send, inbox probe, shutdown
+
+Agent-team teammates (TeamCreate / SendMessage) deliver results ONLY via `SendMessage` — a teammate's plain-text turn output does NOT reach the lead. This is the OPPOSITE of Task-tool sub-agents, whose completion text IS the deliverable: the "Analysis-only Agent Scope" sentence "Return your findings as text in the completion output only" applies to Task-tool agents ONLY — writing it in a teammate prompt discards the findings and forces a re-request round-trip.
+
+Fan-out prompts to teammates MUST state the delivery contract: 「完了＝findings 全文を SendMessage で <lead の named agent id> 宛に 1 回だけ送る。ToolSearch select:SendMessage で schema を先にロード」.
+
+- **Lead**: `to:"main"` is rejected by the harness as self-address — always address a named agent. Before nudging a "silent" teammate, probe your own inbox first; if a nudge is needed, send a short resend-request, NEVER the full task prompt (full-prompt resend triggers duplicate execution and multi-KB duplicate findings).
+- **Worker**: on receiving an identical prompt for an already-completed task, resend the finished report — do not re-execute.
+- **Lead**: after collecting a teammate's deliverable with no further work planned for it, shut the teammate down in the same turn — do not wait for the user to ask.
+
+Detail (session origins): see `~/.claude/docs/sub-agents-detail.md#agent-team-messaging-contract`.
+
 ## Auto-Launched Review Agent — Dedupe + Completion by Findings Return
 
 Auto-launched security/code-review agents (the claude.ai-side auto-review that fires on a diff — NOT a hook in this repo, so this is a behavioral rule) can double-fire on the same change and can die mid-review. Two guards:
@@ -131,7 +143,7 @@ Background / long-running work (>10 min — workflow batch, Ultraplan, remote re
 1. **On launch**: state the expected duration in one line.
 2. **During the run**: poll observable state (`journal.jsonl`, `TaskList`, output file) every 5-10 min via a Monitor / until-loop and emit a 1-line progress note — done N/M, most-recent completed stream, last-activity time. Do not go silent.
 3. **On a user "status?" / "止まってませんか"**: answer immediately with concrete progress BEFORE resuming other work — never defer to "next turn", never fall back to passive "完了したら通知が来ます".
-4. **Stall detection**: if the same stream shows no progress across 2 consecutive probes, switch from waiting to recovery — `TaskStop` → probe state → restart or narrow scope. Do not keep waiting on a silently-dead agent.
+4. **Stall detection — observe BEFORE kill**: judge "progress" by the observation source. For an in-session Task-tool agent that is `journal.jsonl` / TaskList; for an external headless `claude -p` process it is that process's transcript JSONL (`~/.claude/projects/<proj-dir>/<uuid>.jsonl` — stdout arrives only at exit, but the transcript is written incrementally during the run). Absence of an external artifact (no commit/PR for N minutes) is NOT evidence of a stall — the agent may be recovering from a working-tree collision, and killing it there strands nearly-finished work. `TaskStop`/kill ONLY when tool activity on the observation source is zero across 2 consecutive probes; before killing, read the transcript tail to classify stuck vs recovering. Origin: 2026-06-27 bca7dadc — a resolve session that looked "13-min stuck" was recovering from a shared-tree collision, and the kill was the direct cause of the issue going unresolved.
 
 Deadline guide — set an internal deadline and, if it passes without completion, escalate in the next turn via AskUserQuestion (wait longer with a stated minute count / restart with a narrower scope / proceed without the agent's output):
 

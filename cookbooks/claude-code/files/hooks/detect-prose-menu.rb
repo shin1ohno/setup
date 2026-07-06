@@ -2,9 +2,12 @@
 # frozen_string_literal: true
 
 # Stop hook (soft reminder, non-blocking): detect when the final assistant
-# message ended as tool_use-free TEXT that both (a) enumerates 2+ options and
-# (b) ends in a question — i.e. a prose menu that should have been an
-# AskUserQuestion. Emits a one-line reminder to stdout when matched.
+# message ended as tool_use-free TEXT that enumerates 2+ options AND then does
+# one of: (a) ends in a question, (b) ends with an "I'll proceed once you
+# decide" declaration over decision-point-looking options, or (c) lists 2+
+# "…しますか？" choices even without a trailing question mark — i.e. a prose menu
+# that should have been an AskUserQuestion. Emits a one-line reminder to stdout
+# when matched.
 #
 # Never blocks and never raises: any failure -> print nothing, exit 0.
 
@@ -95,12 +98,51 @@ def ends_in_question?(text)
   stripped.end_with?("?", "？")
 end
 
+# Variant (b): the message ENDS with an "I'll start once you decide" declaration
+# ("決めれば着手します" / "デフォルトを採用して進めます") instead of a question mark.
+# Enumerating decision points and then declaring you'll proceed is the same
+# prose-menu violation dressed as a statement.
+DECLARATION_RE =
+  /(?:決めれば|決めたら|決まれば).{0,10}(?:着手|進め)|デフォルト(?:を|で)?採用.{0,20}(?:着手|進め|実行)/
+
+# false-positive suppression for (b): only count it when the enumerated lines
+# actually read as decision points.
+DECISION_SIGNAL_RE = /しますか|どちら|選択|決め/
+
+def declaration_ending?(text)
+  tail = text.lines.map(&:strip).reject(&:empty?).last(2).join("\n")
+  !(tail =~ DECLARATION_RE).nil?
+end
+
+def decision_point_signal?(text)
+  !(text =~ DECISION_SIGNAL_RE).nil?
+end
+
+# Variant (c): 2+ of the enumerated lines themselves end in a question
+# ("…しますか？"), even when the message body does not end in a question mark.
+def question_option_lines?(text)
+  count =
+    text.lines.map(&:strip).count do |l|
+      (l =~ /\A(?:[-*+]\s|\d+[.)]\s|(?:[A-Za-z]|案[A-Za-z0-9]|選択肢\s*\d+)[:.)、]\s)/) &&
+        (l =~ /(?:しますか|ますか)\s*[?？]?\s*\z/)
+    end
+  count >= 2
+end
+
 begin
-  exit 0 unless enumerates_options?(text) && ends_in_question?(text)
+  fire =
+    enumerates_options?(text) && (
+      ends_in_question?(text) ||
+      (declaration_ending?(text) && decision_point_signal?(text)) ||
+      question_option_lines?(text)
+    )
+  exit 0 unless fire
 rescue StandardError
   exit 0
 end
 
-puts "REMINDER: the final message reads as a prose menu (enumerated options " \
-     "ending in a question). Per the AskUserQuestion rule, present choices via " \
-     "AskUserQuestion instead of a prose list-and-ask."
+puts "REMINDER: the final message reads as a prose menu — it enumerates 2+ " \
+     "options/decision points and then asks a question, ends with an " \
+     "\"I'll proceed once you decide\" declaration, or lists 2+ \"…しますか？\" " \
+     "choices. Per the AskUserQuestion rule, present the choices via " \
+     "AskUserQuestion instead of a prose list-and-ask/declare."

@@ -52,6 +52,21 @@ Present a short status table to the user before acting.
    server. If it never connects, report the failure and stop auto-driving that
    one — do **not** loop forever.
 
+**Failure modes** (don't just re-run `login` in place):
+
+- If the browser callback keeps failing with `invalid_scope` (e.g. `not allowed
+  to request scope 'offline_access'`), or auth stops working right after a
+  server-side OAuth scope / DCR / transport change, re-register the DCR client
+  with `claude mcp logout "<exact name>" && claude mcp login "<exact name>"`
+  rather than retrying in place. Claude Code keeps the client_id/token in the
+  macOS Keychain, NOT in `~/.claude.json` — an empty `~/.claude.json` is not
+  "no cache". Do NOT enumerate/inspect the Keychain with the `security` command;
+  `logout`/`login` is the management path.
+- If `Failed to connect` persists after a successful login, suspect a stale
+  transport/path rather than OAuth: `claude mcp remove <name>` then re-`add` with
+  the correct transport (if the registration script is ADD-only, editing the
+  config file alone does not fix an already-registered entry).
+
 ### notion (NOT a `claude mcp login` connector)
 
 1. Call the `mcp__notion__authenticate` tool; surface the returned URL.
