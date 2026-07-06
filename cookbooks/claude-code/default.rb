@@ -271,7 +271,7 @@ directory "#{node[:setup][:home]}/.claude/docs" do
   action :create
 end
 
-%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md remote-trigger.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md planning-detail.md aws-iam-detail.md pve-lxc-detail.md docker-compose-detail.md ffi-audit.md claude-code-plugins.md adversarial-review-detail.md negative-search-detail.md).each do |file_name|
+%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md remote-trigger.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md planning-detail.md aws-iam-detail.md pve-lxc-detail.md docker-compose-detail.md ffi-audit.md claude-code-plugins.md adversarial-review-detail.md negative-search-detail.md todo-management.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
     source "files/docs/#{file_name}"
     owner node[:setup][:user]
@@ -482,5 +482,17 @@ end
   file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
     action :delete
   end
+end
+
+# Clean up the retired knowledge-drain skill. Its only backend (Cognee) was
+# retired in #656, which removed the skill source but left the deployed copy
+# behind on every host (mitamae never prunes). Its TODO-drain role is
+# superseded by the todo-collect / todo-reconcile loops (docs/todo-management.md).
+file "#{node[:setup][:home]}/.claude/skills/knowledge-drain/SKILL.md" do
+  action :delete
+end
+
+directory "#{node[:setup][:home]}/.claude/skills/knowledge-drain" do
+  action :delete
 end
 
