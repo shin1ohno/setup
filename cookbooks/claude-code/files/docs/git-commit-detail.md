@@ -92,7 +92,7 @@ Origin: 2026-05-11 PR #341 review comment on a line my diff had deleted. Both in
 
 ## Stacked PR Merge Guard — retarget downstream PRs before `--delete-branch`
 
-Before running `gh pr merge --squash --delete-branch <n>`, check whether any *open* PR uses this PR's head branch as its base. GitHub auto-closes a PR when its base branch is deleted, so merging a stacked PR with `--delete-branch` silently kills its downstreams — recovery requires cherry-picking each closed PR's commits onto a fresh main-rooted branch and re-opening, which is 2-3 round-trips per dependent.
+Before running `gh pr merge --squash --delete-branch <n>`, check whether any *open* PR uses this PR's head branch as its base. GitHub auto-closes a PR when its base branch is deleted (it does NOT auto-retarget), and the closed PR is unrecoverable — `gh pr reopen` and `gh pr edit --base` both fail once the base ref is gone — so recovery means rebasing the orphaned branch onto main and opening a brand-NEW PR (new number, lost review context), 2-3 round-trips per dependent. The correct order is: retarget every open downstream to main FIRST (`gh pr edit <m> --base main`), then merge with `--delete-branch`. Reconfirmed 2026-07 setup #696/#697/#700 — the guard was skipped on the (wrong) auto-retarget assumption; #697 could not be reopened and was recreated as #700, while #699 survived the next merge because it was retargeted beforehand.
 
 **Pre-merge check** — for the PR you're about to merge (call its head branch `$head`):
 
