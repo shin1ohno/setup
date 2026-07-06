@@ -11,7 +11,7 @@ WorkingDirectory=/opt/es-memory/app-v2
 # ES_URL / ES_USER / ES_PASSWORD / ES_VERIFY_CERTS / VOYAGE_API_KEY /
 # VOYAGE_ENDPOINT / EMBEDDING_MODEL / EMBEDDING_DIMENSIONS. EnvironmentFile is
 # metacharacter-safe (no shell source) — preferred over docker-compose env_file
-# for SSM-sourced secrets (~/.claude/rules/pve-lxc.md).
+# for SSM-sourced secrets (~/.claude/docs/pve-lxc-detail.md).
 EnvironmentFile=/opt/es-memory/memory-v2.env
 # Index names live in the unit (not the .env) per the v2 contract §2a.
 Environment=FACT_INDEX=memory-fact
@@ -26,7 +26,7 @@ Restart=on-failure
 RestartSec=5
 # Namespace hardening (NoNewPrivileges/ProtectSystem/ProtectHome/PrivateTmp)
 # intentionally omitted: they fail with status=226/NAMESPACE inside privileged
-# PVE LXCs (see node-exporter.service + ~/.claude/rules/pve-lxc.md). The MCP
+# PVE LXCs (see node-exporter.service + ~/.claude/docs/pve-lxc-detail.md). The MCP
 # server listens only on 127.0.0.1 behind the auth proxy.
 
 [Install]

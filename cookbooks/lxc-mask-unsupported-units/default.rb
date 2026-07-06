@@ -34,7 +34,7 @@
 #     CT 100 had it hardening-strip-started but unused. Masking on
 #     all LXCs is simpler than keeping per-LXC postfix configs.
 #
-# References: ~/.claude/rules/pve-lxc.md, PR #363 (sibling cookbook).
+# References: ~/.claude/docs/pve-lxc-detail.md, PR #363 (sibling cookbook).
 #
 # OS gate (darwin skip) now lives at the include site (roles/lxc-core).
 # The container guard below is a SEPARATE concern and stays here.

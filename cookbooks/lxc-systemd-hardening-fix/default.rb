@@ -24,7 +24,7 @@
 # Why not drop-in `=no` overrides: tested 2026-05-06 and 2026-05-16 —
 # systemctl show reports the effective value as no, but the unit still
 # fails with status=226. The hardening directives must be ABSENT from
-# the evaluated unit, not overridden. See ~/.claude/rules/pve-lxc.md.
+# the evaluated unit, not overridden. See ~/.claude/docs/pve-lxc-detail.md.
 
 return if node[:platform] == "darwin"
 

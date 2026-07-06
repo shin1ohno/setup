@@ -76,7 +76,7 @@ Auto-launched security/code-review agents (the claude.ai-side auto-review that f
 1. **Dedupe by prompt/diff hash within a short window**: hash the review prompt (which embeds the target diff); if an identical-hash review already returned findings OR is currently in-flight within the last ~10 min, skip the re-launch. Two full reviews of a byte-identical diff are pure double-consumption — each carries full context plus the always-loaded rules.
 2. **Judge "completed" by findings RETURN, never by session end**: a review counts as done ONLY when it returned findings via `ReportFindings` / `StructuredOutput`. A session that ended with zero assistant entries (never ran) or died mid-`tool_use` (no findings returned) is NOT "reviewed" — re-run it or leave a WARN. Critically, a mid-death session must NOT be treated as complete for dedupe purposes: doing so suppresses the re-fire that may be the only valid review of that diff.
 
-Origin: 2026-06/07 — 7 byte-identical double-fire pairs (10-96 s apart) plus ~10 findings-never-returned sessions; one AWS_PROFILE-global diff died 76 s in and was never re-reviewed, and one pair's only valid review was the 2nd fire after the 1st died at 96 s.
+Detail (origin): see `~/.claude/docs/sub-agents-detail.md#auto-launched-review-agent`.
 
 ## Review Agent Out-of-Scope Findings — Capture, Don't Drop
 
@@ -85,22 +85,13 @@ When a review agent (security-review, code-review) surfaces a correctness / idem
 - If reporting via `ReportFindings`, include the out-of-scope finding under `category: "correctness"` (an example category the tool explicitly permits) rather than omitting it.
 - Otherwise, surface it as an "Out-of-scope observations" note AND transcribe it to TODO.md in the same turn (description / reason / concrete first step; delete the entry in the resolving commit).
 
-Origin: 2026-06-15 — a security-review sub-agent prose-noted a `not_if "diff -q …"` idempotency bug in `cookbooks/mac-sudo` (0440 file unreadable without sudo → re-installs every apply) then returned `findings: []`; the bug sat unfixed for ~3 weeks.
+Detail (origin): see `~/.claude/docs/sub-agents-detail.md#review-agent-out-of-scope`.
 
 ## Fleet Status Verification — Functional Probe in the Agent Prompt
 
-When dispatching an agent to verify health across fleet hosts, the prompt MUST name the FUNCTIONAL probe, not leave the agent to infer it. Agents default to artifact-level checks (`systemctl is-active`, `docker ps`, "process running") that return healthy even for a degraded service — producing false-positive HEALTHY reports that can close an incident prematurely.
+When dispatching an agent to verify health across fleet hosts, the prompt MUST name the FUNCTIONAL probe, not leave the agent to infer it. Agents default to artifact-level checks (`systemctl is-active`, `docker ps`, "process running") that return healthy even for a degraded service — producing false-positive HEALTHY reports that can close an incident prematurely. Name the per-service functional check in the prompt (data flowing, components active), not just that the process runs.
 
-| Service | Artifact check (insufficient) | Functional check (required) |
-|---|---|---|
-| elastic-agent | `systemctl is-active elastic-agent` | `elastic-agent status` → top-level `HEALTHY` AND metric components present, plus ES doc-count advancing |
-| docker-compose stack | `docker ps` shows Up | `docker compose ps` shows `healthy` + one metric/endpoint probe |
-| auto-mitamae | the drift-checker/orchestrator **cron** is present (it runs via `/etc/cron.d/`, NOT a systemd timer) | per-host `auto_mitamae_last_apply_status{...,result="success"}` in `auto-mitamae.prom`, last apply within ~2× the 5-min cycle |
-| prometheus scrape | process running | `curl -s localhost:9090/-/healthy` + `targets?state=up` count |
-
-Prompt line to include: "Report each host's FUNCTIONAL health via `<specific-command>`, NOT `systemctl is-active`. A host is HEALTHY only when the functional check confirms behavior (data flowing, components active), not just that the process runs."
-
-Detail (origin): see `~/.claude/docs/sub-agents-detail.md#fleet-status-verification`.
+Detail (per-service artifact-vs-functional table + prompt-line example + origin): see `~/.claude/docs/sub-agents-detail.md#fleet-status-verification`.
 
 ## Tool Availability — ToolSearch Before Claiming Unavailable
 
@@ -121,14 +112,9 @@ Detail (origin): see `~/.claude/docs/sub-agents-detail.md#tool-availability-tool
 
 ## Bulk Research Pattern
 
-When collecting information from multiple sources (URLs, products, brands, categories), **proactively** apply this pattern (propose and execute before the user asks for parallelism):
+When collecting information from multiple sources (URLs, products, brands, categories), **proactively** (before the user asks for parallelism) split by independence — 1 agent = 1 brand / category / theme — launch all agents in background in parallel (`run_in_background: true` in one message), have each WebFetch and save findings to the memory MCP (`remember` / `ingest`), and show a live-updating progress table.
 
-1. **Split by independence**: divide targets so each agent's work is self-contained — 1 agent = 1 brand, category, or theme
-2. **Launch all agents in background in parallel**: use `run_in_background: true` for all agents in a single message
-3. **Each agent's responsibility**: WebFetch reviews → fetch specs from manufacturer sites → save to the memory MCP (`remember` / `ingest`)
-4. **Progress reporting**: show a progress table with agent status (researching... / **done**) and update it as each agent completes
-
-Detail (examples): see `~/.claude/docs/sub-agents-detail.md#bulk-research-pattern`.
+Detail (numbered breakdown + examples): see `~/.claude/docs/sub-agents-detail.md#bulk-research-pattern`.
 
 ## Long-Running Tasks
 
@@ -154,8 +140,6 @@ Deadline guide — set an internal deadline and, if it passes without completion
 - Large multi-repo audit or domain research: **60 min**
 
 Do not re-launch the same agent with the same prompt expecting a different result. If it silently fails once, the second attempt usually fails the same way — narrow the scope or switch tools.
-
-Origin: 2026-07 aa4b0e75 (status? asked 3× + 2 stall reports in one session) / 29d690f1 (30 min silent, user prompted "止まってませんか") / 2ec1c07b.
 
 Detail (origin): see `~/.claude/docs/sub-agents-detail.md#background-agent-deadline-tracking`.
 
