@@ -52,7 +52,6 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # server's JWT validator to accept it.
 #
 # Transport (verified 2026-05-12):
-#   - cognee     → Streamable HTTP at /cognee/mcp (single POST endpoint)
 #   - memory     → Streamable HTTP at /memory/mcp (single POST endpoint)
 #   - roon-mcp   → SSE 2-endpoint at /roon/sse (legacy, not yet migrated)
 #
@@ -60,13 +59,12 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # line (NOT derived from path), because each server's auth-proxy emits its
 # own canonical messages URL including the path prefix.
 SERVERS = [
-    ("cognee",   "cognee",   "/cognee/mcp",  "http"),
     ("memory",   "memory",   "/memory/mcp",  "http"),
     ("roon-mcp", "roon-mcp", "/roon/sse",    "sse"),
 ]
 
 # Default 15s — SSE endpoint event has been observed to arrive 4-12s
-# after connect on cognee + roon-mcp. The auth + JSON-RPC phases are
+# after connect on roon-mcp. The auth + JSON-RPC phases are
 # typically <500ms each.
 TIMEOUT = float(os.environ.get("PROBE_TIMEOUT_S", "15"))
 
@@ -124,8 +122,8 @@ def open_sse(base_url: str, sse_path: str, token: str):
     `messages_path` is the path portion of the data URL — used directly by
     the caller to POST JSON-RPC messages. Don't derive it from sse_path:
     each server's auth-proxy emits its own canonical messages URL
-    (e.g. memory's auth-proxy preserves /memory/mcp/messages/ but cognee's
-    emits /cognee/messages/), and reverse-engineering this from sse_path
+    (e.g. memory's auth-proxy preserves /memory/mcp/messages/ but another
+    server may emit /<prefix>/messages/), and reverse-engineering this from sse_path
     breaks for any non-standard server layout.
     """
     t0 = now()

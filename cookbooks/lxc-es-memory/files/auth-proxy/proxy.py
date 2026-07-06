@@ -60,7 +60,7 @@ PATH_PREFIX = os.environ.get("PATH_PREFIX", "")
 
 # ── v2 identity enforcement config (env-gated) ─────────────────────────
 # All three default to empty. When MEMORY_AUDIENCES is empty the enforcement
-# matrix in handle() is INERT (old cognee/memory units are unaffected) — only
+# matrix in handle() is INERT (the v1 memory units are unaffected) — only
 # identity injection still runs. Comma-separated lists → sets of trimmed values.
 MEMORY_AUDIENCES = {
     a.strip() for a in os.environ.get("MEMORY_AUDIENCES", "").split(",") if a.strip()

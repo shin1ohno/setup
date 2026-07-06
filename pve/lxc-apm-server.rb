@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 #
 # Entry recipe for CT 116 apm-server: standalone Elastic APM Server for
-# OTLP ingestion from 5 home-fleet services (weave-server, edge-agent,
-# roon-mcp, cognee-auth-proxy, ai-memory-auth-proxy). All install +
+# OTLP ingestion from 4 home-fleet services (weave-server, edge-agent,
+# roon-mcp, ai-memory-auth-proxy). All install +
 # config work lives in cookbooks/lxc-apm-server/default.rb.
 #
 # Run inside the LXC after the Terraform layer has provisioned it:

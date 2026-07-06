@@ -1,6 +1,6 @@
 # es-memory migration + cutover runbook
 
-Parallel-run cutover (old Cognee/Mem0 stay up until ES search quality is
+Parallel-run cutover (the old Mem0 stack stays up until ES search quality is
 confirmed). Run these from inside the es-memory LXC (or any host with ES + DB
 reachability and the env vars set).
 
@@ -38,10 +38,6 @@ ES_URL=$ES_URL ES_USER=elastic ES_PASSWORD=$ES_PASSWORD \
 # Mem0 — re-embed ~60-100 memories from the running OpenMemory API
 OPENMEMORY_URL=http://127.0.0.1:8765 python3 migrate_mem0.py --dry-run
 OPENMEMORY_URL=http://127.0.0.1:8765 python3 migrate_mem0.py
-
-# Cognee — DISCOVERY first (no writes), confirm the table, then --apply
-DATABASE_URL=postgresql://cognee:...@<rds-host>:5432/cognee python3 migrate_cognee.py
-DATABASE_URL=postgresql://cognee:...@<rds-host>:5432/cognee python3 migrate_cognee.py --apply
 ```
 
 ## 3. Count reconciliation
@@ -49,23 +45,22 @@ DATABASE_URL=postgresql://cognee:...@<rds-host>:5432/cognee python3 migrate_cogn
 ```bash
 curl -sk -u "elastic:$ES_PASSWORD" "$ES_URL/knowledge/_count"
 curl -sk -u "elastic:$ES_PASSWORD" "$ES_URL/memory-user/_count"
-# compare against Cognee list_data and Mem0 list_memories
+# compare against the old knowledge list and Mem0 list_memories
 ```
 
 ## 4. A/B search-quality check
 
-Query a representative prompt against the old Cognee `search(CHUNKS)` and the
+Query a representative prompt against the old knowledge `search(CHUNKS)` and the
 new ES hybrid; eyeball top-chunk overlap before cutover.
 
 ## 5. Cutover (only after quality is acceptable)
 
-Edit `cookbooks/mcp/files/servers.yml`: point the `cognee` and `ai-memory`
-`url` at the es-memory endpoints. Re-deploy the `mcp` cookbook. Tool names are
-unchanged, so no allowlist edit. Then stop the old stacks:
+Edit `cookbooks/mcp/files/servers.yml`: point the `ai-memory`
+`url` at the es-memory endpoint. Re-deploy the `mcp` cookbook. Tool names are
+unchanged, so no allowlist edit. Then stop the old stack:
 
 ```bash
-# on the cognee LXC (CT105) and memory LXC (CT107)
-cd ~/deploy/cognee && docker compose down
+# on the memory LXC (CT107)
 cd ~/deploy/memory && docker compose down
 ```
 

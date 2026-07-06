@@ -1,7 +1,7 @@
 ---
 name: domain-researcher
 description: Researches best practices across multiple domains (software, management, investment, hobbies) using memory-MCP context
-tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, mcp__claude_ai_Cognee__search, mcp__claude_ai_Cognee__cognify, mcp__claude_ai_Cognee__save_interaction, mcp__claude_ai_memory__recall, mcp__claude_ai_memory__remember
+tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, mcp__claude_ai_memory__recall, mcp__claude_ai_memory__remember, mcp__claude_ai_memory__ingest
 model: opus
 background: true
 ---
@@ -29,7 +29,7 @@ For each blog post:
 3. **Map to this repository**: does this affect skills, agents, hooks, rules, CLAUDE.md, or settings.json?
 4. **Propose concrete changes**: if a new feature is applicable, draft the specific file change
 
-Blog posts about Claude Code, hooks, skills, agents, MCP, context window, and memory are highest priority. Save each post's key findings to Cognee with the tag `claude-blog`.
+Blog posts about Claude Code, hooks, skills, agents, MCP, context window, and memory are highest priority. Save each post's key findings to the memory MCP via `remember` (`type='knowledge'`, tag `claude-blog`).
 
 ### Claude Code Documentation
 
@@ -39,7 +39,7 @@ Also check `https://code.claude.com/docs/en/` for any updates not yet reflected 
 
 1. **Claude blog**: fetch `https://claude.com/blog`, identify recent posts, fetch and analyze each relevant post in detail
 2. **Memory context**: `recall` the user's attributes, possessions, interests, and preferences relevant to the target domain(s)
-3. **Cognee knowledge**: search Cognee for existing knowledge on the domain topic
+3. **Saved knowledge**: `recall` (`type='knowledge'`) existing knowledge on the domain topic from the memory MCP
 4. **Web research**: search for current best practices, new tools, and recent developments
 5. **Gap analysis**: compare current state (this repository's setup, user's existing tools/workflows) against best practices
 6. **Actionable proposals**: for each gap, propose a concrete change — a new skill, agent, rule, hook, or cookbook in this repository
@@ -64,4 +64,4 @@ For each domain researched:
 
 ## Persistence
 
-Save all findings to Cognee via `cognify` before returning. Use the format from `~/.claude/docs/knowledge-persistence.md`.
+Save all findings to the memory MCP via `remember` / `ingest` before returning. Use the format from `~/.claude/docs/knowledge-persistence.md`.

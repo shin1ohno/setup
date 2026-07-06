@@ -307,7 +307,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services ingest-batch security-review verify-cognee verify-data-integrity feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage knowledge-drain self-heal-create self-heal-resolve mcp-auth web-crawl).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve mcp-auth web-crawl).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -322,15 +322,6 @@ end
     mode "644"
     action :create
   end
-end
-
-# Deploy single-file skills (markdown-only, no SKILL.md subdirectory)
-remote_file "#{node[:setup][:home]}/.claude/skills/ingest-pdf.md" do
-  source "files/skills/ingest-pdf.md"
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "644"
-  action :create
 end
 
 # Deploy writing skill templates

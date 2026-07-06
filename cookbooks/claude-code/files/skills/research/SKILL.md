@@ -1,6 +1,6 @@
 ---
 name: research
-description: Research a topic using Cognee, memory, and web search. Persists findings automatically.
+description: Research a topic using the memory MCP and web search. Persists findings automatically.
 user-invocable: true
 argument-hint: "[topic or question]"
 ---
@@ -9,7 +9,7 @@ argument-hint: "[topic or question]"
 
 ## Purpose
 
-Investigate a topic by searching existing knowledge stores (Cognee, memory) and the web, then persist findings automatically.
+Investigate a topic by searching the existing knowledge store (the memory MCP) and the web, then persist findings automatically.
 
 ## Argument Parsing
 
@@ -21,21 +21,21 @@ Investigate a topic by searching existing knowledge stores (Cognee, memory) and 
 
 Launch 2 `researcher` agents **in parallel** via the Agent tool (both with `run_in_background: true`):
 
-**Agent A — Cognee search:**
-- Search Cognee with 3 query types: GRAPH_COMPLETION (relationships), CHUNKS (facts), SUMMARIES (overviews)
+**Agent A — knowledge search:**
+- Search the memory MCP via `recall` over stored knowledge (documents/chunks): relationships, facts, and overviews
 - Use `top_k=15` for broad exploration
 - Topic: `$ARGUMENTS`
 
 **Agent B — memory search:**
-- Search memory for any user-related context on the topic
+- Search the memory MCP via `recall` for any user-related context on the topic
 - Topic: `$ARGUMENTS`
 
 ### Step 2: Gap Analysis and Contradiction Detection
 
 When both agents return, synthesize their results:
 
-1. List what is already known (from Cognee + memory)
-2. **Contradiction check**: if Cognee and memory return conflicting information, flag the contradiction explicitly and investigate which is current
+1. List what is already known (from the memory MCP)
+2. **Contradiction check**: if the two searches return conflicting information, flag the contradiction explicitly and investigate which is current
 3. Identify gaps: what questions remain unanswered?
 4. If no gaps exist, skip to Step 4
 
@@ -46,7 +46,7 @@ Launch a `researcher` agent to fill identified gaps:
 - Provide the specific gaps as search targets
 - Agent uses WebSearch to find sources, WebFetch to extract details
 - **Source credibility**: tag each finding with source type (official docs / engineering blog / forum post / vendor marketing). Flag findings that rely on a single low-credibility source
-- Agent saves new findings to Cognee/memory before returning
+- Agent saves new findings to the memory MCP (`remember` / `ingest`) before returning
 
 ### Step 4: Report
 
@@ -60,7 +60,7 @@ Present findings in BLUF format:
 [Numbered list of supporting facts/evidence]
 
 ## Sources
-[Where each finding came from: Cognee, memory, or web URL]
+[Where each finding came from: the memory MCP or web URL]
 
 ## Gaps
 [What remains unknown, if anything]
@@ -68,4 +68,4 @@ Present findings in BLUF format:
 
 ### Step 5: Persist
 
-If Step 3 was skipped (existing knowledge was sufficient), save the synthesized conclusion to Cognee via `cognify` — the synthesis itself is new knowledge even if the inputs were not.
+If Step 3 was skipped (existing knowledge was sufficient), save the synthesized conclusion to the memory MCP via `ingest` — the synthesis itself is new knowledge even if the inputs were not.

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 #
-# Entry recipe for the es-memory LXC: unified Cognee + Mem0 MCP server backed
-# by the ElasticSearch cluster (es-0/1/2). Replaces the Cognee (RDS pgvector /
+# Entry recipe for the es-memory LXC: unified knowledge-graph + Mem0 MCP server backed
+# by the ElasticSearch cluster (es-0/1/2). Replaces the prior knowledge-graph (RDS pgvector /
 # kuzu) and Mem0 (Qdrant / Aurora pgvector) storage stacks with BM25 +
 # dense_vector kNN hybrid search. See cookbooks/lxc-es-memory.
 #

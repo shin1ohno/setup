@@ -1,7 +1,7 @@
 # Prometheus config for the home-LAN monitoring fleet.
 #
 # Phase 3b scrape targets: monitoring (self) + weave + Phase 3a 5 service
-# LXC (hydra, consent, cognee, memory, roon-mcp) + Phase 3b 4 hosts
+# LXC (hydra, consent, memory, roon-mcp) + Phase 3b 4 hosts
 # (roon, samba, housekeeping, pro-dev) + bare-metal PVE host + PVE API
 # exporter. Phase 3c will add pro-router. Job names align with `host`
 # label conventions used by auto-mitamae-orchestrator (Phase 2b) textfile
@@ -44,7 +44,7 @@ scrape_configs:
           host: weave
 
   # Phase 3a service LXCs. Order: hydra → consent reflects the apply-time
-  # dependency consent has on hydra's admin API (4445). cognee / memory /
+  # dependency consent has on hydra's admin API (4445). memory /
   # roon-mcp have no apply-time deps on their siblings here.
   - job_name: node-hydra
     honor_labels: true
@@ -61,14 +61,6 @@ scrape_configs:
           - "192.168.1.75:9100"
         labels:
           host: consent
-
-  - job_name: node-cognee
-    honor_labels: true
-    static_configs:
-      - targets:
-          - "192.168.1.70:9100"
-        labels:
-          host: cognee
 
   - job_name: node-memory
     honor_labels: true
@@ -249,7 +241,6 @@ scrape_configs:
       module: [http_2xx]
     static_configs:
       - targets:
-          - https://mcp.ohno.be/cognee/health
           - https://mcp.ohno.be/memory/health
         labels:
           probe_class: edge

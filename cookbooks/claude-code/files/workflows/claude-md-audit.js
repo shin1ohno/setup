@@ -255,7 +255,7 @@ function clusterPrompt(findingsJson) {
 ## あなたのタスク: 追加候補のクラスタリング
 抽出エージェントが transcript から見つけた findings（JSON）を統合してください。
 1. 同一・類似テーマをクラスタにまとめる（support_count = 独立セッション数）
-2. 落とすもの: タスク内容そのものの知見（リポジトリの CLAUDE.md や Cognee に属するもの）、引用が弱い一回きりの低確度もの、既存ルールで完全カバー済みのもの（already_covered_by 参照。ただし「ルール違反が繰り返されている」クラスタは残す — ルール強化候補として）
+2. 落とすもの: タスク内容そのものの知見（リポジトリの CLAUDE.md や memory MCP に属するもの）、引用が弱い一回きりの低確度もの、既存ルールで完全カバー済みのもの（already_covered_by 参照。ただし「ルール違反が繰り返されている」クラスタは残す — ルール強化候補として）
 3. 最大18クラスタ、support_count × 確度 の高い順
 4. 各クラスタの proposed_rule は最良の文面案に統合（1-5行、既存 CLAUDE.md の文体に合わせ簡潔に）
 5. dropped_count と代表的な drop 理由を報告
@@ -368,7 +368,7 @@ const summary = {
 const critic = await agent(CTX + `
 ## あなたのタスク: 監査の完全性チェック
 CLAUDE.md 改善監査が完了しました。以下がカバー範囲の要約です。見落としを指摘してください:
-- 分析していない情報源はないか（例: ~/.claude/pending-cognify/, hookify ルール, ~/.claude/settings.json の permissions, memory ディレクトリ, TODO.md）— 実在するか ls で確認し、監査価値があるものを挙げる
+- 分析していない情報源はないか（例: hookify ルール, ~/.claude/settings.json の permissions, memory ディレクトリ, TODO.md）— 実在するか ls で確認し、監査価値があるものを挙げる
 - 追加候補クラスタと削除候補の一覧を見て、明らかに欠けている観点はないか
 - 検証されていない主張はないか
 

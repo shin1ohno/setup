@@ -1,5 +1,5 @@
 [Unit]
-Description=es-memory unified MCP server (Cognee+Mem0 on ElasticSearch)
+Description=es-memory MCP server (Mem0 on ElasticSearch)
 After=network-online.target
 Wants=network-online.target
 

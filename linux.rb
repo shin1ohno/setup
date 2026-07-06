@@ -38,7 +38,7 @@ include_role "server" # Server-specific setup
 
 # Physical-host hardware controllers. MCP servers and Roon Server / MCP
 # previously included here have migrated to dedicated LXCs
-# (lxc-{cognee,hydra,memory,roon,roon-mcp}); bare-metal pro now hosts
+# (lxc-{hydra,roon,roon-mcp}); bare-metal pro now hosts
 # only physical-hardware-coupled cookbooks.
 include_cookbook "arp-flux"
 include_cookbook "dns-prefer-ipv4" unless node[:platform] == "darwin"

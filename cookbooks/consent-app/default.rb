@@ -13,5 +13,5 @@
 #
 # If the consent app outgrows the inline-via-File.read pattern (e.g.
 # needs its own `directory` / `template` resources), promote this
-# cookbook to a real service primitive (like cookbooks/cognee/) and
+# cookbook to a real service primitive (like cookbooks/lxc-hydra/) and
 # update pve/lxc-consent.rb to `include_cookbook "consent-app"`.

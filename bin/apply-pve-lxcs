@@ -11,8 +11,8 @@
 #   - passwordless sudo for the SSH user on each LXC
 #
 # Usage:
-#   bin/apply-pve-lxcs                       # all 11 LXCs in parallel
-#   bin/apply-pve-lxcs cognee hydra          # subset only
+#   bin/apply-pve-lxcs                       # all 10 LXCs in parallel
+#   bin/apply-pve-lxcs hydra weave           # subset only
 #   PARALLEL_JOBS=2 bin/apply-pve-lxcs       # cap concurrency
 #   REPO_PATH=/opt/setup bin/apply-pve-lxcs
 #   HOSTNAME_SUFFIX="" bin/apply-pve-lxcs    # bare names (use ssh aliases)
@@ -24,7 +24,6 @@ PARALLEL_JOBS="${PARALLEL_JOBS:-4}"
 HOSTNAME_SUFFIX="${HOSTNAME_SUFFIX-.home.local}"
 
 declare -a hosts=(
-  cognee
   consent
   housekeeping
   hydra
