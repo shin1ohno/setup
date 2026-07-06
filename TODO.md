@@ -131,3 +131,32 @@ idempotent enforce-execute in `cookbooks/mac-settings/default.rb`, so a
   `mitamae local darwin.rb`, per `~/.claude/rules/ruby.md` "automating mitamae"),
   or (b) a tiny standalone launchd job that re-asserts `pmset -c sleep 0` on load.
   (a) is broader but keeps mini current with all cookbooks; (b) is minimal.
+
+## available-skills list diet — gws-*/recipe-*/persona-* occupy the session skill listing (Low)
+
+From the 2026-07-06 claude-md-audit critic pass: the per-session available-skills
+reminder lists ~100 deployed skills, dominated by the gws plugin families
+(`gws-*`, `recipe-*`, `persona-*`). Their descriptions consume always-loaded
+context the same way rules/ files did before #639/#666, but they were out of
+scope for the rules diet.
+
+- Reason deferred: the skills come from plugins/marketplaces, not the cookbook
+  deploy lists — the diet mechanism is enabledPlugins scoping, not file deletion.
+- First step: measure the actual byte share of the skill listing in a fresh
+  session's system prompt, then trial-disable the `recipe-*`/`persona-*`
+  families in `enabledPlugins` (keep `gws-*` operational skills) and confirm
+  nothing in daily flows regresses.
+
+## auto-memory stale review — Cognee-referencing memories post-#656 (Low)
+
+From the 2026-07-06 claude-md-audit critic pass: project auto-memory dirs
+(`~/.claude/projects/*/memory/`, 4 projects) contain entries written before the
+Cognee retirement (#656) and the local-es-memory migration — e.g. zp-SHIN's
+`loop-engineering-adoption` / `mcp-health-monitor-loop` reference Cognee
+pipelines and the old local MCP ports.
+
+- Reason deferred: memories are per-project and self-correcting on next touch
+  (the stale-recorded-constraints rule shipped in #695 mandates write-back on
+  reversal), but a proactive sweep shortens the stale window.
+- First step: `grep -rliE 'cognee|cognify|8001|8002' ~/.claude/projects/*/memory/`
+  and update or delete each hit, syncing MEMORY.md index lines in the same pass.
