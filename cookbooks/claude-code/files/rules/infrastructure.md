@@ -34,15 +34,22 @@ Before syncing a managed config file (settings.json, YAML with list fields, etc.
 
 In the plan, state the merge mode for every field being changed. For union fields, include the manual-cleanup command (e.g., `jq 'del(.permissions.allow[] | select(...))'`) as an explicit plan step — never assume a cookbook deploy will remove stale entries.
 
-## Deploy-Only Change Tracking
+## Managed-File Ownership Gate
 
-When modifying files directly in `~/deploy/` (not managed by a cookbook):
+Before you Edit/Write a config file under `$HOME` that is OUTSIDE a git working tree (`~/ManagedProjects/*`), probe whether it is mitamae-managed:
 
-1. **Prefer cookbook**: if a cookbook exists for the service, make the change there instead
-2. **If no cookbook exists**: make the change in `~/deploy/`, but immediately save the change details to the memory MCP via `ingest` (what was changed, why, and the file path) so it can be reproduced if the deploy directory is rebuilt
-3. **Flag for future cookbookification**: note in the memory entry that this change is unmanaged and should be moved to a cookbook when one is created
+    rg -l '<parent-dir>/<basename>' ~/ManagedProjects/setup/cookbooks/ ~/ManagedProjects/zp-SHIN/projects/mercari-setup/cookbooks/
+    # e.g. rg -l 'zed/settings\.json' ...  — a bare basename (settings.json) false-hits everywhere, so probe on a path fragment.
 
-Deploy directories can be rebuilt from scratch. Untracked changes there are silently lost.
+- **Hit** → the file is a `template` / `remote_file` render target. A direct edit of the deploy copy is silently reverted by the next apply's re-render. Make the change in the cookbook source (business-specific values in the private overlay).
+- **Emergency direct edit first** → state explicitly that it "disappears on the next apply", and leave a TODO to reflect it into the cookbook in the same turn (same shape as the `~/deploy/` memory-MCP record below).
+- Existing individual cases are subsumed by this general rule: Dual-managed file (CLAUDE.md), Deploy-Only Change Tracking (`~/deploy/`, below).
+
+**Where shared values live (first-driver ≠ owner)**: an env var / config value that more than one tool may read (`GITHUB_TOKEN` etc.) belongs in the consumer-set layer (shell `profile.d` / a generic cookbook), NOT the dedicated cookbook of whichever tool needed it first. Enumerate the tools that could reference it; if 2+, use the generic layer. Origin: 2026-06 mise `GITHUB_TOKEN` → zsh cookbook (setup#597).
+
+### Deploy-Only Change Tracking (`~/deploy/` sub-case)
+
+When modifying files directly in `~/deploy/` (not managed by a cookbook): prefer a cookbook if one exists; otherwise make the change in `~/deploy/` but immediately save the change details to the memory MCP via `ingest` (what changed, why, and the file path) so it can be reproduced if the deploy directory is rebuilt, and flag the change as unmanaged for future cookbookification. Deploy directories can be rebuilt from scratch — untracked changes there are silently lost.
 
 ## Commit Timing for Cookbook Changes
 

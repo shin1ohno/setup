@@ -53,11 +53,11 @@ The Claude Code Bash tool executes through the user's **login zsh** on darwin, n
 2. **Unmatched glob aborts the whole script.** zsh `nomatch` makes an unmatched `*.foo` a hard error that kills a multi-line script mid-run — earlier loop output is discarded with it. Quote globs you don't want expanded, or run under bash.
 3. **zsh builtins shadow `/usr/bin` commands.** `log …` hits the zsh `log` builtin (`too many arguments`), not `/usr/bin/log`. Verify with `type <cmd>`; call the full path (`/usr/bin/log show …`) when a builtin shadows the binary you meant.
 4. **A broken `.zshrc` compdef makes `aws` silently exit 1** (git/gh/curl unaffected). Wrap `aws` in `/bin/bash -c '…'` — see memory `aws-cli-needs-bash-c-wrapper`.
-5. **History expansion mangles `!`** (e.g. `!=` inside an interactive jq filter) — see the `zsh History Expansion Mangles !=` section below.
+5. **Inline `!` via the Bash tool can arrive mangled to `\!`** — not just jq `!=`; the 2026-06 window also corrupted a `reject!` / `!==` inside a quoted heredoc and a `printf` single-quote `<!--` written to a file (version-dependent) — see the `zsh / harness ! mangling` section below.
 
-**Default policy**: write any command containing a loop, a glob, or multi-line structure as `/bin/bash -c '…'` or `bash -s <<'EOF' … EOF` from the start. Observing ONE zsh-dialect error is the signal to switch the whole command to bash — do not patch it token by token.
+**Default policy**: write any command containing a loop, a glob, or multi-line structure as `/bin/bash -c '…'` or `bash -s <<'EOF' … EOF` from the start. Observing ONE zsh-dialect error is the signal to switch the whole command to bash — do not patch it token by token. Note: `/bin/bash -c` / quoted-heredoc wrapping is a fix for traps #1-#3 and does NOT help #5 (`!` corruption) — the corruption has occurred at the harness layer, before the shell; the reliable avoidance for a literal/script containing `!` is to place it with the Write/Edit tool.
 
-**Verification discipline**: before reporting "0 results", drop `2>/dev/null` and re-run one representative case bare to confirm no zsh error was hidden (general form: `~/.claude/rules/debugging.md` Silent Failure Detection). A command that succeeds once but fails inside a loop → suspect the word-split trap (#1) before any external cause. Inline diagnostic one-liners are also subject to the macOS external-command audit (`timeout` / `flock` → exit 127; see below), not just cookbook-distributed scripts.
+**Verification discipline**: before reporting "0 results", drop `2>/dev/null` and re-run one representative case bare to confirm no zsh error was hidden (general form: `~/.claude/rules/debugging.md` Silent Failure Detection). A command that succeeds once but fails inside a loop → suspect the word-split trap (#1) before any external cause. Inline diagnostic one-liners are also subject to the macOS external-command audit (`timeout` / `flock` → exit 127; see below), not just cookbook-distributed scripts. This 0-results re-check is the zsh-error-specific special case — the general gate for asserting absence is CLAUDE.md's `Negative search is not evidence of absence`.
 
 Origin: 2026-07-04 — `$REGIONS` / `$repos` word-split misdiagnosed as throttling / reported a false "0"; `log` builtin `too many arguments`; `timeout` exit 127.
 
@@ -117,6 +117,6 @@ Detail: see `~/.claude/docs/shell-detail.md#awk-bwk-vs-gawk`.
 
 Detail: see `~/.claude/docs/shell-detail.md#macos-external-command-audit`.
 
-## zsh History Expansion Mangles `!=` in Interactive jq — Avoid `!` in tested filters
+## zsh / harness `!` mangling — inline `!` can corrupt (jq `!=` and beyond)
 
 Detail: see `~/.claude/docs/shell-detail.md#zsh-bang-history-expansion`.

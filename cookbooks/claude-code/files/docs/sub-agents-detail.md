@@ -63,3 +63,9 @@ Origin: 2026-04-23 two consecutive Ultraplan agents failed silently; the user ha
 ## 60-second-rule
 
 Origin: 2026-04-23 attempted `docker compose up -d --build` inline as a foreground Bash call; user corrected "時間がかかるタスクは SubAgent で".
+
+## agent-team-messaging-contract
+
+Origin: 2026-06-18 zp-SHIN ×3 sessions — the lead sent with `to:"main"` and was rejected (「You are the main conversation — "main" addresses you. Send to a named agent instead.」); 4/4 teammates finished and emitted findings as plain text that never reached the lead, and the team-lead ran a SendMessage re-request round-trip (0bc32f7d). 2026-07-06 ×2 sessions — the lead re-sent the full task prompt and the worker defended with 「再送要求と判断し、検証済みの同じ完全レポートを再送します」 (45450f91); a teammate whose deliverable was already collected was not shut down until the user prompted 「動作が終わったSubAgentは閉じれますか？」 (da4dcecc).
+
+No hook: `to:"main"` is already rejected by the harness itself (the mechanical enforcement exists; the rule's value is avoiding the wasted turns up front). The remaining items are prompt-composition / agent-judgment problems a PreToolUse hook cannot inspect.

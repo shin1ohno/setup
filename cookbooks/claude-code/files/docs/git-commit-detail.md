@@ -44,17 +44,28 @@ Origin: 2026-04-24 weave — only `--no-merged` surveyed, missed true-merge-comm
 
 When acting on PR review comments ("レビューコメント反映", "review した", "コメントしたから確認"), do NOT rely on `gh api repos/<owner>/<repo>/pulls/<n>/comments` alone. That endpoint returns inline comments but they fan out across multiple `review` submissions — a reviewer who submits review A with 2 comments, then submits review B with 1 more comment, produces 3 inline comments total but they live in 2 separate review threads. Treating the visible-on-screen list as complete after one fetch silently drops the comments from later submissions.
 
-**Required fetch + cross-reference**:
+**Required fetch + cross-reference** — `gh pr view <n> --json reviewThreads` does NOT work: `reviewThreads` is not a `gh pr view --json` field (gh 2.95.0 → `Unknown JSON field: "reviewThreads"`, exit 1). Use the GraphQL API. The `query(...)` variable declarations plus `-F` passing are mandatory — inlining `$owner,$name,$number` without declaring them is a GraphQL validation error:
 
 ```bash
-# Authoritative: review threads with resolution state
-gh pr view <n> --json reviewThreads --jq '.reviewThreads[] | select(.isResolved == false) | {path, line, body: .comments[0].body}'
+# Unresolved review threads (path / isResolved / first comment body)
+gh api graphql -F owner=<owner> -F name=<repo> -F number=<n> -f query='
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$number){
+      reviewThreads(first:100){
+        nodes{isResolved path comments(first:10){nodes{body}}}
+      }}}}' \
+  --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)'
 
-# Count unresolved threads — every one must be addressed before declaring done
-gh pr view <n> --json reviewThreads --jq '[.reviewThreads[] | select(.isResolved == false)] | length'
+# Unresolved thread count — must reach 0 before declaring done (same query):
+#   --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length'
 ```
 
-`reviewThreads` is the canonical structure: each thread groups all comments on a single line/conversation, carries `isResolved`, and survives across review-submission boundaries. Use it as the source of truth, not `pulls/<n>/comments`.
+`reviewThreads` (via GraphQL) is the canonical structure: each thread groups all comments on a single line/conversation, carries `isResolved`, and survives across review-submission boundaries. Use it as the source of truth, not `pulls/<n>/comments`.
+
+- `statusCheckRollup` / `mergeStateStatus` and the rest ARE still valid `gh pr view --json` fields — only `reviewThreads` is rejected there. When one `gh pr view --json` call would need both, split `reviewThreads` out to the GraphQL query above and leave the other fields on `gh pr view`.
+- In a headless environment where `gh api` is approval-gated, unresolved-thread state is unobtainable — do NOT guess it resolved; escalate with a needs-human label and stop (this ends the dead-probe-every-run loop).
+- jq negation: use the `select(.isResolved | not)` form — `!=` / bare `!` break under interactive zsh history expansion (consistent with `rules/shell.md`).
 
 **Verification gate before pushing the fix commit**: count unresolved threads, count comments you've addressed. If the numbers don't match, re-fetch — there is at least one comment from a review submission you didn't see.
 
@@ -179,6 +190,12 @@ Full trigger list — re-run `git branch --show-current` before **every** `git a
 - **the previous Bash invocation ended with `Shell cwd was reset to ...`** — the Bash sandbox does not persist branch checkouts across CWD resets. Even if the Bash log line `Switched to a new branch 'fix/X'` is visible, the next Bash invocation may evaluate `git status` against a *different* branch (typically the session-default one, which can be a long-lived `feat/*` branch left over from another conversation). This is the most common failure mode for misplaced commits in long sessions.
 - **a daemon or autonomous loop also operates on this repo** (launchd job, cron, a `claude -p` watcher, a CI runner that shares the working tree) — the HEAD, index, and tracked files can change between your Bash invocations with NO trace in this conversation. Before the first `git add`, confirm the loop is paused (kill-switch file, `launchctl stop`, kill by PID) and re-probe `git status` twice for stability. Detection: `git branch --show-current` returns a branch you did not create, OR `git status` shows modifications that appear/vanish between two probes. When the shared working tree may be in concurrent use (the user editing in another terminal, or an unrelated feature branch checked out), do NOT `git checkout` it — that moves the shared HEAD out from under them. Use `git worktree add <path> -b <branch> origin/main` to work on an isolated checkout without touching the shared HEAD. **When a repo is KNOWN to host a recurring autonomous git loop that shares the working tree (a scheduled `claude -p` runner, a CI agent that commits, a self-healing apply loop), do not gate worktree-vs-shared-tree on a liveness probe at all — default to `git worktree add /private/tmp/<name>-wt <branch>` unconditionally for every manual git op in that repo.** The loop can seize the tree during any later wall-clock gap (an AskUserQuestion wait, a GPG retry, a slow build) even when it was absent at your first check; a passing point-in-time probe is not evidence the tree stays yours for the whole task. Symptom of getting this wrong: the shared tree ends up on a branch you did not create, with a stale `index.lock` and your staged change stranded on another task's branch.
 
+Three loop-repo git-discipline addenda for that same bullet:
+
+- **worktree placement**: prefer the repo-internal `.claude/worktrees/` location (EnterWorktree's default — sandbox-writable). `/private/tmp/<name>-wt` can be denied by the sandbox write allowlist (observed 2026-06-27); if it is denied, try EnterWorktree or a repo-internal path BEFORE degrading to `stash`+`checkout`, and if you do fall back to `stash`+`checkout`, confirm the loop is stopped in the same turn.
+- **unexpected staged files**: if a file you did not stage lands in the commit, run `git reflog -10` to look for a concurrent writer's trace (reset/checkout/commit interleaved with your own commands) BEFORE suspecting a hook or your own operation.
+- **follow-up push to a self-authored PR branch**: on a repo running an autonomous merge loop, probe `gh pr view <n> --json state` before a follow-up push. A `[new branch]` line in the push output — a push to an *existing* PR branch reported as newly created — is the anomaly signal for "already merged + branch deleted, then orphan-recreated"; abandon that branch and switch to a new branch + new PR cut from the updated `origin/main`.
+
 Origin: 2026-04-22 commit on wrong branch after background `terraform apply`; strengthened 2026-05-06 after two misplaced commits where `git checkout -b` ran in a separate Bash call from `git commit` (recovery: cherry-pick + `git branch -f <branch> origin/main`); 2026-06-19 a bare `cd <dir>` used to "enter" the repo within one Bash call still drifted at the next CWD reset AND triggered a shell tree-hook that masked the reset line — using `git -C /absolute/path` on every git call (never a leading `cd`) eliminates the ambiguity.
 
 ## branch-overlap-preflight
@@ -218,3 +235,31 @@ Origin: 2026-06-26 PR #556 — body written to the command-sandbox TMPDIR, `gh p
 2. **Put it on a user-visible path** — for long multi-line content, `Write` it under the target repo's `.git/` (e.g. `.git/<topic>-commit-msg.txt`, the same convention as `COMMIT_EDITMSG`), then present the relative-path form `! git commit -F .git/<topic>-commit-msg.txt` (the user `cd`s into the repo first). `.git/` is not tracked, so it does not dirty `git status`; do NOT use a bare tmp file inside the repo tree — that adds untracked noise and mis-commit risk.
 
 Origin: 2026-07 session 031f3049 — a `git commit -F <scratchpad path>` presented for the user (GPG signing) failed with `could not read log file`; recovered by moving the message under `.git/`.
+
+## index-lock-triage
+
+## `index.lock` — 3-point triage before removal
+
+When a git operation fails with `fatal: Unable to create '<repo>/.git/index.lock': File exists`, neither of the reflex reactions is correct: deleting the lock immediately can corrupt an in-flight write, and diagnosing a permanent fault chases the wrong cause. Run the 3-point probe.
+
+```bash
+# (a) transient? — re-probe after a few seconds; if it's gone, an editor/poller held it, just retry
+sleep 3; ls -l .git/index.lock 2>/dev/null && echo "still present" || echo "gone — retry"
+
+# (b) 0 bytes AND mtime minutes old and unchanging (not a live write mid-flight)
+stat -f '%z bytes, mtime %Sm' -t '%H:%M:%S' .git/index.lock   # macOS BSD stat
+#   Linux: stat -c '%s bytes, mtime %y' .git/index.lock
+
+# (c) no writing git process holds it
+pgrep -fl git
+```
+
+Remove the lock and retry ONCE only when (a)(b)(c) all hold (`rm -f .git/index.lock`); if any fails, wait or move work to a `git worktree`.
+
+**Suspect ordering** — when the failure has all three of "multiple repos / frequent / cause unknown", the first suspect is a high-frequency poller running in the session's cwd (an IDE's git integration, the shell prompt, the statusline), NOT an autonomous loop. A loop-caused stale lock comes bundled with the other symptoms in the `Re-check after any long-running background operation` daemon guidance (a branch you did not create, staged files that appear/vanish between probes). The pre-diet rule text blamed loops only and mis-steered the diagnosis — poller-first is the correction.
+
+**New periodic git-calling scripts** — when you WRITE a new script that calls git on a schedule (statusline / hook / monitoring loop / shell prompt), set `export GIT_OPTIONAL_LOCKS=0` in it. That stops `git status` from taking the optional `index.lock` (the index stat-cache write-back) — the standard VS Code / p10k / starship practice. Note: the coralline statusline was already fixed in setup#663 (2026-07-06) — no re-fix needed; this convention applies to newly written scripts.
+
+**Why the triage protocol is permanently needed**: even after the statusline fix, the git polling of IDEs like Cursor / Zed is out of our control, so `index.lock` contention keeps happening — the triage above is the durable response, the `GIT_OPTIONAL_LOCKS=0` convention only covers scripts we write.
+
+Origin: 2026-06-19〜07-06 — 18 real-error sessions across 3 repos (setup / zp-SHIN / orca). 96eb691b (a 1-second statusline poll was the root cause → #663); 0791ced1 (Cursor-IDE-origin stale lock ×2); 41598c5a (Zed-polling-origin transient → moved to a worktree).
