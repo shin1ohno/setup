@@ -35,4 +35,7 @@ include_cookbook "gpg-backup"
 include_cookbook "edge-agent"
 include_cookbook "elastic-agent"
 include_cookbook "macos-hub"
+# Local single-node ES + memory-v2 MCP (replaces the retired local-mcp
+# cognee/mem0 stack). darwin-only; self-guards.
+include_cookbook "local-es-memory"
 

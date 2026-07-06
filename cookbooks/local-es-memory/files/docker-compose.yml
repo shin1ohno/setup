@@ -1,0 +1,80 @@
+# local-es-memory: single-node ElasticSearch + memory-v2 MCP for this MacBook Air.
+#
+# Replaces the retired local-mcp stack (cognee + mem0 + postgres + qdrant) with
+# the SAME memory-v2 backend the hosted es-memory LXC runs (BM25 + dense_vector
+# kNN hybrid on ES, Voyage embeddings). All ports bind 127.0.0.1 — Claude Code
+# on this host connects over loopback, so no OIDC/JWT proxy and no app-layer
+# auth (mirrors the old local-mcp "loopback-only, no auth" model). The MCP
+# server derives provenance from static X-Verified-* headers passed at Claude
+# Code registration time (see cookbooks/local-es-memory/default.rb).
+#
+# Ports: 127.0.0.1:9200 (ES) / 127.0.0.1:8010 (MCP, endpoint /memory/mcp).
+# Deliberately disjoint from the old local-mcp ports (5433/6334/8002/8003/8765)
+# so both can run in parallel during cutover.
+#
+# PERSISTENCE: ES data lives in the named volume `es_data`. `docker compose
+# down` KEEPS it; NEVER `down -v` (destroys the local memory store).
+#
+# ARM64 (Apple Silicon M2): elasticsearch:9.4.2 publishes a linux/arm64 manifest
+# (verified) and analysis-kuromoji is arch-independent Java; python:3.12-slim is
+# multi-arch. No `platform:` overrides needed.
+
+services:
+  es:
+    build: ./es                       # elasticsearch:9.4.2 + analysis-kuromoji
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      # Loopback-only single-node dev store — security off keeps ops simple and
+      # matches the old local-mcp model. es_backend still sends basic auth
+      # (elastic:x); ES ignores it when security is disabled.
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - bootstrap.memory_lock=false
+      # 1 GB heap is ample for a personal memory store (facts/knowledge/episodes,
+      # tens–hundreds of MB). Leaves headroom in the 8 GB Docker VM.
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      # The elasticsearch image bundles curl. Ready = cluster health reachable
+      # (yellow is expected on a single node: replicas stay unassigned).
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  memory-mcp:
+    build: ./mcp                      # python:3.12-slim + memory-v2 server
+    restart: unless-stopped
+    env_file:
+      - .env                          # VOYAGE_API_KEY (SSM /memory/voyage-api-key)
+    environment:
+      - ES_URL=http://es:9200
+      - ES_USER=elastic
+      - ES_PASSWORD=x                 # ignored when ES security is off; es_backend requires the env
+      - ES_VERIFY_CERTS=false
+      - VOYAGE_ENDPOINT=https://api.voyageai.com/v1
+      - EMBEDDING_MODEL=voyage-3-large
+      - EMBEDDING_DIMENSIONS=1024
+      # Index names — mirror the memory-v2 systemd unit's Environment= lines.
+      - FACT_INDEX=memory-fact
+      - KNOWLEDGE_INDEX=memory-knowledge
+      - EPISODE_INDEX=memory-episode
+      - STATS_INDEX=memory-stats
+      - ALL_ALIAS=memory-all
+    ports:
+      - "127.0.0.1:8010:8010"
+    depends_on:
+      es:
+        condition: service_healthy
+
+volumes:
+  es_data:

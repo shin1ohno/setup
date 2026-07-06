@@ -417,6 +417,34 @@ if File.file?(cc_default)
   end
 end
 
+# --- check 7: local-es-memory memory-mcp modules must be verbatim copies -----
+#
+# cookbooks/local-es-memory (Mac local store) ships the memory-v2 server code as
+# copies of cookbooks/lxc-es-memory/files/memory-mcp/ (+ files/requirements-v2.txt).
+# The Mac local store and the hosted LXC MUST run identical server code — a
+# contract change in one that doesn't propagate to the other is a silent
+# divergence. Enforce byte-equality.
+LOCAL_MCP_SYNC = {
+  "cookbooks/local-es-memory/files/mcp/server.py"           => "cookbooks/lxc-es-memory/files/memory-mcp/server.py",
+  "cookbooks/local-es-memory/files/mcp/es_backend.py"       => "cookbooks/lxc-es-memory/files/memory-mcp/es_backend.py",
+  "cookbooks/local-es-memory/files/mcp/voyage.py"           => "cookbooks/lxc-es-memory/files/memory-mcp/voyage.py",
+  "cookbooks/local-es-memory/files/mcp/scoring.py"          => "cookbooks/lxc-es-memory/files/memory-mcp/scoring.py",
+  "cookbooks/local-es-memory/files/mcp/identity.py"         => "cookbooks/lxc-es-memory/files/memory-mcp/identity.py",
+  "cookbooks/local-es-memory/files/mcp/requirements-v2.txt" => "cookbooks/lxc-es-memory/files/requirements-v2.txt",
+}.freeze
+LOCAL_MCP_SYNC.each do |copy, src|
+  next unless File.file?(copy) # cookbook may be absent in older checkouts
+  unless File.file?(src)
+    add(violations, copy, 1, "verbatim-copy source #{src} missing — cannot verify equality.")
+    next
+  end
+  if File.read(copy) != File.read(src)
+    add(violations, copy, 1,
+        "diverged from #{src} — local-es-memory must ship the SAME memory-v2 server as " \
+        "lxc-es-memory. Re-copy: cp #{src} #{copy}")
+  end
+end
+
 # --- report ----------------------------------------------------------------
 
 puts "cookbook lint (#{recipe_files.size} recipes scanned)"

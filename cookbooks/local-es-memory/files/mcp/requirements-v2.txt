@@ -1,0 +1,14 @@
+# memory-mcp v2 server venv (contract §S1). All deps ship manylinux wheels —
+# no build toolchain required. Deliberately NO aiohttp / PyJWT / opentelemetry
+# (those live in the proxy venv), NO openai, NO voyageai SDK (voyage.py speaks
+# raw httpx).
+
+# MCP server. Floor pinned for streamable_http_app() + Context + ToolAnnotations.
+# TODO Phase-0: confirm the exact installed mcp wheel version and that
+# `mcp.server.fastmcp.Context`, `mcp.types.ToolAnnotations`, and
+# `FastMCP.streamable_http_app()` are all present.
+mcp>=1.12
+
+starlette>=0.37.0
+uvicorn>=0.30.0
+httpx>=0.27.0
