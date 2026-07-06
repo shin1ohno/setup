@@ -83,18 +83,24 @@ Origin: 2026-06-27 zp-SHIN issue/PR loop (mercari-setup overlay) — `flock` / `
 
 ## zsh-bang-history-expansion
 
-## zsh History Expansion Mangles `!=` in Interactive jq — Avoid `!` in tested filters
+## zsh / harness `!` mangling — inline `!` can corrupt (jq `!=` and beyond)
 
-When writing a jq filter you will TEST interactively via the Claude Code Bash tool (which runs under the user's zsh), avoid the `!=` operator and bare `!`. zsh history expansion rewrites `!=` to `\!=` even inside a **single-quoted** multi-line variable assignment (`JQ='... .x != "y" ...'`), producing `jq: syntax error ... INVALID_CHARACTER` that does NOT reproduce in non-interactive bash (launchd, cron, `bash -c`, a `#!/usr/bin/env bash` script). The failure is therefore invisible in the actual runtime and only breaks your interactive unit test — a wasted cycle chasing a non-bug.
+An inline `!` passed through the Claude Code Bash tool can arrive mangled to `\!`. This is NOT limited to the jq `!=` operator: in the 2026-06 window the same class fired 3 times across 2 repos — (i) setup 2026-06-12, a `reject!` Ruby method inside a single-quoted heredoc body was corrupted; (ii) zp-SHIN 2026-06-16, a JS `!==` inside a heredoc was corrupted; (iii) zp-SHIN 2026-06-27, `printf '%s\n' '<!-- ... -->' >> file` silently wrote `<\!--` into the file (no error; the corruption survived into the committed artifact).
 
-Rewrite to drop the `!`:
+**Mechanism (corrected)**: the command shown in the transcript is clean and only the *executed result* carries the `\!` — so this is NOT zsh history expansion (which is inert inside single quotes). It is a `!`-escape at the harness layer, BEFORE the string reaches any shell. Therefore quote form, a `/bin/bash -c` wrapper, and a single-quoted heredoc do NOT prevent it — all of those live below the harness layer.
+
+**Current status (keep this note fresh)**: a 2026-07-06 probe reproduced NONE of the above (the 3 shapes + jq `!=`) — likely a harness fix. So this is a version-dependent known class, NOT an always-breaks rule; do NOT mechanically ban inline `!`.
+
+**jq case (still the most common trigger)**: when TEST-ing a jq filter interactively via the Bash tool, prefer the `| not` form over `!=` / bare `!`:
 
 - `.field != "value"` → `(.field == "value" | not)`
-- any `select(... != ...)` embedded in a shell-var-held filter → phrase the negation with `| not`
+- any `select(... != ...)` held in a shell var → phrase the negation with `| not`
 
-The deployed script (bash, no history expansion) runs the original filter fine; this is purely an interactive-test artifact, but rephrasing with `| not` makes the test match the runtime.
+The deployed script (bash, no history expansion) runs the original `!=` filter fine, so `| not` mainly makes the interactive test match the runtime.
 
-Origin: 2026-06-28 zp-issue-loops merge-gate — `JQ='... (.mergeStateStatus != "CLEAN") ...'` was mangled to `\!=` in the Bash tool (zsh) and failed jq compile; the launchd runner ran the identical filter cleanly. Rephrased as `(.mergeStateStatus == "CLEAN" | not)`.
+**Detection recipe**: right after writing `!`-containing content through the shell, byte-verify with `od -c <file>` or `grep -n '\\!' <file>` before committing. If you observe `\!`, switch to the Write/Edit tool to place the literal/script (all 3 sessions recovered via Write/Edit).
+
+Origin: 2026-06-28 zp-issue-loops merge-gate — `JQ='... (.mergeStateStatus != "CLEAN") ...'` mangled to `\!=` in the Bash tool while the launchd runner ran the identical filter cleanly; rephrased as `(.mergeStateStatus == "CLEAN" | not)`. Extended 2026-06 by the 3 heredoc/printf cases above. The candidate claim that a loop-body shell negation `! rg -q …` also corrupts is NOT included — no evidence, not reproduced.
 
 ## chain-two-sudo
 

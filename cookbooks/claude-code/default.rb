@@ -213,7 +213,7 @@ directory "#{node[:setup][:home]}/.claude/hooks" do
   action :create
 end
 
-%w(pre-commit-test.rb check-trailing-newline.rb check-whitespace-lines.rb block-co-authored-by.rb post-compact-remind.rb mcp-health-check.rb detect-prose-menu.rb).each do |file_name|
+%w(pre-commit-test.rb check-trailing-newline.rb check-whitespace-lines.rb block-co-authored-by.rb post-compact-remind.rb mcp-health-check.rb detect-prose-menu.rb warn-loop-repo-shared-tree.rb).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/hooks/#{file_name}" do
     source "files/hooks/#{file_name}"
     owner node[:setup][:user]
@@ -231,6 +231,17 @@ remote_file "#{node[:setup][:home]}/.claude/hooks/ruby-shim" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
+  action :create
+end
+
+# Loop-repo registry consumed by the warn-loop-repo-shared-tree PreToolUse hook.
+# Repos listed here share their working tree with an autonomous loop; the hook
+# emits a soft reminder to use a worktree for git mutations against them.
+remote_file "#{node[:setup][:home]}/.claude/loop-repos.json" do
+  source "files/loop-repos.json"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
   action :create
 end
 
@@ -260,7 +271,7 @@ directory "#{node[:setup][:home]}/.claude/docs" do
   action :create
 end
 
-%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md remote-trigger.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md planning-detail.md aws-iam-detail.md pve-lxc-detail.md docker-compose-detail.md ffi-audit.md claude-code-plugins.md adversarial-review-detail.md).each do |file_name|
+%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md remote-trigger.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md planning-detail.md aws-iam-detail.md pve-lxc-detail.md docker-compose-detail.md ffi-audit.md claude-code-plugins.md adversarial-review-detail.md negative-search-detail.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
     source "files/docs/#{file_name}"
     owner node[:setup][:user]
