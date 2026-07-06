@@ -318,7 +318,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve mcp-auth web-crawl setup-release-plz todo-reconcile).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve mcp-auth web-crawl setup-release-plz todo-reconcile todo-collect).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -423,6 +423,24 @@ end
     mode "644"
     action :create
   end
+end
+
+# Deploy TODO pipeline config (docs/todo-management.md). sources.yaml is the
+# managed PERSONAL-source list for /todo-collect; work sources live in the
+# unmanaged ~/.claude/todo/sources.local.yaml, merged at runtime by the skill.
+directory "#{node[:setup][:home]}/.claude/todo" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+remote_file "#{node[:setup][:home]}/.claude/todo/sources.yaml" do
+  source "files/todo/sources.yaml"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  action :create
 end
 
 # Clean up deprecated custom items replaced by official plugins.
