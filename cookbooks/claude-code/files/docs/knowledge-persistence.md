@@ -48,6 +48,8 @@ Save immediately — do not wait to be asked:
 
 **Never save**: secrets/credentials/tokens, routine refactors, info already in README, or temporary state (branch/WIP).
 
+**TODO-shaped content** (unfinished work — anything with a close condition) MUST carry `tags:["todo"]` + an explicit close condition; untagged TODOs are un-enumerable and rot. Store routing (work vs personal, TODO.md vs memory) and the collect/reconcile loops: see `~/.claude/docs/todo-management.md`.
+
 ### Save Format
 
 Structure each `knowledge` note as a self-contained block: Topic / Context (project, stack) / Problem / Solution / Why. (Adapt the labels for reviews — Rating/Pros/Cons/Verdict — or analyses — Findings/Recommendation/Risks.)
