@@ -318,7 +318,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve mcp-auth web-crawl setup-release-plz).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve mcp-auth web-crawl setup-release-plz todo-reconcile).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
