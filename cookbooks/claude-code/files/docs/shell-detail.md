@@ -95,3 +95,123 @@ Rewrite to drop the `!`:
 The deployed script (bash, no history expansion) runs the original filter fine; this is purely an interactive-test artifact, but rephrasing with `| not` makes the test match the runtime.
 
 Origin: 2026-06-28 zp-issue-loops merge-gate — `JQ='... (.mergeStateStatus != "CLEAN") ...'` was mangled to `\!=` in the Bash tool (zsh) and failed jq compile; the launchd runner ran the identical filter cleanly. Rephrased as `(.mergeStateStatus == "CLEAN" | not)`.
+
+## chain-two-sudo
+
+## Never Chain Two `sudo` Calls in a `!` Block
+
+```
+# Anti-pattern — second sudo silently doesn't run if its prompt isn't visible
+! sudo dpkg-divert --rename --add /usr/sbin/resolvconf && sudo systemctl restart tailscaled
+```
+
+The first `sudo` succeeds with password entry. The second `sudo` may either re-prompt (because the timestamp cache wasn't propagated through the chain in the user's shell) or appear to skip silently in the buffered terminal output. Either way, the user often sees only the first command's success message and assumes the chain completed. Diagnosing the silent skip costs a round-trip.
+
+Instead, split into numbered `!` items the user runs sequentially:
+
+```
+1. ! sudo dpkg-divert --rename --add /usr/sbin/resolvconf
+2. ! sudo systemctl restart tailscaled
+```
+
+Each gets its own clean prompt and visible result. The user can re-run any step in isolation if needed.
+
+Origin: 2026-04-26 — chained `sudo ... && sudo ...` `!` block, second sudo silently skipped.
+
+## ssh-while-read-drains-stdin
+
+## SSH inside `while-read` Loop Drains Parent Stdin
+
+**Wrong** (consumes pipe — silently skips host #2 onward):
+
+```bash
+while IFS= read -r entry; do
+    host=$(jq -r '.host' <<<"$entry")
+    output=$(ssh -i key root@"$host" "$cmd")  # ← reads parent stdin, drains pipe
+    ...
+done < <(jq -c '.[]' "$HOSTS_JSON")
+```
+
+**Right** — pass `-n` (or `< /dev/null`) so ssh's stdin goes to /dev/null and the parent pipe stays intact:
+
+```bash
+while IFS= read -r entry; do
+    host=$(jq -r '.host' <<<"$entry")
+    output=$(ssh -n -i key root@"$host" "$cmd")
+    ...
+done < <(jq -c '.[]' "$HOSTS_JSON")
+```
+
+Origin: 2026-05-06 PR #153 — bare ssh in jq-fed read loop dropped all hosts but the first.
+
+## multi-hop-shell-injection
+
+## Multi-hop Shell Injection (ssh → pct exec → bash)
+
+When running commands inside a PVE LXC via `ssh host 'pct exec <vmid> -- bash -c "..."'`, the command string traverses **three quoting layers** before reaching the inner bash:
+
+1. The local shell (this machine) interprets the outer single quotes
+2. The remote ssh shell (PVE host) interprets `pct exec ... -- bash -c "..."` — the `bash -c` argument is the double-quoted string
+3. The container's bash (CT) executes the contents of the double-quoted string
+
+Shell metacharacters — `()`, `$()`, backticks, `!` history expansion, `*` glob — inside the innermost string are interpreted at layer 2 (the remote ssh shell), NOT inside the container. This causes silent breakage:
+
+```
+ssh root@pve.host 'pct exec 111 -- bash -c "
+  echo === step 1.3: bin/setup (mitamae binary download) ===
+  ...
+"'
+# Layer 2 evaluates `(mitamae binary download)` as a subshell call to
+# the command `mitamae`, fails with `mitamae: command not found` (or
+# `syntax error near unexpected token (` when nested) — and the rest
+# of the multi-line block silently doesn't run.
+```
+
+**Clean pattern — single-quoted heredoc piped to `bash -s`**:
+
+```
+ssh root@pve.host "pct exec 111 -- bash -s" <<'EOF'
+set -euo pipefail
+echo === step 1.3: bin/setup (mitamae binary download) ===
+cd /root/setup && ./bin/setup
+EOF
+```
+
+Why this works:
+
+- The outer `"..."` only wraps the ssh command-line — no metacharacter interpretation inside the command body
+- `<<'EOF'` (single-quoted delimiter) tells the local shell to send the heredoc content **verbatim** with no expansion of `$VAR`, `$()`, `()`, backticks, or `!`
+- `bash -s` reads from stdin (the heredoc) instead of taking a `-c` argument, so the inner bash sees the script source character-for-character
+
+**Same trap fires for direct (non-nested) `bash -c '...'` too**: any `()` inside the single-quoted body — typically commentary parentheses in `echo === foo (bar) ===` — is interpreted as subshell grouping by the inner bash. Both forms break:
+
+```
+bash -c 'echo === foo (bar) ==='
+# bash: -c: line 1: syntax error near unexpected token '('
+
+ssh host 'echo === foo (bar) ==='
+# Same error at the remote shell, before reaching anything else
+```
+
+Fix options (any work):
+
+- Drop the parens: `echo === foo bar ===`
+- Escape: `echo "=== foo (bar) ==="` (use double quotes outside, or escape `\(\)`)
+- Heredoc: `bash <<'EOF' ... EOF` (no -c argument)
+
+Origin: 2026-05-06 / 2026-05-11 / 2026-06-07 — `syntax error near unexpected token '('` from commentary parens in `echo === ... ===` headers through three remote shells; structural, recurs per metacharacter unless heredoc + `bash -s` is the default.
+
+## sed-awk-over-python3
+
+## Prefer sed/awk over `python3 -c` for inline filesystem edits
+
+**Concrete substitutions**:
+
+| Task | python3 -c (avoid) | sed/awk (prefer) |
+|---|---|---|
+| Remove INI section `[name]` and its body | `python3 -c "import configparser; c=configparser.ConfigParser(); c.read('f'); c.remove_section('name') if 'name' in c else None; c.write(open('f','w'))"` | `sed -i.bak '/^\[name\]$/,/^\[/{/^\[name\]$/d; /^\[/!d}' f` |
+| Replace value of `key = ...` in INI | `python3 -c "..."` (multi-line) | `sed -i 's/^key = .*/key = newvalue/' f` |
+| Filter JSON one key | (Python possible) | `jq '.key' f` (preferred over either) |
+| Edit YAML | (Python possible) | `yq` if available, else sed for simple cases |
+
+Origin: 2026-05-11 — multi-line `python3 -c` paste-broke with `IndentationError`; one sed command worked first try.

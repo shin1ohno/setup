@@ -252,7 +252,7 @@ end
 # Compose orchestration via the compose_service DSL. buildkit: false
 # forces DOCKER_BUILDKIT=0 because roon-mcp runs in an unprivileged LXC
 # where BuildKit's mount namespacing trips up despite features_nesting
-# (see ~/.claude/rules/pve-lxc.md). The compose spec uses git-source
+# (see ~/.claude/docs/pve-lxc-detail.md). The compose spec uses git-source
 # context but NOT the `#ref:subdir` syntax, so classic builder is
 # sufficient.
 compose_service "roon-mcp" do

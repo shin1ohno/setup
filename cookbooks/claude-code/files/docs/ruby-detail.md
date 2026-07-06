@@ -363,3 +363,177 @@ Why batched: each fix-PR-CI-merge-redeploy cycle takes 5-10 min. Sequential fix 
 **Exception**: bug B is genuinely unobservable until bug A is fixed (e.g., container won't start until cert ownership fixed → can't probe ES auth until container running). Batching the related-bug-cluster is correct, but the dependency must be genuine — not "I noticed A first so let me ship A".
 
 Origin: 2026-05-09 ADR-0005 Phase 3b — 6 sequential fix PRs (~30-60 min waste); the IP-confusion bugs were diagnosable from the first ES "No route to host" via `pct exec <vmid> -- ip neigh show` (`INCOMPLETE`).
+
+## mitamae-compile-time
+
+## Mitamae evaluation model — top-level Ruby is compile-time
+
+The trap looks like this:
+
+```ruby
+# WRONG — `if` runs at compile time, before execute creates temp_path
+execute "generate config" do
+  command "bash gen.sh #{temp_path}"
+end
+
+if File.exist?(temp_path)            # always false on a clean run
+  remote_file output_path do
+    source temp_path                  # this resource never gets declared
+  end
+  file temp_path do
+    action :delete
+  end
+end
+```
+
+On a clean machine the `remote_file` and `file` resources are never added to the resource collection, so the deploy + cleanup never fires. On a second run, `temp_path` happens to exist from the first run's execute, the `if` evaluates true at compile time, and the deploy finally happens — leading to the false impression that the cookbook "needs 2-3 mitamae passes to converge".
+
+Same shape applies whenever the gate file is produced by an upstream cookbook in the same run: `if File.exist?("#{node[:setup][:home]}/.local/bin/claude")` evaluated at the top of `cookbooks/notion/default.rb` runs before `cookbooks/claude-code` has installed the binary.
+
+**Two correct patterns:**
+
+1. **Single-pipeline `execute`** (preferred when generate / install / cleanup are all shell-ish):
+
+   ```ruby
+   execute "generate and deploy config" do
+     command <<~CMD.strip
+       set -euo pipefail
+       bash gen.sh #{temp_path}
+       install -m 644 #{temp_path} #{output_path}
+       rm -f #{temp_path}
+     CMD
+   end
+   ```
+
+2. **String / Proc `only_if` at the resource level** (when you need separate resources, e.g. for `notifies`):
+
+   ```ruby
+   remote_file output_path do
+     source temp_path
+     notifies :run, "execute[restart svc]"
+     only_if "test -f #{temp_path}"          # shell command, evaluated at converge
+   end
+
+   local_ruby_block "merge config" do
+     block { ... }                            # Ruby code, evaluated at converge
+     only_if { File.exist?(temp_path) }       # Proc, evaluated at converge
+   end
+   ```
+
+`only_if` / `not_if` accept either a string (run as shell at converge time) or a Proc (run as Ruby at converge time). Both forms are lazy. Bare top-level Ruby is not.
+
+Origin: 2026-05 — `if File.exist?(temp_path)` compile-time bug across six cookbooks needing 2-3 converge passes.
+
+## auth-check-gate-profile
+
+## Auth-check gate must match the cookbook's actual invocation profile
+
+**Stronger pattern** — make the check_command attempt the actual resource read the cookbook will need:
+
+```ruby
+device_ssm_check = "aws ssm get-parameter --name /ssh-keys/devices/#{host}/private " \
+                   "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1"
+require_external_auth(check_command: device_ssm_check, ...)
+```
+
+vs the false gate:
+
+```ruby
+require_external_auth(check_command: "aws sts get-caller-identity", ...)  # passes against ANY default profile
+```
+
+Origin: 2026-04-25 neo bootstrap — ssh-keys gated on bare `aws sts get-caller-identity` but invoked SSM with `--profile sh1admn`; neo had only `default` → gate passed → silent fetch_ssm cascade. Origin: 2026-05-06 lxc-monitoring — bare gate passed on CT 111 (had `pve-bootstrap-ssm`, no `default`) → Grafana silently undeployed.
+
+## stdin-tty-guard
+
+## STDIN.tty? guard before any blocking STDIN read
+
+```ruby
+# WRONG — infinite loop in CI
+loop do
+  result = run_command(check, error: false)
+  return if result.exit_status == 0
+  STDIN.gets  # nil immediately on non-TTY → loop never blocks → spin forever
+end
+
+# RIGHT — fail-soft skip in non-TTY
+unless STDIN.tty?
+  MItamae.logger.warn("[bootstrap] non-TTY context — skipping interactive gate")
+  yield if block_given?
+  return
+end
+```
+
+Origin: 2026-04-25 — `require_external_auth` helper hung 3 CI runs 1+ hr each (non-TTY `gets` returned nil); local TTY hid it.
+
+## guard-runtime-privilege
+
+## Guard must be evaluatable under mitamae's actual runtime privilege
+
+**If NOT_READABLE, in order of preference:**
+
+1. **Hash sentinel (preferred — privilege-free)**: in the same placement `execute`, write a hash of the staged content to a user-space sentinel, and guard on the sentinel vs the staging file — works even on non-TTY fleet hosts:
+
+   ```ruby
+   execute "install setup-sudo-timestamp" do
+     command "sudo install -m 0440 -o root -g wheel #{staging} #{dest} && " \
+             "shasum -a 256 #{staging} > #{sentinel}"
+     not_if "test -f #{sentinel} && shasum -a 256 -c #{sentinel} >/dev/null 2>&1"
+   end
+   ```
+
+2. **`sudo diff -q`** (darwin **interactive** apply only): relies on a warm sudo timestamp (mac-sudo global timestamp / `bin/apply` keepalive). Non-TTY runs (launchd timer, auto-mitamae) cannot prompt for sudo, so this fails there — never use it in a fleet cookbook.
+
+Origin: 2026-06-15 mac-sudo (PR #428/#505) — `not_if "diff -q <staging> /etc/sudoers.d/setup-sudo-timestamp 2>/dev/null"` could not read its own `install -m 0440 -o root -g wheel` destination as non-root, so it was always false; live-confirmed NOT_READABLE + re-install-every-apply on a real host 2026-07-05. The in-cookbook comment "sudoers.d is 0755 so the diff itself needs no sudo" was the root misconception.
+
+## owner-group-string
+
+## mitamae directory/file `owner`/`group` MUST be String, not Integer
+
+**Wrong** (silently passes CI, fails on first apply):
+
+```ruby
+directory "/var/lib/myservice/state" do
+  owner 1000
+  group 1000
+  mode "755"
+end
+```
+
+**Right** (use string form even for numeric UIDs):
+
+```ruby
+directory "/var/lib/myservice/state" do
+  owner "1000"
+  group "1000"
+  mode "755"
+end
+```
+
+The String requirement is the same whether the value is a username (`"shin1ohno"`) or a numeric UID stringified (`"1000"`). The latter is the only safe form when the cookbook needs an explicit UID that does not match a `useradd`-created system user — typical for container-mounted state directories where the `owner` must match a docker compose `user: "${UID}:${GID}"` directive.
+
+Origin: 2026-05-05 — `owner 1000` (Integer) for `/var/lib/roon-mcp/state/`; CI passed, mitamae apply on CT 108 failed with `InvalidTypeError`.
+
+## ip-literal-devices-json
+
+## IP literal must come from contracts/devices.json (plan-phase probe)
+
+This catches the **CT-ID-shaped IP confusion**: hardcoded `192.168.1.{112,113,114}` matches CT IDs visually but the real LXC IPs are `.77/.78/.79`. The two are visually similar but only the real values route — ARP `ip neigh show` reports `INCOMPLETE` for the wrong ones, ES discovery throws `connect_exception: No route to host` from Java/Netty, and `pct exec` ICMP ping confusingly succeeds (kernel kept the L2 path) so the bug looks like an ES configuration issue.
+
+Origin: 2026-05-09 ADR-0005 Phase 3b — ~3 hrs debugging ES discovery failures from two cookbook files (`elasticsearch.yml.tmpl` seed_hosts + `pve/lxc-es-{0,1,2}.rb` `transport_host`) hardcoding CT-ID-shaped IPs; `contracts/devices.json` had the correct `.77/.78/.79` all along.
+
+## dry-run-sandbox
+
+## `mitamae --dry-run` requires `dangerouslyDisableSandbox`
+
+`mitamae local <role>.rb --dry-run` (and any wrapper, e.g. `./bin/apply --dry-run`) fails inside the Claude Code command sandbox with `touch: /tmp/<rand>: Operation not permitted` → `Command 'touch /tmp/<rand>' failed`. mitamae's `remote_file` resource probes writability with a `touch /tmp/<rand>` during the converge/dry-run pass, and the command sandbox only permits writes under `/tmp/claude` + `$TMPDIR`. The error aborts on the FIRST `remote_file` resource — often an unrelated cookbook (e.g. git config) — before reaching the cookbook you are validating, so it reads like a cookbook bug rather than a sandbox limit.
+
+Origin: 2026-06-28 zp-issue-loops — `./bin/apply --overlay-only --dry-run` blocked on `touch /tmp/...: Operation not permitted` at the git cookbook until the sandbox was disabled.
+
+## mruby-file-api
+
+## mruby API constraints — File.mtime / File.stat not available
+
+**Why CI cannot catch this**: the syntax-check job uses the system Ruby (CRuby). Only running `mitamae local <role>.rb` under the real mruby binary (or `mitamae --dry-run`) on a target host exposes the missing method. `mitamae --dry-run` on the dev box also uses mruby, so a dry-run on any LXC is a faster feedback loop than waiting for a production apply failure.
+
+Origin: 2026-06-10 KMS-reduction ES snapshot cookbook — `skip_if: -> { ... File.mtime(sentinel) ... }` passed CI (CRuby), every ES-node apply aborted `NoMethodError: undefined method 'mtime'` (mruby). The mruby runtime is the only gate that counts.

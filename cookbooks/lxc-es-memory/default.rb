@@ -7,7 +7,7 @@
 # embeddings computed externally via OpenAI text-embedding-3-small).
 #
 # Runs as native systemd units + a Python venv (NOT docker). Per the PVE LXC
-# design gate (~/.claude/rules/pve-lxc.md): a single-purpose service LXC
+# design gate (~/.claude/docs/pve-lxc-detail.md): a single-purpose service LXC
 # prefers apt+venv+systemd over docker-compose, avoiding the docker-in-LXC bug
 # class (bind-mount UID mapping, .env shell-interpretation, BuildKit failures,
 # image pulls). Two units share one venv:
@@ -35,7 +35,7 @@ venv_dir = "#{base_dir}/venv"
 env_path = "#{base_dir}/es-memory.env"
 
 # Debian 13 minimal LXC ships without python3-venv/pip — see
-# ~/.claude/rules/pve-lxc.md "Debian 13 Minimal LXC — Mandatory Bootstrap".
+# ~/.claude/docs/ruby-detail.md "Debian 13 Minimal LXC — Mandatory Bootstrap".
 execute "install es-memory python deps" do
   command "apt-get update -qq && apt-get install -y python3 python3-venv python3-pip ca-certificates"
   not_if "dpkg -s python3-venv python3-pip >/dev/null 2>&1"

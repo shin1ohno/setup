@@ -35,9 +35,9 @@ Absent an explicit opt-in OR an established convention, always go PR branch → 
 
 Origin: 2026-05-05 PVE migration — asked PR-vs-direct ceremony when git-log already answered.
 
-**Deny-list scope note**: The `Bash(git push:*)` deny entry matches commands that *start with* `git push`. A compound command `cd /repo && git push ...` bypasses the matcher. This is a known limitation. The behavioral rule (always present the blocked push as `! git push ...` and let the user run it) is the reliable enforcement mechanism — not the deny entry alone. Do not exploit the compound-form loophole to auto-push.
+**Deny-list scope note**: The `Bash(git push:*)` deny entry only matches commands that *start with* `git push` — a compound `cd /repo && git push ...`, or a non-GitHub remote whose URL form is exotic (CodeCommit `codecommit::...`, GitLab via custom remote, internal Gitea), can bypass the matcher. The behavioral rule is the reliable enforcement, not the deny entry: always present a blocked push as `! git push <remote> <branch>` and let the user run it, and apply the same `!` user-authorization rule manually for any push to a non-GitHub remote. Do not exploit the compound-form loophole to auto-push; treat the deny entry as a backstop, not a complete safety net.
 
-**CodeCommit (and other non-`origin` remote URL forms) also bypass the deny entry**: when the remote URL is `codecommit::ap-northeast-1://<profile>@<repo>` instead of `origin → github.com:...`, the command shape `git push origin <branch>` for that repo translates into the codecommit transport at the remote-helper layer — but in some sessions the deny matcher did NOT intercept the push and it ran inline as a regular Bash call (the 2026-05-06 retro session pushed a recovery branch directly to a CodeCommit remote without `!` confirmation). The orphaned-commit recovery accidentally became auto-execute. The fix is behavioral, not a regex change: **for any push to a non-GitHub remote — CodeCommit, GitLab via custom remote, internal Gitea — apply the same `! git push <remote> <branch>` user-authorization rule manually.** Treat the deny entry as a backstop that catches GitHub-flavored pushes, not a complete safety net. When the URL form is exotic, the rule lives in the assistant's behavior, not the deny config.
+Detail (deny-matcher mechanics + CodeCommit bypass narrative + origin): see `~/.claude/docs/git-commit-detail.md#deny-list-nongithub-remote`.
 
 ## Merge Execution Default — self-execute, plan-scoped authorization
 
@@ -49,7 +49,7 @@ When a PR you created has all required checks green, do NOT present `! gh pr mer
 
 **Fallback**: only when `gh pr merge` is denied by project-local settings (deny/ask) do you revert to presenting `! gh pr merge <n> --squash --delete-branch` for the user.
 
-Origin: 2026-07 — 3 sessions / 2 repos (setup #624, #632; sage #11→#21) each re-presented `! gh pr merge` after the user had already authorized merging in chat, forcing a re-authorization round-trip; #13–#21 merged autonomously with no objection once the pattern was corrected.
+Origin: 2026-07 — re-presented `! gh pr merge` after the user had already authorized merging, forcing a re-authorization round-trip. Detail: see `~/.claude/docs/git-commit-detail.md#merge-execution-default`.
 
 ## Branch Check Before First Commit
 
@@ -119,15 +119,9 @@ Origin: 2026-04-25 `neo` host add — `home-monitor/ssh-devices.tf` discovered a
 
 ### Re-check after any long-running background operation
 
-The check above covers the start of a task. It does not cover mid-task branch drift. Re-run `git branch --show-current` before **every** `git add` / `git commit` when *any* of these happened since your last commit on this repo:
+The check above covers the start of a task. It does not cover mid-task branch drift. Re-run `git branch --show-current` before **every** `git add` / `git commit` when *any* long-running or async operation happened since your last commit on this repo — a background Bash task (`run_in_background: true`), a repo-writing sub-agent, a user-run `!` pause, an AskUserQuestion / credential-retry gap, a `Shell cwd was reset to ...` line between invocations, or a daemon / autonomous loop sharing the working tree. Any wall-clock gap between two of your tool calls is a window a repo-sharing async process can act in, even if you probed immediately before the gap opened. For a repo KNOWN to host a recurring autonomous git loop sharing the working tree, default to `git worktree add /private/tmp/<name>-wt <branch>` unconditionally — do not gate worktree-vs-shared-tree on a liveness probe.
 
-- a background Bash task ran (`run_in_background: true`) — `terraform apply/plan`, `cargo test`, `npm run build`, etc.
-- a sub-agent (Explore / general-purpose / Plan) ran with write access to the repo, or executed Bash in it
-- the conversation paused waiting on a user-run `!` command (`! git push`, `! sudo …`, the user is likely at a shell and may switch branches)
-- the user sent a message that could plausibly include a `git checkout` on their side
-- the conversation paused on an **AskUserQuestion round-trip**, or an interactive **credential retry** (GPG pinentry timeout, sudo password prompt, 2FA) — any wall-clock gap between two of your tool calls is a window a repo-sharing async process can act in, *even if you probed for it immediately before the gap opened*. A point-in-time "is the loop running?" check taken at task start does not cover the gaps that open later in the same task
-- **the previous Bash invocation ended with `Shell cwd was reset to ...`** — the Bash sandbox does not persist branch checkouts across CWD resets. Even if the Bash log line `Switched to a new branch 'fix/X'` is visible, the next Bash invocation may evaluate `git status` against a *different* branch (typically the session-default one, which can be a long-lived `feat/*` branch left over from another conversation). This is the most common failure mode for misplaced commits in long sessions.
-- **a daemon or autonomous loop also operates on this repo** (launchd job, cron, a `claude -p` watcher, a CI runner that shares the working tree) — the HEAD, index, and tracked files can change between your Bash invocations with NO trace in this conversation. Before the first `git add`, confirm the loop is paused (kill-switch file, `launchctl stop`, kill by PID) and re-probe `git status` twice for stability. Detection: `git branch --show-current` returns a branch you did not create, OR `git status` shows modifications that appear/vanish between two probes. When the shared working tree may be in concurrent use (the user editing in another terminal, or an unrelated feature branch checked out), do NOT `git checkout` it — that moves the shared HEAD out from under them. Use `git worktree add <path> -b <branch> origin/main` to work on an isolated checkout without touching the shared HEAD. **When a repo is KNOWN to host a recurring autonomous git loop that shares the working tree (a scheduled `claude -p` runner, a CI agent that commits, a self-healing apply loop), do not gate worktree-vs-shared-tree on a liveness probe at all — default to `git worktree add /private/tmp/<name>-wt <branch>` unconditionally for every manual git op in that repo.** The loop can seize the tree during any later wall-clock gap (an AskUserQuestion wait, a GPG retry, a slow build) even when it was absent at your first check; a passing point-in-time probe is not evidence the tree stays yours for the whole task. Symptom of getting this wrong: the shared tree ends up on a branch you did not create, with a stale `index.lock` and your staged change stranded on another task's branch.
+Detail (full per-case trigger list + daemon/worktree mechanics + origins): see `~/.claude/docs/git-commit-detail.md#recheck-after-background-op`.
 
 The branch you started the task on is not the branch you are necessarily on now. Committing on the wrong branch requires a cherry-pick + reset cleanup cycle that wastes a turn and leaves a confusing history.
 
@@ -142,8 +136,6 @@ test "$(git -C /Users/sh1/ManagedProjects/setup branch --show-current)" = "fix/X
 ```
 
 If the `branch --show-current` test fails the chain aborts before staging, surfacing the drift immediately rather than after the commit lands on the wrong branch. **Do NOT** split `git checkout -b` into a separate Bash invocation from the commit — branch context does not survive the CWD reset between calls.
-
-Origin: 2026-04-22 commit on wrong branch after background `terraform apply`; strengthened 2026-05-06 after two misplaced commits where `git checkout -b` ran in a separate Bash call from `git commit` (recovery: cherry-pick + `git branch -f <branch> origin/main`); 2026-06-19 a bare `cd <dir>` used to "enter" the repo within one Bash call still drifted at the next CWD reset AND triggered a shell tree-hook that masked the reset line — using `git -C /absolute/path` on every git call (never a leading `cd`) eliminates the ambiguity.
 
 ### Cherry-pick is a commit operation — branch check applies
 
@@ -161,26 +153,9 @@ Origin: 2026-04-25 cherry-picked onto the user's unrelated WIP branch.
 
 ### Branch overlap pre-flight: open PR file scope
 
-Before cutting a feature branch from `origin/main` while another fix-PR is still open, check whether the fix touches files the feature plans to modify. A feature branched from `origin/main` does NOT inherit changes from an open sibling PR — when that sibling later merges, the feature's branch is silently regression-prone for the duration the user keeps deploying from it.
+Before cutting a feature branch from `origin/main` while another fix-PR is still open, check whether the fix touches files the feature plans to modify. A feature branched from `origin/main` does NOT inherit changes from an open sibling PR — when that sibling later merges, the feature's branch is silently regression-prone for the duration the user keeps deploying from it. Cross-reference your planned file edits against the open-PR file list; if they overlap, choose explicitly via AskUserQuestion and **default to branching from the open fix-PR's HEAD** (`git checkout -b feat/<topic> origin/<fix-branch>`), rebasing onto `main` after the fix merges.
 
-```
-# List open PRs and the files they change.
-gh pr list --state open --json number,headRefName,files \
-  --jq '.[] | "#\(.number) \(.headRefName) — \(.files | map(.path) | join(", "))"'
-```
-
-Before `git checkout -b feat/<topic> origin/main`:
-
-1. List your planned file edits (from the plan, or from the AskUserQuestion contract decisions)
-2. Cross-reference against the open-PR file list
-3. If overlap exists, choose explicitly via AskUserQuestion:
-   - **(a) branch from the open fix-PR's HEAD** (`git checkout -b feat/<topic> origin/<fix-branch>`) — feature inherits the fix; rebase onto main after the fix merges
-   - **(b) wait for the fix-PR to merge first**, then branch from updated `origin/main`
-   - **(c) branch from main now and accept the cherry-pick later** (only when the fix-PR is unlikely to land before you ship)
-
-Default to **(a)**. The cost of cherry-picking later is one extra round-trip the user must notice on their own; the cost of (a) is a routine post-merge rebase.
-
-Origin: 2026-04-25 weave — feature branch cut from main lacked an open sibling fix, regressing BLE pairing on redeploy.
+Detail (`gh pr list` file-scope query + full 3-option choice + origin): see `~/.claude/docs/git-commit-detail.md#branch-overlap-preflight`.
 
 ## Branch Cleanup Survey
 
@@ -234,9 +209,7 @@ Origin: 2026-05-07 — `--body-file /tmp/...` denied right after a Write the ver
 
 ### Cross-sandbox TMPDIR isolation — never reference a `$TMPDIR` file across sandbox modes
 
-The Write tool and ordinary Bash commands run in the Claude Code command sandbox, where `$TMPDIR` is remapped to a sandbox-private directory. Network commands (`gh pr create/edit`, see the next section) must run with `dangerouslyDisableSandbox: true`, where `$TMPDIR` resolves to the REAL OS temp dir (`/var/folders/.../T` on macOS) — a different path. A `cat "$TMPDIR/body.md"` inside the sandbox-disabled invocation then returns 0 bytes with NO error, and the PR is created with a silently empty body.
-
-Rule: never reference a `$TMPDIR`-relative path in a `dangerouslyDisableSandbox` invocation when the file was written under the normal command sandbox. Construct the body inline via heredoc piped to `--body-file -` in the same sandbox-disabled invocation — no file reference:
+Rule: never reference a `$TMPDIR`-relative path in a `dangerouslyDisableSandbox` invocation when the file was written under the normal command sandbox — the sandbox `$TMPDIR` and the real-OS `$TMPDIR` a sandbox-disabled `gh pr create/edit` sees are different paths, so `cat "$TMPDIR/body.md"` returns 0 bytes with NO error and the PR ships a blank body. Construct the body inline via heredoc piped to `--body-file -` in the same sandbox-disabled invocation — no file reference:
 
 ```
 gh pr create --base main --title "..." --body-file - <<'EOF'
@@ -249,16 +222,11 @@ EOF
 
 This sidesteps all three `--body-file` failure modes at once (backtick mis-parse, harness verifier window, cross-sandbox TMPDIR). Detection signal: the PR body is blank even though you "wrote" it and no command errored.
 
-Origin: 2026-06-26 PR #556 — body written to the command-sandbox TMPDIR, `gh pr create` ran sandbox-disabled with the real TMPDIR → `cat "$TMPDIR/body.md"` returned empty → blank PR body, no error surfaced.
+**User-run `!` commands are outside the isolation boundary too**: the scratchpad (`/private/tmp/claude-501/...`) and the command-sandbox `$TMPDIR` are invisible from the user's terminal. Writing one of those paths into a `!` command you present for the user to run — `git commit -F <path>`, an `scp`/`rsync` source, any command taking `-f`/`-F`/`--file` — is a composition bug: the user's run fails with `fatal: could not read log file <path>: No such file or directory`. Fix by inlining via heredoc (`git commit -F - <<'EOF' … EOF`) or writing the content to a user-visible path under the target repo's `.git/`.
 
-**User-run `!` commands are outside the isolation boundary too**: the scratchpad (`/private/tmp/claude-501/...`) and the command-sandbox `$TMPDIR` are invisible from the user's terminal. The moment you write one of those paths into a `!` command you present for the user to run — `git commit -F <path>`, an `scp`/`rsync` copy source, any command taking `-f`/`-F`/`--file` — it is a composition bug: the user's run fails with `fatal: could not read log file <path>: No such file or directory`. Fix, in order:
+Pre-emit check: before writing out any `!` block, scan it for a `/private/tmp/claude-501` or sandbox-`$TMPDIR` path. If one is present, do not present it — switch to the inline heredoc or `.git/`-path form.
 
-1. **Inline it** — if the content is short, use no file: write `git commit -F - <<'EOF' … EOF` (or `gh pr create --body-file - <<'EOF' … EOF`) directly in the `!` block, same heredoc solution as above.
-2. **Put it on a user-visible path** — for long multi-line content, `Write` it under the target repo's `.git/` (e.g. `.git/<topic>-commit-msg.txt`, the same convention as `COMMIT_EDITMSG`), then present the relative-path form `! git commit -F .git/<topic>-commit-msg.txt` (the user `cd`s into the repo first). `.git/` is not tracked, so it does not dirty `git status`; do NOT use a bare tmp file inside the repo tree — that adds untracked noise and mis-commit risk.
-
-Pre-emit check: before writing out any `!` block, scan it for a `/private/tmp/claude-501` or sandbox-`$TMPDIR` path. If one is present, do not present it — switch to option 1 or 2.
-
-Origin: 2026-07 session 031f3049 — a `git commit -F <scratchpad path>` presented for the user (GPG signing) failed with `could not read log file`; recovered by moving the message under `.git/`.
+Detail (mechanism + 2-option remediation + origins): see `~/.claude/docs/git-commit-detail.md#cross-sandbox-tmpdir`.
 
 ## gh CLI network access requires `dangerouslyDisableSandbox`
 

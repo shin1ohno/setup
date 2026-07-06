@@ -3,7 +3,7 @@
 # lxc-kibana (CT 115): Kibana 8.x — log analytics UI for the 3-node ES
 # cluster (es-0/1/2). Single instance. Native apt + systemd install
 # (Phase 3b retro: docker-compose deployment was replaced because of
-# structural docker-isms — see ~/.claude/rules/pve-lxc.md "Docker-in-LXC
+# structural docker-isms — see ~/.claude/docs/pve-lxc-detail.md "Docker-in-LXC
 # vs apt+systemd").
 #
 # Stack:
