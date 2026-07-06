@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "notify-send --urgency=low 'Claude Code' 'Waiting for input' 2>/dev/null; true"
+            "command": "if command -v osascript >/dev/null 2>&1; then osascript -e 'display notification \"Waiting for input\" with title \"Claude Code\"' 2>/dev/null; else notify-send --urgency=low 'Claude Code' 'Waiting for input' 2>/dev/null; fi; true"
           }
         ]
       }
