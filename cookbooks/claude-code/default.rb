@@ -242,7 +242,7 @@ directory "#{node[:setup][:home]}/.claude/rules" do
   action :create
 end
 
-%w(ruby.md shell.md infrastructure.md aws-iam.md pve-lxc.md docker-compose.md sub-agents.md git-commit.md mcp-config.md rust.md debugging.md claude-code-plugins.md editing.md planning.md ffi-audit.md adversarial-review.md).each do |file_name|
+%w(ruby.md shell.md infrastructure.md aws-iam.md docker-compose.md sub-agents.md git-commit.md mcp-config.md rust.md debugging.md editing.md planning.md adversarial-review.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
     source "files/rules/#{file_name}"
     owner node[:setup][:user]
@@ -260,7 +260,7 @@ directory "#{node[:setup][:home]}/.claude/docs" do
   action :create
 end
 
-%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md remote-trigger.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md rust-detail.md claude-code-plugins-detail.md planning-detail.md aws-iam-detail.md pve-lxc-detail.md docker-compose-detail.md).each do |file_name|
+%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md remote-trigger.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md planning-detail.md aws-iam-detail.md pve-lxc-detail.md docker-compose-detail.md ffi-audit.md claude-code-plugins.md adversarial-review-detail.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
     source "files/docs/#{file_name}"
     owner node[:setup][:user]
@@ -434,24 +434,41 @@ directory "#{node[:setup][:home]}/.claude/skills/audit-claudemd" do
   action :delete
 end
 
-# Clean up rules/ files moved to docs/ (or inlined into CLAUDE.md) by #638/#639.
-# mitamae only creates files from the deploy lists above — it never prunes
-# entries removed from those lists, so every deployed host keeps loading the
-# stale rules/ copies (~128K per session) until they are deleted explicitly.
+# Clean up rules/ files moved to docs/ (or inlined into CLAUDE.md) by #638/#639
+# and the rules-diet round 2 (ffi-audit / claude-code-plugins / pve-lxc demoted
+# to docs/). mitamae only creates files from the deploy lists above — it never
+# prunes entries removed from those lists, so every deployed host keeps loading
+# the stale rules/ copies (~128K per session) until they are deleted explicitly.
 %w(
   architecture.md
+  claude-code-plugins.md
   cookbook-prs.md
   data-collection.md
+  ffi-audit.md
   frontend-dev.md
   ios-build.md
   kibana-lens.md
   mise-migration.md
+  pve-lxc.md
   remote-trigger.md
   tailscale.md
   weave-protocol.md
   writing.md
 ).each do |file_name|
   file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
+    action :delete
+  end
+end
+
+# Clean up docs/ detail files whose content was merged into a sibling doc by
+# the rules-diet round 2: claude-code-plugins-detail.md → merged into its parent
+# (now docs/claude-code-plugins.md); rust-detail.md → merged into
+# docs/release-plz.md#crates-io-token-scopes. Same non-pruning caveat as above.
+%w(
+  claude-code-plugins-detail.md
+  rust-detail.md
+).each do |file_name|
+  file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
     action :delete
   end
 end

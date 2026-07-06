@@ -17,7 +17,7 @@ Load before `gh pr create` on a cookbook change. Each check catches a recurring 
    ```
    Unquoted `${PASSWORD}` with metacharacters → `bash: syntax error near unexpected token (`, container marks `unhealthy` even when service is functional.
 
-3. **Bind-mount host UID matches cookbook owner**: every `directory ... owner` resource on a bind-mount path must match the host UID set in the host pre-bootstrap (typically `100000:100000` on PVE unprivileged LXC for in-container UID 0, or `runtime_uid + 100000` for in-container service UIDs). Cross-check with the PVE host's `chown` setup in `phase-3a-lxc-create.md` or equivalent. See `~/.claude/rules/pve-lxc.md` "Unprivileged LXC Bind-Mount Host Ownership Mapping".
+3. **Bind-mount host UID matches cookbook owner**: every `directory ... owner` resource on a bind-mount path must match the host UID set in the host pre-bootstrap (typically `100000:100000` on PVE unprivileged LXC for in-container UID 0, or `runtime_uid + 100000` for in-container service UIDs). Cross-check with the PVE host's `chown` setup in `phase-3a-lxc-create.md` or equivalent. See `~/.claude/docs/pve-lxc-detail.md` "Unprivileged LXC Bind-Mount Host Ownership Mapping".
 
 4. **UDP-receiving container has `network_mode: host`**: any docker-compose service that listens on UDP (syslog, statsd, DNS) MUST have `network_mode: host`. docker-proxy unreliably forwards UDP. Probe:
    ```

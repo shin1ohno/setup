@@ -4,6 +4,12 @@ This file is the detail companion to `~/.claude/rules/debugging.md`. The summary
 
 Anchor convention: each section's heading slug matches the pointer line in the summary file.
 
+## auth-gate-changes-live-token
+
+Synthetic-token tests encode your assumption about the token shape — the exact thing an auth tightening puts at risk. A synthetic token you mint reflects the claim shape you *expect*; the live issuer may mint something different (e.g. an empty `aud=[]`), so only a real token round-trip confirms the new check passes for the values actually issued.
+
+Origin: 2026-06-07 synthetic-token PASS, real `aud=[]`.
+
 ## noisy-non-failure-pattern
 
 The trap: warning-driven debugging starts from "this looks broken, fix it" and skips the function test. The fix often disables the OS feature that was holding things together. Function-test first, classify the noise, then act.
@@ -55,6 +61,20 @@ If 3 hypotheses each have 50/50 odds and the rebuild costs 5 min, sequential eva
 This rule exists because the 2026-04-28 roon-mcp / SSE session ran ~7 docker rebuild cycles back-to-back — each cycle added one of {snake_case session_id, trailing slash on `/messages/`, `X-Accel-Buffering: no` header, `charset=utf-8` on content-type, default `sse_path = "/sse"`} — every one of which was diagnosable from the same `curl --hex-dump` against the cognee reference server before the first rebuild. ~35 minutes of build wall-clock recoverable by batching.
 
 ## wire-protocol-reverse-engineering
+
+Capture the reference wire bytes before writing any implementation:
+
+```
+curl -sN -H "Accept: text/event-stream" '<reference-url>' | head -c 400 | xxd
+curl -sIL '<reference-url>'   # response headers
+```
+
+Diff your output against the reference at the same hex-dump granularity:
+
+```
+diff <(curl -sN '<reference>' | head -c 400 | xxd) \
+     <(curl -sN '<new>'       | head -c 400 | xxd)
+```
 
 **Anti-pattern**: iterating on format hypotheses one-at-a-time across expensive rebuilds without ground truth. Common divergences hex-dump catches in one pass:
 
@@ -136,7 +156,22 @@ For tools whose tabular output has stable column counts (most do), awk is shorte
 
 This rule exists because in the 2026-04-22 session, three cascaded "hard-coded stale value" failures — systemd ExecStart pointing at a deleted `configs/` path, stale release binary predating the config migration, and Hue token IP pinned to a rotated DHCP lease — would each have been caught by asking "is this value persistently hard-coded against a thing that rotates?" before starting implementation. Instead, each was discovered sequentially, wasting restart cycles.
 
+## verify-remediation-feasible
+
+The "share one subscription/login across two hosts" probe-before-execute pair, in full: inspect the credential file's token structure (`accessToken`/`refreshToken`/`expiresAt`) for rotating-refresh-token semantics BEFORE copying it — a shared rotating token invalidates whichever host refreshes second; the correct mechanism is an independent login per host (see `~/.claude/docs/claude-cli-headless.md`). Origin: 2026-07-04 memory-v2 keeper — probing the token structure surfaced the refresh-rotation conflict before building; a separate `claude setup-token` per host was the fix.
+
+Origin: 2026-05-30 chosen snapshot-restore had zero snapshots.
+
 ## chain-verify-with-fix
+
+Composed form — fix and verify in one `!` block so the user cannot skip the verify:
+
+```
+! aws configure --profile sh1admn && \
+  aws ssm get-parameter --name /ssh-keys/devices/neo/private \
+    --with-decryption --profile sh1admn --region ap-northeast-1 > /dev/null && \
+  echo OK
+```
 
 Versus the anti-pattern of presenting fix and verify as separate steps the user is expected to chain mentally:
 
@@ -152,3 +187,16 @@ Users skip "separately" verifies, especially under time pressure or when the fix
 **When verify cannot be composed** (e.g. the fix is `aws configure` interactive, which can't be piped): explicitly mark the verify command as **required before retrying the main task** — not as a suggestion. Words like "and confirm with" or "before retrying, run". Not "you can also check".
 
 This rule exists because the 2026-04-25 neo bootstrap session presented `aws configure --profile sh1admn` and the SSM-read verify as separate steps. The user configured the profile, skipped the verify, and re-ran mitamae — which then failed deeper (UnrecognizedClientException because the credentials had been clobbered by an earlier `aws configure set` with empty values). 4-5 round-trips of diagnostic followed.
+
+## confirm-suspected-driver-deployed
+
+Probe sequence (30 seconds, avoids the full investigation arc on a ghost process):
+
+```bash
+ssh root@<host> "find /root /etc/cron.d /etc/cron.* /var/spool/cron -name '<pattern>' 2>/dev/null"
+ssh root@<host> "pgrep -a -f '<script-name>' || echo NOT_RUNNING"
+ssh root@<host> "grep -rs '<script-name>' /etc/cron* /var/spool/cron || echo NO_CRON"
+ssh root@<host> "systemctl list-timers --all | grep '<name>' || echo NO_TIMER"
+```
+
+Origin: 2026-06-10 optimized a script not deployed on target.

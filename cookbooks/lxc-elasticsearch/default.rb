@@ -3,7 +3,7 @@
 # lxc-elasticsearch (CT 112 / 113 / 114): Elasticsearch 8.x master+data+ingest
 # node, one of a 3-node cluster. Native apt + systemd install (Phase 3b
 # retro: docker-compose deployment was replaced because 4 of 8 cookbook
-# bugs were structural docker-isms — see ~/.claude/rules/pve-lxc.md
+# bugs were structural docker-isms — see ~/.claude/docs/pve-lxc-detail.md
 # "Docker-in-LXC vs apt+systemd"). The same cookbook ships to all three
 # CTs; per-LXC divergence is parameterised through node attributes set
 # in the pve/lxc-es-{0,1,2}.rb entry recipes:

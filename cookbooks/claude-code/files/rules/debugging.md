@@ -40,7 +40,9 @@ For a change to an authentication / authorization gate on a RUNNING system (JWT 
 1. Decode a real token from the actual live issuer (not a synthetic one) and confirm the new check passes for its real claim values.
 2. After deploy, round-trip a real client request and observe accept/reject on the receiving system.
 
-Synthetic-token tests encode your assumption about the token shape — the exact thing an auth tightening puts at risk. See the design-time counterpart in `~/.claude/rules/adversarial-review.md` "Live Token Round-Trip Gate". Origin: 2026-06-07 synthetic-token PASS, real `aud=[]`.
+See the design-time counterpart in `~/.claude/rules/adversarial-review.md` "Live Token Round-Trip Gate".
+
+Detail (why synthetic tokens are insufficient + origin): see `~/.claude/docs/debugging-detail.md#auth-gate-changes-live-token`.
 
 ## When to Add Observation Tooling Proactively
 
@@ -91,22 +93,14 @@ When implementing a transport, webhook receiver, or protocol endpoint to satisfy
 Sequence:
 
 1. Identify the nearest working reference deployment (sibling vendor endpoint, open-source server, in-tree example — there is almost always one)
-2. Capture the wire bytes:
-   ```
-   curl -sN -H "Accept: text/event-stream" '<reference-url>' | head -c 400 | xxd
-   curl -sIL '<reference-url>'   # response headers
-   ```
+2. Capture the wire bytes (raw body + response headers via `curl … | xxd`; exact commands in Detail)
 3. Write the implementation
-4. Diff your output against the reference at the same hex-dump granularity:
-   ```
-   diff <(curl -sN '<reference>' | head -c 400 | xxd) \
-        <(curl -sN '<new>'       | head -c 400 | xxd)
-   ```
+4. Diff your output against the reference at the same hex-dump granularity (exact `diff <(curl…) <(curl…)` form in Detail)
 5. Fix every divergence in **one** batch (per Fix-Loop Escalation rule above)
 
 **Trigger**: "the client says NG but my server returns 200 OK". The client has format expectations your code does not satisfy yet. Stop hypothesizing; start observing.
 
-Detail (common divergence list + origin): see `~/.claude/docs/debugging-detail.md#wire-protocol-reverse-engineering`.
+Detail (exact capture/diff commands + common divergence list + origin): see `~/.claude/docs/debugging-detail.md#wire-protocol-reverse-engineering`.
 
 ## Read the Source Before Researching Patterns
 
@@ -154,42 +148,26 @@ Probe-before-execute pairs:
 - "restore from S3 / backup" → `aws s3 ls <bucket>/<key>` before the restore
 - "roll back to version X" → confirm the tag / artifact exists before the rollback
 - "reassign to user/role Y" → confirm Y exists with the needed grant before the change
-- "share one subscription/login across two hosts" → inspect the credential file's token structure (`accessToken`/`refreshToken`/`expiresAt`) for rotating-refresh-token semantics BEFORE copying it — a shared rotating token invalidates whichever host refreshes second; the correct mechanism is an independent login per host (see `~/.claude/docs/claude-cli-headless.md`). Origin: 2026-07-04 memory-v2 keeper — probing the token structure surfaced the refresh-rotation conflict before building; a separate `claude setup-token` per host was the fix.
+- "share one subscription/login across two hosts" → inspect the credential file's token structure (`accessToken`/`refreshToken`/`expiresAt`) for rotating-refresh-token semantics BEFORE copying it — a shared rotating token invalidates whichever host refreshes second; use an independent login per host (see `~/.claude/docs/claude-cli-headless.md`)
 
 If the precondition is absent, do NOT run the doomed command (it fails with a misleading error — "snapshot not found", "bad revision"). Return to the user with the corrected, actually-feasible options.
 
-Origin: 2026-05-30 chosen snapshot-restore had zero snapshots.
+Detail (claude-cli token-rotation origin + snapshot-restore origin): see `~/.claude/docs/debugging-detail.md#verify-remediation-feasible`.
 
 ## Chain verify command with the fix in the same `!` block
 
-When presenting a credential or configuration fix to the user that must succeed before the main task can resume, **compose the verify command into the same `!` block** with `&&`:
-
-```
-! aws configure --profile sh1admn && \
-  aws ssm get-parameter --name /ssh-keys/devices/neo/private \
-    --with-decryption --profile sh1admn --region ap-northeast-1 > /dev/null && \
-  echo OK
-```
+When presenting a credential or configuration fix to the user that must succeed before the main task can resume, **compose the verify command into the same `!` block** with `&&` (e.g. `! aws configure --profile … && aws ssm get-parameter … && echo OK` — full example in Detail).
 
 When verify cannot be composed (e.g. interactive `aws configure`): explicitly mark verify as **required before retrying the main task**, not a suggestion. "and confirm with" or "before retrying, run". Not "you can also check".
 
-Detail (anti-pattern + origin): see `~/.claude/docs/debugging-detail.md#chain-verify-with-fix`.
+Detail (composed-block example + anti-pattern + origin): see `~/.claude/docs/debugging-detail.md#chain-verify-with-fix`.
 
 ## Confirm the suspected driver is actually deployed before optimizing it
 
 Before designing an optimization or fix for a specific process / script / cron job suspected of driving a cost or load metric, run a one-shot probe to confirm it is actually present and running on the target host(s). Source-code existence does not imply deployment.
 
-Probe sequence (30 seconds, avoids the full investigation arc on a ghost process):
-
-```bash
-ssh root@<host> "find /root /etc/cron.d /etc/cron.* /var/spool/cron -name '<pattern>' 2>/dev/null"
-ssh root@<host> "pgrep -a -f '<script-name>' || echo NOT_RUNNING"
-ssh root@<host> "grep -rs '<script-name>' /etc/cron* /var/spool/cron || echo NO_CRON"
-ssh root@<host> "systemctl list-timers --all | grep '<name>' || echo NO_TIMER"
-```
-
-If all return absent / NOT_RUNNING / NO_CRON / NO_TIMER, the suspected driver is not active on the target. Stop optimizing it and pivot to finding the actual driver (CloudTrail, `ps aux`, container logs, `systemctl list-timers`).
+Probe (30 seconds): `find` the script under `/root` + cron dirs, `pgrep -a -f`, `grep` the crontabs, and `systemctl list-timers --all` (full 4-line ssh block in Detail). If all return absent / NOT_RUNNING / NO_CRON / NO_TIMER, the suspected driver is not active on the target. Stop optimizing it and pivot to finding the actual driver (CloudTrail, `ps aux`, container logs, `systemctl list-timers`).
 
 **Trigger**: you are about to implement a cache, throttle, or rate-limit for a specific script or service based on source-code reading, without having verified it runs on the target.
 
-Origin: 2026-06-10 optimized a script not deployed on target.
+Detail (full 4-line ssh probe block + origin): see `~/.claude/docs/debugging-detail.md#confirm-suspected-driver-deployed`.

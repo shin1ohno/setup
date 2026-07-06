@@ -124,7 +124,7 @@ allowlist に載っている (host, service) に限り** PR 無しで回復コ�
 `AWS_PROFILE`/`AWS_REGION`/`STATE_INDEX`）。加えて `SELF_HEAL_OWNER`（既定 `shin1ohno`、
 repo owner）＝「ユーザー信号」の著者として認める唯一の login。fleet 到達は `contracts/devices.json`
 （home-monitor、SSM `/host-registry/devices`）の `lxc.ip` / `ct_id` を引く。PVE LXC は
-`pct exec <ct_id>` を PVE host 経由で使う（`bash -lc` でラップ — `~/.claude/rules/pve-lxc.md`）。
+`pct exec <ct_id>` を PVE host 経由で使う（`bash -lc` でラップ — `~/.claude/docs/pve-lxc-detail.md`）。
 
 ## ユーザー信号と identity 判定（第三者は無視）
 

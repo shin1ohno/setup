@@ -4,7 +4,7 @@ globs: ["*.rs"]
 
 # Rust Code Guidelines
 
-This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/docs/rust-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
+This file is the always-loaded summary. The crates.io token-scope examples + origin notes live in `~/.claude/docs/release-plz.md#crates-io-token-scopes` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
 
 ## Commit Gate for Rust Projects
 
@@ -37,7 +37,7 @@ crates.io API tokens have per-action scopes. For release-plz / manual publishing
 - **`publish-new`**: the FIRST publish of a new crate name. Required even if the crate is listed in the token's allow-list — `publish-update` is NOT sufficient for the first push
 - **`yank`**: separate scope, only needed when retracting a published version
 
-Detail (403 trap + practical workflow + transitive-closure allow-list checklist + origin): see `~/.claude/docs/rust-detail.md#crates-io-token-scopes`.
+Detail (403 trap + practical workflow + transitive-closure allow-list checklist + origin): see `~/.claude/docs/release-plz.md#crates-io-token-scopes`.
 
 ## Pre-`/bump-version` Sanity Check
 

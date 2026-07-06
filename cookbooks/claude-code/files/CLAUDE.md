@@ -139,7 +139,7 @@ When responding in Japanese (default), follow these. They override English-rule 
 
 ### Detail playbooks (load on demand — Read when the task matches)
 
-These are `docs/` files (not auto-loaded). `Read` the file when the task matches its trigger. Always-loaded `rules/` summaries (ruby, aws-iam, pve-lxc, docker-compose, …) point to their own `docs/<name>-detail.md` inline — those are not indexed here.
+These are `docs/` files (not auto-loaded). `Read` the file when the task matches its trigger. Always-loaded `rules/` summaries (ruby, aws-iam, docker-compose, …) point to their own `docs/<name>-detail.md` inline — those are not indexed here.
 
 | Topic | File |
 |---|---|
@@ -156,6 +156,9 @@ These are `docs/` files (not auto-loaded). `Read` the file when the task matches
 | Adding an OAuth-protected MCP service to mcp.ohno.be | `~/.claude/docs/mcp-deployment.md` |
 | Neovim (AstroNvim) config repo: Lazy sync / plugin lockfile gotchas | `~/.claude/docs/neovim.md` |
 | release-plz failure-mode checklist (secrets, token scopes, workflow config) | `~/.claude/docs/release-plz.md` |
+| FFI boundary (UniFFI Rust↔Swift / JNI / WASM) encoding audit at plan time | `~/.claude/docs/ffi-audit.md` |
+| Claude Code plugin integration rules — skill availability check, hookify vs Ruby hooks, plugin-vs-cookbook | `~/.claude/docs/claude-code-plugins.md` |
+| PVE LXC operational gotchas — unprivileged bind-mount UID mapping, `pct exec` non-TTY, Docker-in-LXC design gate | `~/.claude/docs/pve-lxc-detail.md` |
 
 ## Sub-agent Design Principles
 
@@ -163,7 +166,7 @@ See `~/.claude/rules/sub-agents.md` (always-loaded via `rules/`; no `@`-import n
 
 ## Claude Code Plugins
 
-Official plugins auto-registered; most self-describe triggers. See `~/.claude/rules/claude-code-plugins.md` (always-loaded) for plugin-vs-cookbook integration rules.
+Official plugins auto-registered; most self-describe triggers. See `~/.claude/docs/claude-code-plugins.md` (on-demand — Read when integrating a plugin) for plugin-vs-cookbook integration rules.
 
 ## Writing
 

@@ -16,7 +16,24 @@ Origin: 2026-05-31 an analysis agent stopped a panic but broke the plan-order co
 
 Origin: 2026-06-01 a synthesis agent restarted a production service with an unvalidated config during the analysis phase.
 
+## auto-launched-review-agent
+
+Origin: 2026-06/07 — 7 byte-identical double-fire pairs (10-96 s apart) plus ~10 findings-never-returned sessions; one AWS_PROFILE-global diff died 76 s in and was never re-reviewed, and one pair's only valid review was the 2nd fire after the 1st died at 96 s.
+
+## review-agent-out-of-scope
+
+Origin: 2026-06-15 — a security-review sub-agent prose-noted a `not_if "diff -q …"` idempotency bug in `cookbooks/mac-sudo` (0440 file unreadable without sudo → re-installs every apply) then returned `findings: []`; the bug sat unfixed for ~3 weeks.
+
 ## fleet-status-verification
+
+| Service | Artifact check (insufficient) | Functional check (required) |
+|---|---|---|
+| elastic-agent | `systemctl is-active elastic-agent` | `elastic-agent status` → top-level `HEALTHY` AND metric components present, plus ES doc-count advancing |
+| docker-compose stack | `docker ps` shows Up | `docker compose ps` shows `healthy` + one metric/endpoint probe |
+| auto-mitamae | the drift-checker/orchestrator **cron** is present (it runs via `/etc/cron.d/`, NOT a systemd timer) | per-host `auto_mitamae_last_apply_status{...,result="success"}` in `auto-mitamae.prom`, last apply within ~2× the 5-min cycle |
+| prometheus scrape | process running | `curl -s localhost:9090/-/healthy` + `targets?state=up` count |
+
+Prompt line to include: "Report each host's FUNCTIONAL health via `<specific-command>`, NOT `systemctl is-active`. A host is HEALTHY only when the functional check confirms behavior (data flowing, components active), not just that the process runs."
 
 Origin: 2026-06-01 a fleet agent reported 19/19 HEALTHY via `systemctl is-active` while emission had stopped.
 
@@ -26,6 +43,11 @@ Origin: 2026-05-09 a stream blocked itself reporting SendMessage/EnterPlanMode u
 
 ## bulk-research-pattern
 
+1. **Split by independence**: divide targets so each agent's work is self-contained — 1 agent = 1 brand, category, or theme
+2. **Launch all agents in background in parallel**: use `run_in_background: true` for all agents in a single message
+3. **Each agent's responsibility**: WebFetch reviews → fetch specs from manufacturer sites → save to the memory MCP (`remember` / `ingest`)
+4. **Progress reporting**: show a progress table with agent status (researching... / **done**) and update it as each agent completes
+
 ```
 Example: "Save all reviews from this page" → launch sub-agents per category in background
 Example: "Look up all reviews for this brand" → 1 agent per brand in background
@@ -33,6 +55,8 @@ Example: "Find bindings for this board" → 1 agent per brand group in backgroun
 ```
 
 ## background-agent-deadline-tracking
+
+Origin: 2026-07 aa4b0e75 (status? asked 3× + 2 stall reports in one session) / 29d690f1 (30 min silent, user prompted "止まってませんか") / 2ec1c07b.
 
 Origin: 2026-04-23 two consecutive Ultraplan agents failed silently; the user had to notice and restart.
 
