@@ -152,6 +152,10 @@ These are `docs/` files (not auto-loaded). `Read` the file when the task matches
 | Frontend (Next.js / Vite) dev-server / HMR gotchas | `~/.claude/docs/frontend-dev.md` |
 | Data-collection failure-escalation + transient-retry ladder | `~/.claude/docs/data-collection.md` |
 | Weave protocol publish → feedback shape contract | `~/.claude/docs/weave-protocol.md` |
+| Elasticsearch query/index layer (`dense_vector` / kNN / mappings) gotchas | `~/.claude/docs/elasticsearch.md` |
+| Adding an OAuth-protected MCP service to mcp.ohno.be | `~/.claude/docs/mcp-deployment.md` |
+| Neovim (AstroNvim) config repo: Lazy sync / plugin lockfile gotchas | `~/.claude/docs/neovim.md` |
+| release-plz failure-mode checklist (secrets, token scopes, workflow config) | `~/.claude/docs/release-plz.md` |
 
 ## Sub-agent Design Principles
 

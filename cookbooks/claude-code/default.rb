@@ -307,7 +307,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve mcp-auth web-crawl).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve mcp-auth web-crawl setup-release-plz).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -432,5 +432,27 @@ end
 
 directory "#{node[:setup][:home]}/.claude/skills/audit-claudemd" do
   action :delete
+end
+
+# Clean up rules/ files moved to docs/ (or inlined into CLAUDE.md) by #638/#639.
+# mitamae only creates files from the deploy lists above — it never prunes
+# entries removed from those lists, so every deployed host keeps loading the
+# stale rules/ copies (~128K per session) until they are deleted explicitly.
+%w(
+  architecture.md
+  cookbook-prs.md
+  data-collection.md
+  frontend-dev.md
+  ios-build.md
+  kibana-lens.md
+  mise-migration.md
+  remote-trigger.md
+  tailscale.md
+  weave-protocol.md
+  writing.md
+).each do |file_name|
+  file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
+    action :delete
+  end
 end
 
