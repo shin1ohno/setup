@@ -168,7 +168,7 @@
   "theme": "auto",
   "model": "opus[1m]",
   "effortLevel": "xhigh",
-  "teammateMode": "tmux",
+  "teammateMode": "in-process",
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,

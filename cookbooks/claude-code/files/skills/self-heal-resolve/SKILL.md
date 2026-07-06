@@ -41,8 +41,15 @@ Addy Osmani「無人ループは無人でミスするループ」への答え＝
    needs-human で停止（`~/.claude/rules/debugging.md` の escalation threshold）。
 7. **観測でのみ「解決」を判定**（artifact でなく機能）。「`systemctl is-active`」や「PR merged」は
    解決の証拠にならない。ES の当該 dedup_key が `resolved` に転じる／機能 probe が通ることが証拠。
-8. home-monitor（CodeCommit / terraform）への変更は **PR/diff を残して needs-human**。
-   このループは setup cookbook の範囲で自律する（AWS infra は人間 apply）。
+8. home-monitor（CodeCommit / terraform）への変更は原則 **PR/diff を残して needs-human**。
+   **唯一の例外 = CT memory/cores resize（Phase 3B, PVE-API-direct）**: `infra-resize-allowlist.json` に載る CT の
+   **increase-only** な resize に限り、**非LLM wrapper `self-heal-infra-apply.sh` 経由でのみ**自律実行可
+   （後述 Step 3 の Phase 3 case）。wrapper は **PVE API を scoped token（`svc-resize@pve`, role SelfHealResize =
+   VM.Config.Memory/CPU/Audit, per-CT ACL）で直接叩く** — terraform も state も使わない。**このループ自身は
+   PVE API も terraform も直接叩かない**、wrapper に `{ct, target_mb, target_cores}` を渡すだけ。硬い境界は
+   token scope 自体（memory/cpu 以外・allowlist 外 CT を物理的に触れない）+ wrapper の least-priv（pve-resize、
+   admin 拒否）+ floor/ceiling + increase-only + budget（`docs/self-heal-phase3-security-review.md`）。
+   IAM/SG/リソース作成削除/rootfs/decrease/CT lifecycle/その他 TF は needs-human のまま。それ以外は setup cookbook の範囲で自律。
 
 ## remediation class と自律可否
 
@@ -52,11 +59,64 @@ Addy Osmani「無人ループは無人でミスするループ」への答え＝
 |---|---|---|
 | **A. 既知サービスの再収束** | crashed systemd/docker サービスを cookbook 再適用で復旧（cookbook の notify→restart 経由）、設定 drift の再適用 | ✅ 自律（merge→auto-mitamae） |
 | **B. cookbook 設定修正** | 誤った閾値 / stale な process 名で es-query rule が誤発火 → cookbook/alert rule を修正 | ✅ 自律（merge→auto-mitamae） |
+| **C'. known-safe kick（allowlist）** | `self-heal-probe.sh` が `wedge-suspect`（target refused, ssh open）= listener 無しと判定した既知サービスを、allowlist の recovery_command で kick（etserver wedge #567 の `launchctl kickstart -k` 等） | ✅ 限定自律（**PR 無し**、`self-heal-remediate.sh <host> <service>` 経由のみ、後述） |
 | **C. transient restart** | OOM 等で一時 crash、再起動で復旧かつ flap でない既知サービス | ⚠️ 限定自律（`pct exec systemctl restart`、前後 comment + 機能 verify、flap_count を見て 2 回目以降は B/needs-human） |
 | **D. 新規設計 / 破壊的 / auth / infra / 原因不明 / 複数候補** | 新コンポーネント追加、IAM、データ移行、home-monitor TF、原因が割れる | ❌ needs-human（PR/診断を残す） |
 
 **判定に迷ったら D**（needs-human）。長期間（数週間）`active` の alert は transient ではない —
 C で雑に restart せず、まず「本当に落ちているか／alert 自体が stale か」を観測で切り分ける。
+**ただし class D の中でも「原因は特定できたが remediation が 2 つあり優劣を付けられない」ケースは、
+診断だけ残さず両候補を PR まで作って owner に選ばせる**（下記 multi-candidate propose）。
+
+### multi-candidate propose（曖昧な二択は両候補を PR 化して owner が選ぶ）
+
+class D の「原因は分かるが remediation の候補が複数あり確信を持って優劣を付けられない」ケースは、診断だけ
+残して needs-human にせず、**両候補を実装して PR まで作り owner に選ばせる**（人間の仕事を「自分で実装」から
+「出来上がった 2 本の PR のどちらかを選ぶ」に縮める）。
+
+**発火条件**（すべて満たす時のみ）:
+- 候補が **2 件（最大 3）**、各々 **viable かつ envelope 内**（非破壊・auth/secret/IAM/KMS 非該当・
+  setup cookbook か Phase3-B の可逆 infra allowlist の範囲）。
+- **確信を持って優劣を付けられない**（明確に一方が良いなら普通に class A/B でその 1 本を出す）。
+- 「何が壊れているか分からない」= 対象外（従来どおり診断のみ needs-human。**候補を捏造しない**）。
+
+**動作**:
+1. 各候補を独立 branch → PR 化（PR body に実装計画＝変更内容・理由・sibling との trade-off、`Fixes #<n>`）。
+   **2 本は同一 run で作る**（以後 Step 0 dup-guard の複数-linked-PR ガードが skip する）。
+2. PR 同士 + issue を相互リンク。issue と**両 PR に `self-heal-needs-human`** を付与。
+3. issue に 1 コメント: 候補 A(#PRx) / B(#PRy) の trade-off 表 + 「採用する方を選んでください（他方は close）」
+   `<!-- self-heal-bot -->`。
+4. **どちらも owner が選ぶまで auto-merge しない**（両方 class-D/needs-human）。owner が採用側 PR に付けた
+   採用コメント = user-GO（その PR 限定）→ Step 4 で merge → 検証 → close、非採用 PR は close。採用候補が
+   Phase3-B infra なら案 B 規則を適用。
+5. **envelope を跨ぐ候補は PR 化せず**、診断コメント内で言及のみ（materialize しない）。両 PR 作成は当該 run の
+   1-issue 予算を消費、3-try escalation は据え置き。
+
+### class C'（known-safe kick）— allowlist ゲート付き自動回復
+
+`self-heal-probe.sh` の verdict が `wedge-suspect`（listener が落ちた既知サービス）のとき、**checked-in の
+allowlist に載っている (host, service) に限り** PR 無しで回復コマンドを打てる。フェンスはコード
+（`self-heal-remediate.sh`）が強制する — ループは任意コマンドを実行できず、(host, service) キーだけを渡す。
+
+```bash
+# 実行（allowlist 厳密一致時のみ recovery_command を実行、前後に機能 probe）:
+/usr/local/bin/self-heal-remediate.sh <host> <service>
+# 事前確認（何が実行されるか／flap で escalate か）:
+/usr/local/bin/self-heal-remediate.sh --dry-run <host> <service>
+```
+
+手順:
+
+1. verdict が `wedge-suspect` であることを確認（`sleep-suspect`/`timeout` 系は C' 対象外 — restart しない）。
+2. `self-heal-remediate.sh <host> <service>` を実行。
+   - exit 0 = kick 実行。exit 2 = allowlist 外（→ class D / needs-human）。exit 3 = flap（同一 window で
+     `max_kicks` 超過）→ **恒久修正（class B）か needs-human に格上げ**、再 kick しない。
+3. kick 後、`self-heal-probe.sh classify_port <host> <port>` が `open` に復帰したことを**機能 verify**（Step 5）。
+   復帰しなければ C' の再試行でなく class B/needs-human へ（原因が listener 単独でない）。
+4. issue に「class C' kick 実行（(host,service)、verdict=wedge-suspect、probe 復帰）`<!-- self-heal-bot -->`」を comment。
+
+**allowlist（`cookbooks/self-heal-loops/files/remediation-allowlist.json`）はデータ**。エントリ追加は PR review
+のみ（破壊的 / auth / secret / IAM は載せない）。テーブル外は class D のまま。allowlist に無い＝自動 kick しない。
 
 ## 設定（env で上書き可）
 
@@ -142,6 +202,11 @@ dup ガード + partial-state recovery）:
 2. **open な linked PR を持つ issue は新規 PR を作らない**（重複 PR 防止）。代わりに
    その PR の状態で分岐 — `gh pr list --repo shin1ohno/setup --search "<issue># in:body linked:issue" --state open`
    や issue の timeline で `Fixes #<n>` の PR を特定し:
+   - **複数（≥2）の open linked PR がある = multi-candidate propose 状態**（後述「multi-candidate propose」）。
+     この場合 **どの PR も auto-merge しない** — owner が採用する 1 本を選ぶまで待つ owner-choice 状態。
+     owner が特定 PR に付けた採用コメント（user-GO、その PR に限定）を検出したら、その PR を Step 4 で merge し、
+     もう一方を close。owner 未選択なら今回はスキップ（needs-human 維持）。CI green は複数 linked PR の
+     どれかを勝手に merge する理由にならない。
    - **owner の未処理レビュー/コメントがあるか先に確認**（owner 著・マーカー無し・最新 bot 活動より新しい）。
      あれば最優先で反映する: 指摘を読み、**PR ブランチに修正を push**（新規 PR は作らない）、CI を再実行、
      bot マーカー付きで「反映しました」コメント。**merge は CI green ＋未解決の owner レビュー無し ＋
@@ -191,23 +256,35 @@ body の `dedup_key` / `self-heal-source` を読む:
   **「本当に down か」「alert が stale か（プロセス名変更・metric path 変更で誤発火）」を切り分ける。**
 - `source=uptime`（monitor/TLS down）→ 対象エンドポイントへ実際に到達確認（curl / tailscale ping）。
 
-**port/listener down 系の観測 caveat（sandbox 盲目化 + sleep 誤診防止, setup #603 由来）:**
+**port/listener down 系は `self-heal-probe.sh` で必ず分類する（散文の遵守任せをやめる, setup #603 由来）:**
 
-- `netstat` / `lsof` / `launchctl list` / `log show` の**空結果を「listener 無し」の証拠にしない**。
-  sandbox 化された Bash tool では実在の listener（`nc` で応答する ssh:22 すら）が 0 件で返る。
-  listener 存否は `nc -z <host> <port>` の実 connect で判定し、**既知の閉ポートが refused に
-  なること**で probe 自体が本物だと確認してから結論する。
-- **connect 挙動で故障を分類**:
-  - `refused`（RST / 即時 / `nc` exit 1）= ホスト稼働・listener 無し → **実 wedge 候補**
-    （etserver #567 型。`launchctl kickstart -k` / `systemctl restart` で回復）。
-  - `timeout`（SYN drop / `nc` exit 124）= 当該ポート不到達 → **sleep / firewall / LAN 経路**の
-    可能性大。必ずしも wedge でない（多くは自己回復 = flap）。
-- **macOS ホストは sleep を先に疑う**: `pmset -g log | grep -E '\+[0-9]{4}[[:space:]]+(Sleep|DarkWake)'`
-  でアラート時刻に sleep / Maintenance Sleep 遷移が重なるか確認。sleep 窓に一致し「ssh:22 は
-  通るが監視ポートは timeout」なら真因は sleep（Bonjour/Wake-on-Demand が wake させるのは ssh 等の
-  登録済みサービスのみで、任意ポートの SYN は drop される）。remediation はサービス再起動でなく
-  **電源管理（常時起動化）** = class D（darwin, 要 root）。cookbook は `mac-settings` の
-  always-on power enforce（`pmset -c sleep 0`）。#603 はこの sleep を #567 の wedge と誤診した。
+`netstat` / `lsof` / `launchctl list` / `log show` の**空結果を「listener 無し」の証拠にしない** —
+sandbox 化された Bash tool では実在の listener（ssh:22 すら）が 0 件で返る。listener 存否は
+手打ちの `nc` や空 netstat で結論せず、**必ず `self-heal-probe.sh` の実 connect 分類で判定する**
+（helper は既知の閉ポートが refused になることで probe 自体の妥当性も確認する）:
+
+```bash
+# 単発分類（refused=wedge候補 / timeout=sleep・fw・route / open=稼働）:
+/usr/local/bin/self-heal-probe.sh classify_port <host> <port>
+# 完全診断（target + ssh:22 + darwin なら sleep 相関 → verdict を返す）:
+/usr/local/bin/self-heal-probe.sh diagnose_port_down <host> <port> [1=darwin]
+```
+
+verdict と対応:
+- `wedge-suspect`（target refused, ssh open）= listener 無し = 実 wedge（#567 型）→ **class C'**（allowlist の
+  `launchctl kickstart -k` / `systemctl restart` — 後述 class 表）。
+- `sleep-suspect`（darwin, target timeout, sleep 遷移あり）= 真因は sleep（#603）→ remediation は再起動でなく
+  **電源管理（常時起動化）** = class D（`mac-settings` の `pmset -c sleep 0`）。**timeout を wedge と誤診しない。**
+- `filter-or-route-suspect` / `sleep-or-filter-suspect`（timeout, sleep 未確認）= 必ずしも wedge でない（多くは
+  自己回復 = flap）→ restart しない。
+- `host-unreachable`（ssh:22 も open でない）= 単一サービス wedge でなくホスト自体の問題。
+- `service-up`（target open）= alert が stale の可能性 → Step 5 で close 判断。
+
+**confidence gate（class-D needs-human 診断を書く前に必須）**: root cause の唯一の根拠が sandbox-blind な
+空結果（空 netstat/lsof/launchctl）なら、その診断は low-confidence。(a) `pct exec`/ssh で
+`self-heal-probe.sh` を実行し直して positive な観測（refused/timeout/open の verdict）を得る、(b) それも無理なら
+診断を「**needs-human: 観測不能（原因未確定）**」とし、**誤った root cause（wedge 等）を断定して書かない**。
+空の netstat は「listener 無し」の証拠ではない（#603 の教訓）。
 
 ES の現状も確認（まだ active か、resolved に転じていないか）:
 ```bash
@@ -228,6 +305,19 @@ es_get "/self-heal-state/_doc/<sha1>"   # status / first_seen / flap_count / occ
   `pct exec <ct_id> -- bash -lc "systemctl restart <unit>"`（または docker compose restart）。
   issue に「restart 実行（class C, 理由 <...>）<!-- self-heal-bot -->」を comment。Step 4 の検証へ（PR なし）。
   2 回目以降の同一 restart は B（恒久修正）or needs-human に格上げ。
+- **Phase 3（infra resize, PVE-API-direct）**: 根本原因が「対象 CT の memory/cores 不足」で、その CT が
+  `infra-resize-allowlist.json` に載っていて **increase（増加）** の場合に限る。**PVE API も terraform も自分で
+  叩かず**、必要な目標値を決めて **非LLM wrapper に委譲する**:
+  ```bash
+  /usr/local/bin/self-heal-infra-apply.sh --dry-run <ct> <target_mb> <target_cores>   # scoped token で read 確認
+  /usr/local/bin/self-heal-infra-apply.sh <ct> <target_mb> <target_cores>             # PVE API PUT + devices.json sync
+  ```
+  wrapper が allowlist∩[min,max]∩increase-only∩budget∩least-priv(pve-resize, admin 拒否) を強制し、scoped PVE
+  token（memory/cpu 以外・allowlist 外 CT を物理的に触れない）で resize、PUT 後に config を re-read して検証、
+  devices.json を更新 commit（drift 防止）。exit 2=off-list/least-priv 不成立、3=API/verify 失敗、4=budget、
+  5=decrease/floor → いずれも **needs-human**（wrapper が拒否 = 自律 envelope 外）。exit 0 で resize 成功。
+  後は機能検証（Step 5、対象サービス復帰 + `pct config <ct_id> | grep memory`）。allowlist 外 CT / decrease /
+  rootfs / CT create-destroy / IAM 等は **D**。
 - **D**: 修正を auto-apply せず、調査結果を残して人間に渡す。**実装 PR を作ってもよい（propose）**が、
   作ったら**同じ run で即座に** `gh issue edit <n> --add-label self-heal-needs-human` を付与する
   （CI 完了を待たない）。理由: needs-human を付けないと、次 run の Step 0 dup-guard が「open linked PR +

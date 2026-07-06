@@ -1,0 +1,42 @@
+# web-crawl targets — canonical, shared config for the `web-crawl` skill.
+#
+# This file is PUBLIC (shin1ohno/setup is a public repo) and is read over plain
+# HTTP by both local `/web-crawl` runs and cloud `/schedule` routines:
+#   https://raw.githubusercontent.com/shin1ohno/setup/main/config/web-crawl-targets.yaml
+#
+# Editing a target = a git push (no mitamae apply). The cloud routine picks up
+# changes on its next run.
+#
+# Anything private or sensitive must NOT go here — put it in the (gitignored,
+# home-local) override instead:  ~/.claude/web-crawl/targets.local.yaml
+# (URLs/queries written here are world-readable; only public-web monitoring belongs here.)
+#
+# Schema per target:
+#   name:   unique identifier (also the memory dedup tag)
+#   mode:   monitor | radar | crawl
+#   urls:   [<url>, ...]        # monitor: known pages to poll
+#   query:  "<search query>"    # radar:   WebSearch query
+#   seed:   <url>               # crawl:   start URL (same-domain BFS)
+#   depth:  <N>                 # crawl:   link depth (default 1, cap 3)
+#   sink:   memory              # default; or { type: es, index: <name> } (future — errors in v1)
+#   tags:   [<tag>, ...]
+
+targets:
+  - name: claude-code-changelog
+    mode: monitor
+    urls:
+      - https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md
+    sink: memory
+    tags: [claude-code, changelog]
+
+# --- Future `es` sink example (price tracking) -------------------------------
+# v1 has no ES adapter: a target with `sink.type: es` stops with an explicit
+# "not implemented" message. Reference schema `web-crawl-prices` lives in the
+# issue #650 design (追記2). Uncomment once the ES adapter PR lands.
+#
+#  - name: gpu-price
+#    mode: monitor
+#    urls: [https://example-shop.invalid/rtx4090]
+#    sink: { type: es, index: web-crawl-prices }
+#    extract: { item: "RTX 4090", fields: [price, currency, in_stock] }
+#    tags: [price, gpu]

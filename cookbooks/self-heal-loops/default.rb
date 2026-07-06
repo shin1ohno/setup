@@ -98,8 +98,13 @@ end
 
 # Stage + install the scripts to /usr/local/bin (root:root 0755): the two cron
 # wrappers + the pure-shell create logic (self-heal-create.sh) + the sourced
-# liveness-metric helper (self-heal-metric.sh) both wrappers load.
-%w[self-heal-create.sh self-heal-create-run.sh self-heal-resolve-run.sh self-heal-metric.sh].each do |wrapper|
+# liveness-metric helper (self-heal-metric.sh) both wrappers load + the
+# observation helper (self-heal-probe.sh) the resolve SKILL calls for
+# connect-classification / sleep-vs-wedge diagnosis + the class C' remediation
+# executor (self-heal-remediate.sh) that runs ONLY allowlisted known-safe kicks +
+# the Phase 3B infra-resize executor (self-heal-infra-apply.sh) — the ONLY holder
+# of the terraform apply verb, fail-closed + least-priv (pve-resize) only.
+%w[self-heal-create.sh self-heal-create-run.sh self-heal-resolve-run.sh self-heal-metric.sh self-heal-probe.sh self-heal-remediate.sh self-heal-infra-apply.sh].each do |wrapper|
   remote_file "#{staging_dir}/#{wrapper}" do
     source "files/#{wrapper}"
     owner node[:setup][:user]
@@ -112,6 +117,60 @@ end
             "#{staging_dir}/#{wrapper} /usr/local/bin/#{wrapper}"
     not_if "diff -q #{staging_dir}/#{wrapper} /usr/local/bin/#{wrapper} 2>/dev/null"
   end
+end
+
+# Install the class C' remediation allowlist (DATA, 0644 root:root) to a stable
+# path self-heal-remediate.sh reads. The helper executes an entry's
+# recovery_command only on an exact (host, service) match here — the fence that
+# keeps the loop from running an arbitrary command. Grown only via PR review.
+remote_file "#{staging_dir}/remediation-allowlist.json" do
+  source "files/remediation-allowlist.json"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "0644"
+end
+
+execute "install remediation-allowlist.json" do
+  command "sudo install -d -m 0755 -o root -g root /usr/local/share/self-heal && " \
+          "sudo install -m 0644 -o root -g root " \
+          "#{staging_dir}/remediation-allowlist.json /usr/local/share/self-heal/remediation-allowlist.json"
+  not_if "diff -q #{staging_dir}/remediation-allowlist.json /usr/local/share/self-heal/remediation-allowlist.json 2>/dev/null"
+end
+
+# Install the Phase 3B infra-resize allowlist (DATA, 0644). Empty by default =
+# fail-closed (nothing auto-resizes until an owner adds a CT via PR). Read by
+# self-heal-infra-apply.sh, which additionally enforces increase-only / floor /
+# ceiling / daily-budget / least-priv identity / a fail-closed plan-JSON gate.
+remote_file "#{staging_dir}/infra-resize-allowlist.json" do
+  source "files/infra-resize-allowlist.json"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "0644"
+end
+
+execute "install infra-resize-allowlist.json" do
+  command "sudo install -d -m 0755 -o root -g root /usr/local/share/self-heal && " \
+          "sudo install -m 0644 -o root -g root " \
+          "#{staging_dir}/infra-resize-allowlist.json /usr/local/share/self-heal/infra-resize-allowlist.json"
+  not_if "diff -q #{staging_dir}/infra-resize-allowlist.json /usr/local/share/self-heal/infra-resize-allowlist.json 2>/dev/null"
+end
+
+# Pin the PVE root CA (PUBLIC cert, not a key) so self-heal-infra-apply.sh
+# verifies the PVE API TLS cert (--cacert) instead of `-k`. The PVE cert's SAN
+# includes the LAN IP, so verification works by IP. Without this file the wrapper
+# fails closed on TLS (unless SELF_HEAL_ALLOW_INSECURE_PVE=1 is explicitly set).
+remote_file "#{staging_dir}/pve-ca.pem" do
+  source "files/pve-ca.pem"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "0644"
+end
+
+execute "install pve-ca.pem" do
+  command "sudo install -d -m 0755 -o root -g root /etc/self-heal && " \
+          "sudo install -m 0644 -o root -g root " \
+          "#{staging_dir}/pve-ca.pem /etc/self-heal/pve-ca.pem"
+  not_if "diff -q #{staging_dir}/pve-ca.pem /etc/self-heal/pve-ca.pem 2>/dev/null"
 end
 
 # Pre-create the two loop liveness .prom files OWNED BY THE LOOP USER inside the
