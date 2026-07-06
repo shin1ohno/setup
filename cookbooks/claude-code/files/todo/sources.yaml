@@ -1,0 +1,38 @@
+# TODO capture sources for /todo-collect (design: ~/.claude/docs/todo-management.md).
+#
+# This is the cookbook-managed copy — PERSONAL sources only. Work sources
+# (Mercari Slack etc.) belong in ~/.claude/todo/sources.local.yaml (unmanaged,
+# same schema, merged at runtime by `name`; local wins on conflict). Never put
+# work source definitions in this public repo.
+#
+# Schema per entry:
+#   name:    unique id (ledger + dedup key namespace)
+#   class:   explicit  — user made a deliberate mark → auto-remember + receipt
+#            inferred  — extraction guesses intent → candidates only, approval required
+#   adapter: slack-saved | slack-reaction | slack-self-dm | google-tasks |
+#            transcript-deferral | calendar-notion-notes
+#   query:   adapter-specific selector (tasklist name, emoji, lookback window, search modifier)
+#   sink:    ai-memory | memory-local   (work sources MUST sink to memory-local)
+#   enabled: true | false
+#
+# Example local override (~/.claude/todo/sources.local.yaml) for work Slack:
+#   sources:
+#     - { name: slack-saved,    class: explicit, adapter: slack-saved,    query: "",        sink: memory-local, enabled: true }
+#     - { name: slack-pin,      class: explicit, adapter: slack-reaction, query: "pushpin", sink: memory-local, enabled: true }
+#     - { name: slack-self-dm,  class: explicit, adapter: slack-self-dm,  query: "",        sink: memory-local, enabled: true }
+#     - { name: work-cal-notes, class: inferred, adapter: calendar-notion-notes, query: "7d", sink: memory-local, enabled: true }
+
+sources:
+  - name: google-tasks-inbox
+    class: explicit
+    adapter: google-tasks
+    query: "@default"
+    sink: ai-memory
+    enabled: true
+
+  - name: transcript-deferrals
+    class: inferred
+    adapter: transcript-deferral
+    query: "7d"
+    sink: ai-memory
+    enabled: true
