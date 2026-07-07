@@ -183,12 +183,14 @@ Applies to any prose output — formal docs AND chat replies (structural enforce
 - **BLUF is mandatory** in every reply. Lead with the conclusion.
 - **Chat ≠ full Pyramid**: 1-2 levels is fine (constraint is "topic sentence per paragraph"), not the strict 3-level hierarchy.
 - **Reference, don't reproduce**: cite "see `Japanese Output Discipline`" or "see `rules/debugging.md`" instead of pasting protocol text inline — long extracted text is reading-cost with no marginal utility.
+- **No change-narration in the deliverable**: a report / document / proposal / spec contains only reader-facing content — never meta-commentary about how it was authored, ordered, or revised. Editing rationale and reordering / version-diff notes (a heading like `打ち手（North Star を上に、制約対応を下に）`, "per your feedback I moved X above Y", "この節を最上位に移動") belong in the chat reply, crit / PR comment, or commit message — not in the artifact's headings or body. The reader reconstructs *what the document says*, not *how you built it*. Origin: 2026-07 — restructured a proposal per crit feedback and embedded the reviewer's reordering instruction verbatim into a section heading.
 - **Length scales to the question**: a 3-line factual question gets a 3-line answer; a multi-faceted plan question gets the full structure. Apply the marginal-utility test sentence-by-sentence.
 - **Japanese prose**: clarity over politeness; the canonical style rules are the `Japanese Output Discipline` section above (single source of truth — do not restate).
 - **Self-review pass before presenting a multi-line Plan / report** (Plan, analysis, retro, research summary — *whether or not* it is written to `.md`): the bullets above are "while writing"; this is a mandatory pass over the finished draft *before* it reaches the user. Not optional polish — apply the discipline in full, no half-measures:
   1. Delete every `Japanese Output Discipline` 禁止表現 (hedge / suggest-直訳 / 確認伺い / 後送り); replace with the action itself or a numeric/conditional statement.
   2. Compress verbose phrasing; replace adjectives/adverbs with numbers or facts (`Japanese Output Discipline` 圧縮 / 具体性).
   3. Re-confirm BLUF and one topic sentence per paragraph.
+  4. Delete any change-narration that leaked into the artifact (reordering notes, "per feedback…", version-diff parentheticals in headings) — per `No change-narration in the deliverable`; it belongs in chat / PR-comment / commit, not the document.
   For a substantial draft, `Read` `~/.claude/skills/writing/references/phrases.md` + `structures.md` and check against the full lists rather than from memory. Do NOT spawn the 3-agent `/writing` skill for these inline reports — self-apply the same discipline. Single-line factual answers are exempt. Origin: issue #640.
 
 ## Session Retrospective
