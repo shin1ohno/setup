@@ -1,7 +1,16 @@
-"""Async Voyage AI embedding client for memory-mcp v2 (contract §4).
+"""Async embedding client for memory-mcp v2 (contract §4).
 
-The single external-AI dependency. voyage-3-large, 1024 dims, cosine. Query and
-document embeddings use Voyage's asymmetric input_type (query vs document).
+The single external-AI dependency. 1024 dims, cosine. Two provider shapes,
+selected by EMBEDDING_PROVIDER (default "voyage"):
+
+- "voyage" (default): Voyage's native /embeddings body with asymmetric
+  input_type (query vs document) and output_dimension. This is what the hosted
+  es-memory (CT119) uses — unchanged.
+- "openai": OpenAI-compatible /embeddings body ({model, input, dimensions}, no
+  input_type — OpenAI/Vertex embeddings are symmetric). Used by the air local
+  store routed through Mercari's LiteLLM gateway (litellm.mercari.in) so work
+  content embeds via a sanctioned egress path instead of api.voyageai.com. The
+  bearer key still comes from VOYAGE_API_KEY (holds the LiteLLM key on this path).
 
 No official SDK — raw httpx against the REST endpoint (design v3: no voyageai
 package). One retry on 5xx/timeout, then raise VoyageUnavailable. recall catches
@@ -18,6 +27,9 @@ import httpx
 VOYAGE_API_KEY = os.environ["VOYAGE_API_KEY"]
 VOYAGE_ENDPOINT = os.environ.get("VOYAGE_ENDPOINT", "https://api.voyageai.com/v1").rstrip("/")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "voyage-3-large")
+# "voyage" (native input_type/output_dimension) or "openai" (OpenAI-compatible
+# {model, input, dimensions}). Default keeps hosted es-memory on Voyage.
+EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "voyage").lower()
 # Contract fixes the output dimension at 1024 (int8_hnsw index). EMBEDDING_DIMENSIONS
 # is read for parity with the ES mapping; both default to 1024.
 OUTPUT_DIMENSION = int(os.environ.get("EMBEDDING_DIMENSIONS", "1024"))
@@ -41,12 +53,21 @@ async def _post_embeddings(inputs: list[str], input_type: str) -> list[list[floa
     the response `index` field. 1 retry on transient failure."""
     if not inputs:
         return []
-    body = {
-        "model": EMBEDDING_MODEL,
-        "input": inputs,
-        "input_type": input_type,
-        "output_dimension": OUTPUT_DIMENSION,
-    }
+    if EMBEDDING_PROVIDER == "openai":
+        # OpenAI-compatible (LiteLLM): symmetric, `dimensions` (not
+        # `output_dimension`), no `input_type`. input_type is accepted but ignored.
+        body = {
+            "model": EMBEDDING_MODEL,
+            "input": inputs,
+            "dimensions": OUTPUT_DIMENSION,
+        }
+    else:
+        body = {
+            "model": EMBEDDING_MODEL,
+            "input": inputs,
+            "input_type": input_type,
+            "output_dimension": OUTPUT_DIMENSION,
+        }
     last_exc: Exception | None = None
     for attempt in range(2):  # initial try + 1 retry
         try:
