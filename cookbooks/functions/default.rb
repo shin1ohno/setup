@@ -777,6 +777,15 @@ end
 # would make adding a key to the generator a silent no-op on hosts whose .env
 # predates the change; the content check forces a re-fetch instead.
 #
+# :value_prefixes (optional {KEY => "prefix"}) hardens the name-only check for
+# a VALUE/provider migration where the KEY NAME is unchanged but the expected
+# value shape changed. The skip fires only if, for each named key, the .env
+# contains `KEY=prefix`. Origin: 2026-07 local-es-memory moved embedding from
+# Voyage (pa- key) to LiteLLM (sk- key) reusing VOYAGE_API_KEY — the name-only
+# skip kept the stale pa- key and every embedding 401'd until the .env was
+# hand-cleared. Substring-only (no Regexp — mruby's File API subset, see
+# ~/.claude/rules/ruby.md "mruby API constraints").
+#
 # Usage:
 #   deploy_with_ssm_env "hydra" do
 #     tool_name        "AWS CLI (profile=#{aws_profile}) for /hydra/* SSM"
@@ -801,6 +810,7 @@ end
 #   temp_path          (required) generator output, deleted after placement
 #   output_path        (required) final .env path
 #   expected_keys      array of KEY names for the content-aware skip_if
+#   value_prefixes     optional {KEY => "prefix"} — skip only if .env has KEY=prefix
 #   owner/group/mode   optional (defaults: setup user/group, "600")
 #   restart_resource   optional "execute[...]" notified when output changes
 #   user               optional generator user (default node[:setup][:user])
@@ -812,6 +822,7 @@ define :deploy_with_ssm_env,
        temp_path: nil,
        output_path: nil,
        expected_keys: [],
+       value_prefixes: {},
        owner: nil,
        group: nil,
        mode: "600",
@@ -825,6 +836,7 @@ define :deploy_with_ssm_env,
 
   u      = params[:user] || node[:setup][:user]
   keys   = params[:expected_keys] || []
+  vpre   = params[:value_prefixes] || {}
   rsrc   = params[:restart_resource]
   fowner = params[:owner] || node[:setup][:user]
   fgroup = params[:group] || node[:setup][:group]
@@ -833,7 +845,10 @@ define :deploy_with_ssm_env,
   content_aware_skip = lambda do
     next false unless File.exist?(op)
     body = File.read(op)
-    keys.all? { |k| body.include?("#{k}=") }
+    next false unless keys.all? { |k| body.include?("#{k}=") }
+    # Value-aware guard: a provider migration can keep the KEY NAME but change
+    # the value shape (e.g. pa- -> sk-). Re-fetch if any required prefix is absent.
+    vpre.all? { |k, pre| body.include?("#{k}=#{pre}") }
   end
 
   require_external_auth(
