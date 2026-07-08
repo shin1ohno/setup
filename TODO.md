@@ -160,3 +160,21 @@ pipelines and the old local MCP ports.
   reversal), but a proactive sweep shortens the stale window.
 - First step: `grep -rliE 'cognee|cognify|8001|8002' ~/.claude/projects/*/memory/`
   and update or delete each hit, syncing MEMORY.md index lines in the same pass.
+
+## remindd daemon — connection/idle-timeout hardening (Low)
+
+From the adversarial review of the `remindd` daemon (cookbooks/remind, added with
+the daemon PR). The daemon has no idle/read timeout and no max-concurrent-connection
+cap, so a slow or silent LAN client (slowloris) can hold connections and starve the
+accept loop. Deferred deliberately: the daemon is LAN-bound on a trusted home network
+(Mac mini), single-user, so the exposure is a compromised/buggy LAN device only — out
+of scope for the initial PR.
+
+- Reason deferred: trusted-LAN posture makes this low-likelihood; the Hummingbird 2.x
+  config API for read/idle timeout + max connections wasn't confirmed at implementation
+  time and adding it unverified risked the build.
+- First step: confirm the Hummingbird 2.x `Application`/server configuration knobs for
+  idle/read timeout and max in-flight connections (swift-nio `ServerBootstrap`
+  child-channel options surfaced via HB config), set a modest idle timeout (~30s) and
+  connection cap in `cookbooks/remind/files/daemon/Sources/remindd/main.swift`, and
+  add a slowloris probe to the verification steps.
