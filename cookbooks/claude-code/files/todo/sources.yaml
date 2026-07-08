@@ -10,10 +10,42 @@
 #   class:   explicit  — user made a deliberate mark → auto-remember + receipt
 #            inferred  — extraction guesses intent → candidates only, approval required
 #   adapter: slack-saved | slack-reaction | slack-self-dm | google-tasks |
-#            transcript-deferral | calendar-notion-notes
-#   query:   adapter-specific selector (tasklist name, emoji, lookback window, search modifier)
+#            transcript-deferral | calendar-notion-notes | apple-reminders
+#   query:   adapter-specific selector (tasklist name, emoji, lookback window,
+#            search modifier; for apple-reminders: the Reminders list name to
+#            capture from)
 #   sink:    ai-memory | memory-local   (work sources MUST sink to memory-local)
 #   enabled: true | false
+#
+# apple-reminders adapter: sweeps the named Reminders list via `remind --dump`.
+# A reminder is a capture candidate when it is NOT completed, carries no
+# [ai-todo:<memory-id>] token in its notes, no open memory todo references
+# its externalId (provenance `reminders:<externalId>`), and its due (if any)
+# falls within the capture horizon (default 14 days; optional top-level
+# `capture: { due_horizon_days: N }`, negative disables) — far-future scheduled
+# reminders stay in Reminders, which already owns their notification. Capture
+# lists = every apple-reminders source's query list + the mirror list below.
+# explicit class → auto-remember with provenance `reminders:<externalId>`.
+# The source's `sink` is the DEFAULT for its candidates: a mixed personal/work
+# list gets sensitivity-routed at normalization (work-shaped content →
+# memory-local), same routing doctrine as todo-management.md.
+#
+# mirror: section (end of file) — Apple Reminders is also a SURFACE for open
+# memory todos: /todo-collect Step 6 mirrors each open todo of the listed
+# stores 1:1 into `mirror.list` via remind_sync.rb. Link is stateless: the
+# reminder carries an [ai-todo:<memory-id>] token line in its notes; no state
+# file — every sync plan is re-derived from the two dumps (remind --dump JSON
+# + memory dump JSON). Keys:
+#   list:              Reminders list holding the mirrors (created if absent)
+#   stores:            [{ name: <memory store>, policy: full | title-link }]
+#                      full       — title = first sentence of content (prefix
+#                                   stripped, 100-char cap); notes = close-
+#                                   condition line + first URL + token line
+#                      title-link — same title; notes = first URL + token line
+#                                   ONLY (no body text egresses to iCloud)
+#   complete_captured: whether close propagation (rule 5: memory todo gone →
+#                      complete the reminder) also applies to capture-origin
+#                      reminders
 #
 # Example local override (~/.claude/todo/sources.local.yaml) for work Slack:
 #   sources:
@@ -36,3 +68,25 @@ sources:
     query: "7d"
     sink: ai-memory
     enabled: true
+
+  - name: reminders-inbox
+    class: explicit
+    adapter: apple-reminders
+    query: "Inbox"
+    sink: ai-memory
+    enabled: true
+
+# Apple Reminders mirror — public default mirrors the PERSONAL store only
+# (ai-memory, policy full). The work store (memory-local) is deliberately NOT
+# mirrored here: opt in via ~/.claude/todo/sources.local.yaml (zp-SHIN overlay)
+# with `policy: title-link`, so no work-todo body text egresses to iCloud
+# (title + first URL + link token only — iCloud is a third-party egress
+# surface, same judgment as knowledge-persistence.md "local is NOT air-gapped").
+# Merge rule: when sources.local.yaml defines its own `mirror:` section it
+# replaces this one WHOLESALE (no per-key deep-merge) — the overlay copy must
+# therefore restate the full section including the ai-memory entry.
+mirror:
+  list: "Claude"
+  stores:
+    - { name: ai-memory, policy: full }
+  complete_captured: true # apply rule 5 (close propagation → complete) to capture-origin reminders too

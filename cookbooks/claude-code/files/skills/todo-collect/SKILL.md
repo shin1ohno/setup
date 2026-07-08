@@ -3,7 +3,8 @@ name: todo-collect
 description: |
   config（~/.claude/todo/sources.yaml + sources.local.yaml）に列挙された外部 capture
   ソース — Slack saved（後で見る）/ 📌 リアクション / self-DM、Google Tasks、
-  Claude Code transcript の deferral 発話、カレンダー連携 Notion 議事録 — を sweep し、
+  Apple Reminders（remind --dump）、Claude Code transcript の deferral 発話、
+  カレンダー連携 Notion 議事録 — を sweep し、
   TODO 形に正規化（完了条件の起草 + provenance 付与）して機密性 routing どおりの
   memory store（ai-memory / memory-local）に tags:["todo"] で書き込む毎日ループ skill。
   explicit ソース（明示マーク）は自動保存 + 領収書 1 行、inferred ソース（推論抽出）は
@@ -11,6 +12,7 @@ description: |
   に追記。設計の真実源は ~/.claude/docs/todo-management.md。
   「todo collect」「TODO 集めて」「capture 集めて」「TODO 収集」でトリガー。
   注: ソース側の状態は絶対に変更しない（Task の完了化・saved 解除等をしない）。
+  例外は連携ストアの Apple Reminders のみ（リンクトークン annotate と close 伝播 complete）。
   仕事ソースの sink は memory-local 固定 — 個人 ai-memory へ流すのは egress 違反。
 user-invocable: true
 ---
@@ -43,6 +45,7 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
 - `slack-reaction`: search `hasmy::<emoji>:`（query の emoji、既定 `pushpin`）。full sweep（全ページ）
 - `slack-self-dm`: 自分の self-DM を search（`in:` 自 user、`channel_types=im`、from:自分）。self-DM は自分が今書くので後方 lookback は任意
 - `google-tasks`（explicit）: `gws tasks tasks list --tasklist <id>` の needsAction のみ（query = tasklist 名）
+- `apple-reminders`（explicit）: capture lists（= config の apple-reminders ソースの query リスト群 + `mirror.list`）ごとに `remind --dump --list <名前>` を実行。未完了・notes に `[ai-todo:…]` トークン無し・どの open memory todo からも `reminders:<externalId>` で未参照・due が capture horizon 内（既定 14 日、`capture.due_horizon_days` で変更・負値で無効 — 先の予定 reminder は Reminders 自身が通知を担うので取り込まない）、の 4 条件を満たすものが candidate（Step 6 の remind_sync.rb が返す `capture_candidates` と同一規則）。explicit class なので自動 remember + provenance `reminders:<externalId>`。**sink は既定値** — Inbox は個人/work 混在ソースなので候補ごとに内容で routing する（work 形 → memory-local。todo-management.md の capture routing と同一）
 - `transcript-deferral`（inferred）: `~/.claude/projects/*/*.jsonl` の直近 query 期間（既定 7d）から deferral 発話（「あとでやる」「後回し」「TODO にして」等）のうち領収書行（「→ … に保存」）が続かないものを抽出
 - `calendar-notion-notes`（inferred）: `gws calendar` の直近イベント → 説明欄の Notion リンク → notion fetch → action item（自分宛て）抽出
 
@@ -63,9 +66,22 @@ provenance キー（Slack permalink / task id / event id / transcript の sessio
 
 `~/.claude/todo/ledger.md`（`mkdir -p ~/.claude/todo`）に: 実行日時 / ソース別 新規 N 件・候補 M 件（除外候補も理由つきで列挙）・dedup skip 数 / ページ打ち切りがあれば truncated 残数 / 不達ソースの WARN。
 
+### Step 6 — Reminders mirror 同期（remind_sync.rb）
+
+Apple Reminders を open memory todo の surface（mirror）として同期する（設計と sync 5 規則: `~/.claude/docs/todo-management.md` の「Apple Reminders integration」）。実装は同 skill ディレクトリの `remind_sync.rb` — 状態ファイルを持たず、毎回 2 つのダンプから plan を導出する（リンクは reminder notes 末尾の `[ai-todo:<memory-id>]` トークンと memory content 内の `reminders:<externalId>` provenance のみ）。
+
+1. **memory dump 作成**: 両 store の `browse(filters: {tags: "todo"})` 結果（open のみ）を `[{"id","store","content","tags"}]` の JSON に整形して MEM.json へ
+2. **config 作成**: sources.yaml + sources.local.yaml の merge 結果から `{"mirror":{...},"capture":{"lists":[...],"sink":"..."}}` を CONFIG.json へ（capture.lists = apple-reminders ソースの query リスト群）
+3. **1 回目 apply**: `ruby remind_sync.rb --config CONFIG.json --memory-dump MEM.json --apply`。reminder_actions（mklist→add→annotate→complete）は script 自身が remind CLI で実行する。stdout JSON のうち skill が MCP で実行するのは: `memory_actions`（forget — reminder 完了を機械的証拠として対応 store の todo を閉じる）と `capture_candidates`（Step 2-4 の dedup→正規化→書込フローに乗せる。explicit なので自動 remember + 領収書）
+4. **2 回目 apply**: 同コマンドを再実行 — capture で新規 remember した分への annotate（notes に `[ai-todo:<id>]` 追記）が走って収束する
+5. **冪等確認**: 3 回目（`--apply` 無しの plan）で `counts` が全規則 0 件であることを確認。0 でなければ収束失敗 — それ以上書き込まず ledger に WARN
+
+件数（add / annotate / complete / forget / capture 候補）と収束確認の結果は Step 5 の ledger に追記する。
+
 ## 検証ゲート（最重要）
 
 - ソース側の状態を変更しない — Google Task を complete にしない、saved を解除しない、リアクションを消さない
+- **Reminders は連携ストア — 非連携 capture ソース（Slack / Google Tasks 等）の不変更原則の例外**: Apple Reminders に限り、リンクトークンの annotate（notes への `[ai-todo:<id>]` 追記）と close 伝播の complete の 2 操作のみ変更可。それ以外（reminder の削除・タイトル編集・リスト移動・トークン以外の notes 書換え）は禁止
 - **sink 越境禁止**: work 系 adapter（Mercari Slack 等）の sink が `ai-memory` になっていたら書き込まずに停止して警告（egress 違反）
 - **Slack sweep は全ページ取得を確認**: `End of results` まで辿ったか（1 ページ=20 件ちょうどで止まっていないか）。saved / reaction に `after:` を付けていないか（付けると投稿日フィルタで古い保存分が全部消える）。打ち切る場合は ledger に truncated 残数を明記（silent cap 禁止）
 - inferred 項目は承認なしに書き込まない。actionable でないと判断した分も silent drop せず候補に理由つきで残す
