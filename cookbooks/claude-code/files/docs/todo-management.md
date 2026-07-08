@@ -69,3 +69,48 @@ Config: `~/.claude/todo/sources.yaml` (cookbook-managed) merged at runtime with 
 **Sink routing = sensitivity routing**: each source declares its sink. Work sources (Mercari Slack, work calendar) → `memory-local`; personal sources → `ai-memory`. This is the same egress rule as `knowledge-persistence.md` "local is NOT air-gapped" — a work capture in personal ai-memory is a violation, not a convenience.
 
 **Runtime constraints** (2026-07 facts): claude.ai-authenticated connectors (Slack) are absent in headless runs; memory-local is LAN-scoped (air). Work-source collection therefore runs interactively on air; headless automation can start only with `gh` / `gws`-backed personal sources. Daily cadence until then: trigger `/todo-collect` at the start of the first interactive session of the day (pairs naturally with `/morning-triage`).
+
+## Apple Reminders integration (remind CLI)
+
+真実源は変わらず memory store（ai-memory=個人 / memory-local=work）。Apple Reminders は 2 役を担う連携ストア:
+
+- **surface (mirror)**: open な memory todo を専用リスト（default "Claude"）に 1:1 でミラー — Siri / iOS / watch から見え、完了にできる面
+- **capture 入口**: ユーザーが Siri / iOS で作った reminder を `/todo-collect` の `apple-reminders` adapter（explicit class）が memory に正規化取込
+
+**リンク機構（stateless）**: reminder 側は notes 末尾行トークン `[ai-todo:<memory-id>]`（= memory item にリンク済みの印）、memory 側は content 内の `reminders:<externalId>`（capture 由来の provenance）。状態ファイルは持たず、毎回 2 つのダンプ（`remind --dump` JSON / memory dump JSON）から plan を導出する。
+
+**sync 5 規則**（R = 対象リスト群の全 reminder incl. completed、M = open memory todos）:
+
+1. **capture_candidate**: r 未完了・トークン無し・どの m からも未 ref・due が horizon 内（既定 14 日、`capture.due_horizon_days`、負値で無効 — 先の予定は Reminders 自身が通知を担う）→ capture 候補（collector の正規化フローへ。**sink はソース定義の既定値** — 混在リストは内容で work/personal を routing する）
+2. **annotate**: トークン無しだが open な m が r.externalId を ref → notes に `[ai-todo:m.id]` を追記（収束ステップ）
+3. **create_mirror**: reminder 由来でない open な m にミラー r が無い → mirror リストに add（notes にトークン）
+4. **forget (close A)**: r 完了済み・リンク先 m が open → memory forget（reminder 完了 = 機械的証拠、evidence-based auto-close）
+5. **complete (close B)**: r 未完了・トークンの id が M に無い（memory 側で forget 済み）→ reminder を complete
+
+fixpoint: apply 2 回で収束、3 回目は全規則 0 件（冪等）。
+
+**mirror 内容ポリシーと egress 境界**:
+
+| store | policy | reminder に出る内容 |
+|---|---|---|
+| ai-memory（個人） | `full` | title = content 先頭文（接頭辞除去・100 文字打切）、notes = 完了条件行 + 最初の URL + トークン行 |
+| memory-local（work） | `title-link` | title 同様、notes = 最初の URL + トークン行のみ（本文を iCloud に出さない） |
+
+public default（`sources.yaml` の `mirror:`）は ai-memory/full のみ。work store のミラーは zp-SHIN overlay の `sources.local.yaml` で opt-in（title-link 固定）— iCloud は第三者 egress 面であり、`knowledge-persistence.md`「local is NOT air-gapped」と同じ判断基準を適用する。due は content が `期日: YYYY-MM-DD[ HH:MM]` にマッチした時のみ `--due` で付与。
+
+**実行タイミング**: `/todo-collect` Step 6（日次、interactive session 冒頭）。実装は todo-collect skill ディレクトリの `remind_sync.rb`（plan/apply CLI）+ `remind` CLI（`--dump` / `--complete` / `--annotate` / `--mklist`）。
+
+### 受入基準 (AC1〜AC10)
+
+| # | 基準 | 判定（1 行） |
+|---|---|---|
+| AC1 | remind CLI ビルド + 新フラグ presence | `swiftc` build が exit 0、`remind -h 2>&1` に `--dump` `--complete` `--annotate` `--mklist` が 4/4 出現 |
+| AC2 | CLI round-trip | `remind --mklist T` → `remind add`（T へ）→ `--dump --list T` で id 取得 → `--annotate <id> --notes X` → `--complete <id>` → `--dump --list T --include-completed` で notes に X・`completed:true` |
+| AC3 | unit tests green | todo-collect skill ディレクトリの remind_sync テストを `ruby` で実行し exit 0 |
+| AC4 | mirror E2E + 冪等 | open todo 1 件の MEM.json で `--apply` ×2 → 3 回目 plan の `counts` 全規則 0 件 |
+| AC5 | capture E2E + dedup | Inbox に手動 reminder 1 件 → collect で remember 1 件（provenance 付き）、再実行で新規 0 件 |
+| AC6 | close A（reminder 完了 → memory forget） | mirror reminder を complete → 次 plan の `memory_actions` にリンク先 id の forget が 1 件 |
+| AC7 | close B（memory forget → reminder complete） | memory todo を forget → MEM.json から除いて `--apply` → `--dump --include-completed` で該当 reminder が `completed:true` |
+| AC8 | egress guard | memory-local の todo を含む MEM.json + default config（sources.yaml のみ）で plan → `reminder_actions` に該当 add が 0 件 |
+| AC9 | dual-managed diff 一致 | `diff` で cookbook source（sources.yaml / SKILL.md / todo-management.md / remind_sync.rb）と `~/.claude` 配下 deploy 先が全対で差分 0 |
+| AC10 | PR CI green + merge | `gh pr checks <n>` 全 green かつ `gh pr view <n> --json state` = `MERGED` |
