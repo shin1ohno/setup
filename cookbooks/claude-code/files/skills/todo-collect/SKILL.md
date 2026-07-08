@@ -31,7 +31,7 @@ user-invocable: true
 
 ### Step 0 — config 読込 + 到達性確認
 
-enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到達、google-tasks → `gws tasks tasklists list` が 200、sink → 対象 memory store の `memory_stats`。不達ソースは WARN + skip し、ledger に「未 sweep」と明記する（「0 件」と報告しない）。
+enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到達、google-tasks → `gws tasks tasklists list` が 200、sink → 対象 memory store の `memory_stats`。不達ソースは WARN + skip し、ledger に「未 sweep」と明記する（「0 件」と報告しない）。**gws の偽ゼロ注意**: gws はエラー時も JSON（`{"error":{...}}`）を stdout に返すため、`2>/dev/null` + `jq '[.items[]?]'` はエラーを 0 件に化けさせる。sweep 結果が 0 件のときは stderr を出して再実行し、401 `invalid_rapt`（Google 再認証切れ）なら `! gws auth login` を提示して「未 sweep」扱い。probe が通っても数分後の data call でトークン失効し得る — 0 件の positive control を必ず取る。
 
 ### Step 1 — sweep（adapter 別）
 
@@ -44,7 +44,7 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
 - `slack-saved`: search `is:saved`（Later の In progress + Archived を返す）。full sweep（全ページ）
 - `slack-reaction`: search `hasmy::<emoji>:`（query の emoji、既定 `pushpin`）。full sweep（全ページ）
 - `slack-self-dm`: 自分の self-DM を search（`in:` 自 user、`channel_types=im`、from:自分）。self-DM は自分が今書くので後方 lookback は任意
-- `google-tasks`（explicit）: `gws tasks tasks list --tasklist <id>` の needsAction のみ（query = tasklist 名）
+- `google-tasks`（explicit）: `gws tasks tasks list --params '{"tasklist":"<id>"}'` の needsAction のみ（query = tasklist 名）。gws はサブコマンド固有フラグを持たず**引数は全て `--params` JSON 渡し**（`--tasklist` 等は unexpected argument で落ちる）
 - `apple-reminders`（explicit）: capture lists（= config の apple-reminders ソースの query リスト群 + `mirror.list`）ごとに `remind --dump --list <名前>` を実行。未完了・notes に `[ai-todo:…]` トークン無し・どの open memory todo からも `reminders:<externalId>` で未参照・due が capture horizon 内（既定 14 日、`capture.due_horizon_days` で変更・負値で無効 — 先の予定 reminder は Reminders 自身が通知を担うので取り込まない）、の 4 条件を満たすものが candidate（Step 6 の remind_sync.rb が返す `capture_candidates` と同一規則）。explicit class なので自動 remember + provenance `reminders:<externalId>`。**sink は既定値** — Inbox は個人/work 混在ソースなので候補ごとに内容で routing する（work 形 → memory-local。todo-management.md の capture routing と同一）
 - `transcript-deferral`（inferred）: `~/.claude/projects/*/*.jsonl` の直近 query 期間（既定 7d）から deferral 発話（「あとでやる」「後回し」「TODO にして」等）のうち領収書行（「→ … に保存」）が続かないものを抽出
 - `calendar-notion-notes`（inferred）: `gws calendar` の直近イベント → 説明欄の Notion リンク → notion fetch → action item（自分宛て）抽出
