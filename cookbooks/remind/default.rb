@@ -71,3 +71,119 @@ execute "build and install remind" do
   user node[:setup][:user]
   not_if %(test -x #{bin} && test -f #{sentinel} && [ "$(cat #{sentinel})" = "$(cat #{src_dir}/remind.swift #{src_dir}/Info.plist | shasum -a 256 | cut -d' ' -f1)" ])
 end
+
+# --- daemon mode (remindd) — mini-only, opt-in via marker file --------------
+# `remindd serve` is a Hummingbird HTTP daemon that accepts LAN + bearer-token
+# requests and creates reminders, so OTHER machines can add to THIS Mac's
+# Reminders. It is a SEPARATE binary from the `remind` CLI: it uses SPM +
+# Hummingbird (~20 transitive deps, first build 2-5 min), so it is confined to
+# the host that opts in with `touch ~/.config/remind/daemon-enabled` — NOT every
+# Mac that gets the light CLI. Intended host: the always-on home Mac mini.
+#
+# Security posture (LAN bind + bearer token, plaintext HTTP) and the mini GUI-
+# session / TCC precondition are documented in README.md. Do NOT enable this on
+# a roaming laptop (0.0.0.0 would follow it onto untrusted networks).
+daemon_marker = "#{home}/.config/remind/daemon-enabled"
+if File.exist?(daemon_marker)
+  config_dir      = "#{home}/.config/remind"
+  token_file      = "#{config_dir}/token"
+  daemon_src      = "#{home}/.local/src/remindd"
+  daemon_bin      = "#{bin_dir}/remindd"
+  daemon_sentinel = "#{daemon_src}/.build-hash"
+  log_dir         = "#{home}/.local/var/log"
+  agents_dir      = "#{home}/Library/LaunchAgents"
+  plist           = "#{agents_dir}/be.ohno.remindd.plist"
+  pkg_dir         = File.join(File.dirname(__FILE__), "files", "daemon")
+
+  directory config_dir do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "700"
+    action :create
+  end
+
+  [log_dir, agents_dir].each do |d|
+    directory d do
+      owner node[:setup][:user]
+      group node[:setup][:group]
+      mode "755"
+      action :create
+    end
+  end
+
+  # Bearer token — generate once, 0600, under umask 077 (no world-readable window).
+  execute "generate remind daemon token" do
+    command "bash -c 'umask 077; openssl rand -hex 32 > #{token_file}'"
+    user node[:setup][:user]
+    not_if "test -s #{token_file}"
+  end
+
+  # Build remindd (SPM + Hummingbird) + ad-hoc sign + install. Idempotent via a
+  # source sentinel: rebuild only when the package sources change or the binary
+  # is missing. The .build cache is preserved across source changes (no rm -rf).
+  # swift-missing is a WARN skip, like the CLI's swiftc guard above.
+  daemon_build = <<~CMD.strip
+    bash -c '
+      set -euo pipefail
+      if ! command -v swift >/dev/null 2>&1; then
+        echo "WARN: swift not found (install Xcode CLT: xcode-select --install); skipping remindd build" >&2
+        exit 0
+      fi
+      mkdir -p #{daemon_src}
+      cp -R #{pkg_dir}/. #{daemon_src}/
+      cd #{daemon_src}
+      swift build -c release
+      codesign -s - --force .build/release/remindd
+      install -m 755 .build/release/remindd #{daemon_bin}
+      ( cd #{daemon_src} && find Package.swift Sources -type f | sort | xargs cat | shasum -a 256 | cut -d" " -f1 ) > #{daemon_sentinel}
+    '
+  CMD
+
+  execute "build and install remindd" do
+    command daemon_build
+    user node[:setup][:user]
+    not_if %(test -x #{daemon_bin} && test -f #{daemon_sentinel} && [ "$(cat #{daemon_sentinel})" = "$(cd #{pkg_dir} && find Package.swift Sources -type f | sort | xargs cat | shasum -a 256 | cut -d' ' -f1)" ])
+    notifies :run, "execute[reload remindd agent]"
+  end
+
+  # LaunchAgent (user Aqua session — required for TCC Reminders access). KeepAlive
+  # only on UNCLEAN exit + ThrottleInterval, so a crafted-request crash cannot
+  # become an unbounded restart loop and a clean exit (gate removed) stays down.
+  file plist do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    content <<~PLIST
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+        <key>Label</key><string>be.ohno.remindd</string>
+        <key>ProgramArguments</key>
+        <array>
+          <string>#{daemon_bin}</string>
+          <string>serve</string>
+        </array>
+        <key>EnvironmentVariables</key>
+        <dict>
+          <key>REMIND_PORT</key><string>8787</string>
+        </dict>
+        <key>RunAtLoad</key><true/>
+        <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+        <key>ThrottleInterval</key><integer>10</integer>
+        <key>StandardOutPath</key><string>#{log_dir}/remindd.log</string>
+        <key>StandardErrorPath</key><string>#{log_dir}/remindd.log</string>
+      </dict>
+      </plist>
+    PLIST
+    notifies :run, "execute[reload remindd agent]"
+  end
+
+  # (Re)load the agent when the plist or binary changes. bootstrap is idempotent
+  # (|| true if already loaded); kickstart -k restarts to pick up a new binary.
+  execute "reload remindd agent" do
+    command "bash -c 'launchctl bootstrap gui/$(id -u) #{plist} 2>/dev/null || true; launchctl kickstart -k gui/$(id -u)/be.ohno.remindd'"
+    user node[:setup][:user]
+    action :nothing
+  end
+end
