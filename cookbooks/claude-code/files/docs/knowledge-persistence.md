@@ -6,6 +6,10 @@ Doctrine for when and how to search + save durable knowledge. `@`-imported by CL
 
 If a knowledge-WRITE tool (`remember`, `ingest`, `revise`, `forget`) is denied in this session, a local memory MCP may be registered on this host for writes — use the local equivalent instead (`mcp__memory-local__*`). READS (`recall`, `browse`) continue to use whichever connector is available (hosted or local). On hosts where the local server is not registered, the connector write tools are allowed and this note is a no-op.
 
+## Connector timeout ≠ service down — curl the endpoint before declaring an outage
+
+When an MCP connector call (`recall` / `remember` / `browse`) hangs or times out mid-session, probe the backing endpoint directly before treating the service as down: `curl -si --max-time 8 <endpoint URL>`. Any HTTP response (401 / 406 / 200) proves the service is alive and the fault is connector-local (OAuth session, transport) — continue via a fallback path (the local memory MCP, curl-MCP for loopback servers, or defer the write) and retry the connector later; it often recovers within the session. No response / connection refused = genuine outage. This is the memory/MCP specialization of `rules/debugging.md`'s Noisy Non-Failure Pattern. Origin: 2026-07-08 — the ai-memory connector timed out for ~40 min while `mcp.ohno.be` answered 401 in 0.06s; writes proceeded via the local store and the connector recovered mid-session.
+
 ## "local" is NOT air-gapped — verify egress before routing work-sensitive data
 
 `memory-local` (127.0.0.1) names the **MCP server location**, not the LLM/embedding backend. Embedding may call **external vendor APIs** (Voyage, OpenAI, etc.) depending on container config, so "local" storage can still **egress content to a third party** on every write. Before routing any work-sensitive content (employer KPIs, product metrics, internal business data) through a local MCP:
