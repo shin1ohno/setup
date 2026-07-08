@@ -15,6 +15,21 @@ remind --lists                                           # リスト一覧
 
 期日は `YYYY-MM-DD HH:MM`（時刻ありは alarm 付き）または `YYYY-MM-DD`。
 
+### sync 用サブコマンド（todo-remind integration）
+
+todo-remind sync（memory store ↔ Reminders のミラー / capture）が使う機械可読インターフェース。
+
+```
+remind --dump                                            # 全リストの reminder を JSON 配列で stdout へ（completed 除外）
+remind --dump --list Claude --include-completed          # 指定リストのみ・completed 含む
+remind --complete <id>                                   # reminder を完了化
+remind --annotate <id> --notes "[ai-todo:abc123]"        # notes 末尾に 1 行追記（notes が空なら TEXT のみ）
+remind --mklist Claude                                   # リスト作成（既存なら "exists: Claude" で exit 0 の冪等）
+```
+
+- `--dump` の要素: `{"id","externalId","title","notes","list","completed","completionDate","due","priority","created"}`。日時は ISO8601 文字列 or `null`。`due` は `dueDateComponents` から復元（year を欠く不完全 components は `null`）
+- `--complete` / `--annotate` の `<id>` は `calendarItemIdentifier`（`--dump` の `id`）と `externalId` のどちらでも可。前者を先に試し、無ければ後者で全 reminder を検索。見つからなければ stderr + exit 1
+
 ## daemon（`remindd`）
 
 `remindd serve` が HTTP/JSON を待ち受け、他マシンからの POST で Mac の Reminders に登録する。CLI とは別バイナリ・別ビルド（Hummingbird は依存 ~20・初回ビルド 2-5 分）なので、CLI しか使わない Mac には入れず、**opt-in した 1 台**（想定: 常時起動の自宅 Mac mini）だけで動かす。
