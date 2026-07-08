@@ -49,6 +49,8 @@ When a PR you created has all required checks green, do NOT present `! gh pr mer
 
 **Fallback**: only when `gh pr merge` is denied by project-local settings (deny/ask) do you revert to presenting `! gh pr merge <n> --squash --delete-branch` for the user.
 
+**kouzoh org exception**: the auto-mode classifier structurally denies self-merging into `kouzoh/*` repos — even in an interactive session, even with plan-scoped approval and policy-bot green (observed 2026-07-08, zp-SHIN #73). For kouzoh-org PRs, skip the self-merge attempt and present `! gh -R kouzoh/<repo> pr merge <n> --merge --delete-branch` directly (zp convention: merge commit). Consistent with the denial-as-probe rule: this exception is recorded WITH its rationale, so no per-run re-attempt is needed; if a future attempt succeeds anyway, update this line in the same run.
+
 Origin: 2026-07 — re-presented `! gh pr merge` after the user had already authorized merging, forcing a re-authorization round-trip. Detail: see `~/.claude/docs/git-commit-detail.md#merge-execution-default`.
 
 ## Branch Check Before First Commit
@@ -239,6 +241,8 @@ Every `gh pr create / edit / merge / checks / view`, `gh api`, and `git push` ov
 `git push` over an **SSH** remote works in-sandbox (SSH egress is allowed); only HTTPS pushes and `gh` CLI calls need sandbox-disabled.
 
 When a post-commit block is planned (`push → gh pr create → gh pr checks`), run the network steps sandbox-disabled from the start rather than discovering it one failed command at a time. This is a sandbox-config fact, not a one-off — treat a `tls: failed to verify certificate` / blocked-egress error from any `gh`/HTTPS call as expected-in-sandbox and retry sandbox-disabled, per the Bash tool's sandbox-failure guidance.
+
+**Intermittent HTTPS timeouts are transient too**: when an already-sandbox-disabled `gh` call (`pr create` / `merge` / `view` / `api`) fails with `dial tcp …:443: i/o timeout`, treat it like the `pr checks --watch` transient rule — retry up to 3 times (immediately → 5s → 15s) before diagnosing. An SSH `git push` succeeding while HTTPS times out confirms the degradation is network-layer, not repo-side. A merge that timed out may or may not have landed: probe `gh pr view <n> --json state` before re-issuing. Origin: 2026-07-08 — ~10 intermittent 443 timeouts across one session; every operation succeeded on retry while SSH pushes worked throughout.
 
 Origin: 2026-06-26 — every gh/HTTPS call across PR #556/#563/#564 required a sandbox-disabled retry; SSH push succeeded in-sandbox.
 
