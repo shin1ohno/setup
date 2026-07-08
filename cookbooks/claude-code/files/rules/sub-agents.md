@@ -122,6 +122,10 @@ Parent prompts for sessions involving deferred tools should explicitly include: 
 
 Detail (origin): see `~/.claude/docs/sub-agents-detail.md#tool-availability-toolsearch`.
 
+## Sub-agent Scratch-File Discipline
+
+When a sub-agent's task involves writing smoke-test fixtures, stub binaries, call logs, or any temporary artifact, the launching prompt MUST pin the write location to `$TMPDIR` (or an explicit scratchpad path) — never the tracked repo tree. Sub-agents do NOT inherit the session's scratchpad path automatically; name it in the prompt. A stray untracked file left inside a tracked directory blocks the next `git pull` with "untracked working tree files would be overwritten by merge" and pollutes `git status` for every later actor. The `warn-untracked-before-pull.rb` hook is the warn-only backstop; this prompt-side rule is the prevention. Origin: 2026-07-08 — a ruby agent's fake-remind stub landed in `cookbooks/.../todo-collect/` and blocked the post-merge pull.
+
 ## Bulk Research Pattern
 
 When collecting information from multiple sources (URLs, products, brands, categories), **proactively** (before the user asks for parallelism) split by independence — 1 agent = 1 brand / category / theme — launch all agents in background in parallel (`run_in_background: true` in one message), have each WebFetch and save findings to the memory MCP (`remember` / `ingest`), and show a live-updating progress table.
