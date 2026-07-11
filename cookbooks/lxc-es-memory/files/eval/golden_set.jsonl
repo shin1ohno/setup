@@ -29,7 +29,7 @@
 {"query": "なぜ memory v2 はサーバーから LLM を全廃した？", "expect_contains": ["claude -p", "keeper"], "type": "knowledge"}
 {"query": "episode の期限管理はどうしている？", "expect_contains": ["90", "delete_by_query"], "type": "knowledge"}
 {"query": "fact の重複はどう扱う？ supersede か削除か", "expect_contains": ["supersede", "superseded_by"], "type": "knowledge"}
-{"query": "ES trial license expiry date", "expect_contains": ["2026-07-07", "basic"], "type": "fact"}
+{"query": "ES trial license expiry date and post-expiry action", "expect_contains": ["2026-07-07", "start_basic"], "type": "knowledge"}
 {"query": "7月のES移行セッションで完了したこと", "expect_contains": ["ES", "移行"], "type": "episode"}
 {"query": "what did we finish in the memory v2 migration session", "expect_contains": ["memory", "migration"], "type": "episode"}
 {"query": "cognee と mem0 を統合した先のMCP名は？", "expect_contains": ["memory"], "type": "episode"}
