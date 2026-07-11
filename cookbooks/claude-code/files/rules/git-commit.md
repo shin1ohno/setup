@@ -57,8 +57,10 @@ Origin: 2026-07 — re-presented `! gh pr merge` after the user had already auth
 
 Before writing any file or running `git add` in a repo that is part of the current task, run `git branch --show-current` and `git log --oneline -3`. If the current branch is not `main` and was not created for this task, stop and create a new branch from `origin/main`:
 
-    git fetch origin
-    git checkout -b fix/<topic> origin/main
+    git fetch origin && \
+      git checkout -b fix/<topic> origin/main
+
+The `&&` is load-bearing: on an authenticated remote a swallowed `git fetch` failure would otherwise leave you branching from a **stale** local `origin/main`, and the later push is rejected non-fast-forward. Never split fetch and checkout into two unchained lines.
 
 Do NOT commit onto: merged PR branches still checked out locally, in-flight feature branches for unrelated work, or any branch whose `git log` shows commits unrelated to the current task. Scope-bleed discovered after the commit requires cherry-pick surgery that is easy to prevent with this 2-second check.
 
@@ -145,9 +147,9 @@ If the `branch --show-current` test fails the chain aborts before staging, surfa
 
 The standard pattern for moving an existing commit onto its own clean branch:
 
-    git fetch origin
-    git checkout -b fix/<topic> origin/main
-    git cherry-pick <hash>
+    git fetch origin && \
+      git checkout -b fix/<topic> origin/main && \
+      git cherry-pick <hash>
 
 Never cherry-pick onto an existing feature branch unless that branch is the cherry-pick's intended destination. The "branch is not main" heuristic is insufficient — the branch may be another in-flight feature (the user's WIP, a sibling task) that has nothing to do with the commit you're moving.
 
