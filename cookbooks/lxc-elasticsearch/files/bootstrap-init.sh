@@ -119,6 +119,37 @@ ${ELASTIC_PASSWORD}
 EOF
 }
 
+# --- Step 0b: ensure a valid (basic) license ----------------------------
+#
+# The cluster runs on the free BASIC tier by design (kNN / security / ILM /
+# alerting are all basic features — see cookbooks/lxc-es-memory). It was
+# bootstrapped on a 30-day TRIAL, and an expired trial does NOT auto-degrade
+# to basic — it goes non-compliant, which silently degrades security-gated
+# features. In 2026-07 the trial expired, Kibana alerting degraded, and the
+# process-down rules froze "active" → an 8-issue false-positive self-heal
+# storm (#706-#713). Nothing in the cookbooks pinned basic, so nothing
+# re-asserted it. This step makes basic idempotent: no-op when already
+# basic/active, otherwise (trial/expired) activate basic. start_basic is
+# cluster-wide and server-side idempotent, so running it from every node's
+# drift sweep is safe (first node flips it, the rest no-op).
+ensure_basic_license() {
+  local body type status
+  body=$(es_curl "${ES_URL}/_license") || {
+    echo "[bootstrap] WARN: license GET failed — skipping license check this run" >&2
+    return 0
+  }
+  type=$(printf '%s' "${body}"   | sed -n 's/.*"type" *: *"\([^"]*\)".*/\1/p'   | head -1)
+  status=$(printf '%s' "${body}" | sed -n 's/.*"status" *: *"\([^"]*\)".*/\1/p' | head -1)
+  if [[ "${type}" == "basic" && "${status}" == "active" ]]; then
+    echo "[bootstrap] license already basic/active — no-op"
+    return 0
+  fi
+  echo "[bootstrap] license is ${type:-unknown}/${status:-unknown} — applying start_basic" >&2
+  es_curl -X POST "${ES_URL}/_license/start_basic?acknowledge=true" \
+    || echo "[bootstrap] WARN: start_basic POST failed — will retry next apply" >&2
+  echo
+}
+
 # --- Step 1: wait for cluster YELLOW (or better) -------------------------
 
 wait_cluster_ready() {
@@ -383,6 +414,10 @@ main() {
   # first-boot case where the local node's reserved-realm cache lags
   # the cluster security index). Must run before any es_curl call.
   ensure_local_elastic_password
+
+  # Pin the free basic license (idempotent). An expired trial does not
+  # auto-degrade to basic and silently degrades alerting — see the function.
+  ensure_basic_license
 
   # Idempotent infrastructure setup. Order matters: ILM → component →
   # index template → data stream (Adversarial #8).
