@@ -49,6 +49,8 @@ When a PR you created has all required checks green, do NOT present `! gh pr mer
 
 **Fallback**: only when `gh pr merge` is denied by project-local settings (deny/ask) do you revert to presenting `! gh pr merge <n> --squash --delete-branch` for the user.
 
+**Generalizes beyond merges**: this self-execute-after-explicit-authorization shape applies to any auto-mode-classifier-blocked production mutation (license changes, service restarts, config pushes) — do the read-only verify inline, present/ask for the specific mutation, then self-execute on authorization. See `~/.claude/rules/infrastructure.md` "Auto-Mode Classifier Boundary — Production Reads vs Production Mutations".
+
 **kouzoh org exception**: the auto-mode classifier structurally denies self-merging into `kouzoh/*` repos — even in an interactive session, even with plan-scoped approval and policy-bot green (observed 2026-07-08, zp-SHIN #73). For kouzoh-org PRs, skip the self-merge attempt and present `! gh -R kouzoh/<repo> pr merge <n> --merge --delete-branch` directly (zp convention: merge commit). Consistent with the denial-as-probe rule: this exception is recorded WITH its rationale, so no per-run re-attempt is needed; if a future attempt succeeds anyway, update this line in the same run.
 
 Origin: 2026-07 — re-presented `! gh pr merge` after the user had already authorized merging, forcing a re-authorization round-trip. Detail: see `~/.claude/docs/git-commit-detail.md#merge-execution-default`.
