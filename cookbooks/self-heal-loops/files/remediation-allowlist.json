@@ -1,13 +1,5 @@
 {
-  "_comment": "self-heal-resolve class C' known-safe remediation allowlist. Data, grown ONLY via PR review. self-heal-remediate.sh executes an entry's recovery_command ONLY when (host, service) matches EXACTLY here — anything not listed stays class D (needs-human). Never add destructive / auth / secret / IAM commands. Each recovery_command embeds its own transport (ssh/pct) and must run WITHOUT interactive sudo (headless). host = logical key the resolve SKILL derives from the alert; service = the unit/label; flap_window_min + max_kicks_per_window bound re-kicks before escalating to a permanent fix (class B) / needs-human.",
-  "remediations": [
-    {
-      "host": "mini",
-      "service": "homebrew.mxcl.et",
-      "recovery_command": "ssh -o ConnectTimeout=10 -o BatchMode=yes mini.home.local 'launchctl kickstart -k system/homebrew.mxcl.et'",
-      "flap_window_min": 60,
-      "max_kicks_per_window": 1,
-      "notes": "etserver alive-but-not-listening wedge (#567). launchctl kickstart -k restores the :2022 listener; verified reachable as shin1ohno without sudo (2026-07-05). ONLY apply on a wedge-suspect verdict (target refused, ssh:22 open) from self-heal-probe.sh — a target-TIMEOUT verdict on mini is auto-sleep (#603, class D power mgmt), NOT a wedge."
-    }
-  ]
+  "_comment": "self-heal-resolve class C' known-safe remediation allowlist. Data, grown ONLY via PR review. self-heal-remediate.sh executes an entry's recovery_command ONLY when (host, service) matches EXACTLY here — anything not listed stays class D (needs-human). Never add destructive / auth / secret / IAM commands. Each recovery_command embeds its own transport (ssh/pct) and must run WITHOUT interactive sudo (headless) — so a remediation that inherently needs root (e.g. `launchctl kickstart` on a macOS system-domain LaunchDaemon) does NOT belong here. host = logical key the resolve SKILL derives from the alert; service = the unit/label; flap_window_min + max_kicks_per_window bound re-kicks before escalating to a permanent fix (class B) / needs-human.",
+  "_mini_et_removed_note": "REMOVED 2026-07-12: the (mini, homebrew.mxcl.et) remote-kick entry was structurally broken. etserver is a SYSTEM-domain LaunchDaemon (domain=system, /opt/homebrew/bin/etserver), so `launchctl kickstart -k system/homebrew.mxcl.et` requires root and always failed 'Operation not permitted' over the headless no-sudo ssh (contradicting the no-sudo rule above; the '2026-07-05 verified without sudo' note was wrong — it never exercised a real kick of a down service). The #567 alive-but-not-listening wedge is self-healed LOCALLY by the root et-watchdog LaunchDaemon (cookbooks/eternal-terminal: /usr/local/bin/et-watchdog.sh on a StartInterval, runs as root so it CAN kickstart the system daemon). #703 lingered 4 days only because mini was stale (not auto-mitamae'd) and had not re-applied the watchdog. Do NOT re-add a remote-kick entry here — granting the loop NOPASSWD sudo would violate the no-sudo/no-auth design; fix or extend the local watchdog instead.",
+  "remediations": []
 }
