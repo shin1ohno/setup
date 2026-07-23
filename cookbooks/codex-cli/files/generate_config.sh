@@ -38,6 +38,17 @@ fetch_ssm() {
 
 # Start building config.toml
 {
+  # Optional preamble injected before the generated [projects.*] tables. A
+  # consumer (e.g. a work-Mac overlay) points CODEX_CONFIG_PREAMBLE at a file
+  # holding top-level keys (model_provider, model, approval_policy, ...) and
+  # provider tables ([model_providers.*]). TOML requires top-level keys to
+  # precede any [table], so this MUST be emitted first. Unset -> no-op, output
+  # is byte-identical to the pre-existing behavior.
+  if [ -n "${CODEX_CONFIG_PREAMBLE:-}" ] && [ -f "${CODEX_CONFIG_PREAMBLE}" ]; then
+    cat "${CODEX_CONFIG_PREAMBLE}"
+    echo ""
+  fi
+
   # Add trusted projects
   echo "[projects.\"${HOME_DIR}\"]"
   echo 'trust_level = "trusted"'
