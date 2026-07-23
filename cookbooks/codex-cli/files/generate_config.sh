@@ -72,6 +72,16 @@ fetch_ssm() {
   for name in $server_names; do
     server=$(echo "$json_config" | jq -r ".mcp_servers[\"$name\"]")
 
+    # Skip servers the preamble already defines — the preamble wins, so a
+    # consumer can override a server's transport (e.g. wrap an SSE endpoint in
+    # an stdio bridge for a client that lacks native SSE) without editing the
+    # shared servers.yml. Emitting both would produce a duplicate [mcp_servers.X]
+    # table and a TOML parse error.
+    if [ -n "${CODEX_CONFIG_PREAMBLE:-}" ] && [ -f "${CODEX_CONFIG_PREAMBLE}" ] && \
+       grep -qE "^\[mcp_servers\.${name}\]" "${CODEX_CONFIG_PREAMBLE}"; then
+      continue
+    fi
+
     # Check platform restriction - skip platform-specific servers for codex
     # (codex runs cross-platform, so we include all non-platform-specific servers)
     platforms=$(echo "$server" | jq -r '.platforms // empty')
