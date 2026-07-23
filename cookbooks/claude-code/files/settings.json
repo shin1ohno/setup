@@ -6,7 +6,6 @@
     "defaultMode": "auto",
     "allow": [
       "Read(**)",
-      "Write(**)",
       "Edit(**)",
       "Bash(git init:*)",
       "Bash(git add:*)",
@@ -55,7 +54,7 @@
       "Read(.env.*)",
       "Read(id_rsa)",
       "Read(id_ed25519)",
-      "Write(.env*)"
+      "Edit(.env*)"
     ]
   },
   "hooks": {
