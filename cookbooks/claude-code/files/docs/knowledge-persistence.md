@@ -17,7 +17,7 @@ When an MCP connector call (`recall` / `remember` / `browse`) hangs or times out
 1. Probe the actual egress:
 
    ```bash
-   docker exec local-mcp-memory-1 env | grep -iE 'LLM_(PROVIDER|ENDPOINT|MODEL)|EMBEDDING_(PROVIDER|ENDPOINT)|VOYAGE|OPENAI|ANTHROPIC'
+   docker exec local-es-memory-memory-mcp-1 env | grep -iE 'LLM_(PROVIDER|ENDPOINT|MODEL)|EMBEDDING_(PROVIDER|ENDPOINT)|VOYAGE|OPENAI|ANTHROPIC'
    ```
 
 2. If any `*_ENDPOINT` points to a vendor API (`api.openai.com`, …), treat that MCP as equivalent to that vendor for data-sensitivity purposes — route work data through it only when the vendor is sanctioned for that data class, and **never** to a personal home-lab / personal Notion.
