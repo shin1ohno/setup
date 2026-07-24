@@ -2,7 +2,7 @@
 
 Load before `gh pr create` on a cookbook change. Each check catches a recurring bug class observed in past sessions.
 
-## The 5-check pass
+## The 6-check pass
 
 1. **IP literal vs `contracts/devices.json`**: every IP literal in the diff must match a `contracts/devices.json` entry. Probe:
    ```
@@ -31,9 +31,16 @@ Load before `gh pr create` on a cookbook change. Each check catches a recurring 
    ```
    A parser that silently mis-extracts a field either re-runs a mutation on every converge (false-negative idempotency) or permanently skips a required mutation (false-positive) — both look clean in the PR diff and only misbehave on the real target. Sibling failure mode: `~/.claude/rules/ruby.md` "Guard must be evaluatable under mitamae's actual runtime privilege" (guard can't even run, vs. this — guard runs but parses wrong).
 
-Implementation-level, distinct from the design-level `~/.claude/rules/adversarial-review.md`. Adversarial caught architecture bugs (TLS SAN, IAM size, JWKS fetch loop); these 5 checks catch implementation bugs that surface only at apply time.
+6. **Secret-placeholder token appears exactly once in a globally-substituted template**: any committed template with a placeholder (`@@KEY@@`, `{{SECRET}}`, …) rendered via global substitution (`sed 's/…/…/g'`, `envsubst`) must have that token appear ONLY at its intended substitution site. Probe:
+   ```
+   git diff origin/main...HEAD -- '*.toml' '*.tmpl' '*.yml' '*.sh' | grep -oE '@@[A-Z_]+@@|\{\{[A-Z_]+\}\}' | sort | uniq -c
+   ```
+   A count > 1 for the same token means a second mention (typically an explanatory comment) is also replaced by the global sed, leaking the real secret into the rendered file's comment. Fix: describe the mechanism without repeating the literal token ("the placeholder above", or abbreviate `@@...@@`). Pairs with the "no secret in git" rule — the committed template stays secret-free, but a stray token in prose defeats that at render time.
+
+Implementation-level, distinct from the design-level `~/.claude/rules/adversarial-review.md`. Adversarial caught architecture bugs (TLS SAN, IAM size, JWKS fetch loop); these 6 checks catch implementation bugs that surface only at apply time.
 
 ## Origin
 
 2026-05-09 6 sequential fix PRs for bugs all 4 checks catch at PR time.
 2026-07-11 `ensure_basic_license()` sed parse verified against the live ES `_license` response before PR #731 shipped — no bug this time, but no checklist item required it either (check 5 added).
+2026-07-23 `@@LITELLM_API_KEY@@` repeated in a codex preamble comment; the render-time `sed -g` replaced it too, leaking the real LiteLLM key into the generated `~/.codex/config.toml` comment (zp-SHIN #83). Check 6 added.
