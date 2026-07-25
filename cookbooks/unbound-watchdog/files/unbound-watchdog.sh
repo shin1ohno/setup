@@ -14,6 +14,8 @@
 #      SERVFAILs. This is the 2026-06-02 home.local-forward-wedge failure class.
 #      Recovery: `unbound-control flush_infra all` (clears the stuck backoff for
 #      ALL forwarders), and only a full restart if that does not recover it.
+#      The canary answer is FLUSHED from unbound's cache before each probe —
+#      see forward_probe() for why a cached canary is blind to the wedge.
 #
 # On failure it acts inside the CT and records node_exporter textfile metrics
 # (the PVE host's node-exporter is already scraped by Prometheus on monitoring).
@@ -26,14 +28,34 @@ EXPECT="${EXPECT:-192.0.2.1}"
 # Forward-path canary: a public name that REQUIRES the `.` DoT forwarders (it is
 # NOT local-data). Any A answer means the forward path is healthy.
 FWD_CANARY="${FWD_CANARY:-one.one.one.one}"
+# Flush the forward canary from unbound's cache before probing it (see
+# forward_probe). Set to 0 only to fall back to the old cache-served probe.
+FWD_FLUSH="${FWD_FLUSH:-1}"
+# Minimum seconds between two unbound restarts. flush_infra still runs on every
+# failing cycle; only the heavier restart is rate-limited. Without this, a real
+# upstream outage (ISP/DoT unreachable for an hour) would restart unbound every
+# 60s and drop the whole LAN cache each time — making DNS worse, not better.
+RESTART_MIN_INTERVAL="${RESTART_MIN_INTERVAL:-900}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile}"
 OUT="${TEXTFILE_DIR}/unbound-watchdog.prom"
 STATE_DIR="${STATE_DIR:-/var/lib/unbound-watchdog}"
 STATE="${STATE_DIR}/restart_total"
+LAST_RESTART="${STATE_DIR}/last_restart"
+FWD_WEDGE_STATE="${STATE_DIR}/forward_wedge_total"
 
 mkdir -p "${TEXTFILE_DIR}" "${STATE_DIR}"
 [[ -f "${STATE}" ]] || echo 0 >"${STATE}"
-restart_total=$(cat "${STATE}" 2>/dev/null || echo 0)
+[[ -f "${FWD_WEDGE_STATE}" ]] || echo 0 >"${FWD_WEDGE_STATE}"
+
+# read_counter <file> -> integer (0 when the file is missing/garbage)
+read_counter() {
+  local v
+  v=$(cat "${1}" 2>/dev/null || echo 0)
+  case "${v}" in ''|*[!0-9]*) echo 0 ;; *) echo "${v}" ;; esac
+}
+
+restart_total=$(read_counter "${STATE}")
+forward_wedge_total=$(read_counter "${FWD_WEDGE_STATE}")
 
 probe() {
   # +tries=2 absorbs a single dropped UDP packet; +time=2 keeps the whole probe
@@ -47,9 +69,42 @@ probe() {
 forward_probe() {
   # Resolve a public name through the resolver's forward path. Any A answer = the
   # forwarders are responding. +time=3 tolerates the DoT handshake latency.
+  #
+  # The cache flush is load-bearing, not hygiene: unbound.conf sets
+  # `prefetch: yes`, so a popular cached answer is refreshed in the background
+  # and KEEPS BEING SERVED even while every *new* forwarded lookup SERVFAILs.
+  # A cache-served canary therefore stays green straight through a forward
+  # wedge — observed 2026-07-25 (setup#748/#749/#750/#752): LAN clients got
+  # SERVFAIL on every public name for ~35 min in flapping multi-minute windows,
+  # while this watchdog logged nothing, unbound_watchdog_forward_path_up stayed
+  # 1 and restart_total never moved. Flushing the canary first forces a real
+  # forwarded resolution on every cycle, which is what LAN clients actually do.
+  if [[ "${FWD_FLUSH}" == "1" ]]; then
+    pct exec "${CT_ID}" -- unbound-control flush "${FWD_CANARY}" >/dev/null 2>&1
+  fi
   local ans
   ans=$(dig +short +time=3 +tries=2 @"${RESOLVER_IP}" "${FWD_CANARY}" A 2>/dev/null)
   [[ -n "${ans}" ]]
+}
+
+# restart_unbound <reason> -> 0 when the restart ran, 1 when suppressed by the
+# backoff. Rate-limited so a sustained upstream outage cannot turn a per-minute
+# timer into a per-minute cache-wipe.
+restart_unbound() {
+  local reason="${1}" now last
+  now=$(date +%s)
+  last=$(read_counter "${LAST_RESTART}")
+  if (( now - last < RESTART_MIN_INTERVAL )); then
+    logger -t unbound-watchdog \
+      "restart SUPPRESSED (${reason}): last restart $((now - last))s ago < ${RESTART_MIN_INTERVAL}s backoff"
+    return 1
+  fi
+  pct exec "${CT_ID}" -- systemctl restart unbound >/dev/null 2>&1
+  echo "${now}" >"${LAST_RESTART}"
+  restart_total=$((restart_total + 1))
+  echo "${restart_total}" >"${STATE}"
+  sleep 3
+  return 0
 }
 
 up=1
@@ -59,10 +114,7 @@ if ! probe; then
   # Local canary failed: unbound down / wedged / stale config. Restart.
   logger -t unbound-watchdog \
     "resolver ${RESOLVER_IP} canary '${CANARY}' failed — restarting unbound in CT ${CT_ID}"
-  pct exec "${CT_ID}" -- systemctl restart unbound >/dev/null 2>&1
-  restart_total=$((restart_total + 1))
-  echo "${restart_total}" >"${STATE}"
-  sleep 3
+  restart_unbound "local canary"
   if probe; then
     logger -t unbound-watchdog "unbound restarted; resolver ${RESOLVER_IP} healthy again"
   else
@@ -73,6 +125,8 @@ else
   # Local canary OK. Check the forward path — a forwarder infra-cache wedge does
   # not affect local-data answers, so this is the only probe that catches it.
   if ! forward_probe; then
+    forward_wedge_total=$((forward_wedge_total + 1))
+    echo "${forward_wedge_total}" >"${FWD_WEDGE_STATE}"
     logger -t unbound-watchdog \
       "resolver ${RESOLVER_IP} forward canary '${FWD_CANARY}' failed — flush_infra in CT ${CT_ID}"
     pct exec "${CT_ID}" -- unbound-control flush_infra all >/dev/null 2>&1
@@ -82,15 +136,17 @@ else
     else
       logger -t unbound-watchdog \
         "forward path still failing after flush_infra — restarting unbound in CT ${CT_ID}"
-      pct exec "${CT_ID}" -- systemctl restart unbound >/dev/null 2>&1
-      restart_total=$((restart_total + 1))
-      echo "${restart_total}" >"${STATE}"
-      sleep 3
-      if forward_probe; then
-        logger -t unbound-watchdog "unbound restarted; forward path healthy again"
+      if restart_unbound "forward canary"; then
+        if forward_probe; then
+          logger -t unbound-watchdog "unbound restarted; forward path healthy again"
+        else
+          fwd_up=0
+          logger -t unbound-watchdog "unbound restart did NOT restore the forward path"
+        fi
       else
+        # Backoff suppressed the restart; the forward path is still down. Report
+        # it so the alert fires instead of silently looking recovered.
         fwd_up=0
-        logger -t unbound-watchdog "unbound restart did NOT restore the forward path"
       fi
     fi
   fi
@@ -106,6 +162,9 @@ trap 'rm -f "${tmp}"' EXIT
   echo "# HELP unbound_watchdog_forward_path_up Resolver answered a forwarded (public) query (1) or not (0)"
   echo "# TYPE unbound_watchdog_forward_path_up gauge"
   echo "unbound_watchdog_forward_path_up{target=\"${RESOLVER_IP}\"} ${fwd_up}"
+  echo "# HELP unbound_watchdog_forward_wedge_total Cumulative forward-path wedges detected (recovered by flush_infra or restart)"
+  echo "# TYPE unbound_watchdog_forward_wedge_total counter"
+  echo "unbound_watchdog_forward_wedge_total{target=\"${RESOLVER_IP}\"} ${forward_wedge_total}"
   echo "# HELP unbound_watchdog_restart_total Cumulative unbound restarts triggered by the watchdog"
   echo "# TYPE unbound_watchdog_restart_total counter"
   echo "unbound_watchdog_restart_total{target=\"${RESOLVER_IP}\"} ${restart_total}"
