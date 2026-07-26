@@ -395,26 +395,79 @@ directory "#{deploy_dir}/geoip" do
 end
 
 # Download dbip-city-lite (CC-BY 4.0, ~50 MB gz / ~125 MB unpacked) for
-# GeoIP enrichment in the Vector pipeline. URL pattern is
-# dbip-city-lite-YYYY-MM.mmdb.gz; verified 2026-05 active at the time of
-# cookbook authoring (HTTP 200, 62 MB gzipped). The not_if guard
-# re-downloads if the file is older than 25 days — db-ip publishes
-# monthly so this naturally keeps the database fresh-ish without a
-# separate cron.
+# GeoIP enrichment in the Vector pipeline. The not_if guard re-downloads if
+# the file is older than 25 days — db-ip publishes monthly, so this keeps the
+# database fresh-ish without a separate cron.
+#
+# The month is resolved at run time, and the release month is NOT a constant.
+# db-ip serves dbip-city-lite-YYYY-MM.mmdb.gz and DELETES older months, so a
+# pinned month becomes a 404 the moment the next one lands. `curl -f` then
+# feeds nothing into gunzip, `pipefail` turns that into a non-zero exit, and
+# the failed resource aborts the WHOLE monitoring apply — which is how CT 111
+# stopped converging entirely on 2026-07-26 (its elastic-agent.yml had been
+# frozen at 2026-07-06 since the 2026-05 file was withdrawn). An enrichment
+# database must never be able to do that.
+#
+# Two candidate months are tried (current, then previous) because db-ip
+# publishes a few days into each month. Failing both is only fatal when there
+# is no database at all — a stale-but-present DB degrades enrichment quality,
+# which is not worth blocking Prometheus/Grafana/elastic-agent convergence
+# over, so that path WARNs and exits 0.
+#
+# The guard also HEAD-probes the two candidate URLs, which is what keeps the
+# graceful path from becoming a restart storm: mitamae fires a delayed notify
+# whenever an `execute` runs at all, so a resource that ran, found nothing to
+# download and exited 0 would still recreate the whole compose stack — every
+# 5 minutes, on every orchestrator cycle. Not running is the only way to not
+# notify (mitamae has no `ignore_failure`; verified against the pinned
+# binary). When no release is fetchable AND a database already exists, the
+# guard therefore skips the resource entirely.
 geoip_db_path = "#{deploy_dir}/geoip/dbip-city-lite.mmdb"
-geoip_url     = "https://download.db-ip.com/free/dbip-city-lite-2026-05.mmdb.gz"
+geoip_url_tmpl = "https://download.db-ip.com/free/dbip-city-lite-%s.mmdb.gz"
 
 execute "download dbip-city-lite GeoIP DB" do
   command <<~SH.strip
-    set -euo pipefail
-    curl -fsSL "#{geoip_url}" \\
-      | gunzip > #{geoip_db_path}.new
-    mv #{geoip_db_path}.new #{geoip_db_path}
-    chmod 644 #{geoip_db_path}
+    set -uo pipefail
+    db="#{geoip_db_path}"
+    updated=0
+    for month in "$(date -u +%Y-%m)" "$(date -u -d '1 month ago' +%Y-%m)"; do
+      url="$(printf '#{geoip_url_tmpl}' "$month")"
+      if ! curl -fsSL --max-time 900 "$url" -o "$db.gz.new"; then
+        echo "[lxc-monitoring] $url unavailable, trying older release" >&2
+        rm -f "$db.gz.new"
+        continue
+      fi
+      if ! gzip -t "$db.gz.new" 2>/dev/null; then
+        echo "[lxc-monitoring] WARNING: $url is not valid gzip (truncated download?), trying older release" >&2
+        rm -f "$db.gz.new"
+        continue
+      fi
+      gunzip -c "$db.gz.new" > "$db.new" && mv "$db.new" "$db" && chmod 644 "$db"
+      rm -f "$db.gz.new" "$db.new"
+      echo "[lxc-monitoring] GeoIP DB updated from $url"
+      updated=1
+      break
+    done
+    if [ "$updated" -eq 0 ]; then
+      if [ -f "$db" ]; then
+        echo "[lxc-monitoring] WARNING: no dbip-city-lite release could be fetched; keeping the existing (stale) database so the rest of the apply proceeds" >&2
+        exit 0
+      fi
+      echo "[lxc-monitoring] ERROR: no dbip-city-lite release could be fetched and no database is present; Vector GeoIP enrichment cannot start" >&2
+      exit 1
+    fi
   SH
   user user
-  not_if "test -f #{geoip_db_path} && " \
-         "find #{geoip_db_path} -mtime -25 | grep -q ."
+  # Skip when the database is fresh (<25 days), and also when nothing is
+  # fetchable but a database is already in place — see the restart-storm note
+  # above. `date -u -d '1 month ago'` is GNU date; this cookbook is LXC-only.
+  not_if <<~SH.strip
+    { test -f #{geoip_db_path} && find #{geoip_db_path} -mtime -25 | grep -q .; } || {
+      test -f #{geoip_db_path} &&
+      ! curl -fsI --max-time 20 "$(printf '#{geoip_url_tmpl}' "$(date -u +%Y-%m)")" >/dev/null 2>&1 &&
+      ! curl -fsI --max-time 20 "$(printf '#{geoip_url_tmpl}' "$(date -u -d '1 month ago' +%Y-%m)")" >/dev/null 2>&1
+    }
+  SH
   notifies :run, "execute[restart monitoring]"
 end
 
