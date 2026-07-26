@@ -5,8 +5,14 @@ After=homebridge.service
 
 [Service]
 Type=oneshot
-# RemainAfterExit keeps a non-zero active window, so the timer's
-# OnUnitInactiveSec has a deactivation reference to count from — without it a
-# oneshot that exits instantly can leave Trigger at n/a.
-RemainAfterExit=true
+# Deliberately NO RemainAfterExit. The companion timer recurs on
+# OnUnitInactiveSec, which needs this unit to actually reach inactive after
+# each run; RemainAfterExit=true parks it at active (exited) forever, the
+# deactivation reference never arrives, and the timer's next elapse becomes
+# infinity — it fires exactly once and never again. Verified on CT 120:
+# with RemainAfterExit the timer reported Trigger empty /
+# NextElapseUSecMonotonic=infinity after its first fire.
+#
+# RemainAfterExit is the remedy for the OTHER shape — OnUnitActiveSec on a
+# unit whose active window is ~zero. Pick one; combining them breaks both.
 ExecStart=/usr/local/bin/echonet-rediscover
