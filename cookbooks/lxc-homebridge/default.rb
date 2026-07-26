@@ -360,3 +360,23 @@ end
 systemd_unit "echonet-rediscover.timer" do
   staging_path rediscover_timer_staging
 end
+
+# Recover a timer that is enabled and active but will never fire again. A
+# oneshot started while an earlier version of the unit carried
+# RemainAfterExit=true parks at active (exited), and `daemon-reload` does not
+# retroactively deactivate it — so OnUnitInactiveSec has no deactivation to
+# count from and the next elapse stays infinity. Stopping the service supplies
+# that deactivation; restarting the timer recomputes the schedule.
+#
+# The guard reads NextElapseUSecMonotonic, not Trigger: every schedule in the
+# timer is monotonic, and Trigger only carries realtime elapses, so it is empty
+# even on a healthy timer. An armed timer reports a duration ("29min 58s"),
+# a dead one reports "infinity".
+execute "arm echonet-rediscover.timer" do
+  command <<~SH
+    set -eu
+    sudo systemctl stop echonet-rediscover.service
+    sudo systemctl restart echonet-rediscover.timer
+  SH
+  not_if "systemctl show echonet-rediscover.timer --property=NextElapseUSecMonotonic --value | grep -Eq '^[0-9]'"
+end
