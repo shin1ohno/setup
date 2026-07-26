@@ -6,6 +6,11 @@ Description=Periodic ECHONET Lite re-discovery request for Homebridge
 # timer itself (a cookbook update), and OnUnitInactiveSec drives the recurring
 # fire. 30 minutes bounds how long a unit missed at Homebridge startup can stay
 # invisible, while keeping the plugin's info-level "再探索" log line to 48 a day.
+#
+# OnUnitInactiveSec requires the companion service to reach inactive after each
+# run — see the RemainAfterExit note in echonet-rediscover.service. Verify with
+# `systemctl show echonet-rediscover.timer --property=Trigger`: a future
+# timestamp means armed, empty or n/a means it will never fire.
 OnBootSec=120s
 OnActiveSec=120s
 OnUnitInactiveSec=1800s
