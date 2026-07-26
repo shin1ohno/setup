@@ -77,6 +77,7 @@ HOMEBRIDGE_PLATFORM = "ECHONETLitePlus"
 # plugins cannot share UDP 3610.
 HOMEBRIDGE_OLD_PLATFORM = "EchonetLiteAircon"
 ECHONET_DISCOVER    = "/usr/local/bin/echonet-discover"
+ECHONET_REDISCOVER  = "/usr/local/bin/echonet-rediscover"
 
 # Aircons to expose. `ip` is the DHCP-reserved address (source of truth:
 # home-monitor/devices.tf — toshiba_ac_1/.28, toshiba_ac_2/.29); `eoj` is the
@@ -308,4 +309,54 @@ end
 execute "install echonet-discover" do
   command "sudo install -m 0755 -o root -g root #{staging_dir}/echonet-discover.py #{ECHONET_DISCOVER}"
   not_if "diff -q #{staging_dir}/echonet-discover.py #{ECHONET_DISCOVER} >/dev/null 2>&1"
+end
+
+# 9. Periodic re-discovery. The plugin probes knownDeviceIps once, at startup,
+# and its poll loop then iterates only over what that probe found — so a unit
+# whose reply is dropped there stays unpolled for the entire life of the
+# process, with no optional characteristics (no temperature control) while
+# still appearing in HomeKit. Measured after one restart: the plugin held at
+# "1台" across three poll cycles while both units answered a 4-EPC unicast Get
+# 5/5, and writing the marker below recovered the second unit within seconds.
+#
+# See files/echonet-rediscover.sh for the mechanism and the upstream fix this
+# stands in for.
+remote_file "#{staging_dir}/echonet-rediscover.sh" do
+  source "files/echonet-rediscover.sh"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "0755"
+end
+
+execute "install echonet-rediscover" do
+  command "sudo install -m 0755 -o root -g root #{staging_dir}/echonet-rediscover.sh #{ECHONET_REDISCOVER}"
+  not_if "diff -q #{staging_dir}/echonet-rediscover.sh #{ECHONET_REDISCOVER} >/dev/null 2>&1"
+end
+
+# The caller stages the units so `source "files/..."` resolves to this
+# cookbook; systemd_unit owns install + activation.
+rediscover_service_staging = "#{staging_dir}/echonet-rediscover.service"
+rediscover_timer_staging   = "#{staging_dir}/echonet-rediscover.timer"
+
+remote_file rediscover_service_staging do
+  source "files/echonet-rediscover.service"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "0644"
+end
+
+remote_file rediscover_timer_staging do
+  source "files/echonet-rediscover.timer"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "0644"
+end
+
+systemd_unit "echonet-rediscover.service" do
+  staging_path rediscover_service_staging
+  start false
+end
+
+systemd_unit "echonet-rediscover.timer" do
+  staging_path rediscover_timer_staging
 end

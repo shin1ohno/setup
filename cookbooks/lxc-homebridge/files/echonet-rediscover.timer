@@ -1,0 +1,15 @@
+[Unit]
+Description=Periodic ECHONET Lite re-discovery request for Homebridge
+
+[Timer]
+# OnBootSec covers a cold boot, OnActiveSec covers `systemctl restart` of the
+# timer itself (a cookbook update), and OnUnitInactiveSec drives the recurring
+# fire. 30 minutes bounds how long a unit missed at Homebridge startup can stay
+# invisible, while keeping the plugin's info-level "再探索" log line to 48 a day.
+OnBootSec=120s
+OnActiveSec=120s
+OnUnitInactiveSec=1800s
+Unit=echonet-rediscover.service
+
+[Install]
+WantedBy=timers.target

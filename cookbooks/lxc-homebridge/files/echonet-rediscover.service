@@ -1,0 +1,12 @@
+[Unit]
+Description=Ask Homebridge's ECHONET Lite plugin to re-probe known device IPs
+Documentation=https://github.com/sylpied/homebridge-echonet-lite-plus
+After=homebridge.service
+
+[Service]
+Type=oneshot
+# RemainAfterExit keeps a non-zero active window, so the timer's
+# OnUnitInactiveSec has a deactivation reference to count from — without it a
+# oneshot that exits instantly can leave Trigger at n/a.
+RemainAfterExit=true
+ExecStart=/usr/local/bin/echonet-rediscover
