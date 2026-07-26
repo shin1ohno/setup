@@ -144,6 +144,27 @@
         timeout: 10s
         tags: [monitoring, grafana, lan-internal]
 
+  - type: synthetics/http
+    id: synthetics-homebridge-ui
+    use_output: default
+    data_stream:
+      namespace: default
+    streams:
+      - data_stream.dataset: http
+        type: http
+        id: homebridge-ui
+        name: Homebridge UI (CT 120)
+        enabled: true
+        schedule: "@every 60s"
+        # homebridge-config-ui-x serves its SPA at / and 302s to /login
+        # depending on session state; either proves the bridge process is up.
+        # The UI shares the homebridge process, so this doubles as the
+        # liveness probe for the HomeKit bridge itself.
+        urls: ["http://homebridge.home.local:8581/"]
+        timeout: 10s
+        check.response.status: [200, 302]
+        tags: [homebridge, homekit, lan-internal]
+
   # ===== TCP port-open probes =====
 
   - type: synthetics/tcp
