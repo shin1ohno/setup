@@ -88,17 +88,36 @@ ECHONET_DISCOVER    = "/usr/local/bin/echonet-discover"
 # Add the Eolia units here once they answer discovery (they need ECHONET Lite
 # switched on per-unit in the Eolia app first) AND have a DHCP reservation —
 # the reservation is not optional, see the accessory-identity note above.
+#
+# `epcs` pins which ECHONET properties are synced per device, and pinning them
+# is what makes the temperature control appear. HeaterCooler's mandatory
+# characteristics (Active, Current/Target state, CurrentTemperature) are added
+# by HAP no matter what, but the setpoint sliders are OPTIONAL characteristics
+# that the plugin only creates once a decoded `targetTemperature` (EPC B3)
+# arrives. Left to itself the plugin polls whatever it happened to learn from
+# the device's property map, and B3 never made it into that set here — so
+# HomeKit showed an aircon it could switch on but not set. The units answer B3
+# fine (it is in both the Get and Set maps: `80 81 82 86 88 89 8a 8c 8f 93 9d
+# 9e 9f a0 b0 b3 bb be c6 cf` readable, `80 81 8f 93 a0 b0 b3 cf` writable),
+# so requesting it explicitly is all it takes.
+#
+#   80 operation status   -> Active
+#   b0 operation mode     -> TargetHeaterCoolerState
+#   b3 target temperature -> Cooling/HeatingThresholdTemperature
+#   bb room temperature   -> CurrentTemperature
 node.reverse_merge!(
   lxc_homebridge: {
     aircons: [
       { ip: "192.168.1.28", eoj: "013001", name: "Toshiba Aircon 1" },
       { ip: "192.168.1.29", eoj: "013001", name: "Toshiba Aircon 2" },
     ],
+    epcs: %w[80 b0 b3 bb],
     poll_interval: 60,
   },
 )
 
 aircons       = node[:lxc_homebridge][:aircons]
+epcs          = node[:lxc_homebridge][:epcs]
 poll_interval = node[:lxc_homebridge][:poll_interval]
 
 staging_dir = "#{node[:setup][:root]}/lxc-homebridge"
@@ -224,9 +243,11 @@ aircon_eoj = ->(a) { a[:eoj] || a["eoj"] }
 aircon_name = ->(a) { a[:name] || a["name"] }
 
 known_device_ips = aircons.map { |a| "\"#{aircon_ip.call(a)}\"" }.join(",")
+epc_list         = epcs.map { |e| "\"#{e}\"" }.join(",")
 device_settings  = aircons.map do |a|
   "{\"id\":\"#{aircon_ip.call(a)}-#{aircon_eoj.call(a)}\"," \
-    "\"name\":\"#{aircon_name.call(a)}\",\"enabled\":true}"
+    "\"name\":\"#{aircon_name.call(a)}\",\"enabled\":true," \
+    "\"properties\":[#{epc_list}]}"
 end.join(",")
 
 platform_stanza = "{\"name\":\"ECHONET Lite\",\"platform\":\"#{HOMEBRIDGE_PLATFORM}\"," \
@@ -257,9 +278,17 @@ execute "seed #{HOMEBRIDGE_PLATFORM} platform in config.json" do
   SH
   # jq is a hard dependency of the homebridge package, so it is always present
   # by the time this runs.
+  #
+  # "Done" means all three of: the new stanza is present, the superseded one is
+  # gone, and every managed device pins its EPC list. The last clause is what
+  # migrates a host that was seeded before `properties` existed — without it
+  # such a host keeps an aircon HomeKit can switch on but not set.
   not_if "test -f #{HOMEBRIDGE_CONFIG} && " \
-         "jq -e '([.platforms[]? | select(.platform == \"#{HOMEBRIDGE_PLATFORM}\")] | length > 0) and " \
-         "([.platforms[]? | select(.platform == \"#{HOMEBRIDGE_OLD_PLATFORM}\")] | length == 0)' " \
+         "jq -e '[.platforms[]? | select(.platform == \"#{HOMEBRIDGE_PLATFORM}\")] as $p | " \
+         "($p | length > 0) and " \
+         "([.platforms[]? | select(.platform == \"#{HOMEBRIDGE_OLD_PLATFORM}\")] | length == 0) and " \
+         "([$p[0].deviceSettings[]? | select((.properties | type) == \"array\" and (.properties | length) > 0)] " \
+         "| length >= #{aircons.length})' " \
          "#{HOMEBRIDGE_CONFIG} >/dev/null"
   notifies :run, "execute[restart homebridge]"
 end
