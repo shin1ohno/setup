@@ -14,8 +14,24 @@ when "ubuntu"
     not_if { run_command("dpkg-query -W -f='${Status}' unzip 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
   end
 
-  execute "curl --silent --fail https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o #{archive_path.shellescape}" do
-    not_if { File.exist?(archive_path) }
+  # Download to a .part file and only publish it once unzip agrees the archive
+  # is complete. A bare `-o archive_path` guarded on File.exist? leaves a
+  # truncated zip behind when the transfer dies mid-flight, and the guard then
+  # treats that corpse as done forever: every later apply skips the download
+  # and hands the partial file to the unzip below, which fails, which aborts
+  # the whole run. Observed on CT 120 (homebridge) — a 46 MB fragment of the
+  # 73 MB zip, re-failing on every converge until it was replaced by hand.
+  # The integrity check is the guard, so a poisoned cache self-heals.
+  execute "download awscli v2 installer" do
+    command <<~SH.strip
+      set -eu
+      curl --silent --fail --show-error \\
+        https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip \\
+        -o #{archive_path.shellescape}.part
+      unzip -t #{archive_path.shellescape}.part >/dev/null
+      mv #{archive_path.shellescape}.part #{archive_path.shellescape}
+    SH
+    not_if "unzip -t #{archive_path.shellescape} >/dev/null 2>&1"
   end
 
   execute "unzip #{archive_path.shellescape} -d #{node[:setup][:root]}/awscli" do
