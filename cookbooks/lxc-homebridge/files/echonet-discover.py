@@ -13,11 +13,20 @@ Usage:
     echonet-discover --timeout 10     # listen longer
 
 Exit status: 0 if at least one home air conditioner (EOJ class group 0x01,
-class 0x30) answered, 1 otherwise. Safe to use as a verification gate.
+class 0x30) answered, 1 if none answered, 2 if the probe could not run.
+Safe to use as a verification gate.
+
+Port note: this binds UDP 3610 rather than an ephemeral port, because the
+aircons here answer to 3610 regardless of the request's source port — a probe
+from an ephemeral port gets silence even from a unit that is up (measured
+2026-07-26). node-echonet-lite opens 3610 without SO_REUSEADDR, so this cannot
+share the port with a running Homebridge; on the Homebridge host itself, stop
+the service first or probe from another host on the same LAN segment.
 """
 
 import argparse
 import binascii
+import errno
 import ipaddress
 import socket
 import struct
@@ -105,10 +114,20 @@ def local_ipv4_networks():
     return nets
 
 
+class PortBusy(Exception):
+    """UDP 3610 is held by another process (almost always Homebridge)."""
+
+
 def discover(timeout: float, sweep: bool):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("0.0.0.0", PORT))
+    try:
+        sock.bind(("0.0.0.0", PORT))
+    except OSError as exc:
+        sock.close()
+        if exc.errno == errno.EADDRINUSE:
+            raise PortBusy from exc
+        raise
     sock.setsockopt(
         socket.IPPROTO_IP,
         socket.IP_ADD_MEMBERSHIP,
@@ -163,7 +182,16 @@ def main():
     )
     args = parser.parse_args()
 
-    found = discover(args.timeout, args.sweep)
+    try:
+        found = discover(args.timeout, args.sweep)
+    except PortBusy:
+        print(f"UDP {PORT} is already in use, so this probe cannot listen for replies.")
+        print(
+            "Homebridge holds that port while it runs. Either stop it first "
+            "(systemctl stop homebridge), or run this probe from another host "
+            "on the same LAN segment."
+        )
+        return 2
 
     if not found:
         print("No ECHONET Lite responders on this LAN.")

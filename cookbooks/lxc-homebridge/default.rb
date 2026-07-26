@@ -44,8 +44,12 @@
 #      50-60% chance per unit. This is NOT fatal: the plugin is a dynamic
 #      platform and caches every accessory it has ever registered, so a unit
 #      needs to be discovered exactly once. If an aircon is missing from
-#      HomeKit, confirm it answers `echonet-discover --sweep` and then
-#      `systemctl restart homebridge` to re-run discovery.
+#      HomeKit, stop homebridge, confirm the unit answers
+#      `echonet-discover --sweep` (the probe needs 3610, so it only runs
+#      while the service is down), then start homebridge to re-run
+#      discovery. Repeat if the unit is still missing — each start is three
+#      more multicast attempts. Use stop/start, never `restart`, for the
+#      reason documented at the restart resource below.
 #
 #   2. Accessory identity falls back to the IP address. The plugin derives the
 #      HomeKit UUID from EPC 0x83 (identification number) and only falls back
@@ -119,8 +123,27 @@ execute "enable + start homebridge" do
   not_if "systemctl is-enabled homebridge >/dev/null 2>&1 && systemctl is-active homebridge >/dev/null 2>&1"
 end
 
+# A plain `systemctl restart` loses the ECHONET Lite plugin. The homebridge
+# child process outlives the unit's stop by a second or two, and it still
+# holds UDP 3610 when the new instance starts; node-echonet-lite has no bind
+# retry, so the plugin dies at boot with
+#   Failed to initialize Echonet Lite: bind EADDRINUSE 0.0.0.0:3610
+# and — because that error only aborts discovery, not Homebridge — the bridge
+# comes up looking healthy with zero aircons. Stop, wait for the port to
+# actually clear, then start. Observed on every restart until this landed.
 execute "restart homebridge" do
-  command "sudo systemctl restart homebridge"
+  command <<~SH
+    set -eu
+    sudo systemctl stop homebridge
+    for _ in $(seq 1 30); do
+      ss -uln | grep -q ':3610' || break
+      sleep 1
+    done
+    if ss -uln | grep -q ':3610'; then
+      echo "[lxc-homebridge] WARNING: UDP 3610 still held 30s after stop; starting anyway — check that the ECHONET Lite platform initialised" >&2
+    fi
+    sudo systemctl start homebridge
+  SH
   action :nothing
 end
 
