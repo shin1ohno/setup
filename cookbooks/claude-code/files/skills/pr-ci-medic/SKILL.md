@@ -50,7 +50,7 @@ flaky 疑いは `gh run rerun <id> --failed` を 1 回だけ試す（コード�
 
 ### Step 3. 修正
 - **diagnose**: ledger に `repo / PR# / 失敗 class / 根本原因 / 提案修正（具体的 diff か手順）` を記録。push しない。
-- **propose**: `git worktree add` で隔離 → 修正適用 → **ローカル検証**（リポの test/lint コマンド。Rust は `~/.claude/rules/rust.md` の 4 チェック、JS は build、cookbook は mitamae dry-run / `bin/lint-cookbooks`）→ 通れば PR ブランチに push → `git worktree remove` → `gh pr checks <n>` を再確認。検証が通らない修正は push しない。
+- **propose**: `git worktree add` で隔離 → 修正適用 → **ローカル検証**（リポの test/lint コマンド。Rust は `~/.claude/docs/rust.md` の 4 チェック、JS は build、cookbook は mitamae dry-run / `bin/lint-cookbooks`）→ 通れば PR ブランチに push → `git worktree remove` → `gh pr checks <n>` を再確認。検証が通らない修正は push しない。
 
 ### Step 4. サマリ
 処理した PR ごとに `diagnosed / fixed-pushed / flaky-rerun / flagged-for-human / skipped` を ledger に記録して報告。

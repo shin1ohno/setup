@@ -131,7 +131,7 @@ When responding in Japanese (default), follow these. They override English-rule 
 - **User-reported merge signal requires probe**: "merged" / "マージした" → `gh pr view <n> --json state --jq .state` before advancing. If `OPEN`, complete the merge per `git-commit.md` **Merge Execution Default** (self-execute `gh pr merge` when plan-scoped or explicitly authorized + CI green — it's allow-listed, so don't reflexively present `! gh pr merge`; present the `!` form only when `gh pr merge` is denied). Origin: 2026-05-06 retro 2x built on un-merged PRs
 - **Issue-completion self-comment**: when a non-trivial issue-originated investigation/fix completes, self-comment the outcome (what was done, verification, residual risk/tasks) on the originating issue — PR auto-close is not a completion record. Exception: bot-loop issues with their own comment protocol (self-heal etc.)
 - **Verify-before-done**: observe receiving-system state, not your code's "success" log. Build observation tool first if not visible from source. See `~/.claude/rules/debugging.md`
-- **Verify functional state, not deployment artifacts**: `systemctl is-active` (artifact) vs `show --property=Trigger` future timestamp (functional). Layer-specific examples: `~/.claude/rules/infrastructure.md`, `rules/docker-compose.md`, `docs/tailscale.md`. Origin: PR #253 → #257 → #259 — 3 iterations from artifact-shaped verification
+- **Verify functional state, not deployment artifacts**: `systemctl is-active` (artifact) vs `show --property=Trigger` future timestamp (functional). Layer-specific examples: `~/.claude/rules/infrastructure.md`, `docs/docker-compose.md`, `docs/tailscale.md`. Origin: PR #253 → #257 → #259 — 3 iterations from artifact-shaped verification
 - **Scope-before-done**: verify every plan deliverable attempted. Failed first try → retry alternative or AskUserQuestion. Never unilaterally shrink scope
 - **Hotfix layering**: evaluate change frequency vs resource recreation; place fix at the appropriate layer, not where it was edited on the server
 - **Blocked on manual → immediate background**: signals — "読んでいる" / "確認する" / "試してみる" / "待って", presenting `! sudo`, asking restart, delivering spec. Fire background Agent in the same response (retro / memory save / TODO cleanup)
@@ -155,10 +155,12 @@ When responding in Japanese (default), follow these. They override English-rule 
 
 ### Detail playbooks (load on demand — Read when the task matches)
 
-These are `docs/` files (not auto-loaded). `Read` the file when the task matches its trigger. Always-loaded `rules/` summaries (ruby, aws-iam, docker-compose, …) point to their own `docs/<name>-detail.md` inline — those are not indexed here.
+These are `docs/` files (not auto-loaded). `Read` the file when the task matches its trigger. Always-loaded `rules/` summaries (ruby, aws-iam, …) point to their own `docs/<name>-detail.md` inline — those are not indexed here.
 
 | Topic | File |
 |---|---|
+| Rust workspace commit gate (fmt/build/test/clippy), Cargo.lock staging, crates.io token scopes, cross-platform build gates | `~/.claude/docs/rust.md` |
+| Docker Compose ops — branch-dep pre-deploy check, notify `--force-recreate`, UDP host-net, up -d exit-1 triage | `~/.claude/docs/docker-compose.md` |
 | Pre-PR cookbook implementation checklist (IP literal / healthcheck quoting / bind-mount UID / UDP host-net) | `~/.claude/docs/cookbook-prs.md` |
 | Homebrew→mise / direct-download migration — 5-check upstream verification | `~/.claude/docs/mise-migration.md` |
 | iOS build (XcodeGen + Rust UniFFI): fresh-Mac prereqs, keychain, deploy probe | `~/.claude/docs/ios-build.md` |

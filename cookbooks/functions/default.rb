@@ -603,7 +603,7 @@ end
 #      doesn't restart against an empty env (e.g. SSM auth absent on a
 #      fresh host before bootstrap).
 #
-# Retro knowledge baked in (see ~/.claude/rules/docker-compose.md):
+# Retro knowledge baked in (see ~/.claude/docs/docker-compose.md):
 #   --force-recreate mandatory; not_if "test -f env" mandatory when env
 #   exists; DOCKER_BUILDKIT=0 prefix on privileged-LXC hosts whose
 #   namespace hardening trips up BuildKit; --build flag default-on except
