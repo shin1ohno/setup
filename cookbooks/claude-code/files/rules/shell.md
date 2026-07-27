@@ -120,3 +120,15 @@ Detail: see `~/.claude/docs/shell-detail.md#macos-external-command-audit`.
 ## zsh / harness `!` mangling — inline `!` can corrupt (jq `!=` and beyond)
 
 Detail: see `~/.claude/docs/shell-detail.md#zsh-bang-history-expansion`.
+
+## User-run block self-containment — cwd 非依存 + pre-emit scan 拡張
+
+ユーザーの端末で実行させる fenced block / `!` ブロックは、ユーザーの端末状態（cwd・直前ブロックの cd・シェル履歴）に依存せず単体で成立させる:
+
+1. **パスは絶対、または同一ブロック内合成**: 相対パスを使うなら同じブロック内で `cd /abs/path && …` に続ける。cargo は `--manifest-path /abs/Cargo.toml`、git は `git -C /abs/path`（git-commit.md の Claude 側 `git -C` ルールのユーザー実行ブロック版）。セッション中に複数リポを触った場合、ユーザーの端末 cwd は Claude の作業対象リポと一致しない前提で書く。
+
+2. **Pre-emit scan の 2 項目追加**: 既存の scratchpad パス検査・GPG チェーン切断検査（git-commit.md）に加え、emit 直前にブロックを見直す: (a) ブロック内の相対パスが、ブロック自身の cd 先と別のリポ / ディレクトリを指していないか、(b) `</parameter>` 等のツール呼び出しタグ断片が（特に末尾行に）混入していないか。混入 1 つでユーザーの round-trip が丸ごと無駄になる。
+
+3. **タグ断片の検出時の回復**: 自分の出力への `</parameter>` 混入を検出した、またはユーザーの実行失敗報告で判明した場合は、CLAUDE.md「Malformed tool call recovery」と同じ文脈飽和シグナルとして扱う — 同 turn で clean なブロックを再 emit し、セッション内 2 件目以降は /compact を提案（同ルールの発生回数カウントに含める）。
+
+Origin: 2026-06-23 — 別ブロックの cd 前提の相対パス `open target/dashboard_shibuya.html` がユーザー端末 cwd で does-not-exist ×2（実体は sibling リポ側）; 2026-06-27 — `!` ブロック末尾に `</parameter>` が混入したままユーザーが実行しコマンド破壊、1 往復無駄。

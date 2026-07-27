@@ -36,6 +36,11 @@ Match names case-insensitively (casing drifts: `Structured`/`structured`,
 `memory`/`ai_memory`). `claude mcp get` / `claude mcp login` need the **exact
 name as printed**, including any `claude.ai ` prefix.
 
+Scope note: a connector whose `claude mcp get` shows `Scope: claude.ai config`
+can print `Connected` in `claude mcp list` while its tools are NOT injected
+into this CLI session — judge injection by the session tool registry (source 1),
+not the list status.
+
 Present a short status table to the user before acting.
 
 ## 2. Re-authenticate, one server at a time (sequential — never parallel)

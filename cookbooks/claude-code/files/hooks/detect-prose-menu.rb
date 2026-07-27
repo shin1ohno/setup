@@ -93,6 +93,11 @@ def ends_in_question?(text)
   last_line = text.lines.map(&:strip).reject(&:empty?).last.to_s
   return true if last_line.end_with?("?", "？")
 
+  # Japanese questions terminated with a full stop instead of a question mark
+  # ("どれか走らせますか。" / "TODO.md に積みますか。") — all three 2026-07
+  # recurrences slipped through the ？-only check on this exact shape.
+  return true if last_line =~ /(?:ますか|ましょうか|でしょうか)\s*[。.]?\s*\z/
+
   # Trailing whitespace/punctuation tolerance on the whole message.
   stripped = text.rstrip
   stripped.end_with?("?", "？")
@@ -103,7 +108,7 @@ end
 # Enumerating decision points and then declaring you'll proceed is the same
 # prose-menu violation dressed as a statement.
 DECLARATION_RE =
-  /(?:決めれば|決めたら|決まれば).{0,10}(?:着手|進め)|デフォルト(?:を|で)?採用.{0,20}(?:着手|進め|実行)/
+  /(?:決めれば|決めたら|決まれば).{0,10}(?:着手|進め)|デフォルト(?:を|で)?採用.{0,20}(?:着手|進め|実行)|(?:てよければ|でよければ|よろしければ).{0,20}(?:実行|進め|マージ|merge|着手)/
 
 # false-positive suppression for (b): only count it when the enumerated lines
 # actually read as decision points.
@@ -124,7 +129,7 @@ def question_option_lines?(text)
   count =
     text.lines.map(&:strip).count do |l|
       (l =~ /\A(?:[-*+]\s|\d+[.)]\s|(?:[A-Za-z]|案[A-Za-z0-9]|選択肢\s*\d+)[:.)、]\s)/) &&
-        (l =~ /(?:しますか|ますか)\s*[?？]?\s*\z/)
+        (l =~ /(?:しますか|ますか)\s*[?？。.]?\s*\z/)
     end
   count >= 2
 end

@@ -19,6 +19,14 @@ Applies equally to commands and agents from plugins. Built-in Claude Code slash 
 
 Applies equally to **MCP tools / tool-groups the user explicitly asked for** (e.g. a browser-operation request → `mcp__claude-in-chrome__*`). If a `ToolSearch` probe (see `~/.claude/rules/sub-agents.md`) also shows the tool absent, state the absence in one line, then AskUserQuestion offering: (a) proceed with a degraded substitute (e.g. `open <url>` — note click / form-input is unavailable), or (b) re-enable and do the intended operation (check `/mcp`, run the `mcp-auth` skill, reconnect the extension) before proceeding. Running a degraded substitute without consent is the same opaque-substitution violation. Origin: 2026-06 sage 635f5a9c — declared the tool absent, then ran an `open` substitute without consent and offered no re-enable path.
 
+**Absence triage — ToolSearch 0 件 ≠ 不在**（CLAUDE.md「Negative search is not evidence of absence」の ToolSearch 特化形）: claude.ai 系コネクタは切断/認証失効中はツールカタログに注入されず、再認証すれば注入される — 未注入は状態シグナルであって恒常仕様ではない。「不在」と断定する前に 3 手で triage する:
+
+1. **Positive control** — 動作中コネクタの既知ツール名（例 `select:mcp__memory-local__recall`）で ToolSearch が schema を返すことを確認し、索引自体の生死と切り分ける。
+2. **`claude mcp get "<exact name>"` で Scope 確認** — `Scope: claude.ai config` のコネクタは `claude mcp list` が Connected 表示でも当該 CLI セッションに未注入のことがある。この場合の第一仮説は「切断/認証失効」で、対処は上記 (b) の re-enable path（/mcp・mcp-auth）。
+3. **過去使用実績を probe** — transcript grep（`mcp__<server>__` の tool_use）/ recall で直近の使用実績を確認。実績があれば「不在」はほぼ誤りで「切断」が正しい。
+
+スキル不在は別レイヤ: plugins cache（実体）/ `installed_plugins.json`（インストール）/ settings.json `enabledPlugins`（有効化）の 3 層を順に見て not-installed / disabled を区別し、有効化してもロードはセッション起動時なので needs-restart を明示する。root cause 確定時点で memory 保存する（knowledge-persistence の既存 trigger）— 未保存だと翌日の別セッションが同じ実在性 probe をゼロからやり直す（実測: 07-08 に「切断が真因・/mcp で解決」確定 → 未保存 → 07-09 に「この Mac には無い」と誤断定）。Origin: 2026-07 ca39c7b7（claude.ai scope 未注入）/ 898ecac1（切断を不在と誤断定）/ e8ebfcb1（enabledPlugins 欠落）。
+
 ## Skill Creation
 
 When the user asks to create a new skill (model-invocable behavior, not plain slash-command), **invoke the `skill-creator` skill** rather than hand-writing a `SKILL.md`. `skill-creator` runs evals, comparisons, and description-tuning — outputs higher-quality skills than a draft-then-commit loop.
