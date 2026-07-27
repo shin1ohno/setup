@@ -19,6 +19,11 @@ export PATH=#{node[:setup][:root]}/bin:#{node[:setup][:home]}/.local/bin:$PATH
 export ARCHPREFERENCE=arm64
 alias bri="envchain bricolage bundle exec bricolage"
 
+# User-space completion functions (_mise, _fractal, _wiki, ... — generated
+# by cookbooks into ~/.local/share/zsh/site-functions) must be on fpath
+# BEFORE compinit builds the dump, or they are never autoloaded.
+fpath=("$HOME/.local/share/zsh/site-functions" $fpath)
+
 # compinit setup, initialized once so all later profile.d entries
 # (sheldon, fzf-tab, fzf-advanced, mise, zoxide, ...) can register
 # completions via `compdef` without triggering compinit a second time.
