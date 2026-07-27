@@ -1,10 +1,6 @@
----
-globs: ["*.rs"]
----
-
 # Rust Code Guidelines
 
-This file is the always-loaded summary. The crates.io token-scope examples + origin notes live in `~/.claude/docs/release-plz.md#crates-io-token-scopes` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
+Load when committing / building / publishing in a Rust workspace (a repo with `Cargo.toml`), or when `pr-ci-medic` repairs a Rust repo's CI. Demoted from always-loaded `rules/` 2026-07 (claude-md-audit: 1/240 sessions touched Rust in 30 days; the frontmatter `globs` gating never worked). The crates.io token-scope examples + origin notes live in `~/.claude/docs/release-plz.md#crates-io-token-scopes`.
 
 ## Commit Gate for Rust Projects
 
@@ -40,6 +36,8 @@ crates.io API tokens have per-action scopes. For release-plz / manual publishing
 Detail (403 trap + practical workflow + transitive-closure allow-list checklist + origin): see `~/.claude/docs/release-plz.md#crates-io-token-scopes`.
 
 ## Pre-`/bump-version` Sanity Check
+
+（`/bump-version` は roon-rs 等の project skill — global には存在しない。）
 
 Before invoking `/bump-version`, confirm `git status` shows no unstaged
 changes (or only intentional ones). The verify step's lockfile rewrite will

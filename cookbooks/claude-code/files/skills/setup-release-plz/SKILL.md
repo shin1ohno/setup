@@ -84,7 +84,7 @@ Use AskUserQuestion to collect the token value (user supplies it, paste into cha
 gh secret set CARGO_REGISTRY_TOKEN --repo <owner>/<repo> --body '<token>'
 ```
 
-If this is a workspace with a never-published crate, surface the `publish-new` scope requirement from `rules/rust.md` and ask the user whether to handle the first publish via a one-off token path.
+If this is a workspace with a never-published crate, surface the `publish-new` scope requirement from `docs/rust.md` and ask the user whether to handle the first publish via a one-off token path.
 
 ### Step 5: Verify
 
@@ -104,7 +104,7 @@ If the repo is part of an ecosystem tracked in memory, note the setup completion
 ## Reference files
 
 - `docs/release-plz.md` — checklist of all 8 failure modes + pre-flight checklist
-- `rules/rust.md` — token scope section (`publish-update` vs `publish-new`)
+- `docs/rust.md` — token scope section (`publish-update` vs `publish-new`)
 - `~/ManagedProjects/nuimo-rs/.github/workflows/release-plz.yml` — current-generation reference
 - `~/ManagedProjects/edge-agent/.github/workflows/release-plz.yml` — same shape
 
