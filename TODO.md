@@ -1,5 +1,21 @@
 # TODO
 
+## docs/rust.md — apply the estate-lens retro's sandbox-EPERM addendum (Low)
+
+From the 2026-07-24 claude-md-audit removal verification: the estate-lens
+session (eefe318b, 2026-06-22〜24 — the only real Rust session in 30 days)
+produced a retro proposing a High-priority rust.md addition about the cargo
+sandbox-EPERM pattern (cargo build/test hitting `Operation not permitted`
+under the Claude Code command sandbox and the correct retry shape). It was
+never applied, and the 2026-07 rules→docs demotion of rust.md must not bury
+it.
+
+- First step: pull the exact proposed text from the estate-lens retro
+  (session eefe318b transcript or its retro output), verify the pattern
+  against the current sandbox behavior once, then add the section to
+  `cookbooks/claude-code/files/docs/rust.md`. Delete this entry in that
+  commit.
+
 ## H2: MCP auth-proxy resource isolation (REVIEW NEEDED — post-cognee-decommission)
 
 Status 2026-07-05: the cognee LXC/cookbook was decommissioned and the

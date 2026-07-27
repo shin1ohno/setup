@@ -10,7 +10,7 @@ This file is the always-loaded summary. Long examples + origin notes are in `~/.
 
 - AWS / IAM / SSM / Terraform — see `~/.claude/rules/aws-iam.md`
 - PVE LXC operational gotchas — see `~/.claude/docs/pve-lxc-detail.md`
-- Docker Compose patterns — see `~/.claude/rules/docker-compose.md`
+- Docker Compose patterns — see `~/.claude/docs/docker-compose.md`
 - Tailscale routing — see `~/.claude/docs/tailscale.md`
 
 ## Blast Radius Awareness

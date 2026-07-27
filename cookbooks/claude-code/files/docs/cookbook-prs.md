@@ -23,7 +23,7 @@ Load before `gh pr create` on a cookbook change. Each check catches a recurring 
    ```
    git diff origin/main...HEAD -- '*docker-compose*.yml' | grep -B5 'udp\|syslog\|statsd' | grep -E 'network_mode|udp'
    ```
-   See `~/.claude/rules/docker-compose.md` "UDP Listener Containers Require `network_mode: host`".
+   See `~/.claude/docs/docker-compose.md` "UDP Listener Containers Require `network_mode: host`".
 
 5. **Idempotency/guard parse logic verified against live data**: any shell parse (`sed` / `awk` / `grep` / `jq`) embedded in an idempotency guard or convergence check (`not_if` / `only_if` / `skip_if`, or a plain bash guard like `ensure_*_license()`) must be run against REAL live output from the system it parses — not a hand-crafted sample — before the PR ships. Probe:
    ```

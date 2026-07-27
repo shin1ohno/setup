@@ -1,6 +1,6 @@
 # Docker Compose Operational Rules — Examples & Origin Notes
 
-On-demand detail for `~/.claude/rules/docker-compose.md`. Read a section when the summary points here.
+On-demand detail for `~/.claude/docs/docker-compose.md`. Read a section when the summary points here.
 
 
 ## container-state-path-audit

@@ -1,10 +1,6 @@
----
-globs: ["docker-compose*.yml", "docker-compose*.yaml", "compose.yml", "compose.yaml", "**/files/docker-compose*.yml"]
----
-
 # Docker Compose Operational Rules
 
-This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/docs/docker-compose-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
+Load when writing or deploying a docker-compose stack (compose YAML, a compose-deploying cookbook, `docker compose up/build` operations). Demoted from always-loaded `rules/` 2026-07 (claude-md-audit; the frontmatter `globs` gating never worked). Long examples + origin notes are in `~/.claude/docs/docker-compose-detail.md`.
 
 ## Docker Compose Branch-Dep Pre-Deploy Check
 
