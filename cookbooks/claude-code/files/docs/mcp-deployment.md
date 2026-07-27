@@ -81,18 +81,19 @@ the harness blocks it as a security perimeter change):
     --region ap-northeast-1 --query Version --output text
 ```
 
-After the put, regenerate `~/deploy/hydra/.env` and restart the consent
-container so the new value is picked up:
+After the put, regenerate the consent `.env` on the consent LXC (CT 110 —
+the docker-hydra era `cookbooks/hydra/files/generate_env.sh` is gone; the
+`lxc-consent` cookbook now generates `.env` itself, gated by a
+`skip_if File.exist?` guard, so deleting the file forces regeneration on
+the next apply):
 
 ```
-AWS_PROFILE=sh1admn AWS_REGION=ap-northeast-1 \
-  bash ~/ManagedProjects/setup/cookbooks/hydra/files/generate_env.sh \
-  ~/deploy/hydra/.env
-cd ~/deploy/hydra && docker compose up -d consent
+ssh root@pve 'pct exec 110 -- bash -c "rm /root/deploy/consent/.env && cd /root/setup && ./bin/mitamae local pve/lxc-consent.rb"'
 ```
 
-Both steps are scriptable from the same session — only the SSM put
-itself requires a `!` block.
+(Or just `rm` the file and let the auto-mitamae orchestrator's next cycle
+regenerate it — the `remote_file` notify restarts the consent container
+when the content changes.) Only the SSM put itself requires a `!` block.
 
 ## Token audience must be unverified (for now)
 
