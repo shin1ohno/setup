@@ -168,7 +168,8 @@
     "design-md@saladdays-skills": true,
     "roundtable@saladdays-skills": true,
     "codex@openai-codex": true,
-    "crit@crit": true
+    "crit@crit": true,
+    "fractal@plasma": true
   },
   "enableAllProjectMcpServers": true,
   "skipDangerousModePermissionPrompt": true,

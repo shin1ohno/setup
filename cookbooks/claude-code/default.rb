@@ -100,6 +100,15 @@ execute "register crit marketplace" do
   not_if "test -f #{known_marketplaces} && grep -q '\"crit\"' #{known_marketplaces}"
 end
 
+# fractal — hierarchical agent loops (plasma.ai). The fractal/wiki CLIs are
+# installed by the fractal cookbook (mise pipx); this registers the plasma
+# marketplace, whose plugin is enabled via enabledPlugins (fractal@plasma).
+execute "register plasma marketplace" do
+  user node[:setup][:user]
+  command "#{claude_path} plugin marketplace add plasma-ai/plugins"
+  not_if "test -f #{known_marketplaces} && grep -q '\"plasma\"' #{known_marketplaces}"
+end
+
 remote_file "#{node[:setup][:home]}/.claude/CLAUDE.md" do
   source "files/CLAUDE.md"
   owner node[:setup][:user]
