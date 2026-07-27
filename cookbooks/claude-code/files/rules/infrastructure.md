@@ -112,6 +112,8 @@ The Claude Code auto-mode classifier enforces a split during infra investigation
 
 Origin: 2026-07-11 ES license-expiry storm — classifier blocked (a) SSH+`source` into CT 112 for the elastic credential, (b) `POST _license/start_basic` after a prior blanket "実行して" covered investigation only. Read-only verify ran inline; the SSM-scoped fetch replaced SSH+source; the mutation ran only after a second, explicit "許可するから…実行して".
 
+The classifier quotes the user's own CLAUDE.md/rules wording and AskUserQuestion label text **verbatim** as denial reasons (observed 2026-07: the kouzoh-exception line cited in a headless merge denial; a 「私」 label misread as the user). Permission-boundary rule lines are therefore runtime configuration, not documentation — the same-run reversal write-back discipline (CLAUDE.md Progress-ledger stale facts / the kouzoh line's own update clause) applies to them with production weight. See CLAUDE.md "Rule text is classifier input".
+
 ## systemd Timer Verification Gate
 
 After creating or modifying a systemd timer (cookbook deploy, manual install, drop-in override), verify with `systemctl show <name>.timer --property=Trigger` — NOT `systemctl is-active <name>.timer`. A future timestamp (`Trigger: Sat 2026-05-09 08:08:21 UTC`) = the timer will fire; `Trigger: n/a` = the trigger condition cannot be evaluated and **the timer is enabled and active but will never fire** (`is-active` returns `active` either way). The usual `Trigger: n/a` cause on a `Type=oneshot` unit is `OnUnitActiveSec` on a unit whose active window is ~zero — switch to `OnUnitInactiveSec`, or add `RemainAfterExit=true`.
