@@ -59,6 +59,8 @@ The Claude Code Bash tool executes through the user's **login zsh** on darwin, n
 
 **Verification discipline**: before reporting "0 results", drop `2>/dev/null` and re-run one representative case bare to confirm no zsh error was hidden (general form: `~/.claude/rules/debugging.md` Silent Failure Detection). A command that succeeds once but fails inside a loop → suspect the word-split trap (#1) before any external cause. Inline diagnostic one-liners are also subject to the macOS external-command audit (`timeout` / `flock` → exit 127; see below), not just cookbook-distributed scripts. This 0-results re-check is the zsh-error-specific special case — the general gate for asserting absence is CLAUDE.md's `Negative search is not evidence of absence`.
 
+**Multi-file `grep -h` drops the filename — never attribute its lines**: `grep -h -m1 PATTERN file1 file2 file3` prints one match per file with no filename, so reading the output top-to-bottom silently attributes file2's line to file1. When comparing the same field across files (an identifier, a version, a URL), use `-H`, or loop per file (`for f in …; do printf '%s :: %s\n' "$f" "$(grep -m1 … "$f")"; done`), or `rg` (filenames by default). Applies to any claim of the form "file X has the wrong value" — re-probe that single file before reporting a defect. Origin: 2026-07-27 — a `grep -h` sweep over three wiki pages produced a false "wrong PMID in page A" finding that a single-file re-probe disproved and forced a retraction.
+
 Origin: 2026-07-04 — `$REGIONS` / `$repos` word-split misdiagnosed as throttling / reported a false "0"; `log` builtin `too many arguments`; `timeout` exit 127.
 
 ## Never Chain Two `sudo` Calls in a `!` Block

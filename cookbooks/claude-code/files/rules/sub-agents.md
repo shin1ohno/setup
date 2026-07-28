@@ -130,6 +130,8 @@ When a sub-agent's task involves writing smoke-test fixtures, stub binaries, cal
 
 When collecting information from multiple sources (URLs, products, brands, categories), **proactively** (before the user asks for parallelism) split by independence — 1 agent = 1 brand / category / theme — launch all agents in background in parallel (`run_in_background: true` in one message), have each WebFetch and save findings to the memory MCP (`remember` / `ingest`), and show a live-updating progress table.
 
+**Cited output: split collection from verification, and make source-record cross-check a named completion requirement.** Whenever agent output carries citations (evidence pages, literature reviews, research reports, competitor claims), the collecting agent must NOT also judge its own citations — give a separate agent the verification role, and write into *its* completion requirements: "confirm each PMID / DOI / URL resolves, and that the author, year, journal and title on the page match the record — not merely that the citation is plausible." Fabricated and misattributed citations are a standing failure mode that plausibility review never catches: one such verify role corrected 24 of 43 source pages, including an attribution to an author who did not write the paper and a DOI belonging to a different article, and an operator spot-check of 6 citations afterwards found zero remaining errors. Also require the verifier to leave rejected items in place with their reason, so the next run does not re-collect them.
+
 Detail (numbered breakdown + examples): see `~/.claude/docs/sub-agents-detail.md#bulk-research-pattern`.
 
 ## Long-Running Tasks
@@ -168,6 +170,10 @@ Detail (origin): see `~/.claude/docs/sub-agents-detail.md#background-agent-deadl
 | 3+ step non-standard task | /plan → implement |
 | 2+ independent research tasks | Background sub-agents (parallel) |
 | Multi-brand/category survey | 1 agent per category (background) |
+
+## Polling Sleeps Need the `timeout` Parameter
+
+When monitoring an external loop (an agent tree, a deploy, a CI run) with `sleep N; <probe>` in the Bash tool, the tool's **default timeout is 120s**, so any `sleep` at or above it is SIGTERM'd (exit 143) and the probe never runs — the wait looks like a tool failure. Set `timeout` explicitly (ms) and keep a single sleep at ~175s or less; for a longer wait use `run_in_background: true` and read the output file, per the 60-Second Rule below. Emit a one-line progress note between polls rather than a silent chain of sleeps: a multi-minute silent sleep reads as a hang and invites a rejection. Origin: 2026-07-27 — `sleep 240` and `sleep 285` both died at the default timeout and one was rejected by the user mid-monitor.
 
 ## 60-Second Rule for Inline Commands
 
