@@ -179,6 +179,7 @@ These are `docs/` files (not auto-loaded). `Read` the file when the task matches
 | PVE LXC operational gotchas — unprivileged bind-mount UID mapping, `pct exec` non-TTY, Docker-in-LXC design gate | `~/.claude/docs/pve-lxc-detail.md` |
 | Headless / scheduled `claude -p` runner — auth-token gate, runner death / silent-failure detection, fail-closed pre-gate, permission-mode probe, re-dispatch dedup, notification channels | `~/.claude/docs/claude-cli-headless.md` |
 | TODO capture routing, stores, collect / reconcile loops (`/todo-collect`, `/todo-reconcile`) | `~/.claude/docs/todo-management.md` |
+| fractal node trees + plasma-wiki — agent config home not inherited, cost caps need an explicit model, `--scope` double-nesting, budget shape, wiki lint / naming traps, wave design | `~/.claude/docs/fractal-nodes.md` |
 
 ## Sub-agent Design Principles
 
