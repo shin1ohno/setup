@@ -1,6 +1,9 @@
 #!/bin/bash
 # Generate codex config.toml from servers.yml
 # Usage: generate_config.sh <servers.yml> <output.toml>
+#
+# If ~/.codex/config-preamble.toml exists (or $CODEX_CONFIG_PREAMBLE points at a
+# file), its contents are prepended to the output — see PREAMBLE_FILE below.
 
 set -euo pipefail
 
@@ -11,6 +14,19 @@ MANAGED_PROJECTS_DIR="${HOME_DIR}/ManagedProjects"
 
 # Default AWS region for SSM
 AWS_REGION="${AWS_REGION:-ap-northeast-1}"
+
+# Optional preamble prepended to the generated config (see the emit block below).
+# Resolution order: $CODEX_CONFIG_PREAMBLE (override for direct invocation) ->
+# ~/.codex/config-preamble.toml (the path a consumer writes to).
+#
+# The default path is what makes this reachable from a cookbook apply: mitamae
+# wraps an `execute ... user <u>` in `sudo -H -u <u>`, and sudo's env_reset drops
+# exported variables — so CODEX_CONFIG_PREAMBLE never arrives at this script when
+# the cookbook runs it (measured 2026-07-30: the same execute reports UNSET with
+# `user` set and the real value without it; mitamae 1.14.0 has no `environment`
+# attribute either). `sudo -H` sets HOME to the target user's home, so ${HOME}
+# here is that user's home — the same value the [projects.*] tables below use.
+PREAMBLE_FILE="${CODEX_CONFIG_PREAMBLE:-${HOME_DIR}/.codex/config-preamble.toml}"
 
 # Detect yq version and set appropriate command for YAML to JSON conversion
 # Python yq (kislyuk/yq): yq '.' file.yaml
@@ -39,13 +55,13 @@ fetch_ssm() {
 # Start building config.toml
 {
   # Optional preamble injected before the generated [projects.*] tables. A
-  # consumer (e.g. a work-Mac overlay) points CODEX_CONFIG_PREAMBLE at a file
-  # holding top-level keys (model_provider, model, approval_policy, ...) and
-  # provider tables ([model_providers.*]). TOML requires top-level keys to
-  # precede any [table], so this MUST be emitted first. Unset -> no-op, output
+  # consumer (e.g. a work-Mac overlay) writes a file holding top-level keys
+  # (model_provider, model, approval_policy, ...) and provider tables
+  # ([model_providers.*]) to PREAMBLE_FILE. TOML requires top-level keys to
+  # precede any [table], so this MUST be emitted first. Absent -> no-op, output
   # is byte-identical to the pre-existing behavior.
-  if [ -n "${CODEX_CONFIG_PREAMBLE:-}" ] && [ -f "${CODEX_CONFIG_PREAMBLE}" ]; then
-    cat "${CODEX_CONFIG_PREAMBLE}"
+  if [ -f "${PREAMBLE_FILE}" ]; then
+    cat "${PREAMBLE_FILE}"
     echo ""
   fi
 
@@ -77,8 +93,7 @@ fetch_ssm() {
     # an stdio bridge for a client that lacks native SSE) without editing the
     # shared servers.yml. Emitting both would produce a duplicate [mcp_servers.X]
     # table and a TOML parse error.
-    if [ -n "${CODEX_CONFIG_PREAMBLE:-}" ] && [ -f "${CODEX_CONFIG_PREAMBLE}" ] && \
-       grep -qE "^\[mcp_servers\.${name}\]" "${CODEX_CONFIG_PREAMBLE}"; then
+    if [ -f "${PREAMBLE_FILE}" ] && grep -qE "^\[mcp_servers\.${name}\]" "${PREAMBLE_FILE}"; then
       continue
     fi
 
