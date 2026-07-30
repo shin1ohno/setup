@@ -61,12 +61,17 @@ require_external_auth(
   execute "generate and deploy codex config.toml" do
     # Wrap in `bash -c` because mitamae's execute runs via /bin/sh, which is
     # dash on Ubuntu and rejects `set -o pipefail`.
+    # umask 077 + install -m 600: the generator prepends
+    # ~/.codex/config-preamble.toml when present, and that preamble can carry
+    # provider auth (e.g. an `Authorization = "Bearer sk-..."` http_headers
+    # entry), so both the temp file and the deployed config are owner-only.
     command <<~CMD.strip
       bash -c '
         set -euo pipefail
+        umask 077
         export PATH="#{node[:setup][:home]}/.local/share/mise/shims:$PATH"
         bash #{generator_script} #{mcp_yaml_path} #{temp_path}
-        install -m 644 #{temp_path} #{output_path}
+        install -m 600 #{temp_path} #{output_path}
         rm -f #{temp_path}
       '
     CMD
