@@ -60,6 +60,7 @@ fleet = {
   "pro" => {},
   "air" => { "hostname_override" => "xmhtm6qvqx" }, # MacBook Air factory serial
   "neo" => { "aliases" => ["ohnos-macbook"] },      # ohnos-macbook OS hostname
+  "sh1-cloud" => { "hostname_override" => "sh1-dev-instance-1" }, # kouzoh-p-sh1 always-on GCE dev box
   # ES cluster nodes — `ip` is the node's own LAN transport_host, sourced here
   # so pve/lxc-es-{0,1,2}.rb stop hardcoding it. Canonical IP source remains
   # home-monitor contracts/devices.json (es-{0,1,2} entries).
