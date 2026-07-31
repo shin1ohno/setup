@@ -23,7 +23,15 @@ execute "sudo chsh -s #{zsh_path} #{node[:setup][:user]}" do
   not_if {
     next true unless zsh_path
     passwd_shell = run_command("getent passwd #{node[:setup][:user]} 2>/dev/null", error: false).stdout.split(":")[6].to_s.strip
-    passwd_shell == zsh_path
+    next true if passwd_shell == zsh_path
+    # NSS-virtual users (GCE OS Login's libnss_oslogin, sssd, LDAP/NIS, etc.)
+    # resolve fine through getent/PAM but have no LITERAL /etc/passwd line --
+    # chsh edits that file directly (not via NSS) and always fails with
+    # "user does not exist in /etc/passwd" for such accounts. mitamae has no
+    # ignore_failure, so an unguarded failure here aborts the entire recipe
+    # run, silently skipping every cookbook after this one (roles/programming,
+    # roles/llm, etc.). Detect the mismatch and skip gracefully instead.
+    run_command("grep -q \"^#{node[:setup][:user]}:\" /etc/passwd", error: false).exit_status != 0
   }
 end
 
