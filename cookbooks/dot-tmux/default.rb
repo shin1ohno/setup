@@ -17,6 +17,26 @@ directory "#{home}/.config/tmux/plugins" do
   action :create
 end
 
+# This step PUSHES to the personal shin1ohno/tmux repo, so it needs actual
+# SSH write access, not just a key -- probe real auth to github.com rather
+# than just checking a key file exists. Hosts with no SSH key at all (GCE
+# OS Login boxes, by design) or a key not yet registered to this GitHub
+# account both fail the same way and should skip gracefully instead of
+# aborting the whole linux.rb run (mitamae has no ignore_failure).
+dot_tmux_ssh_auth_ok = run_command(
+  "ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new git@github.com 2>&1",
+  error: false,
+).stdout.include?("successfully authenticated")
+
+unless dot_tmux_ssh_auth_ok
+  MItamae.logger.warn(
+    "dot-tmux: no SSH write access to git@github.com -- skipping personal " \
+    "tmux dotfiles sync (~/.config/tmux stays local-only). Expected on hosts " \
+    "with no SSH private key. Re-run this cookbook once one is set up if you " \
+    "want it synced.",
+  )
+end
+
 execute "Initialise tmux config directory" do
   command <<EOF
     GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' && export GIT_SSH_COMMAND &&\n
@@ -27,6 +47,7 @@ execute "Initialise tmux config directory" do
 EOF
   cwd "#{home}/.config/tmux"
   not_if { File.exist? "#{home}/.config/tmux/.git" }
+  only_if { dot_tmux_ssh_auth_ok }
 end
 
 # Symlink ~/.tmux.conf -> ~/.config/tmux/tmux.conf BEFORE TPM's install_plugins
