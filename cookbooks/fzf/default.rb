@@ -1,12 +1,15 @@
 # frozen_string_literal: true
 
+# Third-party, public, read-only clone -- HTTPS needs no auth at all and
+# works on every host, unlike an SSH URL (which fails outright on hosts with
+# no SSH private key, e.g. GCE OS Login boxes; confirmed live).
 git_clone "fzf-git.sh" do
   cwd node[:setup][:root]
-  uri "git@github.com:junegunn/fzf-git.sh.git"
+  uri "https://github.com/junegunn/fzf-git.sh.git"
 end
 
 execute "update fzf-git.sh" do
-  command "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' git pull || true"
+  command "git pull || true"
   cwd "#{node[:setup][:root]}/fzf-git.sh"
   only_if "test -d #{node[:setup][:root]}/fzf-git.sh"
 end
