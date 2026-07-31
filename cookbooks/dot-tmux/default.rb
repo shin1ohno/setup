@@ -84,10 +84,16 @@ execute "clone TPM" do
   not_if { File.exist? "#{home}/.config/tmux/plugins/tpm/.git" }
 end
 
+# Requires tmux_conf_xdg to exist: TPM's install_plugins reads tmux.conf for
+# `@plugin`/`run "...tpm/tpm"` declarations, and aborts with "FATAL: Tmux
+# Plugin Manager not configured in tmux.conf" if the file is missing --
+# which it is whenever the personal dotfiles sync above was skipped (no SSH
+# write access). Confirmed live: this cascaded into the same
+# whole-linux.rb-aborts failure mode as the push step itself.
 execute "install TPM plugins" do
   command "#{home}/.config/tmux/plugins/tpm/bin/install_plugins"
   cwd home
-  only_if "test -x #{home}/.config/tmux/plugins/tpm/bin/install_plugins"
+  only_if "test -x #{home}/.config/tmux/plugins/tpm/bin/install_plugins && test -f '#{tmux_conf_xdg}'"
   not_if "test -d #{home}/.config/tmux/plugins/tmux-sensible/.git"
 end
 
