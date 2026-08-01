@@ -574,6 +574,19 @@ define :mise_tool, versions: nil, default_version: nil, backend: nil do
       not_if "$HOME/.local/bin/mise list #{tool} | grep -q 'config.toml'"
     end
   end
+
+  # `mise use --global` does not always regenerate the tool's shim in the
+  # same pass (confirmed live: `mise ls` correctly showed the tool
+  # registered, but invoking it via its own shim failed with "not a valid
+  # shim -- likely means you uninstalled a tool", and a manual
+  # `mise reshim` immediately fixed it). Any cookbook resource that
+  # invokes the shim right after installing (as pm2's cookbook does) can
+  # hit a stale/missing shim otherwise. `mise reshim` is fast and
+  # idempotent, so just run it unconditionally after every mise_tool call.
+  execute "$HOME/.local/bin/mise reshim (#{tool})" do
+    command "$HOME/.local/bin/mise reshim"
+    user node[:setup][:user]
+  end
 end
 
 define :git_clone, uri: nil, cwd: nil, user: nil, not_if: nil do
