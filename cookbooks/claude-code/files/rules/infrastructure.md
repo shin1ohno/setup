@@ -34,6 +34,32 @@ Before syncing a managed config file (settings.json, YAML with list fields, etc.
 
 In the plan, state the merge mode for every field being changed. For union fields, include the manual-cleanup command (e.g., `jq 'del(.permissions.allow[] | select(...))'`) as an explicit plan step — never assume a cookbook deploy will remove stale entries.
 
+## A CLI's Active Context Is Shared Mutable State Across Cookbooks in One Apply
+
+`gcloud`, `kubectl` and `aws` each resolve identity from an on-disk active-context file (`~/.config/gcloud/configurations/config_default`, `~/.kube/config` current-context, `AWS_PROFILE` / `~/.aws/config`). That state is **process-global and persists across cookbooks within a single mitamae run**. If an earlier cookbook sets it — `gcloud config set account`, `gcloud auth activate-service-account`, `kubectl config use-context` — every later cookbook invoking the tool WITHOUT an explicit identity flag silently runs as the new identity. The failure mode is `exit 0` with no state change, not an error.
+
+**Rule**: any `execute` invoking one of these tools for an infrastructure operation (reading a secret, writing config, calling an API) MUST pin identity at the call site rather than inheriting whatever a sibling cookbook left active. Pin from a runtime source, not a literal, so a rename cannot silently break it:
+
+```ruby
+# metadata server gives the instance's own SA; export only when the lookup
+# returns something, so a metadata-less host degrades to gcloud's own
+# resolution instead of failing on an empty --account
+_sa=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email 2>/dev/null || true)
+[ -n "$_sa" ] && export CLOUDSDK_CORE_ACCOUNT="$_sa"
+```
+
+**Plan-phase check** — for any cookbook running after an identity-switching one in the same entry recipe's include order:
+
+```bash
+git grep -n 'gcloud ' cookbooks/*/default.rb | grep -v -- '--account\|--project\|CLOUDSDK_CORE_ACCOUNT'
+git grep -n 'kubectl ' cookbooks/*/default.rb | grep -v -- '--context'
+```
+
+This is the GCP/kubectl generalisation of `~/.claude/docs/ruby-detail.md#auth-check-gate-profile` (AWS profile pinning) — same defect, different tool.
+
+Origin: 2026-08-01 sh1-cloud — `mercari-gcloud` set the active account to the work account mid-apply; a later overlay cookbook's bare `gcloud secrets versions access` lost the instance service account its IAM grant was written for, failed with `does not have any valid credentials`, was swallowed by its own non-aborting guard, and left the cookbook a silent no-op while the run reported success. The tell was that resources NOT depending on the fetch (`known_hosts`, `config.d`) had converged normally — that split is what isolated it (zp-SHIN #114).
+
 ## Managed-File Ownership Gate
 
 Before you Edit/Write a config file under `$HOME` that is OUTSIDE a git working tree (`~/ManagedProjects/*`), probe whether it is mitamae-managed:

@@ -99,6 +99,28 @@ A command string sent via `ssh host 'pct exec <vmid> -- bash -c "..."'` traverse
 
 Detail (WRONG/RIGHT worked examples + `bash -c` `()` sub-examples + fix options + origins): see `~/.claude/docs/shell-detail.md#multi-hop-shell-injection`.
 
+## `awk '{print $N}'` cannot survive a single-quoted `bash -c` wrapper — use `cut`
+
+Once a script is committed to `bash -c '…'` (required whenever it needs `set -o pipefail`, which dash rejects), no inner single quotes are available, so an awk program has to be written in double quotes — and then **bash expands awk's `$2` / `$10` as its own positional parameters before awk ever runs**. `$2` becomes empty; `$10` becomes `$1` followed by a literal `0`. Nothing errors: every layer's syntax is valid, only the runtime value is wrong, so the pipeline silently produces empty or shifted output.
+
+```bash
+# WRONG — bash eats $2 inside the double-quoted awk program
+bash -c 'ssh-keygen -lf "$TMP" | awk "{print \$2}" | sort'
+
+# RIGHT — cut has no $-prefixed field syntax to collide with
+bash -c 'ssh-keygen -lf "$TMP" | cut -d" " -f2 | sort'
+```
+
+Prefer `cut -d<delim> -f<N>`; for logic `cut` cannot express, ship the program as a `files/*.awk` and call `awk -f`. The same substitution applies to `awk -F: '/^x:/ {print $10}'` → `grep "^x:" | cut -d: -f10`.
+
+**Detection**:
+
+```bash
+git grep -nE "bash -c '" cookbooks/ | grep -E 'awk.*\$[0-9]'
+```
+
+Detail (why no layer errors + origin): see `~/.claude/docs/shell-detail.md#awk-dollar-bash-positional-collision`.
+
 ## Prefer sed/awk over `python3 -c` for inline filesystem edits
 
 When the task is "edit one line of an INI/JSON/YAML file" or "remove a section header", default to `sed`/`awk` (or `jq`/`yq` for JSON/YAML) over `python3 -c "..."`. Two recurring failure modes hit the Python form but not sed:
@@ -132,5 +154,7 @@ Detail: see `~/.claude/docs/shell-detail.md#zsh-bang-history-expansion`.
 2. **Pre-emit scan の 2 項目追加**: 既存の scratchpad パス検査・GPG チェーン切断検査（git-commit.md）に加え、emit 直前にブロックを見直す: (a) ブロック内の相対パスが、ブロック自身の cd 先と別のリポ / ディレクトリを指していないか、(b) `</parameter>` 等のツール呼び出しタグ断片が（特に末尾行に）混入していないか。混入 1 つでユーザーの round-trip が丸ごと無駄になる。
 
 3. **タグ断片の検出時の回復**: 自分の出力への `</parameter>` 混入を検出した、またはユーザーの実行失敗報告で判明した場合は、CLAUDE.md「Malformed tool call recovery」と同じ文脈飽和シグナルとして扱う — 同 turn で clean なブロックを再 emit し、セッション内 2 件目以降は /compact を提案（同ルールの発生回数カウントに含める）。
+
+4. **1 行が長すぎる / 連結が深い `!` ブロックは分割する**: `&&` 連結が 4 段以上、または 1 行が目安 200 文字を超えると、ユーザーは貼る前に内容を確認できず、貼り付け時の改行崩れも起きる。番号付きの複数ステップに割るか、内容を Write でスクリプトにしてから `! bash /abs/path/script.sh` の 1 行にする。**対話プロンプト（パスフレーズ・確認）を含む手順は必ず 1 段ずつ**に割る — 途中で失敗しても後段が `&&` で連鎖するため、どの段で落ちたか判別できなくなる。加えて、黙って失敗しうる段の直後には checkpoint コマンドを置き、期待値（`subkey=1` 等）を明記して「期待値でなければ次に進まない」と書く。Origin: 2026-08-01 — 鍵投入手順を 7 段 `&&` 連結の 1 行で出してユーザーから分割を要求され、さらに連結形では途中段の無音失敗（保護付き subkey の drop）が検出できず secret のバージョンを 2 つ無駄にした。
 
 Origin: 2026-06-23 — 別ブロックの cd 前提の相対パス `open target/dashboard_shibuya.html` がユーザー端末 cwd で does-not-exist ×2（実体は sibling リポ側）; 2026-06-27 — `!` ブロック末尾に `</parameter>` が混入したままユーザーが実行しコマンド破壊、1 往復無駄。
