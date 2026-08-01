@@ -7,8 +7,15 @@
 #
 # Not in the mise core registry and the GitHub repo publishes no release
 # assets, so pipx: is the only viable mise backend (PyPI: plasma-fractal —
-# canonical name; "fractal" is an alias). mise's pipx backend falls back to
-# uv when no pipx binary is installed, so no pipx bootstrap is needed.
+# canonical name; "fractal" is an alias). mise's pipx backend prefers uv
+# (via uvx) when uv is spawnable, and only falls back to a literal pipx
+# binary otherwise (src/backend/pipx.rs, install_version_ -- confirmed by
+# reading mise's pinned-version source, not the mise docs) -- on a bare
+# Ubuntu box, NEITHER is present, so `mise use --global pipx:plasma-fractal`
+# fails outright ("pipx is required ... but was not found", exit 1),
+# aborting the rest of linux.rb (mitamae has no ignore_failure). Bootstrap
+# uv first via mise's own aqua-backed core tool so the pipx backend's uv
+# path is taken.
 #
 # plasma-wiki is installed as a second tool because isolated pipx/uv
 # installs do NOT expose the `wiki` executable from plasma-fractal's
@@ -19,6 +26,8 @@
 # by the claude-code cookbook via the plasma-ai/plugins marketplace and
 # enabled via enabledPlugins.
 include_cookbook "mise"
+
+mise_tool "uv"
 
 mise_tool "plasma-fractal" do
   backend "pipx"
