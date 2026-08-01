@@ -30,7 +30,10 @@ ssh_auth_ok = run_command(
   error: false,
 ).stdout.include?("successfully authenticated")
 
-aws_auth_ok = run_command("aws sts get-caller-identity >/dev/null 2>&1", error: false).exit_status.zero?
+# `== 0`, not `.zero?` — mitamae runs on mruby, which has no Integer#zero?.
+# `ruby -c` (CRuby) accepts it and CI's real dry-run is what catches it.
+# Matches the idiom already used at cookbooks/git/default.rb:28.
+aws_auth_ok = run_command("aws sts get-caller-identity >/dev/null 2>&1", error: false).exit_status == 0
 
 node[:managed_projects][:repos].each do |repo|
   # `codecommit::` is the scheme git-remote-codecommit registers; everything
