@@ -25,6 +25,22 @@ execute "mise self-update" do
   only_if { File.exist? "#{node[:setup][:home]}/.local/bin/mise" }
 end
 
+# mise's default npm backend embeds its own package manager ("aube"),
+# which has a security trust-prompt for low-download/unfamiliar packages
+# (typosquatting protection) that defaults to DENY when non-interactive.
+# mitamae has no way to answer it, so any npm-backend mise_tool for a
+# less-common package fails with "aube install failed: user aborted
+# `mise add <pkg>`" -- confirmed live on mcp-hub, which every other
+# npm-backend tool (pm2, mcp-remote, etc.) is fine either way, but a
+# global, one-time setting is simpler than tracking which specific
+# packages trip aube's heuristics. Plain npm installs don't have this
+# prompt. Same "pre-answer what mitamae can't prompt for" idiom as the
+# `mise trust` step below.
+execute "$HOME/.local/bin/mise settings set npm.package_manager npm" do
+  user node[:setup][:user]
+  not_if "$HOME/.local/bin/mise settings get npm.package_manager 2>/dev/null | grep -qx npm"
+end
+
 # Install usage tool for mise completions
 execute "$HOME/.local/bin/mise use -g usage" do
   user node[:setup][:user]
