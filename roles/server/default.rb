@@ -12,8 +12,17 @@ directory "#{node[:setup][:home]}/deploy" do
   action :create
 end
 
-include_cookbook "samba"
-include_cookbook "smartmontools"
+# samba exports a LAN file share (declaring a media path that exists only on
+# the physical fleet) and smartmontools monitors physical disk SMART data.
+# Neither is meaningful on a cloud VM, and standing up smbd/nmbd on one is an
+# unwanted service exposure rather than a no-op — so skip both there instead of
+# relying on `deb-systemd-invoke … || true` to swallow the service-start
+# failure. The remaining three are pure file/directory writes and stay.
+unless node[:profile][:label] == "sh1-cloud"
+  include_cookbook "samba"
+  include_cookbook "smartmontools"
+end
+
 include_cookbook "obsidian_file_sync"
 include_cookbook "s3-backup"
 include_cookbook "gpg-backup"
