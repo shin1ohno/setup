@@ -76,12 +76,21 @@ end
 # of truth: files/gitconfig). Shell, not a Ruby Proc, so it evaluates at
 # converge time -- after the remote_file has written signingkey. sh operator
 # precedence is left-to-right, so this reads: skip when (a key is configured
-# AND its secret half is present) OR (signing is already disabled).
+# AND git can actually sign with it) OR (signing is already disabled).
+#
+# It probes SIGNING CAPABILITY, not key presence. `gpg --list-secret-keys`
+# succeeds for a key that gpg cannot actually use, and on a headless box that
+# is the normal case: a passphrase-protected key makes gpg try to launch
+# pinentry, which fails with `signing failed: Inappropriate ioctl for device`.
+# Confirmed live -- presence-based, this guard enabled signing on a box where
+# every commit then died, which is worse than the state it was written to fix.
+# `-bsau <key>` is git's own invocation shape (see git's sign_buffer), so the
+# probe exercises the same path git will, rather than a proxy for it.
 execute "git config --global commit.gpgsign false" do
   user node[:setup][:user]
   only_if { node[:profile][:label] == "sh1-cloud" }
   not_if 'k=$(git config --global --get user.signingkey) && [ -n "$k" ] && ' \
-         'gpg --list-secret-keys "$k" >/dev/null 2>&1 || ' \
+         'printf x | gpg --batch --yes -bsau "$k" -o /dev/null >/dev/null 2>&1 || ' \
          'git config --global --get commit.gpgsign | grep -qx false'
 end
 
