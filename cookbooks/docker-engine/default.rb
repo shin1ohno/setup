@@ -84,9 +84,29 @@ service "docker" do
   }
 end
 
-# Add the setup user to the docker group for rootless access
+# Add the setup user to the docker group for rootless access.
+#
+# usermod (shadow-utils) edits /etc/group directly, bypassing NSS -- it
+# fails on NSS-virtual users (GCE OS Login's libnss_oslogin, sssd, etc.)
+# that have no literal /etc/passwd line, the same way chsh does (see
+# cookbooks/zsh/default.rb). mitamae has no ignore_failure, so an
+# unguarded failure here aborts the rest of the recipe. Skip with a WARN
+# in that case instead -- docker still works for root-owned containers;
+# only rootless `docker` invocations as this user are affected.
+has_etc_passwd_line = run_command("grep -q \"^#{node[:setup][:user]}:\" /etc/passwd", error: false).exit_status == 0
+
+unless has_etc_passwd_line
+  MItamae.logger.warn(
+    "docker-engine: #{node[:setup][:user]} has no literal /etc/passwd line " \
+    "(NSS-virtual user, e.g. GCE OS Login) -- skipping usermod -aG docker. " \
+    "docker itself still works; only passwordless/rootless docker commands " \
+    "as this user require the group membership.",
+  )
+end
+
 execute "usermod -aG docker #{node[:setup][:user]}" do
   user node[:setup][:system_user]
   not_if { run_command("id -nG #{node[:setup][:user]} | grep -qw docker", error: false).exit_status == 0 }
+  only_if { has_etc_passwd_line }
 end
 

@@ -53,13 +53,20 @@ end
 # re-downloads, while a matching install is a no-op).
 execute "install herdr #{herdr_version} (#{target})" do
   user node[:setup][:user]
-  command <<~SH
-    set -euo pipefail
-    tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' EXIT
-    curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 '#{url}' -o "$tmp"
-    echo '#{sha}  '"$tmp" | shasum -a 256 -c -
-    install -m 0755 "$tmp" '#{herdr_path}'
+  # Wrap in `bash -c` because mitamae's execute runs via /bin/sh, which is
+  # dash on Ubuntu and rejects `set -o pipefail` (same fix already used by
+  # cookbooks/codex-cli and cookbooks/mcp -- confirmed live: the un-wrapped
+  # form fails with "set: Illegal option -o pipefail" and, since mitamae has
+  # no ignore_failure, aborts the whole recipe run).
+  command <<~SH.strip
+    bash -c '
+      set -euo pipefail
+      tmp="$(mktemp)"
+      trap "rm -f $tmp" EXIT
+      curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 "#{url}" -o "$tmp"
+      echo "#{sha}  $tmp" | shasum -a 256 -c -
+      install -m 0755 "$tmp" "#{herdr_path}"
+    '
   SH
   not_if "'#{herdr_path}' --version 2>/dev/null | grep -q '#{herdr_version}'"
 end
