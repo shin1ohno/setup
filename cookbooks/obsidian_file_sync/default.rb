@@ -84,12 +84,14 @@ end
 if node[:platform] != "darwin"
   directory "#{node[:setup][:home]}/.config/systemd/user" do
     owner node[:setup][:user]
+group node[:setup][:group]
     mode "755"
   end
 
   # Create the systemd service
   file "#{node[:setup][:home]}/.config/systemd/user/obsidian-sync.service" do
     owner node[:setup][:user]
+group node[:setup][:group]
     mode "644"
     content <<-EOM
 [Unit]
@@ -110,6 +112,7 @@ EOM
   # Create the systemd timer
   file "#{node[:setup][:home]}/.config/systemd/user/obsidian-sync.timer" do
     owner node[:setup][:user]
+group node[:setup][:group]
     mode "644"
     content <<-EOM
 [Unit]
@@ -139,11 +142,13 @@ else
   # Create launchd plist on macOS
   directory "#{node[:setup][:home]}/Library/LaunchAgents" do
     owner node[:setup][:user]
+group node[:setup][:group]
     mode "755"
   end
 
   file "#{node[:setup][:home]}/Library/LaunchAgents/com.#{node[:setup][:user]}.obsidian-sync.plist" do
     owner node[:setup][:user]
+group node[:setup][:group]
     mode "644"
     content <<-EOM
 <?xml version="1.0" encoding="UTF-8"?>

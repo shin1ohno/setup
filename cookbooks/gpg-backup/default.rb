@@ -23,6 +23,7 @@ end
 if node[:platform] == "darwin"
   file "#{setup_root}/bin/gpg-keychain" do
     owner user
+group node[:setup][:group]
     mode "0755"
     content <<~'SCRIPT'
       #!/usr/bin/env bash

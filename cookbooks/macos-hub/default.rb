@@ -54,6 +54,7 @@ bin_path = "#{bin_dir}/macos-hub"
 
 directory bin_dir do
   owner user
+group node[:setup][:group]
   mode "755"
 end
 
@@ -73,6 +74,7 @@ end
 
 directory "#{home}/.config/macos-hub" do
   owner user
+group node[:setup][:group]
   mode "755"
 end
 
@@ -81,6 +83,7 @@ end
 # config-handling convention.
 file "#{home}/.config/macos-hub/macos-hub.toml" do
   owner user
+group node[:setup][:group]
   mode "644"
   content <<~TOML
     # macos-hub config for #{node[:profile][:hostname]} (#{edge_id})
@@ -100,6 +103,7 @@ end
 
 directory "#{home}/.local/state/macos-hub" do
   owner user
+group node[:setup][:group]
   mode "755"
 end
 
@@ -115,16 +119,19 @@ launchd_plist = "#{home}/Library/LaunchAgents/com.shin1ohno.macos-hub.plist"
 
 directory "#{home}/Applications" do
   owner user
+group node[:setup][:group]
   mode "755"
 end
 
 directory "#{app_bundle}/Contents/MacOS" do
   owner user
+group node[:setup][:group]
   mode "755"
 end
 
 file bundle_info do
   owner user
+group node[:setup][:group]
   mode "644"
   content <<~PLIST
     <?xml version="1.0" encoding="UTF-8"?>
@@ -154,11 +161,13 @@ end
 
 directory "#{home}/Library/LaunchAgents" do
   owner user
+group node[:setup][:group]
   mode "755"
 end
 
 file launchd_plist do
   owner user
+group node[:setup][:group]
   mode "644"
   content <<~PLIST
     <?xml version="1.0" encoding="UTF-8"?>

@@ -72,6 +72,7 @@ end
 
 directory "#{home}/.config/edge-agent" do
   owner user
+group node[:setup][:group]
   mode "755"
 end
 
@@ -117,6 +118,7 @@ end
 
 remote_file "#{home}/.config/edge-agent/config.toml" do
   owner user
+group node[:setup][:group]
   mode "644"
   source "files/config-#{variant}.toml"
   # Skip when config exists AND no longer references the pre-PVE weave-server
@@ -129,6 +131,7 @@ end
 
 directory "#{home}/.local/state/edge-agent" do
   owner user
+group node[:setup][:group]
   mode "755"
 end
 
@@ -147,16 +150,19 @@ if node[:platform] == "darwin"
 
   directory "#{home}/Applications" do
     owner user
+group node[:setup][:group]
     mode "755"
   end
 
   directory "#{app_bundle}/Contents/MacOS" do
     owner user
+group node[:setup][:group]
     mode "755"
   end
 
   file bundle_info do
     owner user
+group node[:setup][:group]
     mode "644"
     content <<~PLIST
       <?xml version="1.0" encoding="UTF-8"?>
@@ -202,6 +208,7 @@ if node[:platform] == "darwin"
   # below uses --deep so it covers the wrapper too — no separate sign needed.
   file bundle_launcher do
     owner user
+group node[:setup][:group]
     mode "755"
     content <<~LAUNCHER
       #!/bin/sh
@@ -238,11 +245,13 @@ if node[:platform] == "darwin"
 
   directory "#{home}/Library/LaunchAgents" do
     owner user
+group node[:setup][:group]
     mode "755"
   end
 
   file launchd_plist do
     owner user
+group node[:setup][:group]
     mode "644"
     content <<~PLIST
       <?xml version="1.0" encoding="UTF-8"?>
@@ -292,11 +301,13 @@ else
   # Linux: systemd --user unit.
   directory "#{home}/.config/systemd/user" do
     owner user
+group node[:setup][:group]
     mode "755"
   end
 
   file "#{home}/.config/systemd/user/edge-agent.service" do
     owner user
+group node[:setup][:group]
     mode "644"
     content <<~UNIT
       [Unit]
