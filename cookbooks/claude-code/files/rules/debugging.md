@@ -82,6 +82,8 @@ When the same observable symptom persists after 3 hypothesis-test cycles on the 
 
 **Signal**: same symptom after 3 cycles = wrong design assumption, not wrong implementation detail.
 
+**Count by capability, not by error text**: when 3+ cycles chase the same *capability* ("make GPG signing work unattended", "get this secret readable from the box") but each cycle's error message differs, do NOT reset the counter because the symptom changed shape. Ask instead: do these differently-worded errors share one root assumption? A drifting error message is the normal look of a wrong assumption being probed from different angles — it is evidence FOR escalating, not against. Origin: 2026-08-01 sh1-cloud — 5 cycles on unattended GPG signing (`No secret key` → protected-export silently dropping the subkey → `--passwd` targeting a stub primary → agent `Bad passphrase` → broken temp keyring), all resting on "an interactive passphrase flow is available"; the same-symptom counter never fired because no two errors matched.
+
 **Batch fixes within a rebuild cycle**: when a debugging loop involves an expensive rebuild (`docker compose up --build`, `cargo build --release`, `xcodebuild`, `terraform apply` — anything >60s), collect ALL hypothesized fixes for the *current* observable failure before triggering the rebuild. Sequential evaluation of N hypotheses costs N × build time; batched evaluation costs one build.
 
 Detail (worked example + origin): see `~/.claude/docs/debugging-detail.md#fix-loop-escalation-threshold`.

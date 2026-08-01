@@ -207,6 +207,31 @@ Fix options (any work):
 
 Origin: 2026-05-06 / 2026-05-11 / 2026-06-07 — `syntax error near unexpected token '('` from commentary parens in `echo === ... ===` headers through three remote shells; structural, recurs per metacharacter unless heredoc + `bash -s` is the default.
 
+## awk-dollar-bash-positional-collision
+
+## `awk $N` vs bash positional parameters inside a quoted `bash -c`
+
+The failing shape: a script is already committed to `bash -c '…'` — most often because it needs `set -euo pipefail`, which dash rejects as a bare mitamae `command` (see the pipefail rule in `~/.claude/rules/ruby.md` / the `bash -c` wraps in `cookbooks/{codex-cli,mcp,herdr,terraform}`). Single quotes are therefore unavailable inside, so an awk program gets written in double quotes:
+
+```bash
+bash -c 'ssh-keygen -lf "$TMP" | awk "{print \$2}" | sort'
+```
+
+Bash parses `$2` as its own positional parameter and substitutes empty **before awk is invoked**, so awk receives `{print }`. `$10` degrades differently — `$1` followed by a literal `0`.
+
+**Why nothing catches it**: `ruby -c`, `bash -n`, `mitamae --dry-run`, and the outer shell's own parse all pass, because every layer's syntax IS valid. Only the runtime value is wrong, and the pipeline still exits 0. It surfaces as an empty or shifted field downstream — e.g. a fingerprint comparison that always mismatches, or a variable that is silently blank.
+
+`cut` sidesteps the class entirely (no `$`-prefixed field syntax):
+
+```bash
+cut -d' ' -f2
+grep "^fpr:" | cut -d: -f10   # replaces awk -F: '/^fpr:/ {print $10}'
+```
+
+For logic `cut` cannot express, ship the program as `files/<name>.awk` via `remote_file` and invoke `awk -f`, removing inline quoting from the problem entirely.
+
+Origin: 2026-08-01 sh1-cloud `gcp-ssh-keys` cookbook (zp-SHIN #111) — a github.com `known_hosts` keyscan needed field 2 of `ssh-keygen -lf` output for fingerprint verification, inside a `bash -c` wrapper the `set -euo pipefail` forced. Caught by rendering the cookbook through a stub DSL and executing the extracted script, not by any syntax check.
+
 ## sed-awk-over-python3
 
 ## Prefer sed/awk over `python3 -c` for inline filesystem edits
