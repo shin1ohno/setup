@@ -162,16 +162,21 @@ Detail: see `~/.claude/docs/ruby-detail.md#converge-fail-batch-diagnose`.
 
 Detail: see `~/.claude/docs/ruby-detail.md#dry-run-sandbox`.
 
-## mruby API constraints — File.mtime / File.stat / Integer#zero? not available
+## mruby API constraints — File.mtime / File.stat / Integer#zero? / Regexp.last_match(n) not available
 
 mitamae runs on **mruby**, not CRuby, and mruby simply lacks a number of CRuby convenience methods. `ruby -c` (CRuby) accepts every one of them, so the gap only surfaces at converge time. The `File` class is a strict subset:
 
 - **Available**: `File.exist?`, `File.read`, `File.join`, `File.dirname`, `File.basename`, `File.expand_path`
 - **NOT available**: `File.mtime`, `File.stat`, `File.size`, `File.birthtime`, any `File::Stat` methods
 
-Beyond `File`, other core-class predicates are missing too — **`Integer#zero?` is confirmed absent**; write `== 0`, which is also this codebase's existing idiom (`cookbooks/git/default.rb`'s `dpkg-query` guard). Treat any CRuby convenience predicate as unconfirmed until it has run under the real mruby binary once.
+Beyond `File`, other core-class methods are missing or narrower:
 
-CI syntax-check jobs run CRuby (`ruby -c`), which has all of these. A cookbook using `File.mtime`, `File.stat`, or `Integer#zero?` passes CI, passes `ruby -c`, and aborts at converge time on every real target with `undefined method '…' (NoMethodError)`. **CI's own `test-linux` / `test-macos` dry-run jobs DO catch it** — they run the real mruby binary — so a red dry-run job on a green `syntax-check` is the signature of this class.
+- **`Integer#zero?` is confirmed absent** — write `== 0`, this codebase's existing idiom (`cookbooks/git/default.rb`'s `dpkg-query` guard).
+- **`Regexp.last_match` takes NO arguments** — `Regexp.last_match(1)` raises `wrong number of arguments (1 for 0) (ArgumentError)`, an *arity* error rather than the `NoMethodError` the other cases give. Read captures through `$1` / `$2` (`cookbooks/functions/default.rb:315,334`).
+
+Treat any CRuby convenience method as unconfirmed until it has run under the real mruby binary once. Note the two error shapes: a missing method gives `NoMethodError`, a *narrower signature* gives `ArgumentError` — so do not scan converge logs for `NoMethodError` alone when hunting this class.
+
+CI syntax-check jobs run CRuby (`ruby -c`), which has all of these. A cookbook using `File.mtime`, `File.stat`, `Integer#zero?`, or `Regexp.last_match(1)` passes CI and passes `ruby -c`, then aborts at converge time on every real target. **CI's own `test-linux` / `test-macos` dry-run jobs DO catch it** — they run the real mruby binary — so a red dry-run job on a green `syntax-check` is the signature of this class. A stub-DSL render does NOT catch it either: the stub runs under CRuby, so it is only evidence about interpolation and control flow, never about mruby's API surface.
 
 **Rule**: any time/age/size logic in a `skip_if` / `not_if` / `only_if` guard MUST be expressed as a shell command (string form), not a Ruby Proc:
 
@@ -183,17 +188,18 @@ skip_if: -> { File.exist?(sentinel) && (Time.now - File.mtime(sentinel)) < 86400
 skip_if: "test -f #{sentinel} && find #{sentinel} -mmin -1440 | grep -q ."
 ```
 
-The same substitution applies to `Integer#zero?` — use `== 0` anywhere the value flows through mruby-executed code, guard or not.
+The same substitution applies to `Integer#zero?` (use `== 0`) and `Regexp.last_match(n)` (use `$n`) anywhere the value flows through mruby-executed code, guard or not.
 
-**Trigger**: any `not_if` / `only_if` / `skip_if` that references `File.mtime`, `File.stat`, `File.size`, or any `File::Stat` method; any cookbook Ruby calling `.zero?`.
+**Trigger**: any `not_if` / `only_if` / `skip_if` that references `File.mtime`, `File.stat`, `File.size`, or any `File::Stat` method; any cookbook Ruby calling `.zero?` or `Regexp.last_match(`.
 
 **Detection**:
 
 ```bash
 git grep -nE 'File\.(mtime|stat|size|birthtime|ctime|atime)' cookbooks/
 git grep -nE '\.zero\?' cookbooks/
+git grep -nE 'Regexp\.last_match\(' cookbooks/
 ```
 
-Any `File.*` hit inside a Proc, or any `.zero?` hit in recipe Ruby, is a mruby NoMethodError waiting to fire. (`.zero?` hits inside `files/` scripts run by CRuby are fine — check which runtime executes the file.)
+Any `File.*` hit inside a Proc, or any `.zero?` / `Regexp.last_match(n)` hit in recipe Ruby, is waiting to fire at converge. (Hits inside `files/` scripts run by CRuby — Claude Code hooks, standalone helper scripts — are fine; check which runtime executes the file.)
 
 Detail: see `~/.claude/docs/ruby-detail.md#mruby-file-api`.
