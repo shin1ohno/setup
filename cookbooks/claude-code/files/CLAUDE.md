@@ -180,6 +180,7 @@ These are `docs/` files (not auto-loaded). `Read` the file when the task matches
 | Headless / scheduled `claude -p` runner — auth-token gate, runner death / silent-failure detection, fail-closed pre-gate, permission-mode probe, re-dispatch dedup, notification channels | `~/.claude/docs/claude-cli-headless.md` |
 | TODO capture routing, stores, collect / reconcile loops (`/todo-collect`, `/todo-reconcile`) | `~/.claude/docs/todo-management.md` |
 | fractal node trees + plasma-wiki — agent config home not inherited, cost caps need an explicit model, `--scope` double-nesting, budget shape, wiki lint / naming traps, wave design | `~/.claude/docs/fractal-nodes.md` |
+| GPG secret-subkey distribution to a headless host via a secret store — passphrase stripping via agent keygrip, `--batch` silent-drop detection, per-step checkpoints, rotation | `~/.claude/docs/gpg-key-distribution.md` |
 
 ## Sub-agent Design Principles
 

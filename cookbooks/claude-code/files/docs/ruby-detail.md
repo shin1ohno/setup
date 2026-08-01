@@ -537,3 +537,68 @@ Origin: 2026-06-28 zp-issue-loops — `./bin/apply --overlay-only --dry-run` blo
 **Why CI cannot catch this**: the syntax-check job uses the system Ruby (CRuby). Only running `mitamae local <role>.rb` under the real mruby binary (or `mitamae --dry-run`) on a target host exposes the missing method. `mitamae --dry-run` on the dev box also uses mruby, so a dry-run on any LXC is a faster feedback loop than waiting for a production apply failure.
 
 Origin: 2026-06-10 KMS-reduction ES snapshot cookbook — `skip_if: -> { ... File.mtime(sentinel) ... }` passed CI (CRuby), every ES-node apply aborted `NoMethodError: undefined method 'mtime'` (mruby). The mruby runtime is the only gate that counts.
+
+Origin: 2026-08-01 sh1-cloud — `run_command(...).exit_status.zero?` in a new `managed-projects` guard. Passed `ruby -c` and review; CI's `test-linux` / `test-macos` dry-run jobs failed with `undefined method 'zero?'` while `syntax-check` stayed green. Confirms the missing-method class is not limited to `File`, and that the dry-run jobs are the real gate — a red dry-run beside a green syntax-check is this class's signature. Fixed to `== 0`, matching `cookbooks/git/default.rb`'s existing idiom.
+
+## capability-guard-not-presence
+
+## Capability guards must attempt the operation, not check for its prerequisite
+
+A presence check answers "is the prerequisite installed?", not "will the operation succeed?" — and the two diverge exactly where it hurts: on a headless host a credential can be present and unusable. Enabling the operation on that evidence is worse than leaving it disabled, because the breakage appears only once the prerequisite arrives, which reads as progress.
+
+```ruby
+# WRONG — succeeds for a passphrase-protected or stub key that cannot sign
+# unattended, so this ENABLES signing on a host where every commit then fails
+not_if 'gpg --list-secret-keys "$k" >/dev/null 2>&1'
+
+# RIGHT — `-bsau` is git's own invocation shape (sign_buffer), so the guard
+# exercises the same path the consumer will, not a proxy for it
+not_if 'printf x | gpg --batch --yes -bsau "$k" -o /dev/null >/dev/null 2>&1'
+```
+
+Generalises past GPG: prefer a real `aws sts get-caller-identity` over "is there a credentials file", a real `gcloud secrets versions access` over "is the API enabled", a real `ssh -T git@github.com` over "does a key file exist" (the idiom `dot-tmux` and `managed-projects` already use). Where the attempt is genuinely expensive or mutating, say so in a comment rather than silently downgrading to presence.
+
+**Detection**:
+
+```bash
+git grep -nE 'list-secret-keys|test -[fe] .*(key|credential)' cookbooks/ | grep -E 'not_if|only_if|skip_if'
+```
+
+Any hit feeding a boolean gate (rather than an informational log line) is a candidate.
+
+Origin: 2026-08-01 sh1-cloud — shipped in setup#784 as a presence check, which was correct while the box had no key at all. Once the signing subkey was provisioned from Secret Manager the guard saw it, left `commit.gpgsign = true`, and every `git commit` died with `gpg: signing failed: Inappropriate ioctl for device` — strictly worse than the unsigned-but-working state the guard existed to produce. Corrected in setup#787.
+
+## string-percent-shell-collision
+
+## Ruby `String#%` / `format` colliding with literal shell `%` directives
+
+Never use `%`/`format`/`sprintf` to build a shell command or config body. Use a heredoc with `#{}` interpolation — `#{}` only touches what you explicitly mark, so a literal `%s` beside it is inert.
+
+```ruby
+# WRONG — %<known>s and the shell's own printf "%s" fight over the same parser
+command <<~'OUTER'.strip % { known: path }
+  printf "%s\n%s\n" "a" "b"
+  KNOWN="%<known>s"
+OUTER
+# => ArgumentError: named<known> after unnumbered(1)
+
+# RIGHT — heredoc interpolation never touches literal % in the body
+command <<~SH.strip
+  printf "%s\\n%s\\n" "a" "b"
+  KNOWN="#{path}"
+SH
+```
+
+Note the escaping shift in the RIGHT form: an interpolating heredoc needs `\\n` where the non-interpolating one took `\n`.
+
+`ruby -c` cannot catch this — the failure happens when `%` evaluates, at mitamae COMPILE time, before any resource converges, so it aborts the whole run.
+
+**Detection**:
+
+```bash
+git grep -nE '\.strip %|\bformat\(|\bsprintf\(' cookbooks/
+```
+
+A hit is not automatically a bug — check whether the template also contains a literal `%`.
+
+Origin: 2026-08-01 sh1-cloud — a `known_hosts` keyscan `execute` built with `<<~'OUTER'.strip % { known: … }` whose body also ran `printf "%s\n%s\n%s\n"`. Passed `ruby -c`; found by rendering the cookbook through a stub DSL, which raised `ArgumentError: named<known> after unnumbered(1)` immediately.

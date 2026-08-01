@@ -256,6 +256,12 @@ When a post-commit block is planned (`push → gh pr create → gh pr checks`), 
 
 Origin: 2026-06-26 — every gh/HTTPS call across PR #556/#563/#564 required a sandbox-disabled retry; SSH push succeeded in-sandbox.
 
+**`gh auth refresh` REFUSES to run while `GITHUB_TOKEN` is exported** — and on these machines it always is. The zsh cookbook ships `~/.setup_shin1ohno/profile.d/50-github-token.sh` (setup#597, for mise's GitHub rate limit) which exports `gh auth token` into every interactive shell. `gh` treats an exported `GITHUB_TOKEN`/`GH_TOKEN` as an override and refuses the OAuth flow outright: `The value of the GITHUB_TOKEN environment variable is being used for authentication. To refresh credentials stored in GitHub CLI, first clear the value from the environment.` Any `gh auth refresh` — in a runbook, a script, or a `!` block — needs `env -u GITHUB_TOKEN`, and so does **every subsequent `gh` call that must use the refreshed credential**: the shell's `GITHUB_TOKEN` still holds the OLD token after a refresh, so wrapping only the refresh leaves the next command on the stale scope.
+
+Before writing a scope-expanding runbook, check what the current token actually has and whether the web UI avoids the round-trip entirely: `curl -sI https://api.github.com/user -H "Authorization: token $GITHUB_TOKEN" | grep -i x-oauth-scopes`. Prefer the web UI for one-off account-level operations (adding an SSH key, adding a signing key) — `gh auth refresh -s admin:public_key` widens the keyring token *permanently*, and because `50-github-token.sh` re-exports it, every tool reading `GITHUB_TOKEN` in every shell can then manage SSH keys on the account. Same browser-interaction count, durably wider blast radius.
+
+Origin: 2026-08-01 sh1-cloud — a runbook step `gh auth refresh -h github.com -s admin:public_key` failed on gh's own refusal; the fix needed `env -u` on both that and the follow-up `gh ssh-key add`, and the scope widening was avoidable by pasting into github.com/settings/keys instead.
+
 ## GPG Signing Failures
 
 If `git commit` fails with a GPG signing error or timeout, present the user with the full cache-refresh command:

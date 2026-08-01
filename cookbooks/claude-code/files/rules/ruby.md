@@ -42,6 +42,18 @@ Any hit is a false-gate candidate unless the cookbook genuinely uses the default
 
 Detail: see `~/.claude/docs/ruby-detail.md#auth-check-gate-profile`.
 
+## Capability guards must attempt the operation, not check for its prerequisite
+
+A guard that tests whether a credential/key/tool is PRESENT can pass on a host where the operation still fails — and enabling the operation there is often worse than leaving it off, because the failure only appears once the prerequisite arrives. Gate on the smallest real attempt instead, in the same invocation shape the consumer uses. Concretely: `gpg --list-secret-keys <id>` succeeds for a passphrase-protected or stub key that cannot sign unattended, so gate `commit.gpgsign` on `printf x | gpg --batch --yes -bsau <id> -o /dev/null` (git's own `sign_buffer` shape) instead.
+
+Detail: see `~/.claude/docs/ruby-detail.md#capability-guard-not-presence`.
+
+## Never build a shell command with Ruby's `%` / `format`
+
+`%`/`format`/`sprintf` parses EVERY `%` in the template as a format specifier, so a shell fragment carrying its own `printf "%s"`, a `%20` in a URL, or a strftime token collides with it — raising `ArgumentError: named<known> after unnumbered(1)` when the styles mix, or substituting silently wrong values when the counts happen to align. Use a heredoc with `#{}` interpolation, which only touches what you mark.
+
+Detail: see `~/.claude/docs/ruby-detail.md#string-percent-shell-collision`.
+
 ## STDIN.tty? guard before any blocking STDIN read
 
 Any Ruby cookbook helper (or any mitamae recipe code) that reads from STDIN MUST check `STDIN.tty?` before entering a blocking read or loop. In non-TTY contexts (CI, agent-driven runs, dry-runs over ssh without `-t`), `STDIN.gets` returns `nil` immediately — and `nil` is not a useful loop-exit signal. Fail-soft (log WARN + `yield`/`return`) in the non-TTY branch. Never rely on `gets` returning nil as a loop-exit signal.
@@ -150,14 +162,16 @@ Detail: see `~/.claude/docs/ruby-detail.md#converge-fail-batch-diagnose`.
 
 Detail: see `~/.claude/docs/ruby-detail.md#dry-run-sandbox`.
 
-## mruby API constraints — File.mtime / File.stat not available
+## mruby API constraints — File.mtime / File.stat / Integer#zero? not available
 
-mitamae runs on **mruby**, not CRuby. The `File` class in mruby is a strict subset:
+mitamae runs on **mruby**, not CRuby, and mruby simply lacks a number of CRuby convenience methods. `ruby -c` (CRuby) accepts every one of them, so the gap only surfaces at converge time. The `File` class is a strict subset:
 
 - **Available**: `File.exist?`, `File.read`, `File.join`, `File.dirname`, `File.basename`, `File.expand_path`
 - **NOT available**: `File.mtime`, `File.stat`, `File.size`, `File.birthtime`, any `File::Stat` methods
 
-CI syntax-check jobs run CRuby (`ruby -c`), which has all of these. A cookbook using `File.mtime` or `File.stat` inside a `skip_if` / `not_if` Proc passes CI, passes `ruby -c`, and aborts at converge time on every real target with `undefined method 'mtime' (NoMethodError)`.
+Beyond `File`, other core-class predicates are missing too — **`Integer#zero?` is confirmed absent**; write `== 0`, which is also this codebase's existing idiom (`cookbooks/git/default.rb`'s `dpkg-query` guard). Treat any CRuby convenience predicate as unconfirmed until it has run under the real mruby binary once.
+
+CI syntax-check jobs run CRuby (`ruby -c`), which has all of these. A cookbook using `File.mtime`, `File.stat`, or `Integer#zero?` passes CI, passes `ruby -c`, and aborts at converge time on every real target with `undefined method '…' (NoMethodError)`. **CI's own `test-linux` / `test-macos` dry-run jobs DO catch it** — they run the real mruby binary — so a red dry-run job on a green `syntax-check` is the signature of this class.
 
 **Rule**: any time/age/size logic in a `skip_if` / `not_if` / `only_if` guard MUST be expressed as a shell command (string form), not a Ruby Proc:
 
@@ -169,14 +183,17 @@ skip_if: -> { File.exist?(sentinel) && (Time.now - File.mtime(sentinel)) < 86400
 skip_if: "test -f #{sentinel} && find #{sentinel} -mmin -1440 | grep -q ."
 ```
 
-**Trigger**: any `not_if` / `only_if` / `skip_if` that references `File.mtime`, `File.stat`, `File.size`, or any `File::Stat` method.
+The same substitution applies to `Integer#zero?` — use `== 0` anywhere the value flows through mruby-executed code, guard or not.
+
+**Trigger**: any `not_if` / `only_if` / `skip_if` that references `File.mtime`, `File.stat`, `File.size`, or any `File::Stat` method; any cookbook Ruby calling `.zero?`.
 
 **Detection**:
 
 ```bash
 git grep -nE 'File\.(mtime|stat|size|birthtime|ctime|atime)' cookbooks/
+git grep -nE '\.zero\?' cookbooks/
 ```
 
-Any hit inside a Proc is a mruby NoMethodError waiting to fire.
+Any `File.*` hit inside a Proc, or any `.zero?` hit in recipe Ruby, is a mruby NoMethodError waiting to fire. (`.zero?` hits inside `files/` scripts run by CRuby are fine — check which runtime executes the file.)
 
 Detail: see `~/.claude/docs/ruby-detail.md#mruby-file-api`.
