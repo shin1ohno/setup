@@ -115,11 +115,13 @@ apm_ca_path = "#{deploy_dir}/apm-ca.crt"
 
 directory deploy_dir do
   owner user
+group node[:setup][:group]
   mode "755"
 end
 
 file "#{deploy_dir}/.env" do
   owner user
+group node[:setup][:group]
   mode "644"
   content <<~ENV_FILE
     UID=1000
@@ -132,6 +134,7 @@ end
 # the LXC has its own dedicated network namespace via vmbr0.
 file "#{deploy_dir}/docker-compose.yml" do
   owner user
+group node[:setup][:group]
   mode "644"
   content <<~COMPOSE
     services:

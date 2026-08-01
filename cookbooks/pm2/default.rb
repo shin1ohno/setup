@@ -16,6 +16,7 @@ if node[:platform] == "darwin"
   # which ENOENT-fails on fresh Macs where the directory doesn't yet exist.
   directory "#{node[:setup][:home]}/Library/LaunchAgents" do
     owner node[:setup][:user]
+group node[:setup][:group]
     mode "755"
   end
 

@@ -388,11 +388,13 @@ end
 if node[:platform] != "darwin"
   directory "#{node[:setup][:home]}/.config/systemd/user" do
     owner user
+    group node[:setup][:group]
     mode "0755"
   end
 
   file "#{node[:setup][:home]}/.config/systemd/user/s3-backup.service" do
     owner user
+    group node[:setup][:group]
     mode "0644"
     content <<~SERVICE
       [Unit]
@@ -417,6 +419,7 @@ if node[:platform] != "darwin"
 
   file "#{node[:setup][:home]}/.config/systemd/user/s3-backup.timer" do
     owner user
+    group node[:setup][:group]
     mode "0644"
     content <<~TIMER
       [Unit]
