@@ -9,18 +9,21 @@ include_cookbook "rclone"
 # Create base sync directory for Obsidian vaults
 directory "#{node[:setup][:home]}/obsidian" do
   owner node[:setup][:user]
+  group node[:setup][:group]
   mode "755"
 end
 
 # Create config directory for sync scripts
 directory "#{node[:setup][:root]}/obsidian_sync" do
   owner node[:setup][:user]
+  group node[:setup][:group]
   mode "755"
 end
 
 # Create the sync script
 file "#{node[:setup][:root]}/obsidian_sync/sync.sh" do
   owner node[:setup][:user]
+  group node[:setup][:group]
   mode "755"
   content <<-EOM
 #!/bin/bash
@@ -178,6 +181,7 @@ end
 # Create a README file with usage instructions
 file "#{node[:setup][:root]}/obsidian_sync/README.md" do
   owner node[:setup][:user]
+  group node[:setup][:group]
   mode "644"
   content <<-EOM
 # Obsidian Vault Sync

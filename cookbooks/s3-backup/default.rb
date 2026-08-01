@@ -20,22 +20,26 @@ user = node[:setup][:user]
 # Create directories
 directory "#{setup_root}/bin" do
   owner user
+  group node[:setup][:group]
   mode "0755"
 end
 
 directory "#{node[:setup][:home]}/.config/s3-backup" do
   owner user
+  group node[:setup][:group]
   mode "0700"
 end
 
 directory "#{node[:setup][:home]}/.local/log" do
   owner user
+  group node[:setup][:group]
   mode "0755"
 end
 
 # Install backup script
 file "#{setup_root}/bin/s3-backup" do
   owner user
+  group node[:setup][:group]
   mode "0755"
   content <<~'SCRIPT'
     #!/usr/bin/env bash
@@ -360,6 +364,7 @@ end
 # Create sample config if not exists
 file "#{node[:setup][:home]}/.config/s3-backup/config.sample" do
   owner user
+  group node[:setup][:group]
   mode "0600"
   content <<~CONFIG
     # S3 Backup Configuration
@@ -439,6 +444,7 @@ end
 # Create README with usage instructions
 file "#{setup_root}/bin/s3-backup.README.md" do
   owner user
+  group node[:setup][:group]
   mode "0644"
   content <<~README
     # S3 Backup
