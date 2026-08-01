@@ -253,9 +253,14 @@ module RecipeHelper
   # the captured value are stripped so the result is the bare profile name.
   # Used by _auto_select_aws_profile (to skip useless iteration on pinned
   # gates) and _auth_diagnosis (to mirror the same identity the gate uses).
+  #
+  # Read the capture through `$1`, NOT `Regexp.last_match(1)`: mitamae runs on
+  # mruby, whose Regexp.last_match takes NO arguments, so the arity form raises
+  # `wrong number of arguments (1 for 0)` and aborts the run. CRuby accepts it,
+  # so `ruby -c` and CI's syntax-check stay green. Matches lines 315/334 below.
   def _pinned_profile(check_command)
     if check_command =~ /--profile\s+(\S+)/ || check_command =~ /AWS_PROFILE=(\S+)/
-      Regexp.last_match(1).gsub(/['"]/, "").sub(/[,)]+\z/, "")
+      $1.gsub(/['"]/, "").sub(/[,)]+\z/, "")
     end
   end
 
