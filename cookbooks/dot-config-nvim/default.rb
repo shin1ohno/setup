@@ -10,8 +10,16 @@ directory "#{node[:setup][:home]}/.config/" do
   action :create
 end
 
+# Canonical HTTPS, not git@. This is a read-only clone of a public repo, so
+# HTTPS needs no credential and works on a host with no SSH key — where the
+# git@ form was a HARD abort (`Permission denied (publickey)`), taking the rest
+# of the entry recipe with it since mitamae has no ignore_failure.
+# On a host that HAS a key this is not a behaviour change: cookbooks/git
+# installs `url."git@github.com:shin1ohno/".insteadOf https://github.com/shin1ohno/`
+# whenever a private key is present, and it runs in roles/foundation, well
+# before this cookbook — so the transport is still SSH there.
 git_clone "nvim" do
-  uri "git@github.com:shin1ohno/astro.git nvim"
+  uri "https://github.com/shin1ohno/astro.git nvim"
   cwd "#{node[:setup][:home]}/.config/"
 end
 

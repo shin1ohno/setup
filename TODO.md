@@ -194,3 +194,41 @@ of scope for the initial PR.
   child-channel options surfaced via HB config), set a modest idle timeout (~30s) and
   connection cap in `cookbooks/remind/files/daemon/Sources/remindd/main.swift`, and
   add a slowloris probe to the verification steps.
+
+## elastic-agent — two Linux defects that abort the whole apply (Medium)
+
+Found by an adversarial review while making `linux.rb` converge on a keyless cloud
+VM. The `sh1-cloud` profile now skips `elastic-agent`, so neither defect affects
+that host any more — but both still stand for bare-metal / LXC Linux.
+
+1. `execute "render elastic-agent.yml"`'s command string begins with
+   `set -euo pipefail` (`cookbooks/elastic-agent/default.rb:543`). mitamae runs
+   `command` through `/bin/sh`, which is dash on Debian/Ubuntu, so this exits 2
+   with `set: Illegal option -o pipefail`. Its `only_if` is
+   `test -f <tmpl> && test -d /etc/elastic-agent`, i.e. it fires on any Linux host
+   that already has the agent installed. The resource's own `not_if` carries a
+   comment about dash lacking process substitution, so the dash constraint was
+   known when it was written. This is the last unwrapped `pipefail` site in the
+   repo — the same class was already fixed in
+   `cookbooks/{codex-cli,mcp,herdr,terraform}`.
+2. The apt block (`default.rb:313-355` — install prerequisites, add key, add repo,
+   `apt-get update`, install, `apt-mark hold`) runs privileged commands with no
+   `user` attribute and no `sudo` in the command string. Fine where
+   `mitamae-runner` applies as root; fails on a Linux host applying as a regular
+   login user. The same file already uses `user "root"` for its darwin path
+   (`:176`, `:183`), so the idiom is in place.
+
+- Reason deferred: both fixes are one-liners, but neither is verifiable from the
+  work Mac — the affected hosts (ES LXCs, bare-metal `pro`) are on the home LAN and
+  unreachable from here (`ssh pro` → DNS failure, `neo.local` → connect timeout).
+  Shipping an unverified change to the cookbook that feeds the monitoring cluster
+  is worse than leaving a recorded defect. Also out of scope for the PR that
+  surfaced it, which is about cloud-VM convergence.
+- First step: from a host on the home LAN, run `./bin/mitamae local linux.rb
+  --dry-run` and confirm whether the render resource is reached (that settles
+  whether defect 1 is live fleet-wide or its `only_if` is simply unsatisfied). Then
+  wrap the command in `bash -c '...'` per the herdr/terraform pattern, add
+  `user node[:setup][:system_user]` to the six apt resources, and verify by
+  dispatching `test-setup.yml` at `all-cookbooks`, which runs a non-sudo
+  `./bin/mitamae local linux.rb` — exactly the non-root Linux profile defect 2
+  fails under.
