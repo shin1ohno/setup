@@ -56,6 +56,7 @@ end
 # resource is content-hash idempotent on its own.
 template "#{node[:setup][:home]}/.gnupg/gpg-agent.conf" do
   owner node[:setup][:user]
+  group node[:setup][:group]
   mode "600"
   source "templates/gpg-agent.conf"
   notifies :run, "execute[reload gpg-agent]"

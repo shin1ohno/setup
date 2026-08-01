@@ -13,6 +13,7 @@ user = node[:setup][:user]
 
 directory "#{setup_root}/bin" do
   owner user
+  group node[:setup][:group]
   mode "0755"
 end
 
@@ -516,6 +517,7 @@ end
 #
 file "#{setup_root}/bin/gpg-master-backup" do
   owner user
+  group node[:setup][:group]
   mode "0755"
   content <<~'SCRIPT'
     #!/usr/bin/env bash

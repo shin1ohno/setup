@@ -14,6 +14,7 @@ model_dir = "#{node[:setup][:home]}/models/llm/llama-3-elyza-jp"
 
 directory model_dir do
   owner node[:setup][:user]
+  group node[:setup][:group]
   mode "0755"
   action :create
 end
@@ -21,6 +22,7 @@ end
 remote_file "#{model_dir}/download-llama-3-elyza-jp.sh" do
   source "files/download.sh"
   owner node[:setup][:user]
+  group node[:setup][:group]
   mode "0755"
   action :create
 end
@@ -28,6 +30,7 @@ end
 remote_file "#{model_dir}/MODELFILE" do
   source "files/Modelfile"
   owner node[:setup][:user]
+  group node[:setup][:group]
   mode "0755"
   action :create
 end

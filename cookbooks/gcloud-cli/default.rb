@@ -4,6 +4,7 @@ installation_home = "#{node[:setup][:root]}/gcloud-cli"
 
 directory installation_home do
   owner node[:setup][:user]
+  group node[:setup][:group]
   mode "755"
 end
 
