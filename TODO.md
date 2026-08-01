@@ -232,3 +232,36 @@ that host any more — but both still stand for bare-metal / LXC Linux.
   dispatching `test-setup.yml` at `all-cookbooks`, which runs a non-sudo
   `./bin/mitamae local linux.rb` — exactly the non-root Linux profile defect 2
   fails under.
+
+## ssh-keys — known_hosts keyscan is dash-fatal on Linux (Medium)
+
+`cookbooks/ssh-keys/default.rb`'s step 5 builds `github_known_hosts_script` as a
+heredoc beginning `set -euo pipefail` and passes it as a bare `command`
+(`execute "register github.com host keys in known_hosts"`). mitamae runs `command`
+through `/bin/sh`, which is dash on Debian/Ubuntu, so this exits 2 with
+`set: Illegal option -o pipefail` and — no `ignore_failure` — aborts the rest of
+`ssh-keys` and everything after it. Same class as the `elastic-agent` entry above
+and as the already-fixed `cookbooks/{codex-cli,mcp,herdr,terraform}`.
+
+Whether it is *live* is genuinely unclear and worth settling before touching it:
+its `not_if` is `test -f known_hosts && grep -q '^github.com '`, so on any host
+whose `known_hosts` already carries a github entry the resource never runs. A
+Linux host that has been converging successfully for a long time may simply have
+been seeded before the `pipefail` line was introduced.
+
+The overlay's `cookbooks/gcp-ssh-keys` (kouzoh/zp-SHIN) deliberately carries its
+own `bash -c`-wrapped copy of this script rather than reusing this one, and
+records why in a comment — so the cloud box is unaffected either way.
+
+- Reason deferred: unverifiable from the work Mac. The hosts that run `ssh-keys`
+  past its AWS auth gate are the home-LAN LXCs and bare-metal `pro`, and neither
+  resolves from here (`ssh pro` → DNS failure, `neo.local` → connect timeout).
+  Changing the cookbook that distributes SSH keys to the whole fleet on an
+  unverified hypothesis is the wrong trade.
+- First step: on a home-LAN Linux host, `mv ~/.ssh/known_hosts{,.bak}` and run
+  `./bin/mitamae local linux.rb --dry-run` to force the resource to be reached —
+  that distinguishes "already seeded, never runs" from "live abort". If live, wrap
+  in `bash -c '...'`; note the script uses `awk '{print $2}'`, which needs
+  rewriting to `cut -d' ' -f2` under a single-quoted `bash -c` wrapper (bash would
+  otherwise expand `$2` as a positional parameter), exactly as done in the
+  overlay's copy.
