@@ -285,11 +285,50 @@ def _make_client() -> httpx.AsyncClient:
     )
 
 
+async def _index_exists(client: httpx.AsyncClient, name: str) -> bool:
+    """HEAD /<index>. Needs only view_index_metadata, so it stays available to a
+    credential that has no create_index / manage."""
+    try:
+        resp = await client.request("HEAD", f"/{name}")
+    except Exception:  # noqa: BLE001 — treated as "cannot confirm"
+        return False
+    return resp.status_code == 200
+
+
+async def _alias_covers(client: httpx.AsyncClient, members: list[str]) -> bool:
+    """True when every member index already carries ALL_ALIAS. GET /_alias/<name>
+    answers with only the indices that carry it, so key presence is the test.
+    view_index_metadata is enough for this too."""
+    try:
+        resp = await client.request("GET", f"/_alias/{ALL_ALIAS}")
+    except Exception:  # noqa: BLE001
+        return False
+    if resp.status_code != 200:
+        return False
+    try:
+        mapped = resp.json()
+    except ValueError:
+        return False
+    return all(idx in mapped for idx in members)
+
+
 async def ensure_indices(retries: int = 10, delay: float = 3.0) -> None:
-    """Idempotently PUT the 4 indices (tolerate resource_already_exists) then
-    ensure the memory-all alias. Retries because ES may be cold at boot. Uses an
+    """Make sure the 4 indices and the memory-all alias exist, and tolerate not
+    being allowed to create them. Retries because ES may be cold at boot. Uses an
     ephemeral client so the module-level `_es` pool is not created inside the
-    throwaway loop used by the import-time asyncio.run() call."""
+    throwaway loop used by the import-time asyncio.run() call.
+
+    LEAST-PRIVILEGE CREDENTIALS. This server is deployable with an ES user that
+    holds only read / write / view_index_metadata on the memory-* indices -- no
+    manage, no create_index -- so that possessing its password cannot delete an
+    index or wipe the cluster. Such a user gets 403 on `PUT /<index>` and on
+    `POST /_aliases`, and ES answers the authorization check BEFORE it would have
+    answered resource_already_exists_exception, so the 400 branch never fires.
+    Left unhandled, that 403 propagates through the retry loop and the server
+    fails to start against a perfectly healthy, already-provisioned cluster.
+    Treat 403 as success when the object is verifiably already there (the
+    operator or the deploy-time bootstrap created it as a privileged user), and
+    keep failing when it genuinely is not."""
     last_err: Exception | None = None
     async with _make_client() as client:
         for _ in range(retries):
@@ -300,6 +339,8 @@ async def ensure_indices(retries: int = 10, delay: float = 3.0) -> None:
                         continue
                     if resp.status_code == 400 and \
                             "resource_already_exists_exception" in resp.text:
+                        continue
+                    if resp.status_code == 403 and await _index_exists(client, name):
                         continue
                     resp.raise_for_status()
                 await _ensure_alias(client)
@@ -312,12 +353,14 @@ async def ensure_indices(retries: int = 10, delay: float = 3.0) -> None:
 
 
 async def _ensure_alias(client: httpx.AsyncClient) -> None:
+    members = [FACT_INDEX, KNOWLEDGE_INDEX, EPISODE_INDEX]
     actions = {"actions": [
-        {"add": {"index": FACT_INDEX, "alias": ALL_ALIAS}},
-        {"add": {"index": KNOWLEDGE_INDEX, "alias": ALL_ALIAS}},
-        {"add": {"index": EPISODE_INDEX, "alias": ALL_ALIAS}},
+        {"add": {"index": idx, "alias": ALL_ALIAS}} for idx in members
     ]}
     resp = await client.request("POST", "/_aliases", json=actions)
+    # Same 403-when-already-correct case as ensure_indices; see its docstring.
+    if resp.status_code == 403 and await _alias_covers(client, members):
+        return
     resp.raise_for_status()
 
 
