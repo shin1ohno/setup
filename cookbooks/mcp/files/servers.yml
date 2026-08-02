@@ -1,7 +1,8 @@
 # MCP Server Definitions
 # =======================
 # This file defines MCP servers that will be deployed to:
-# - Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json
+# - Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json (macOS only)
+# - Claude Code USER scope: `claude mcp add` / `add-json` (every platform)
 # - Codex CLI: ~/.codex/config.toml
 #
 # Environment Variables:
@@ -11,6 +12,13 @@
 #
 # Variables:
 #   - ${HOME} will be expanded to the user's home directory
+#
+# Platform pinning:
+#   - `platforms: [darwin]` (or `[linux]`) restricts a server to those hosts;
+#     omit the key to deploy everywhere. The token is the renderer's PLATFORM
+#     value — `darwin` on macOS, `linux` on everything else, passed by
+#     cookbooks/mcp/default.rb. Pin anything whose command path is
+#     OS-specific (an iCloud Drive path, a Homebrew prefix).
 #
 # Desktop delivery of HTTP/SSE servers:
 #   Claude Desktop's claude_desktop_config.json is stdio-only, so type:http
