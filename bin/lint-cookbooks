@@ -26,6 +26,21 @@
 #      unattended NON-TTY fleet (the cognee/memory/hydra silent .env-skip class).
 #      Fleet cookbooks must pin an explicit --profile; darwin auto-discovery
 #      cookbooks are listed in BARE_OK. allowlist: see BARE_OK (+ ALLOW3).
+#   6. claude-code deploy-list drift        — files/{rules,docs,workflows,agents}/
+#      are deployed via explicit %w() lists, not Dir.glob, so a new file is a
+#      silent orphan until its name is added to the matching list.
+#   7. `owner` without `group`              — mitamae then chowns to the group it
+#      reads off the existing path, and on a host whose login user is NSS-virtual
+#      (GCE OS Login) it cannot read one, emitting the literal
+#      `chown <user>:UNKNOWN` and failing the resource. Swept three times
+#      (#778/#788, 50 sites); this stops a fourth.
+#   8. mruby-absent CRuby methods in recipe Ruby — mitamae runs mruby, so
+#      File.mtime/stat/size, Integer#zero?, Regexp.last_match(n), filter_map and
+#      each_with_object abort at converge while `ruby -c` stays green. The
+#      dry-run jobs only catch what they EXECUTE, so anything behind
+#      require_external_auth's non-TTY return is invisible to CI (how
+#      Regexp.last_match(1) shipped). Comment lines are skipped; `dig` is NOT in
+#      the set (35 legitimate uses on mitamae's node object).
 #
 # Usage:  bin/lint-cookbooks   # exit 1 on any violation
 
@@ -92,6 +107,13 @@ end
 # Flag File.exist? inside a top-level `if`/`unless` CONDITION, including
 # multi-line conditions (e.g. `if a && \n  b && \n  File.exist?(...)`). Code
 # inside a `def` body is exempt (runs at call time, not compile time).
+#
+# KNOWN LIMITATION: only a `def` body is exempt, so an `if File.exist?(...)`
+# inside an only_if / not_if / skip_if Proc is flagged even though a Proc body
+# also runs at converge, not compile, time. Write the predicate into a local and
+# test the local (see cookbooks/zsh/default.rb's .bash_profile guard) rather
+# than allowlisting a line number here — ALLOW1 entries go stale on the next
+# insertion above them.
 CONT = /(?:&&|\|\||\\|\band\b|\bor\b)\z/ # line continues the condition
 
 recipe_files.each do |file|
@@ -413,6 +435,86 @@ if File.file?(cc_default)
           "%w() list — it will never reach ~/.claude/#{dir}/. Add it to the " \
           "list, or delete the orphan file. (Explicit-list deploy, not glob: " \
           "dropping a file in files/#{dir}/ does not wire it.)")
+    end
+  end
+end
+
+# --- check 7: `owner` without `group` --------------------------------------
+#
+# A file/directory resource that sets `owner` and leaves `group` nil makes
+# mitamae chown to the group it reads off the existing path. On a host whose
+# login user is NSS-virtual (GCE OS Login's libnss_oslogin, sssd, LDAP/NIS) that
+# lookup yields nothing, so the resource runs the literal
+# `chown <user>:UNKNOWN` and fails -- and with no ignore_failure that aborts the
+# rest of the run. node[:setup][:group] is correct on every platform (staff on
+# darwin, `id -gn` elsewhere), so naming it is a no-op where the inference was
+# already working.
+#
+# Deliberately tests the JOINED resource body, not `group` at a specific
+# indentation: #788 inserted 30 of its 33 `group` lines at column 0, so an
+# indent-strict child filter reports 30 false positives across edge-agent,
+# macos-hub, obsidian_file_sync, lxc-roon-mcp, gpg-backup and pm2.
+recipe_files.each do |file|
+  lines = File.readlines(file)
+  i = 0
+  while i < lines.length
+    line = lines[i]
+    if line =~ /\A(\s*)(directory|file|template|remote_file)\b.*\bdo\b/
+      indent = Regexp.last_match(1).length
+      resource = Regexp.last_match(2)
+      block = [line]
+      start = i
+      j = i + 1
+      while j < lines.length
+        block << lines[j]
+        break if lines[j] =~ /\A {#{indent}}end\b/ || lines[j] =~ /\A\t*end\b/ && lines[j][/\A */].length == indent
+        j += 1
+      end
+      body = block.join
+      if body =~ /^\s*owner\s+\S/ && body !~ /^\s*group\s+\S/
+        add(violations, file, start + 1,
+            "`#{resource}` sets `owner` with no `group` — mitamae then chowns to " \
+            "the group it reads off the path, which is unreadable for an " \
+            "NSS-virtual login user (GCE OS Login), so it emits the literal " \
+            "`chown <user>:UNKNOWN` and the resource fails. Add " \
+            "`group node[:setup][:group]`.")
+      end
+      i = j + 1
+      next
+    end
+    i += 1
+  end
+end
+
+# --- check 8: mruby-absent CRuby methods in recipe Ruby --------------------
+#
+# mitamae runs mruby. `ruby -c` and the syntax-check job run CRuby, which has
+# all of these, so the gap only surfaces at converge — and the dry-run jobs
+# catch it ONLY where they actually execute the line, which is why
+# Regexp.last_match(1) shipped behind require_external_auth's non-TTY return
+# (~/.claude/rules/ruby.md "mruby API constraints").
+#
+# `dig` is intentionally absent from this set: recipe Ruby has ~35 legitimate
+# `node.dig(...)` calls that converge fine on mitamae's node object.
+MRUBY_ABSENT = [
+  [/\bFile\.(mtime|stat|size|birthtime|ctime|atime)\b/, "File.%s is CRuby-only (mruby's File is a strict subset) — express time/age/size logic as a shell guard string instead"],
+  [/\bRegexp\.last_match\s*\(/, "Regexp.last_match takes NO arguments on mruby — the arity form raises ArgumentError at converge; read the capture through $1 / $2"],
+  [/\.zero\?/, "Integer#zero? is absent on mruby — write `== 0` (this codebase's existing idiom)"],
+  [/\.filter_map\b/, "Enumerable#filter_map is CRuby-only — use .map { }.compact"],
+  [/\.each_with_object\b/, "Enumerable#each_with_object is CRuby-only — use .each with an explicit accumulator"],
+].freeze
+
+recipe_files.each do |file|
+  File.foreach(file).with_index(1) do |raw, lineno|
+    next if raw =~ /\A\s*#/
+    MRUBY_ABSENT.each do |pattern, message|
+      next unless raw =~ pattern
+      # sub, not `%`: rules/ruby.md bans building strings with Ruby's `%` where
+      # the template may carry its own percent signs.
+      detail = message.sub("%s", Regexp.last_match(1).to_s)
+      add(violations, file, lineno,
+          "#{detail}. Recipe Ruby runs on mruby; `ruby -c` and syntax-check " \
+          "cannot see this, and a dry-run only catches it if it EXECUTES the line.")
     end
   end
 end
