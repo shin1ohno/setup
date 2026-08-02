@@ -29,7 +29,7 @@ Detail (trap explanation + origin): see `~/.claude/docs/debugging-detail.md#nois
 
 ## Do Not Report Success Without State Evidence
 
-NOT evidence: code compiled/ran without errors; function returned `Ok(())`; "success" message printed by *your* code; previous run looked correct; test suite passes (unit/integration tests exercise isolated paths, not end-to-end effects).
+NOT evidence: code compiled/ran without errors; function returned `Ok(())`; "success" message printed by *your* code; previous run looked correct; test suite passes (unit/integration tests exercise isolated paths, not end-to-end effects); **a green CI run, when the step that would exercise your change is gated behind `workflow_dispatch` inputs** — `github.event.inputs.*` is empty on `pull_request`, so an `if: github.event.inputs.test_level == '…'` step silently skips and still contributes to the green checkmark. Before writing "CI verifies X" in a PR body or commit message, grep the workflow YAML for the `if:` on the specific step that exercises X; if it is input-gated, dispatch it (`gh workflow run <wf> --ref <branch> -f <input>=<value>`) and read that step's conclusion AND its real stdout — `gh run watch --exit-status` exits 0 for a skipped step too. Origin: 2026-08-02 setup #793 — a PR body claimed `test-macos` gated a darwin change while its apply/verify steps had not run.
 
 ARE evidence: observable system state on the receiving end (zone status, file exists, DB record present, queue length changed); test output exercising the changed path against real inputs; log output from the *receiving* system; status-query command returning the expected state after the fix.
 
