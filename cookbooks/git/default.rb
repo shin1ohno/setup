@@ -100,8 +100,12 @@ end
 # silently redirects EVERY https://github.com/... git/gh operation to an SSH
 # transport that can never authenticate, breaking not just this cookbook's
 # own use but any later cookbook/tool that shells out to plain git against
-# github.com (confirmed live: broke both `gh repo clone` and fzf's
-# fzf-git.sh clone on a fresh keyless box).
+# github.com (confirmed live: broke `gh repo clone kouzoh/zp-SHIN` on a fresh
+# keyless box -- gh itself correctly chose HTTPS and injected its own
+# credential helper, and git's rewrite happened downstream of gh, invisible to
+# it). Not the fzf-git.sh clone: that URI was the literal `git@github.com:`
+# form at the time, which no `https://github.com/` prefix rule can match, so
+# it failed on the missing key alone and was fixed separately in cookbooks/fzf.
 #
 # Detection is filename-convention-agnostic (reads each ~/.ssh/* candidate's
 # header instead of assuming id_rsa/id_ed25519) because ssh-keys cookbook

@@ -1,17 +1,39 @@
 # frozen_string_literal: true
 
+fzf_git_uri = "https://github.com/junegunn/fzf-git.sh.git"
+fzf_git_dir = "#{node[:setup][:root]}/fzf-git.sh"
+
 # Third-party, public, read-only clone -- HTTPS needs no auth at all and
 # works on every host, unlike an SSH URL (which fails outright on hosts with
 # no SSH private key, e.g. GCE OS Login boxes; confirmed live).
 git_clone "fzf-git.sh" do
   cwd node[:setup][:root]
-  uri "https://github.com/junegunn/fzf-git.sh.git"
+  uri fzf_git_uri
 end
 
+# git_clone's not_if is path-existence only (functions/default.rb), so it never
+# re-clones -- a host that cloned before the HTTPS switch keeps its git@ remote
+# forever, and the pull below then runs over exactly the SSH transport that
+# switch existed to stop depending on. Repoint an existing SSH remote once; a
+# no-op on a fresh HTTPS clone. `git -C` in the guard because mitamae does not
+# promise the resource's cwd to only_if.
+execute "repoint fzf-git.sh remote to HTTPS" do
+  command "git remote set-url origin #{fzf_git_uri}"
+  cwd fzf_git_dir
+  only_if "test -d #{fzf_git_dir}/.git && " \
+          "git -C #{fzf_git_dir} remote get-url origin | grep -q '^git@'"
+end
+
+# GIT_SSH_COMMAND is kept even though the remote is now HTTPS (git ignores it
+# there): it is what stops a remote this run has NOT repointed -- the repoint
+# guard skipped, or a checkout without a .git dir -- from hanging on a
+# passphrase or host-key prompt. `|| true` hides such a hang rather than
+# preventing it, so the timeout is the real guard. Same string as
+# cookbooks/fzf-tab, cookbooks/dot-config-nvim and cookbooks/dot-tmux.
 execute "update fzf-git.sh" do
-  command "git pull || true"
-  cwd "#{node[:setup][:root]}/fzf-git.sh"
-  only_if "test -d #{node[:setup][:root]}/fzf-git.sh"
+  command "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' git pull || true"
+  cwd fzf_git_dir
+  only_if "test -d #{fzf_git_dir}"
 end
 
 case node[:platform]
