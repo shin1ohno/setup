@@ -257,7 +257,10 @@ module RecipeHelper
   # Read the capture through `$1`, NOT `Regexp.last_match(1)`: mitamae runs on
   # mruby, whose Regexp.last_match takes NO arguments, so the arity form raises
   # `wrong number of arguments (1 for 0)` and aborts the run. CRuby accepts it,
-  # so `ruby -c` and CI's syntax-check stay green. Matches lines 315/334 below.
+  # so `ruby -c` and CI's syntax-check stay green. Same form as the other `$1`
+  # reads in _auth_diagnosis below (named rather than numbered on purpose: the
+  # first version of this comment cited line numbers computed against the
+  # pre-insertion file, so it was already off by its own five lines at commit).
   def _pinned_profile(check_command)
     if check_command =~ /--profile\s+(\S+)/ || check_command =~ /AWS_PROFILE=(\S+)/
       $1.gsub(/['"]/, "").sub(/[,)]+\z/, "")

@@ -208,9 +208,10 @@ that host any more — but both still stand for bare-metal / LXC Linux.
    `test -f <tmpl> && test -d /etc/elastic-agent`, i.e. it fires on any Linux host
    that already has the agent installed. The resource's own `not_if` carries a
    comment about dash lacking process substitution, so the dash constraint was
-   known when it was written. This is the last unwrapped `pipefail` site in the
-   repo — the same class was already fixed in
-   `cookbooks/{codex-cli,mcp,herdr,terraform}`.
+   known when it was written. The same class was already fixed in
+   `cookbooks/{codex-cli,mcp,herdr,terraform}`. This is NOT the last unwrapped
+   site — see the `lxc-elasticsearch / lxc-kibana / lxc-monitoring` entry below
+   for nine more, and `ssh-keys` for a tenth.
 2. The apt block (`default.rb:313-355` — install prerequisites, add key, add repo,
    `apt-get update`, install, `apt-mark hold`) runs privileged commands with no
    `user` attribute and no `sudo` in the command string. Fine where
@@ -265,3 +266,64 @@ records why in a comment — so the cloud box is unaffected either way.
   rewriting to `cut -d' ' -f2` under a single-quoted `bash -c` wrapper (bash would
   otherwise expand `$2` as a positional parameter), exactly as done in the
   overlay's copy.
+
+## lxc-elasticsearch / lxc-kibana / lxc-monitoring — nine dash-fatal pipefail sites (Medium)
+
+Found by auditing every commit of the 2026-07-30..08-02 window against its diff.
+The `elastic-agent` entry above claimed to be the last unwrapped `pipefail` site
+in the repo; it was already wrong when written (the very next PR recorded
+`ssh-keys` as a second), and a full classification finds nine more. All nine are
+the FIRST line of a bare `execute … command`, so on a Debian/Ubuntu host — where
+mitamae runs `command` through `/bin/sh` = dash — they exit 2 with
+`set: Illegal option -o pipefail`, and with no `ignore_failure` that aborts the
+rest of the run:
+
+| Site | Enclosing resource |
+|---|---|
+| `cookbooks/lxc-elasticsearch/default.rb:268` | `execute "render elasticsearch.yml"` |
+| `cookbooks/lxc-elasticsearch/default.rb:294` | `execute "ensure elasticsearch.yml exists"` |
+| `cookbooks/lxc-kibana/default.rb:330` | `execute "install Synthetics alerting (connector + Status + TLS rules)"` |
+| `cookbooks/lxc-kibana/default.rb:346` | `execute "install process-liveness rules (~31 .es-query rules)"` |
+| `cookbooks/lxc-kibana/default.rb:367` | `execute "install Stack Monitoring integration packages (EPM)"` |
+| `cookbooks/lxc-monitoring/default.rb:430` | `execute "download dbip-city-lite GeoIP DB"` |
+| `cookbooks/lxc-monitoring/default.rb:552` | `execute "fetch elastic CA cert from SSM"` |
+| `cookbooks/lxc-monitoring/default.rb:586` | `execute "generate snmp.yml"` |
+| `cookbooks/lxc-monitoring/default.rb:604` | `execute "ensure snmp.yml exists"` |
+
+Firing conditions, read off the guards rather than assumed. The `render …` sites
+are notify-driven and carry a `not_if` that diffs the freshly-rendered output
+against the installed file, so a converged host skips them on every apply and
+they fire the NEXT TIME THE TEMPLATE CHANGES. The `ensure … exists` sites carry
+`only_if "… ! test -f <path>"`, so they fire on a FRESH LXC's first apply. That
+is why a working cluster is not evidence against this: both classes are latent on
+exactly the hosts that already converged.
+
+`cookbooks/lxc-elasticsearch/default.rb:275-279` is the sharpest instance — its
+comment correctly explains that mitamae evaluates `not_if` through dash and
+rewrites the guard for dash compatibility, three lines below a `command` that
+still opens with `set -euo pipefail`.
+
+Detection: use `git grep -n pipefail`, NOT a `set -euo pipefail` literal. The
+string `set -euo pipefail` does not contain the substring `-o pipefail` (the `-`
+and the `o` are not adjacent), and `lxc-monitoring:430` uses the `set -uo
+pipefail` variant, so both narrower patterns silently under-report. Classify each
+hit by its enclosing construct before believing it: `cookbooks/gpg-backup:40,546`,
+`cookbooks/s3-backup:56` and `cookbooks/lxc-pro-router:91` sit inside
+`file … content` heredocs (shipped scripts with their own interpreter, not
+mitamae `command` strings), and `cookbooks/tailscale:37` is inside a darwin-only
+block where `/bin/sh` is bash in sh-mode and accepts the option. Those five are
+NOT defects.
+
+- Reason deferred: unverifiable and unfixable from this machine. All nine live on
+  the home-LAN ES / Kibana / monitoring LXCs, which do not resolve from the cloud
+  box (`air`, `ohnos-macbook` and `pro` all fail name resolution). Shipping an
+  unverified change to the cookbooks that feed the monitoring cluster is the same
+  trade already refused for the `elastic-agent` entry above.
+- First step: from a home-LAN host, `pct exec <ct> -- /bin/sh -c 'set -euo
+  pipefail'` to confirm dash rejects it on the actual template, then for each site
+  wrap the command in `bash -c '...'` per the herdr/terraform pattern. Check each
+  wrapped body for `awk '{print $N}'` first — bash eats `$N` as a positional
+  parameter inside a single-quoted `bash -c`, so those need `cut -d' ' -fN`
+  (same substitution the `ssh-keys` entry above records). Verify by touching a
+  template input so the notify fires, and by applying to a fresh CT for the
+  `ensure … exists` pair.
