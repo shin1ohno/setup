@@ -16,24 +16,54 @@ execute " sudo echo #{zsh_path} | sudo tee -a /etc/shells > /dev/null" do
   not_if "grep -q #{zsh_path} /etc/shells"
 end
 
+# Both guards below need the same two facts, and neither can change during a run:
+# nothing in this repo writes an /etc/passwd line for node[:setup][:user] (=
+# ENV["USER"], an account that necessarily resolved before mitamae started), and
+# no resource changes the login shell except the chsh right below. So probe once
+# at compile time and close over the results -- the shape cookbooks/docker-engine
+# already uses for its own /etc/passwd check -- instead of re-running getent plus
+# grep inside each Proc on every apply.
+#
+# darwin must be excluded EXPLICITLY. macOS ships no `getent` and keeps local
+# accounts in Open Directory rather than /etc/passwd, so the NSS detection below
+# is unconditionally true on every Mac. Unguarded, that silently disabled the
+# chsh across the darwin fleet and made the .bash_profile resource overwrite that
+# file on every darwin apply.
+darwin = node[:platform] == "darwin"
+
+# The login shell as the SYSTEM records it. `$SHELL` is not always set in
+# mitamae's child shell, and when it is it reflects the parent shell's preference
+# rather than the system record -- so read the directory instead: dscl on darwin
+# (Open Directory), getent field 7 elsewhere (NSS, which also covers OS Login /
+# sssd / LDAP). Without the darwin arm this is always "" on a Mac, which is what
+# made the chsh non-idempotent for the three months before it was skipped
+# outright.
+login_shell =
+  if darwin
+    out = run_command("dscl . -read /Users/#{node[:setup][:user]} UserShell", error: false).stdout
+    out.split(":").last.to_s.strip
+  else
+    out = run_command("getent passwd #{node[:setup][:user]} 2>/dev/null", error: false).stdout
+    out.split(":")[6].to_s.strip
+  end
+
+# NSS-directory accounts (GCE OS Login's libnss_oslogin, sssd, LDAP/NIS) resolve
+# fine through getent/PAM but have no LITERAL /etc/passwd line -- chsh edits that
+# file directly, not via NSS, and always fails with "user does not exist in
+# /etc/passwd" for them. mitamae has no ignore_failure, so an unguarded failure
+# aborts the entire run, silently skipping every cookbook after this one
+# (roles/programming, roles/llm, etc.).
+nss_directory_account =
+  !darwin &&
+  run_command("grep -q \"^#{node[:setup][:user]}:\" /etc/passwd", error: false).exit_status != 0
+
 execute "sudo chsh -s #{zsh_path} #{node[:setup][:user]}" do
-  # Read the user's login shell from /etc/passwd directly. `$SHELL` is
-  # not always set in mitamae's child shell, and even when it is, it
-  # reflects the parent shell's preference rather than the system record.
   not_if {
     next true unless zsh_path
-    passwd_shell = run_command("getent passwd #{node[:setup][:user]} 2>/dev/null", error: false).stdout.split(":")[6].to_s.strip
-    next true if passwd_shell == zsh_path
-    # NSS-virtual users (GCE OS Login's libnss_oslogin, sssd, LDAP/NIS, etc.)
-    # resolve fine through getent/PAM but have no LITERAL /etc/passwd line --
-    # chsh edits that file directly (not via NSS) and always fails with
-    # "user does not exist in /etc/passwd" for such accounts. mitamae has no
-    # ignore_failure, so an unguarded failure here aborts the entire recipe
-    # run, silently skipping every cookbook after this one (roles/programming,
-    # roles/llm, etc.). Detect the mismatch and skip gracefully instead --
-    # the `.bash_profile` hand-off below is what actually gets those accounts
-    # onto zsh.
-    run_command("grep -q \"^#{node[:setup][:user]}:\" /etc/passwd", error: false).exit_status != 0
+    next true if login_shell == zsh_path
+    # chsh cannot touch an NSS-directory account; the .bash_profile hand-off
+    # below is what gets those onto zsh instead.
+    nss_directory_account
   }
 end
 
@@ -92,9 +122,29 @@ file "#{node[:setup][:home]}/.bash_profile" do
   PROFILE
   only_if {
     next false unless zsh_path
-    passwd_shell = run_command("getent passwd #{node[:setup][:user]} 2>/dev/null", error: false).stdout.split(":")[6].to_s.strip
-    next false if passwd_shell == zsh_path
-    run_command("grep -q \"^#{node[:setup][:user]}:\" /etc/passwd", error: false).exit_status != 0
+    next false if login_shell == zsh_path
+    next false unless nss_directory_account
+    # Never clobber a .bash_profile this cookbook did not write. `file` +
+    # `content` is a whole-file write, and every vendored installer this repo
+    # ships (homebrew, uv, ghcup, stack, bun) APPENDS to ~/.bash_profile, so
+    # overwriting an unmanaged one silently destroys their PATH/env lines.
+    #
+    # The File read is in a ternary, and the test below is on a plain local,
+    # because bin/lint-cookbooks check 1 flags `if ... File.exist?` on any line
+    # outside a `def` -- it does not know that an only_if Proc body runs at
+    # converge, not compile, time.
+    bash_profile = "#{node[:setup][:home]}/.bash_profile"
+    existing = File.exist?(bash_profile) ? File.read(bash_profile).to_s : ""
+    unmanaged = !existing.empty? && !existing.include?("Managed by cookbooks/zsh")
+    if unmanaged
+      MItamae.logger.warn(
+        "[zsh] #{bash_profile} exists and was not written by this cookbook -- " \
+        "leaving it alone. The bash->zsh hand-off is NOT installed on this host; " \
+        "merge the block by hand or move the file aside and re-apply."
+      )
+      next false
+    end
+    true
   }
 end
 

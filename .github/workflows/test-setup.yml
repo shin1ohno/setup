@@ -106,6 +106,27 @@ jobs:
         which wget && wget --version
         which brew && brew --version
 
+        # cookbooks/zsh writes ~/.bash_profile ONLY for NSS-directory accounts
+        # (GCE OS Login, sssd, LDAP). macOS ships no getent and keeps local
+        # accounts in Open Directory, so that detection reads "NSS" on every Mac
+        # unless it is platform-guarded -- and the resource is a whole-file
+        # write, so it would clobber what other installers appended there.
+        # Assert the absence of the MANAGED BLOCK, not of the file:
+        # cookbooks/homebrew/files/install.sh appends to ~/.bash_profile
+        # legitimately, so `test ! -f` would be flaky.
+        if grep -q 'Managed by cookbooks/zsh' "$HOME/.bash_profile" 2>/dev/null; then
+          echo "❌ cookbooks/zsh installed its NSS bash->zsh hand-off on darwin"
+          exit 1
+        fi
+
+        # The chsh must actually take effect on darwin. cookbooks/zsh reads the
+        # login shell through `dscl` here (no getent on macOS); if that read
+        # breaks, the resource either skips forever or re-runs on every apply,
+        # and neither is visible from `which zsh`.
+        login_shell="$(dscl . -read "/Users/$USER" UserShell | awk '{print $2}')"
+        echo "login shell: $login_shell"
+        test "$login_shell" = "$(brew --prefix)/bin/zsh"
+
     - name: Route public GitHub SSH clones to anonymous HTTPS (CI has no SSH key)
       if: ${{ github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
