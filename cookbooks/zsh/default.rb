@@ -30,7 +30,70 @@ execute "sudo chsh -s #{zsh_path} #{node[:setup][:user]}" do
     # "user does not exist in /etc/passwd" for such accounts. mitamae has no
     # ignore_failure, so an unguarded failure here aborts the entire recipe
     # run, silently skipping every cookbook after this one (roles/programming,
-    # roles/llm, etc.). Detect the mismatch and skip gracefully instead.
+    # roles/llm, etc.). Detect the mismatch and skip gracefully instead --
+    # the `.bash_profile` hand-off below is what actually gets those accounts
+    # onto zsh.
+    run_command("grep -q \"^#{node[:setup][:user]}:\" /etc/passwd", error: false).exit_status != 0
+  }
+end
+
+# Skipping the chsh above keeps the run alive but leaves the account on whatever
+# login shell the directory hands out -- /bin/bash on GCE OS Login. There is no
+# per-instance override for that: OS Login takes the shell from the account's
+# POSIX attributes, and for a Google Workspace identity only a domain
+# administrator can write them (`gcloud compute os-login remove-profile --help`
+# states it outright, and the CLI exposes no subcommand that sets them). So hand
+# off from bash to zsh at login instead of leaving such hosts on bash.
+#
+# ~/.bash_profile, NOT ~/.profile: bash reads .bash_profile in preference to
+# .profile, which scopes the hand-off to bash alone and leaves the distro's
+# .profile -- also read by sh and dash -- untouched. That precedence cuts both
+# ways, so the fall-through path has to source .profile explicitly or a login
+# bash loses what lives there (on Debian: ~/.bashrc, ~/bin, ~/.local/bin).
+#
+# Only LOGIN shells read this file, so `ssh host cmd`, scp, sftp and rsync are
+# structurally unaffected -- none of them get a login shell. The tty tests are
+# belt-and-braces on top of that, and they also route a piped `... | ssh host`
+# to bash rather than exec'ing an interactive zsh onto a non-tty.
+#
+# SHELL is re-exported before the exec because sshd sets it from the passwd
+# entry: without this, anything inside the zsh session that spawns "$SHELL"
+# (tmux, vim :shell, git's own editor logic) would start bash again.
+#
+# `file` + `content` rather than the append-guarded `execute`s above: appending
+# is not idempotent so those need a marker grep, whereas a whole-file write is,
+# and mitamae diffs `content` natively -- so editing this block re-renders the
+# file instead of being skipped by a stale marker. owner/group are deliberately
+# omitted: mitamae runs as the target user, so the file is correctly owned on
+# creation, and naming an owner would trigger a chown that fails on exactly the
+# NSS-virtual accounts this block exists for (mitamae reads their group as the
+# literal "UNKNOWN").
+file "#{node[:setup][:home]}/.bash_profile" do
+  mode "644"
+  content <<~PROFILE
+    # Managed by cookbooks/zsh -- edits here are overwritten on the next apply.
+    #
+    # This account resolves through NSS (GCE OS Login, sssd, LDAP/NIS) and has no
+    # /etc/passwd line, so `chsh` cannot set its login shell and the directory
+    # hands out /bin/bash. Hand off to zsh here instead.
+    if [ -x '#{zsh_path}' ] && [ -z "$ZSH_VERSION" ] && [ -t 0 ] && [ -t 1 ]; then
+      # sshd exports SHELL from the passwd entry, so tools that spawn "$SHELL"
+      # would still start bash from inside the zsh session without this.
+      SHELL='#{zsh_path}'
+      export SHELL
+      exec '#{zsh_path}' -l
+    fi
+
+    # Fall-through: zsh missing, or a non-interactive login shell. This file takes
+    # precedence over ~/.profile, so source it to keep bash's normal startup.
+    if [ -f "$HOME/.profile" ]; then
+      . "$HOME/.profile"
+    fi
+  PROFILE
+  only_if {
+    next false unless zsh_path
+    passwd_shell = run_command("getent passwd #{node[:setup][:user]} 2>/dev/null", error: false).stdout.split(":")[6].to_s.strip
+    next false if passwd_shell == zsh_path
     run_command("grep -q \"^#{node[:setup][:user]}:\" /etc/passwd", error: false).exit_status != 0
   }
 end
