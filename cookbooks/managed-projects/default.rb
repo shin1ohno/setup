@@ -36,6 +36,33 @@ ssh_auth_ok = run_command(
 aws_auth_ok = run_command("aws sts get-caller-identity >/dev/null 2>&1", error: false).exit_status == 0
 
 node[:managed_projects][:repos].each do |repo|
+  # Repair a stored remote that drifted from the registry. `git_clone` below
+  # fires only when the directory is ABSENT, so a repo something else cloned
+  # first keeps that URL forever -- on the sh1-cloud GCE box the instance
+  # startup-script clones `setup` over HTTPS before the first mitamae apply
+  # ever runs, and the box then pushed over a URL the registry never chose.
+  # repositories.json owns the transport, so re-point origin at it.
+  #
+  # Deliberately ABOVE the reachability gate: set-url is a local config write
+  # that needs no credential, and the guards no-op when the clone is absent,
+  # so a repo this host cannot authenticate still gets a correct remote for
+  # the host that eventually can.
+  #
+  # The comparison reads `config --get remote.origin.url`, NOT `git remote
+  # get-url`: the latter APPLIES url.*.insteadOf, so a stored
+  # `https://github.com/shin1ohno/setup.git` reads back as
+  # `git@github.com:shin1ohno/setup.git` and the drift is invisible. That is
+  # exactly what hid this bug on sh1-cloud until the raw config was read.
+  repo_path = "#{node[:managed_projects][:root]}/#{repo[:name]}"
+  execute "repoint #{repo[:name]} origin at the registry URI" do
+    command "git -C '#{repo_path}' remote set-url origin '#{repo[:uri]}'"
+    user node[:managed_projects][:user]
+    # Also serves as the "is a git repo with an origin" probe -- a directory
+    # without one exits non-zero here rather than failing the set-url.
+    only_if "git -C '#{repo_path}' remote get-url origin >/dev/null 2>&1"
+    not_if "test \"$(git -C '#{repo_path}' config --get remote.origin.url 2>/dev/null)\" = '#{repo[:uri]}'"
+  end
+
   # `codecommit::` is the scheme git-remote-codecommit registers; everything
   # else in the registry is a github URI. Anonymous HTTPS needs no credential
   # at all, so only the ssh form is gated on the key.
