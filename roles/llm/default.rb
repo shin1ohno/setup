@@ -4,8 +4,9 @@
 # This role includes all LLM-related tools and configurations
 # Assumes core and programming roles are already included
 
-# MCP must be included first to set node[:mcp_servers] for other cookbooks
-include_cookbook "mcp"
+# MCP must be included first to set node[:mcp_servers] for other cookbooks.
+# Per-OS split (macOS also renders Claude Desktop's config; Linux does not).
+include_platform_cookbook "mcp"
 
 # LLM specific tools
 include_cookbook "claude-code"
@@ -13,7 +14,7 @@ include_cookbook "gemini-cli"
 include_cookbook "codex-cli"  # Uses node[:mcp_servers] from mcp cookbook
 include_cookbook "crit"       # crit review-tool binary (ubi); CC plugin via claude-code
 include_cookbook "fractal"    # plasma.ai fractal + wiki CLIs (mise pipx); CC plugin via claude-code
-include_cookbook "ollama"
+include_platform_cookbook "ollama"  # brew formula on macOS, upstream installer on Linux
 include_cookbook "llama-3-elyza-jp"
 include_cookbook "tfmcp"
 
