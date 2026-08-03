@@ -58,9 +58,8 @@ execute "mkdir -p ~/.local/bin" do
   not_if "test -d ~/.local/bin"
 end
 
-case node[:platform]
-when "darwin"
-  execute "brew tap daipeihust/tap && brew install im-select" do
-    not_if "which im-select"
-  end
-end
+# The darwin-only im-select install that used to close this recipe now lives in
+# cookbooks/im-select (a darwin-marked cookbook), included right after this one
+# by roles/extras. Everything above is OS-independent, so the cookbook itself no
+# longer branches — splitting it per-OS would have duplicated ~55 shared lines
+# to gate one resource.
