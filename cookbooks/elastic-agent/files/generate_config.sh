@@ -3,7 +3,7 @@
 # password from SSM and substituting it together with the variant +
 # hostname. Output written to "$OUTPUT" (caller `sudo install`s it).
 #
-# Required env (passed by cookbooks/elastic-agent/default.rb):
+# Required env (passed by cookbooks/elastic-agent/darwin.rb):
 #   AWS_PROFILE
 #   AWS_REGION
 #   ES_PASSWORD_SSM    SSM path to the elastic_agent_writer password

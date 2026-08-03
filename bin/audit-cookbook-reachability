@@ -15,7 +15,7 @@
 #                                              NOT a new cookbook node; e.g.
 #                                              homebrew -> "environment")
 #               lxc_entry(...)              -> include_role "lxc-core"
-#                                              + include_cookbook "elastic-agent"
+#                                              + include_cookbook "elastic-agent::linux"
 #                                              (see cookbooks/functions/default.rb
 #                                               #lxc_entry)
 #
@@ -151,7 +151,10 @@ until queue.empty?
     if line =~ /\blxc_entry\s*\(/
       reached_cookbooks << LXC_ENTRY_COOKBOOK
       reached_cookbooks << LXC_ENTRY_TAIL
-      enqueue(File.join("cookbooks", LXC_ENTRY_COOKBOOK, "default.rb"), queue, visited_files)
+      # elastic-agent is a per-OS split cookbook; lxc_entry includes its LINUX
+      # recipe statically (every LXC is linux). Enqueue the same file the helper
+      # does, or elastic-agent/linux.rb reads as an orphan.
+      enqueue(File.join("cookbooks", LXC_ENTRY_COOKBOOK, "linux.rb"), queue, visited_files)
       enqueue(File.join("cookbooks", LXC_ENTRY_TAIL, "default.rb"), queue, visited_files)
       enqueue(File.join("roles", LXC_ENTRY_ROLE, "default.rb"), queue, visited_files)
     end

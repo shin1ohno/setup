@@ -858,8 +858,6 @@ PLATFORM_PENDING = %w[
   cookbooks/build-essential/default.rb
   cookbooks/ctags/default.rb
   cookbooks/dot-config-nvim/default.rb
-  cookbooks/edge-agent/default.rb
-  cookbooks/elastic-agent/default.rb
   cookbooks/envchain/default.rb
   cookbooks/eternal-terminal/default.rb
   cookbooks/fonts/default.rb
@@ -946,7 +944,6 @@ end
 # callers never write skip_if (the helper supplies a content-aware one from
 # :expected_keys, which is why migrating to it also clears this check).
 SKIPIF_PENDING = %w[
-  cookbooks/edge-agent/default.rb
 ].to_set
 
 CONTENT_AWARE = /file_has_all\?|File\.read|run_command|\bsystem\(/
