@@ -7,6 +7,9 @@
 # Entry roots:  darwin.rb, linux.rb, test-cookbook.rb, pve/*.rb
 # Graph edges:  include_role "X"            -> roles/X/default.rb
 #               include_cookbook "X"        -> cookbooks/X/default.rb
+#               include_platform_cookbook "X" -> cookbooks/X/{darwin,linux}.rb
+#                                              (BOTH must exist — a half-split
+#                                               cookbook fails the audit)
 #               include_recipe "[../]cookbooks/X/..."  -> cookbook X
 #               include_recipe "bare"       -> <same-dir>/bare.rb (intra-cookbook,
 #                                              NOT a new cookbook node; e.g.
@@ -45,15 +48,26 @@ LXC_ENTRY_TAIL      = "gate-report"
 
 ENTRY_FILES = (["darwin.rb", "linux.rb", "test-cookbook.rb"] + Dir["pve/*.rb"]).select { |f| File.file?(f) }
 
-# A cookbook is a directory under cookbooks/ that has a default.rb.
-all_cookbooks = Dir["cookbooks/*/default.rb"].map { |p| p.split("/")[1] }.to_set
+# A cookbook is a directory under cookbooks/ with at least one top-level
+# recipe (*.rb). Per-OS split cookbooks (stream B) ship {darwin,linux}.rb
+# with NO default.rb — the old default.rb-based definition would silently
+# drop them from the audit universe.
+all_cookbooks = Dir["cookbooks/*"]
+                .select { |d| File.directory?(d) && !Dir["#{d}/*.rb"].empty? }
+                .map { |p| p.split("/")[1] }.to_set
 
 reached_cookbooks = Set.new
 visited_files     = Set.new
 queue             = []
+half_split        = []
 
 def enqueue(path, queue, visited_files)
-  return unless path && File.file?(path)
+  return unless path
+  # Normalize to a REPO_ROOT-relative path so BFS bookkeeping (and the per-OS
+  # orphan check at the end) compares one canonical form regardless of how
+  # the include was written (absolute expand_path vs relative join).
+  path = path.sub("#{REPO_ROOT}/", "")
+  return unless File.file?(path)
   return if visited_files.include?(path)
   visited_files << path
   queue << path
@@ -98,6 +112,22 @@ until queue.empty?
       parts = m[0].split("::")
       parts << "default" if parts.length == 1
       enqueue(File.join("roles", *parts) + ".rb", queue, visited_files)
+    end
+
+    # include_platform_cookbook "X" dispatches to cookbooks/X/<os>.rb at apply
+    # time; statically, BOTH per-OS recipes must exist — one missing means a
+    # half-split cookbook that raises on one platform's apply.
+    line.scan(/\binclude_platform_cookbook\s+"([^"]+)"/) do |m|
+      cb = m[0].split("::").first
+      reached_cookbooks << cb
+      %w[darwin linux].each do |os|
+        f = File.join("cookbooks", cb, "#{os}.rb")
+        if File.file?(f)
+          enqueue(f, queue, visited_files)
+        else
+          half_split << "#{file}: include_platform_cookbook \"#{cb}\" but #{f} is missing"
+        end
+      end
     end
 
     line.scan(/\binclude_recipe\s+"([^"]+)"/) do |m|
@@ -149,6 +179,11 @@ unreachable      = (all_cookbooks - reached_cookbooks).sort
 unexpected       = unreachable - ALLOWLIST
 stale_allowlist  = ALLOWLIST.select { |c| reached_cookbooks.include?(c) }
 
+# Per-OS recipes that no caller ever includes (e.g. zsh::darwin referenced but
+# linux.rb orphaned after a partial migration). visited_files holds normalized
+# repo-relative paths, so a plain set-difference is sound.
+per_os_orphans = Dir["cookbooks/*/{darwin,linux}.rb"].reject { |p| visited_files.include?(p) }.sort
+
 puts "cookbook reachability audit"
 puts "  cookbooks total : #{all_cookbooks.size}"
 puts "  reachable       : #{reached_cookbooks.size}"
@@ -161,15 +196,29 @@ unless stale_allowlist.empty?
   stale_allowlist.each { |c| warn "  - #{c}" }
 end
 
-if unexpected.empty?
+unless half_split.empty?
+  warn ""
+  warn "FAIL: #{half_split.size} half-split cookbook reference(s) — include_platform_cookbook needs BOTH per-OS recipes:"
+  half_split.each { |msg| warn "  - #{msg}" }
+end
+
+unless per_os_orphans.empty?
+  warn ""
+  warn "FAIL: #{per_os_orphans.size} per-OS recipe(s) no caller includes (orphaned by a partial migration):"
+  per_os_orphans.each { |p| warn "  - #{p}" }
+end
+
+if unexpected.empty? && half_split.empty? && per_os_orphans.empty?
   puts "OK: every cookbook is reachable or allowlisted."
   exit 0
 else
-  warn ""
-  warn "FAIL: #{unexpected.size} cookbook(s) unreachable and NOT allowlisted:"
-  unexpected.each { |c| warn "  - cookbooks/#{c}" }
-  warn ""
-  warn "Either wire it into an entry recipe / role, delete it, or add it to"
-  warn "ALLOWLIST in bin/audit-cookbook-reachability with a justifying comment."
+  unless unexpected.empty?
+    warn ""
+    warn "FAIL: #{unexpected.size} cookbook(s) unreachable and NOT allowlisted:"
+    unexpected.each { |c| warn "  - cookbooks/#{c}" }
+    warn ""
+    warn "Either wire it into an entry recipe / role, delete it, or add it to"
+    warn "ALLOWLIST in bin/audit-cookbook-reachability with a justifying comment."
+  end
   exit 1
 end

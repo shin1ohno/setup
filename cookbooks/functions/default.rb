@@ -12,6 +12,30 @@ module RecipeHelper
   def include_role_or_cookbook(name, type)
     dir = File.expand_path("#{__FILE__}/../../..")
     names = name.split("::")
+    if type == "cookbooks"
+      host_os = node[:platform] == "darwin" ? "darwin" : "linux"
+      # Per-OS recipe requested for the wrong OS (zsh::darwin on a linux host)
+      # is a caller bug — raise instead of loading the wrong resources. Only
+      # the darwin/linux recipe names are guarded; ordinary sub-recipes
+      # (homebrew::environment) pass through untouched.
+      if names.length > 1 && %w[darwin linux].include?(names.last) && names.last != host_os
+        raise "Cookbook recipe #{name} is #{names.last}-only; this host resolves to #{host_os}."
+      end
+      # Single-OS cookbook marker: cookbooks/<name>/platform holds one token
+      # ("darwin" | "linux"). This replaces the per-cookbook dead early-return
+      # guards (stream B of the hurdle-removal plan): the include layer
+      # refuses loudly, so a cross-OS `COOKBOOK=mac-settings mitamae local
+      # test-cookbook.rb` run explains itself instead of silently no-opping.
+      # Normal applies never hit this — single-OS cookbooks are only included
+      # from matching single-OS entry recipes.
+      marker = File.join(dir, "cookbooks", names.first, "platform")
+      if File.exist?(marker)
+        marker_os = File.read(marker).strip
+        if marker_os != host_os
+          raise "Cookbook #{names.first} is #{marker_os}-only (see cookbooks/#{names.first}/platform); this host resolves to #{host_os}."
+        end
+      end
+    end
     names << "default" if names.length == 1
     names[-1] += ".rb"
     recipe_file = File.join(dir, type, *names)
@@ -20,6 +44,26 @@ module RecipeHelper
     else
       raise "#{type.capitalize} #{name} is not found at #{recipe_file}."
     end
+  end
+
+  # OS-dispatching include for a per-OS split cookbook
+  # (cookbooks/<name>/{darwin,linux}.rb). One line at the ROLE layer keeps the
+  # per-cookbook include ORDER intact while the platform decision stays with
+  # the caller — cookbooks themselves hold no node[:platform] control flow
+  # (stream B invariant). Single-OS callers (darwin.rb / pve/*.rb) write the
+  # static form instead: include_cookbook "elastic-agent::linux".
+  def include_platform_cookbook(name)
+    include_cookbook "#{name}::#{node[:platform] == "darwin" ? "darwin" : "linux"}"
+  end
+
+  # VALUE dispatch only — a path, token, option list, or flag that differs by
+  # OS while the resource structure stays shared. If the platforms need
+  # different RESOURCES or differently-shaped commands, split the cookbook
+  # into per-OS recipe files instead. Both keywords are required, so an
+  # unknown platform can never produce a silent nil (the case-without-else
+  # bug class).
+  def platform_value(darwin:, linux:)
+    node[:platform] == "darwin" ? darwin : linux
   end
 
   # Collapse the LXC entry-recipe tail trio into one call:
