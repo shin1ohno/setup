@@ -16,6 +16,12 @@ Pick the column that matches the target. Each step assumes you start in the repo
 
 **LXC fleet** (dev workstation + service LXCs): provision each CT via `home-monitor/` Terraform, seed AWS creds with `./bin/bootstrap-lxc-creds <CT>` from the PVE host, then apply all `pve/lxc-*.rb` in parallel with `./bin/apply-pve-lxcs`. Per-LXC details in the table below.
 
+### Preflight / fresh machine
+
+Run `./bin/doctor` before step 2. It is read-only — it changes nothing, locally or remotely — and reports every external prerequisite the apply cannot supply for itself (aws CLI, credentials and per-prefix SSM grants; host registration in the FLEET table; gh auth; GPG signing capability; tailscale; headless claude tokens; egress and LAN DNS), each with the exact command that fixes it. `FAIL` means the apply will not converge (exit 1); `WARN` means it converges but something is degraded. The host type is inferred; override it with `--type darwin|lxc|pve-host|bare-linux`.
+
+**A fresh machine needs TWO applies of the same entry recipe.** The SSM-gated cookbooks test for `aws` while the recipe compiles, which is before the resources that install `aws` have converged — so on run 1 all of those gates skip, and run 2 is the one that actually configures them. An apply that skipped gates for that reason leaves a sentinel behind, and `bin/doctor` turns it into a re-run warning naming the recipe to repeat, so this rule is not something you have to remember.
+
 ## Entry recipe by host type
 
 Pick the entry recipe that matches the target host. Running the wrong
