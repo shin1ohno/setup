@@ -875,9 +875,7 @@ PLATFORM_PENDING = %w[
   cookbooks/libffi/default.rb
   cookbooks/lxc-roon/default.rb
   cookbooks/ncurses/default.rb
-  cookbooks/obsidian_file_sync/default.rb
   cookbooks/python/default.rb
-  cookbooks/rclone/default.rb
   cookbooks/roon/default.rb
   cookbooks/ssh/default.rb
   cookbooks/starship/default.rb

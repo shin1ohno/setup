@@ -80,20 +80,23 @@ EOM
   not_if "test -f #{node[:setup][:root]}/obsidian_sync/sync.sh"
 end
 
-# Create systemd user service and timer if on Linux (non-macOS)
-if node[:platform] != "darwin"
-  directory "#{node[:setup][:home]}/.config/systemd/user" do
-    owner node[:setup][:user]
+# systemd user service and timer. Linux-only (cookbooks/obsidian_file_sync/
+# platform): the launchd twin this cookbook used to carry was unreachable —
+# roles/server is included from linux.rb alone, pve/lxc-housekeeping.rb is the
+# only other caller, and the rclone dependency above is itself linux-only. The
+# LaunchAgents plist is recoverable from git history if a Mac ever needs it.
+directory "#{node[:setup][:home]}/.config/systemd/user" do
+  owner node[:setup][:user]
 group node[:setup][:group]
-    mode "755"
-  end
+  mode "755"
+end
 
-  # Create the systemd service
-  file "#{node[:setup][:home]}/.config/systemd/user/obsidian-sync.service" do
-    owner node[:setup][:user]
+# Create the systemd service
+file "#{node[:setup][:home]}/.config/systemd/user/obsidian-sync.service" do
+  owner node[:setup][:user]
 group node[:setup][:group]
-    mode "644"
-    content <<-EOM
+  mode "644"
+  content <<-EOM
 [Unit]
 Description=Obsidian Vault Synchronization Service
 After=network-online.target
@@ -106,15 +109,15 @@ ExecStart=#{node[:setup][:root]}/obsidian_sync/sync.sh
 [Install]
 WantedBy=default.target
 EOM
-    not_if "test -f #{node[:setup][:home]}/.config/systemd/user/obsidian-sync.service"
-  end
+  not_if "test -f #{node[:setup][:home]}/.config/systemd/user/obsidian-sync.service"
+end
 
-  # Create the systemd timer
-  file "#{node[:setup][:home]}/.config/systemd/user/obsidian-sync.timer" do
-    owner node[:setup][:user]
+# Create the systemd timer
+file "#{node[:setup][:home]}/.config/systemd/user/obsidian-sync.timer" do
+  owner node[:setup][:user]
 group node[:setup][:group]
-    mode "644"
-    content <<-EOM
+  mode "644"
+  content <<-EOM
 [Unit]
 Description=Run Obsidian sync periodically
 
@@ -126,61 +129,17 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOM
-    not_if "test -f #{node[:setup][:home]}/.config/systemd/user/obsidian-sync.timer"
-  end
+  not_if "test -f #{node[:setup][:home]}/.config/systemd/user/obsidian-sync.timer"
+end
 
-  # Enable and start the timer
-  execute "enable obsidian sync timer" do
-    command "systemctl --user daemon-reload && systemctl --user enable obsidian-sync.timer && systemctl --user start obsidian-sync.timer"
-    only_if "which systemctl"
-    only_if "test -f #{node[:setup][:home]}/.config/systemd/user/obsidian-sync.timer"
-    # Skip when the timer is already active — without this the
-    # daemon-reload + enable + start chain runs every mitamae apply.
-    not_if "systemctl --user is-active obsidian-sync.timer"
-  end
-else
-  # Create launchd plist on macOS
-  directory "#{node[:setup][:home]}/Library/LaunchAgents" do
-    owner node[:setup][:user]
-group node[:setup][:group]
-    mode "755"
-  end
-
-  file "#{node[:setup][:home]}/Library/LaunchAgents/com.#{node[:setup][:user]}.obsidian-sync.plist" do
-    owner node[:setup][:user]
-group node[:setup][:group]
-    mode "644"
-    content <<-EOM
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.#{node[:setup][:user]}.obsidian-sync</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>#{node[:setup][:root]}/obsidian_sync/sync.sh</string>
-    </array>
-    <key>StartInterval</key>
-    <integer>900</integer>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>#{node[:setup][:root]}/obsidian_sync/stdout.log</string>
-    <key>StandardErrorPath</key>
-    <string>#{node[:setup][:root]}/obsidian_sync/stderr.log</string>
-</dict>
-</plist>
-EOM
-    not_if "test -f #{node[:setup][:home]}/Library/LaunchAgents/com.#{node[:setup][:user]}.obsidian-sync.plist"
-  end
-
-  # Load the launchd job
-  execute "load obsidian sync launchd job" do
-    command "launchctl load #{node[:setup][:home]}/Library/LaunchAgents/com.#{node[:setup][:user]}.obsidian-sync.plist"
-    only_if "which launchctl"
-    not_if "launchctl list | grep com.#{node[:setup][:user]}.obsidian-sync"
-  end
+# Enable and start the timer
+execute "enable obsidian sync timer" do
+  command "systemctl --user daemon-reload && systemctl --user enable obsidian-sync.timer && systemctl --user start obsidian-sync.timer"
+  only_if "which systemctl"
+  only_if "test -f #{node[:setup][:home]}/.config/systemd/user/obsidian-sync.timer"
+  # Skip when the timer is already active — without this the
+  # daemon-reload + enable + start chain runs every mitamae apply.
+  not_if "systemctl --user is-active obsidian-sync.timer"
 end
 
 # Create a README file with usage instructions
