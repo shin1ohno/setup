@@ -19,3 +19,8 @@ end
 include_recipe "../cookbooks/functions/default"
 
 include_cookbook "lxc-apm-server"
+
+# Gate visibility report — this entry opts out of lxc_entry (see
+# cookbooks/functions/default.rb), so include the report tail explicitly.
+# Must stay the LAST include.
+include_cookbook "gate-report"

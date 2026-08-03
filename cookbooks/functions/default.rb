@@ -44,6 +44,34 @@ module RecipeHelper
     include_role "lxc-core"
     node.reverse_merge!(elastic_agent: { tags: tags }.merge(elastic_agent_extra))
     include_cookbook "elastic-agent"
+    # Gate visibility: compile last so every require_external_auth outcome is
+    # already recorded; its resources converge at the very end of the apply.
+    # pve/pve-host.rb includes unbound-watchdog AFTER lxc_entry, which is fine
+    # only because that cookbook has no auth gate — a gate added after this
+    # include would be missing from the report.
+    include_cookbook "gate-report"
+  end
+
+  # Gate-outcome ledger, read by cookbooks/gate-report (included last by every
+  # entry recipe). A global because include_cookbook shares one top-level Ruby
+  # scope — $gate_events accumulates across all cookbooks within one run.
+  # reasons: :satisfied (skip_if), :ok (check passed / auth resolved),
+  # :tool_missing / :auth_unavailable / :user_skip (need operator attention).
+  def record_gate_event(tool_name, reason)
+    $gate_events ||= []
+    $gate_events << { tool: (tool_name || "unnamed gate").to_s, reason: reason }
+  end
+
+  # True when `path` exists and its content contains every string in `needles`.
+  # mruby-safe (File.exist?/File.read only). Content-aware building block for
+  # auth-gate skip_if predicates: a bare File.exist? skip_if never re-fetches
+  # when a NEW key is added to a generator — for .env-shaped flows prefer
+  # deploy_with_ssm_env's expected_keys; use this for the flows that helper
+  # does not fit (system-path installs, certs, keys).
+  def file_has_all?(path, needles)
+    return false unless File.exist?(path)
+    body = File.read(path)
+    needles.all? { |n| body.include?(n) }
   end
 
   # Gate a block of cookbook resources behind an external prerequisite
@@ -96,6 +124,7 @@ module RecipeHelper
   # -f <path>"`.
   def require_external_auth(tool_name:, check_command:, instructions:, skip_if: nil, tool_binary: nil)
     if skip_if && skip_if.call
+      record_gate_event(tool_name, :satisfied)
       return
     end
 
@@ -110,6 +139,7 @@ module RecipeHelper
     # First check before any prompting — covers the warm-rerun case.
     result = run_command(check_command, error: false)
     if result.exit_status == 0
+      record_gate_event(tool_name, :ok)
       yield if block_given?
       return
     end
@@ -138,6 +168,7 @@ module RecipeHelper
       MItamae.logger.warn("[bootstrap] #{tool_name}: prerequisite tool#{named} not installed yet — skipping auth-gated work this run.")
       MItamae.logger.warn("The installer converges during this run; re-run mitamae to complete the gated work.")
       MItamae.logger.warn("=" * 60)
+      record_gate_event(tool_name, :tool_missing)
       return
     end
 
@@ -153,6 +184,7 @@ module RecipeHelper
     # new code adds zero aws calls / latency on the fleet.
     unless STDIN.tty?
       MItamae.logger.warn("[bootstrap] #{tool_name} not configured AND STDIN is not a TTY — skipping auth-gated block. Configure auth and re-run mitamae to apply.")
+      record_gate_event(tool_name, :auth_unavailable)
       return
     end
 
@@ -171,6 +203,7 @@ module RecipeHelper
           ENV["AWS_PROFILE"] = found
           MItamae.logger.info("[bootstrap] #{tool_name}: auto-selected AWS profile '#{found}' — set AWS_PROFILE for the rest of this run.")
         end
+        record_gate_event(tool_name, :ok)
         yield if block_given?
         return
       end
@@ -195,6 +228,7 @@ module RecipeHelper
       if response == "s" || response == "skip"
         if block_given?
           MItamae.logger.warn("[bootstrap] Skipping #{tool_name}-dependent block. Re-run mitamae after configuring.")
+          record_gate_event(tool_name, :user_skip)
           return
         else
           raise "User skipped #{tool_name} configuration"
@@ -212,6 +246,7 @@ module RecipeHelper
             ENV["AWS_PROFILE"] = found
             MItamae.logger.info("[bootstrap] #{tool_name}: profile '#{found}' now satisfies the check — AWS_PROFILE set for the rest of this run.")
           end
+          record_gate_event(tool_name, :ok)
           yield if block_given?
           return
         end
@@ -228,12 +263,14 @@ module RecipeHelper
             ENV["AWS_PROFILE"] = found
             MItamae.logger.info("[bootstrap] #{tool_name}: auto-selected AWS profile '#{found}' on re-check — AWS_PROFILE set for the rest of this run.")
           end
+          record_gate_event(tool_name, :ok)
           yield if block_given?
           return
         end
       else
         result = run_command(check_command, error: false)
         if result.exit_status == 0
+          record_gate_event(tool_name, :ok)
           yield if block_given?
           return
         end

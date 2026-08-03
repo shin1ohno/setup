@@ -37,3 +37,7 @@ include_cookbook "edge-agent"
 include_cookbook "elastic-agent"
 include_cookbook "macos-hub"
 
+# Gate visibility report — must stay the LAST include so its compile phase
+# runs after every require_external_auth gate has recorded its outcome.
+include_cookbook "gate-report"
+
