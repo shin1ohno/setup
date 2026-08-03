@@ -69,7 +69,7 @@ module RecipeHelper
   # Collapse the LXC entry-recipe tail trio into one call:
   #   include_role "lxc-core"
   #   node.reverse_merge!(elastic_agent: { tags: tags, **extra })
-  #   include_cookbook "elastic-agent"
+  #   include_cookbook "elastic-agent::linux"
   #
   # lxc-core bundles node-exporter + auto-mitamae-target; elastic-agent ships
   # the host's logs/metrics to the ES cluster tagged with `tags`. reverse_merge!
@@ -87,7 +87,9 @@ module RecipeHelper
   def lxc_entry(tags:, elastic_agent_extra: {})
     include_role "lxc-core"
     node.reverse_merge!(elastic_agent: { tags: tags }.merge(elastic_agent_extra))
-    include_cookbook "elastic-agent"
+    # LXCs are always linux, so the per-OS recipe is selected statically here
+    # rather than via include_platform_cookbook.
+    include_cookbook "elastic-agent::linux"
     # Gate visibility: compile last so every require_external_auth outcome is
     # already recorded; its resources converge at the very end of the apply.
     # pve/pve-host.rb includes unbound-watchdog AFTER lxc_entry, which is fine
