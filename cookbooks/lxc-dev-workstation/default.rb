@@ -93,7 +93,9 @@ include_role "network"
 
 # Independent tailscaled. ssh-keys (already pulled in via core) handles
 # the private key fetch from /ssh-keys/devices/<hostname>/private.
-include_cookbook "tailscale"
+# Static ::linux — this cookbook is linux-only (cookbooks/lxc-dev-workstation/
+# platform), so it names the per-OS recipe directly rather than dispatching.
+include_cookbook "tailscale::linux"
 include_cookbook "ssh-keys"
 
 local_ruby_block "log lxc-dev-workstation tailscale up hint" do
