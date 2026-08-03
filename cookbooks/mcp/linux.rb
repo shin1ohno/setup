@@ -11,21 +11,21 @@
 
 include_recipe "common"
 
-# The render resolves /mcp/* SSM parameters, so gate on them. Block here until
-# AWS auth is in place — interactive pause + re-check loop; a non-TTY host
-# (fleet apply, CI) warns and skips instead. darwin.rb declares the same gate
-# around a body that also generates the Desktop config; keep the two argument
-# lists in sync.
-require_external_auth(
-  tool_name: "AWS CLI (for MCP server SSM params)",
-  # Probe the ACTUAL SSM path the generators read (/mcp/obsidian-api-key) so the
-  # gate fails when this identity lacks SSM access. `aws sts get-caller-identity`
-  # was a false gate — it passes for any valid identity regardless of SSM scope.
-  check_command: "aws ssm get-parameter --name /mcp/obsidian-api-key --with-decryption --query Parameter.Value --output text --region ${AWS_REGION:-ap-northeast-1} >/dev/null 2>&1",
-  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
-) do
-  include_recipe "register"
-end
+# NO auth gate here, deliberately (2026-08 gap decision): the only `ssm:`
+# entry in files/servers.yml belongs to obsidian-mcp-tools, which is pinned
+# `platforms: [darwin]`, and register_claude_code.sh runs with PLATFORM=linux
+# so it never touches that server — the Linux render resolves ZERO SSM
+# parameters. The old gate here probed /mcp/obsidian-api-key anyway, which the
+# fleet identity (pve-bootstrap-ssm) cannot read, so every LXC apply silently
+# skipped the whole registration for a credential it never needed
+# (gate-report surfaced this as mitamae_gate_attention on pro-dev).
+# darwin.rb DOES keep its gate — the Desktop config + the darwin register
+# really fetch the obsidian key there.
+#
+# CONTRACT: if a server reachable on Linux (no `platforms:` pin, or pinned
+# [linux]) ever gains an `ssm:` field, reinstate a require_external_auth gate
+# here probing that exact path.
+include_recipe "register"
 
 # =============================================================================
 # Codex CLI MCP config

@@ -8,6 +8,13 @@
 # Environment Variables:
 #   - Static values: use plain strings
 #   - AWS SSM Parameters: use { ssm: "/path/to/parameter" }
+#     CONTRACT (2026-08 gap decision): only darwin-pinned servers may use
+#     `ssm:` today. The Linux register path (mcp/linux.rb) and the codex
+#     render (codex-cli — which skips ALL platform-pinned servers) run with
+#     NO auth gate because they resolve zero SSM parameters. Adding `ssm:`
+#     to a linux-reachable or unpinned server REQUIRES reinstating the
+#     matching require_external_auth gate — see the comments in
+#     cookbooks/mcp/linux.rb and cookbooks/codex-cli/default.rb.
 #   - Shell environment: use { env: "ENV_VAR_NAME" }
 #
 # Variables:
