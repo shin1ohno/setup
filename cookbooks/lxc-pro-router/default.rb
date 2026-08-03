@@ -45,8 +45,9 @@ execute "apply pro-router ip-forward sysctl" do
   action :nothing
 end
 
-# Reuse the canonical Tailscale install path.
-include_cookbook "tailscale"
+# Reuse the canonical Tailscale install path. Static ::linux — pro-router is an
+# LXC service cookbook, reached only from pve/lxc-pro-router.rb.
+include_cookbook "tailscale::linux"
 
 # Subnet routing: pro-router needs to forward LAN packets (192.168.1.x)
 # to AWS VPC (10.33.128.0/18) over tailscale0. This requires:

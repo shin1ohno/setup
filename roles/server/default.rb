@@ -25,4 +25,7 @@ end
 
 include_cookbook "obsidian_file_sync"
 include_cookbook "s3-backup"
-include_cookbook "gpg-backup"
+# Static ::linux — this role is included from linux.rb alone, so it names the
+# per-OS recipe rather than dispatching. darwin.rb includes gpg-backup::darwin
+# directly; that half also ships the macOS Keychain tool.
+include_cookbook "gpg-backup::linux"
