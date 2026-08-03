@@ -23,8 +23,6 @@
 # cookbook and self-applies via auto-mitamae-target — both included from
 # pve/lxc-monitoring.rb.
 
-return if node[:platform] == "darwin"
-
 include_cookbook "docker-engine"
 include_cookbook "awscli"
 

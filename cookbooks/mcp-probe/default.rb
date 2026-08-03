@@ -19,8 +19,6 @@
 #     Hydra client first (per the require_external_auth instructions
 #     below) — fetch-secrets.sh fails until those SSM params exist.
 
-return if node[:platform] == "darwin"
-
 include_cookbook "awscli"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys so

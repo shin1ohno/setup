@@ -63,8 +63,6 @@
 #      address as the identity, and a lease change then re-registers the unit
 #      as a brand-new accessory while the old one goes dead in the Home app.
 
-return if node[:platform] == "darwin"
-
 HOMEBRIDGE_KEYRING  = "/usr/share/keyrings/homebridge.gpg"
 HOMEBRIDGE_APT_LIST = "/etc/apt/sources.list.d/homebridge.list"
 HOMEBRIDGE_STORAGE  = "/var/lib/homebridge"

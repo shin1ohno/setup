@@ -26,8 +26,6 @@
 # fails with status=226. The hardening directives must be ABSENT from
 # the evaluated unit, not overridden. See ~/.claude/docs/pve-lxc-detail.md.
 
-return if node[:platform] == "darwin"
-
 hardening_pattern = (
   "ProtectSystem|ProtectHome|PrivateTmp|NoNewPrivileges|ProtectControlGroups|" \
   "RestrictNamespaces|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|" \

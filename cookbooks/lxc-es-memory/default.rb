@@ -18,8 +18,6 @@
 # Tool names are preserved 1:1 so the existing claude.ai connector
 # (mcp__claude_ai_ai_memory__*) keeps working.
 
-return if node[:platform] == "darwin"
-
 include_cookbook "awscli"
 
 # Pin the scoped fleet AWS profile (pve-bootstrap-ssm) so the auth gate and the
@@ -158,7 +156,19 @@ require_external_auth(
                 "/monitoring/elastic/* and /memory/openai-api-key in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. " \
                 "Then press Enter.",
-  skip_if: -> { File.exist?(env_path) },
+  # Content-aware: the needles are every KEY= files/generate_env.sh writes, so
+  # a key added there re-fetches on hosts whose .env predates it instead of
+  # being silently dropped (~/.claude/rules/ruby.md "SSM-sourced .env
+  # generator: file-existence skip_if drops new KEY=VALUE lines silently").
+  # The v2 gate below already had this shape. Readable because this cookbook
+  # only runs on the es-memory LXC as root (env is 0600 root:root).
+  skip_if: lambda {
+    file_has_all?(env_path, %w[
+      ES_URL= ES_USER= ES_PASSWORD= ES_VERIFY_CERTS=
+      OPENAI_API_KEY= OPENAI_ENDPOINT=
+      EMBEDDING_MODEL= EMBEDDING_DIMENSIONS= LLM_MODEL= MEM0_USER=
+    ])
+  },
 ) do
   execute "generate es-memory .env" do
     command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \

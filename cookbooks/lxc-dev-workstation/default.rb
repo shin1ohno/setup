@@ -18,8 +18,6 @@
 # Entry recipes (e.g. lxc-pro-dev.rb) set those attributes before
 # include_cookbook "lxc-dev-workstation".
 
-return if node[:platform] == "darwin"
-
 # functions + node[:setup] seeded by the entry recipe.
 # Cookbooks must be invoked via that entry, not directly with
 # `mitamae local cookbooks/lxc-dev-workstation/default.rb`.
