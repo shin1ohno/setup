@@ -80,3 +80,7 @@ unless node[:profile][:label] == "sh1-cloud"
   include_cookbook "elastic-agent"
 end
 
+# Gate visibility report — must stay the LAST include so its compile phase
+# runs after every require_external_auth gate has recorded its outcome.
+include_cookbook "gate-report"
+

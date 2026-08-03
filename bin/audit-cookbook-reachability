@@ -39,8 +39,9 @@ Dir.chdir(REPO_ROOT)
 ALLOWLIST = %w[].freeze
 
 # lxc_entry(...) expands to these (functions/default.rb#lxc_entry).
-LXC_ENTRY_ROLE     = "lxc-core"
-LXC_ENTRY_COOKBOOK = "elastic-agent"
+LXC_ENTRY_ROLE      = "lxc-core"
+LXC_ENTRY_COOKBOOK  = "elastic-agent"
+LXC_ENTRY_TAIL      = "gate-report"
 
 ENTRY_FILES = (["darwin.rb", "linux.rb", "test-cookbook.rb"] + Dir["pve/*.rb"]).select { |f| File.file?(f) }
 
@@ -119,7 +120,9 @@ until queue.empty?
 
     if line =~ /\blxc_entry\s*\(/
       reached_cookbooks << LXC_ENTRY_COOKBOOK
+      reached_cookbooks << LXC_ENTRY_TAIL
       enqueue(File.join("cookbooks", LXC_ENTRY_COOKBOOK, "default.rb"), queue, visited_files)
+      enqueue(File.join("cookbooks", LXC_ENTRY_TAIL, "default.rb"), queue, visited_files)
       enqueue(File.join("roles", LXC_ENTRY_ROLE, "default.rb"), queue, visited_files)
     end
 
