@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # Phase 4 zsh-startup refactor: Sheldon + starship on all platforms.
-include_cookbook "starship"
+include_platform_cookbook "starship"
 include_cookbook "sheldon"
 
 add_profile "dot-zsh" do
