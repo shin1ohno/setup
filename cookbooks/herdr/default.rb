@@ -30,8 +30,8 @@ checksums = {
   "linux-x86_64"  => "0d0c0a39469434efb3630d7259f9f91463bad727a4c10ed1c40c06d30bc0eaac",
 }
 
-os = node[:platform] == "darwin" ? "macos" : "linux"
-arch = case run_command("uname -m").stdout.strip
+os = platform_value(darwin: "macos", linux: "linux")
+arch = case node[:hw][:machine]
        when "arm64", "aarch64" then "aarch64"
        else "x86_64"
        end

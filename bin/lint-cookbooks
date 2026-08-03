@@ -855,8 +855,6 @@ PLATFORM_PENDING = %w[
   cookbooks/elastic-agent/default.rb
   cookbooks/envchain/default.rb
   cookbooks/eternal-terminal/default.rb
-  cookbooks/fastfetch/default.rb
-  cookbooks/fd/default.rb
   cookbooks/fonts/default.rb
   cookbooks/fzf/default.rb
   cookbooks/gcloud-cli/default.rb
@@ -866,9 +864,7 @@ PLATFORM_PENDING = %w[
   cookbooks/golang/default.rb
   cookbooks/gpg-backup/default.rb
   cookbooks/haskell/default.rb
-  cookbooks/herdr/default.rb
   cookbooks/jdk/default.rb
-  cookbooks/jq/default.rb
   cookbooks/lazygit/default.rb
   cookbooks/libffi/default.rb
   cookbooks/lxc-apm-server/default.rb
@@ -899,7 +895,6 @@ PLATFORM_PENDING = %w[
   cookbooks/pm2/default.rb
   cookbooks/pve-host/default.rb
   cookbooks/python/default.rb
-  cookbooks/rbenv/default.rb
   cookbooks/rclone/default.rb
   cookbooks/remind/default.rb
   cookbooks/roon/default.rb
