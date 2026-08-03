@@ -6,7 +6,8 @@ The content-aware `skip_if` migration (PR "content-aware skip_if") changed the
 two Elastic CA fetch gates from `File.exist?` to
 `file_has_all?(path, ["BEGIN CERTIFICATE"])` —
 `cookbooks/lxc-monitoring/default.rb` (`/data/monitoring/vector/elastic-ca.crt`)
-and `cookbooks/elastic-agent/default.rb` (`/etc/elastic-agent/certs/ca.crt`).
+and `cookbooks/elastic-agent/linux.rb` (`/etc/elastic-agent/certs/ca.crt` —
+the cookbook was split per-OS in #816; the gate lives on the linux side).
 That upgrade catches a truncated or error-text file, but **CA rotation is an
 explicit non-goal of it**: an OLD but well-formed PEM still satisfies the
 needle, so the gate keeps skipping.
@@ -229,8 +230,12 @@ Found by an adversarial review while making `linux.rb` converge on a keyless clo
 VM. The `sh1-cloud` profile now skips `elastic-agent`, so neither defect affects
 that host any more — but both still stand for bare-metal / LXC Linux.
 
+(Paths updated after #816 split the cookbook per-OS: both defects moved
+verbatim into `cookbooks/elastic-agent/linux.rb`; old default.rb line numbers
+no longer apply — locate by resource name.)
+
 1. `execute "render elastic-agent.yml"`'s command string begins with
-   `set -euo pipefail` (`cookbooks/elastic-agent/default.rb:543`). mitamae runs
+   `set -euo pipefail` (`cookbooks/elastic-agent/linux.rb`). mitamae runs
    `command` through `/bin/sh`, which is dash on Debian/Ubuntu, so this exits 2
    with `set: Illegal option -o pipefail`. Its `only_if` is
    `test -f <tmpl> && test -d /etc/elastic-agent`, i.e. it fires on any Linux host
@@ -240,12 +245,12 @@ that host any more — but both still stand for bare-metal / LXC Linux.
    `cookbooks/{codex-cli,mcp,herdr,terraform}`. This is NOT the last unwrapped
    site — see the `lxc-elasticsearch / lxc-kibana / lxc-monitoring` entry below
    for nine more, and `ssh-keys` for a tenth.
-2. The apt block (`default.rb:313-355` — install prerequisites, add key, add repo,
+2. The apt block in `linux.rb` (install prerequisites, add key, add repo,
    `apt-get update`, install, `apt-mark hold`) runs privileged commands with no
    `user` attribute and no `sudo` in the command string. Fine where
    `mitamae-runner` applies as root; fails on a Linux host applying as a regular
-   login user. The same file already uses `user "root"` for its darwin path
-   (`:176`, `:183`), so the idiom is in place.
+   login user. The darwin recipe (`darwin.rb`) already uses `user "root"` for
+   its privileged installs, so the idiom is in place.
 
 - Reason deferred: both fixes are one-liners, but neither is verifiable from the
   work Mac — the affected hosts (ES LXCs, bare-metal `pro`) are on the home LAN and
