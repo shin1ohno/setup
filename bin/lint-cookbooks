@@ -75,6 +75,17 @@
 #      node[:platform] (it is the burn-down list), any OTHER cookbook file may
 #      not, and a migrated file MUST drop its PENDING entry in the same PR.
 #      Allowlist: functions + host-profile — the platform abstraction owners.
+#  13. [FAIL] existence-only `skip_if` on a require_external_auth gate (ratchet)
+#      — `-> { File.exist?(path) }` makes the gate skip forever on every
+#      already-converged host, so a NEW key added to the generator is silently
+#      dropped and a truncated/error-text artifact counts as done. The
+#      predicate must read CONTENT: file_has_all?, File.read, or a
+#      run_command/system shell probe (the form to use when the file is
+#      root-only-readable and mitamae runs non-root). Negated existence
+#      (`!File.exist?`) is exempt — that is a prerequisite check, not a
+#      done-claim. SKIPIF_PENDING freezes the pre-migration state exactly like
+#      check 12: a listed file may still have a raw site, any other file may
+#      not, and migrating MUST drop the entry in the same PR.
 #
 # Usage:  bin/lint-cookbooks   # exit 1 on any FAIL-tier violation (WARN never
 #                              # affects the exit code)
@@ -934,6 +945,122 @@ recipe_files.each do |file|
           "(per-OS recipe via include_platform_cookbook or a static ::darwin/" \
           "::linux include), or use install_package / platform_value / " \
           "node[:hw] facts (check 12)")
+    end
+  end
+end
+
+# --- check 13: existence-only auth-gate skip_if (ratchet) ------------------
+#
+# A `skip_if:` that only asks "does the file exist?" makes the gate permanently
+# skip on every host that already converged — so a NEW key added to the
+# generator, or a half-written/error-text artifact, never triggers a re-fetch
+# (~/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence skip_if
+# drops new KEY=VALUE lines silently"). The predicate must inspect CONTENT.
+#
+# Content-aware forms accepted (any one clears the lambda):
+#   file_has_all?  — the mruby-safe helper in cookbooks/functions
+#   File.read      — hand-rolled include? check
+#   run_command / system — content probe delegated to a shell (`grep -q ...`),
+#                    the right form when the file is root-only-readable and
+#                    mitamae runs as a non-root user
+#
+# NEGATED existence (`!File.exist?(script)`) is exempt: that is a "prerequisite
+# not deployed yet" precondition, not a "work already done" claim.
+#
+# Scope: only `require_external_auth(...)` argument regions — deploy_with_ssm_env
+# callers never write skip_if (the helper supplies a content-aware one from
+# :expected_keys, which is why migrating to it also clears this check).
+SKIPIF_PENDING = %w[
+  cookbooks/edge-agent/default.rb
+  cookbooks/lxc-es-memory/default.rb
+  cookbooks/lxc-kibana/default.rb
+  cookbooks/lxc-roon-mcp/default.rb
+  cookbooks/lxc-weave/default.rb
+].to_set
+
+CONTENT_AWARE = /file_has_all\?|File\.read|run_command|\bsystem\(/
+
+recipe_files.each do |file|
+  text = File.read(file)
+  next unless text.include?("require_external_auth")
+  lines = text.lines.map(&:chomp)
+
+  hits = []
+  i = 0
+  while i < lines.length
+    line = lines[i]
+    unless line !~ /\A\s*#/ && line =~ /\brequire_external_auth\s*\(/
+      i += 1
+      next
+    end
+
+    # Walk paren depth to the matching close (same approach as check 3).
+    depth = 0
+    started = false
+    j = i
+    region = []
+    region_start = i
+    while j < lines.length
+      l = lines[j]
+      region << l
+      l.each_char do |c|
+        if c == "("
+          depth += 1; started = true
+        elsif c == ")"
+          depth -= 1
+        end
+      end
+      break if started && depth <= 0
+      j += 1
+    end
+
+    # Capture the skip_if lambda body by brace depth (handles `-> { ... }`,
+    # `lambda { ... }`, single-line and multi-line).
+    si = region.index { |l| l =~ /\A\s*skip_if:/ }
+    if si
+      bdepth = 0
+      bstarted = false
+      k = si
+      body = []
+      while k < region.length
+        l = region[k]
+        body << l
+        l.each_char do |c|
+          if c == "{"
+            bdepth += 1; bstarted = true
+          elsif c == "}"
+            bdepth -= 1
+          end
+        end
+        break if bstarted && bdepth <= 0
+        k += 1
+      end
+      blob = body.join("\n")
+      # Drop negated existence tests before asking whether any remain.
+      positive = blob.gsub(/!\s*File\.exist\?/, "")
+      if positive =~ /File\.exist\?/ && blob !~ CONTENT_AWARE
+        hits << region_start + si + 1
+      end
+    end
+
+    i = j + 1
+  end
+
+  if SKIPIF_PENDING.include?(file)
+    if hits.empty?
+      add(violations, file, 1,
+          "migrated to a content-aware skip_if but still listed in " \
+          "SKIPIF_PENDING — remove its entry from bin/lint-cookbooks in this " \
+          "PR (check 13 ratchet)")
+    end
+  else
+    hits.each do |ln|
+      add(violations, file, ln,
+          "existence-only `skip_if` on an auth gate — a new generator key (or " \
+          "a truncated artifact) never re-fetches on an already-converged " \
+          "host. Use file_has_all?(path, %w[KEY= ...]), a File.read/include? " \
+          "check, a run_command/system content probe, or migrate the flow to " \
+          "deploy_with_ssm_env with :expected_keys (check 13)")
     end
   end
 end

@@ -124,42 +124,41 @@ end
 env_temp_path   = "#{generated_dir}/consent.env"
 env_output_path = "#{deploy_dir}/.env"
 
-require_external_auth(
-  tool_name: "AWS CLI (for /hydra/* SSM params)",
-  check_command: "aws ssm get-parameter --name /hydra/google-client-id --with-decryption --profile #{aws_profile} --region #{aws_region} --query Parameter.Value --output text >/dev/null 2>&1",
-  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on /hydra/* + aws/ssm kms:Decrypt in #{aws_region} (home-monitor pve-bootstrap-ssm policy). On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter to retry.",
-  skip_if: -> { File.exist?(env_output_path) },
-) do
-  execute "generate consent .env" do
-    command <<~SH
-      set -e
-      umask 077
-      export AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region}
-      GOOGLE_CLIENT_ID=$(aws ssm get-parameter --name /hydra/google-client-id --with-decryption --query Parameter.Value --output text)
-      GOOGLE_CLIENT_SECRET=$(aws ssm get-parameter --name /hydra/google-client-secret --with-decryption --query Parameter.Value --output text)
-      ALLOWED_EMAILS=$(aws ssm get-parameter --name /hydra/allowed-emails --with-decryption --query Parameter.Value --output text)
-      cat > #{env_temp_path} <<EOF
-      GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
-      GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
-      ALLOWED_EMAILS=$ALLOWED_EMAILS
-      EOF
-    SH
-    user user
-  end
-end
-
-remote_file env_output_path do
-  source env_temp_path
-  owner user
-  group group
-  mode "600"
-  notifies :run, "execute[restart consent]"
-  only_if "test -f #{env_temp_path}"
-end
-
-file env_temp_path do
-  action :delete
-  only_if "test -f #{env_temp_path}"
+# deploy_with_ssm_env (cookbooks/functions/default.rb) supplies the
+# content-aware skip_if: the gate re-fetches unless the placed .env already
+# carries EVERY key below. A bare File.exist? skip would leave a host that
+# converged before a key was added stuck on the old file forever
+# (~/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence skip_if
+# drops new KEY=VALUE lines silently"). Keep :expected_keys in sync with the
+# generator's heredoc — that list IS the drift detector.
+deploy_with_ssm_env "consent" do
+  tool_name        "AWS CLI (for /hydra/* SSM params)"
+  check_command    "aws ssm get-parameter --name /hydra/google-client-id --with-decryption --profile #{aws_profile} --region #{aws_region} --query Parameter.Value --output text >/dev/null 2>&1"
+  instructions     "Configure '#{aws_profile}' with ssm:GetParameter on /hydra/* + aws/ssm kms:Decrypt in #{aws_region} (home-monitor pve-bootstrap-ssm policy). On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter to retry."
+  generate_command <<~SH
+    set -e
+    umask 077
+    export AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region}
+    GOOGLE_CLIENT_ID=$(aws ssm get-parameter --name /hydra/google-client-id --with-decryption --query Parameter.Value --output text)
+    GOOGLE_CLIENT_SECRET=$(aws ssm get-parameter --name /hydra/google-client-secret --with-decryption --query Parameter.Value --output text)
+    ALLOWED_EMAILS=$(aws ssm get-parameter --name /hydra/allowed-emails --with-decryption --query Parameter.Value --output text)
+    cat > #{env_temp_path} <<EOF
+    GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
+    GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
+    ALLOWED_EMAILS=$ALLOWED_EMAILS
+    EOF
+  SH
+  temp_path        env_temp_path
+  output_path      env_output_path
+  expected_keys    %w[GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET ALLOWED_EMAILS]
+  # owner/group/user pinned to this cookbook's locals (ENV["USER"] / `id -gn`)
+  # rather than the helper's node[:setup] defaults, preserving the prior
+  # remote_file ownership exactly.
+  owner            user
+  group            group
+  user             user
+  mode             "600"
+  restart_resource "execute[restart consent]"
 end
 
 # Compose orchestration via the compose_service DSL

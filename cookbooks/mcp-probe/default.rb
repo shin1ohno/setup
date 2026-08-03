@@ -130,7 +130,18 @@ require_external_auth(
   instructions: "Run cookbooks/hydra-server first (on the Hydra LXC, CT 106) — " \
                 "it registers the monitoring-prober Hydra client and writes " \
                 "client-id/secret to SSM. Then this cookbook can fetch them.",
-  skip_if: -> { File.exist?(probe_env_system) },
+  # Content-aware: the needles are every KEY= that files/fetch-secrets.sh
+  # writes, so adding one there forces a re-fetch on hosts whose probe.env
+  # already exists. A bare File.exist? would silently keep the stale file
+  # (~/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence
+  # skip_if drops new KEY=VALUE lines silently"). Readable because mcp-probe
+  # is only included from lxc-monitoring, where mitamae runs as root.
+  skip_if: lambda {
+    file_has_all?(probe_env_system, %w[
+      PROBER_CLIENT_ID= PROBER_CLIENT_SECRET= HYDRA_TOKEN_URL=
+      MCP_BASE_URL= TEXTFILE_OUT= PROBE_TIMEOUT_S=
+    ])
+  },
 ) do
   execute "generate mcp-probe env" do
     command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \

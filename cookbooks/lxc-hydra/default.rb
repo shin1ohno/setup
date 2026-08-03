@@ -137,7 +137,13 @@ require_external_auth(
   tool_name: "AWS CLI (profile=#{aws_profile}) for /memory/aurora-* + /hydra/* SSM params",
   check_command: "aws ssm get-parameter --name /memory/aurora-endpoint --profile #{aws_profile} --region #{aws_region} --query Parameter.Value --output text >/dev/null 2>&1",
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on /memory/* + /hydra/* + aws/ssm kms:Decrypt in #{aws_region} (home-monitor pve-bootstrap-ssm policy). On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter to retry.",
-  skip_if: -> { File.exist?(env_system_path) },
+  # Content-aware: re-fetch when the installed .env predates a key the
+  # generator now writes. A bare File.exist? would pin a host to the old file
+  # forever (~/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence
+  # skip_if drops new KEY=VALUE lines silently"). deploy_with_ssm_env does not
+  # fit here — placement is a `sudo install` to a root-owned system path, not a
+  # remote_file. Readable because this cookbook only runs on CT 106 as root.
+  skip_if: -> { file_has_all?(env_system_path, %w[DSN= SECRETS_SYSTEM=]) },
 ) do
   execute "generate hydra-server .env" do
     command <<~SH
