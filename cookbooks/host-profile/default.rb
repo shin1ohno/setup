@@ -43,11 +43,22 @@ node.reverse_merge!(
 # never nil-prone on a missing key — on Linux the value is simply nil and the
 # reads sit behind their own platform guards. M1/M2 Macs default to
 # /opt/homebrew; Intel to /opt/brew (Homebrew install.sh L30-32).
-machine = darwin ? run_command("uname -m").stdout.strip : nil
+machine = run_command("uname -m").stdout.strip
 node.reverse_merge!(
   homebrew: {
     prefix: darwin ? (machine == "arm64" ? "/opt/homebrew" : "/opt/brew") : nil,
-    machine: machine,
+    machine: darwin ? machine : nil, # kept darwin-only for consumer compatibility; cross-OS arch is node[:hw][:machine]
+  },
+)
+
+# --- hardware facts (cross-platform, resolved once) ------------------------
+# Cookbooks read these instead of re-running `uname -m` / nproc / sysctl
+# themselves (stream B of the hurdle-removal plan: elastic-agent, herdr,
+# rbenv migrate onto them).
+node.reverse_merge!(
+  hw: {
+    machine: machine, # "arm64" / "x86_64" / "aarch64" — raw `uname -m`
+    ncpu: (darwin ? run_command("sysctl -n hw.ncpu") : run_command("nproc")).stdout.strip.to_i,
   },
 )
 

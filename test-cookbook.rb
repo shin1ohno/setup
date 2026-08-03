@@ -12,6 +12,11 @@
 # Usage:
 #   COOKBOOK=elastic-agent ./bin/mitamae local test-cookbook.rb --dry-run
 #   COOKBOOK=mise          ./bin/mitamae local test-cookbook.rb
+#   COOKBOOK=zsh::linux    ./bin/mitamae local test-cookbook.rb --dry-run
+#     (per-OS split cookbooks: name the recipe explicitly; the bare name has
+#      no default.rb and raises. Requesting the OTHER OS's recipe — or a
+#      single-OS cookbook whose cookbooks/<name>/platform marker mismatches
+#      this host — raises a "<os>-only" error instead of silently no-opping.)
 #
 # Platform-aware: replicates darwin.rb's node[:homebrew] block on macOS,
 # linux.rb's primary-group resolution on linux. Container guard from
