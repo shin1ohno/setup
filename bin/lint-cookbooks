@@ -67,14 +67,13 @@
 #      through to nil instead of failing, so the recipe converges "successfully"
 #      with an unset path/package. Heredoc bodies are skipped so shell `if` in an
 #      add_profile block does not unbalance the walk.
-#  12. [FAIL] `node[:platform]` inside cookbooks/ (ratchet) — OS branching
-#      belongs at the entry/role layer (hurdle-removal plan stream B: per-OS
-#      recipes selected by the caller, install_package / platform_value /
-#      host-profile facts for values). PLATFORM_PENDING freezes the
-#      pre-migration state: a file listed there may still reference
-#      node[:platform] (it is the burn-down list), any OTHER cookbook file may
-#      not, and a migrated file MUST drop its PENDING entry in the same PR.
-#      Allowlist: functions + host-profile — the platform abstraction owners.
+#  12. [FAIL] `node[:platform]` inside cookbooks/ — cookbooks are
+#      platform-pure; OS branching lives at the entry/role layer (per-OS
+#      recipes selected by the caller; values via install_package /
+#      platform_value / node[:hw] facts). The 2026-08 stream-B migration
+#      drove the original 82-file burn-down list to zero, so every cookbook
+#      is held at zero references. Allowlist: functions + host-profile — the
+#      platform abstraction owners.
 #  13. [FAIL] existence-only `skip_if` on a require_external_auth gate (ratchet)
 #      — `-> { File.exist?(path) }` makes the gate skip forever on every
 #      already-converged host, so a NEW key added to the generator is silently
@@ -846,46 +845,29 @@ recipe_files.each do |file|
   end
 end
 
-# --- check 12: node[:platform] inside cookbooks/ (migration ratchet) --------
+# --- check 12: node[:platform] inside cookbooks/ (hard invariant) -----------
 
-# The two files that legitimately own platform dispatch.
+# The two files that legitimately own platform dispatch. The 2026-08 stream-B
+# migration (PRs #807-#825) emptied the original 82-file PLATFORM_PENDING
+# burn-down list, so the ratchet is now a hard ban: any non-comment
+# node[:platform] reference in any other cookbook file fails immediately.
 PLATFORM_ALLOW = %w[
   cookbooks/functions/default.rb
   cookbooks/host-profile/default.rb
-].freeze
-
-# Pre-migration burn-down list, generated mechanically (files under cookbooks/
-# with a non-comment node[:platform] reference) when the ratchet landed. Files
-# here may keep their references until their stream-B migration PR; that PR
-# must remove the entry (the ratchet FAILS on a clean file still listed).
-# Everything NOT listed is held at zero references from day one.
-PLATFORM_PENDING = %w[
 ].freeze
 
 recipe_files.each do |file|
   next unless file.start_with?("cookbooks/")
   next if PLATFORM_ALLOW.include?(file)
 
-  hits = []
   File.foreach(file).with_index(1) do |raw, ln|
     next if raw =~ /\A\s*#/
-    hits << ln if raw =~ /node\[:platform\]/
-  end
-
-  if PLATFORM_PENDING.include?(file)
-    if hits.empty?
-      add(violations, file, 1,
-          "migrated off node[:platform] but still listed in PLATFORM_PENDING — " \
-          "remove its entry from bin/lint-cookbooks in this PR (check 12 ratchet)")
-    end
-  else
-    hits.each do |ln|
-      add(violations, file, ln,
-          "node[:platform] in a cookbook — branch at the entry/role layer " \
-          "(per-OS recipe via include_platform_cookbook or a static ::darwin/" \
-          "::linux include), or use install_package / platform_value / " \
-          "node[:hw] facts (check 12)")
-    end
+    next unless raw =~ /node\[:platform\]/
+    add(violations, file, ln,
+        "node[:platform] in a cookbook — branch at the entry/role layer " \
+        "(per-OS recipe via include_platform_cookbook or a static ::darwin/" \
+        "::linux include), or use install_package / platform_value / " \
+        "node[:hw] facts (check 12)")
   end
 end
 
