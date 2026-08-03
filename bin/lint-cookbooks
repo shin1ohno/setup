@@ -870,7 +870,6 @@ PLATFORM_PENDING = %w[
   cookbooks/git/default.rb
   cookbooks/gnupg/default.rb
   cookbooks/golang/default.rb
-  cookbooks/gpg-backup/default.rb
   cookbooks/haskell/default.rb
   cookbooks/jdk/default.rb
   cookbooks/libffi/default.rb
