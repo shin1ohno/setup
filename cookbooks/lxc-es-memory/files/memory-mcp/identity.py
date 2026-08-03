@@ -15,6 +15,8 @@ Starlette so it stays importable anywhere (es_backend imports authorize_supersed
 
 from __future__ import annotations
 
+import hmac
+import os
 import sys
 import time
 
@@ -26,8 +28,34 @@ GRANT_AUTHZ_CODE = "authorization_code"
 GRANT_CLIENT_CREDS = "client_credentials"
 
 
+HEADER_PROXY_SECRET = "x-proxy-secret"
+
+# Env-gated shared secret between the auth proxy and this server. UNSET = inert,
+# so existing deployments are unaffected.
+#
+# WHY THIS EXISTS. Everything below trusts the x-verified-* headers completely:
+# they decide write provenance, and they decide who may forget or revise a
+# document. The only thing stopping a caller from writing them itself is that the
+# server listens on loopback and the proxy is the sole reachable listener. On a
+# single-purpose host that is enough. On a host that also runs autonomous coding
+# agents it is not: any local process can reach loopback, and forging
+# `x-verified-grant: authorization_code` there buys the ability to fabricate a
+# `user-stated` fact -- which the recall tool explicitly tells the model it may
+# treat as instruction rather than data. That turns a local write into prompt
+# injection with elevated trust.
+#
+# With this set, forging an identity additionally requires reading the server's
+# environment file, which is the same bar as reading its ES credential.
+_PROXY_SHARED_SECRET = os.environ.get("PROXY_SHARED_SECRET", "")
+
+
 class AuthzError(Exception):
     """Raised when a caller is not permitted to supersede/revise a target doc."""
+
+
+class ProxyAuthError(Exception):
+    """Raised when PROXY_SHARED_SECRET is configured and the request did not come
+    through the proxy that holds it."""
 
 
 def _now_iso() -> str:
@@ -54,12 +82,36 @@ def _get_header(headers, name: str) -> str:
         return ""
 
 
+def require_proxy_secret(headers) -> None:
+    """Reject anything that did not come through the trusted proxy.
+
+    No-op unless PROXY_SHARED_SECRET is set, so this is opt-in per deployment.
+    Constant-time compare: the value is a fixed secret checked on every request,
+    which is exactly the shape a timing oracle needs."""
+    if not _PROXY_SHARED_SECRET:
+        return
+    got = _get_header(headers, HEADER_PROXY_SECRET)
+    # Compared as bytes: compare_digest raises TypeError on a non-ASCII str, which
+    # would surface as a 500 instead of a clean rejection for a hostile header.
+    if not got or not hmac.compare_digest(
+        got.encode("utf-8", "surrogateescape"),
+        _PROXY_SHARED_SECRET.encode("utf-8", "surrogateescape"),
+    ):
+        print("AUDIT proxy_secret_rejected", file=sys.stderr, flush=True)
+        raise ProxyAuthError("request did not come through the auth proxy")
+
+
 def parse_identity(headers) -> dict:
     """Read the three verified headers and derive the provenance agent.
 
     provenance.agent = client_id (client_credentials) or sub (authorization_code),
     per contract §3. Never sourced from tool arguments.
+
+    Gated on require_proxy_secret: this is the single chokepoint every request
+    passes through before an identity exists, so enforcing here means no code path
+    can derive provenance from headers that bypassed the proxy.
     """
+    require_proxy_secret(headers)
     sub = _get_header(headers, HEADER_SUB)
     client_id = _get_header(headers, HEADER_CLIENT_ID)
     grant = _get_header(headers, HEADER_GRANT)
