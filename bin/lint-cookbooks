@@ -860,15 +860,9 @@ PLATFORM_ALLOW = %w[
 # must remove the entry (the ratchet FAILS on a clean file still listed).
 # Everything NOT listed is held at zero references from day one.
 PLATFORM_PENDING = %w[
-  cookbooks/envchain/default.rb
-  cookbooks/fonts/default.rb
-  cookbooks/fzf/default.rb
-  cookbooks/gnupg/default.rb
   cookbooks/lxc-roon/default.rb
   cookbooks/roon/default.rb
-  cookbooks/starship/default.rb
   cookbooks/yq/default.rb
-  cookbooks/zsh/default.rb
 ].freeze
 
 recipe_files.each do |file|
