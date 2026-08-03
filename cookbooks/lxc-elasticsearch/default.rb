@@ -41,7 +41,7 @@
 # native apply succeeds, the operator may remove ~/deploy/elasticsearch/
 # from the LXC.
 
-include_cookbook "awscli"
+include_cookbook "awscli::linux"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys so the
 # require_external_auth check_command and the secrets / cert generators

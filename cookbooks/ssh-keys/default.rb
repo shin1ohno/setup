@@ -17,7 +17,7 @@
 
 # Ensure aws CLI is on disk before we try to fetch SSM. awscli cookbook
 # is idempotent — no-op on hosts that already have it.
-include_cookbook "awscli"
+include_platform_cookbook "awscli"
 
 # Bootstrap config: only the AWS profile + region the cookbook uses to
 # make its first SSM call. The canonical host registry (devices map)

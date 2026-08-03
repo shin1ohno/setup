@@ -10,7 +10,7 @@ user = ENV["USER"]
 group = `id -gn`.strip
 
 include_cookbook "docker-engine"
-include_cookbook "awscli"
+include_platform_cookbook "awscli"
 
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
 aws_profile = ssh_keys_config["aws_profile"]

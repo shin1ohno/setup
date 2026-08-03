@@ -37,7 +37,7 @@
 # Idempotency: aws configure get the existing aws_access_key_id and skip
 # if it matches the SSM-fetched value (no rewrite, no rotation).
 
-include_cookbook "awscli"
+include_platform_cookbook "awscli"
 
 profiles = node.dig(:aws_credentials, :profiles) || {}
 bootstrap = node.dig(:aws_credentials, :bootstrap_profile)

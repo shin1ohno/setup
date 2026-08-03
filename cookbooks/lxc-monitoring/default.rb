@@ -24,7 +24,7 @@
 # pve/lxc-monitoring.rb.
 
 include_cookbook "docker-engine"
-include_cookbook "awscli"
+include_cookbook "awscli::linux"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys so the
 # require_external_auth check_command and the .env generator both target the

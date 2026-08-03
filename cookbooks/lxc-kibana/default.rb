@@ -34,7 +34,7 @@
 # the first native apply. Data dir survives unchanged. After native
 # apply succeeds, the operator may remove ~/deploy/kibana/.
 
-include_cookbook "awscli"
+include_cookbook "awscli::linux"
 
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
 aws_profile = ssh_keys_config["aws_profile"]

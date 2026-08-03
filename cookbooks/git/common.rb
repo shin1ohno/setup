@@ -1,34 +1,10 @@
 # frozen_string_literal: true
-
-if node[:platform] == "darwin"
-  package "git"
-  package "git-lfs"
-  package "git-filter-repo"
-
-  include_cookbook "mise"
-  mise_tool "gh"
-
-  package "gh" do
-    action :remove
-    only_if { brew_formula?("gh") }
-  end
-
-  # git-ai-commit (takai/tap) removed — drop the formula and the tap.
-  package "git-ai-commit" do
-    action :remove
-    only_if { brew_formula?("git-ai-commit") }
-  end
-  execute "brew untap takai/tap" do
-    only_if { brew_tap?("takai/tap") }
-  end
-else
-  %w(git git-lfs gh).each do |pkg|
-    package pkg do
-      user node[:setup][:system_user]
-      not_if { run_command("dpkg-query -W -f='${Status}' #{pkg} 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
-    end
-  end
-end
+#
+# git: the OS-independent half — the ~/.gitconfig render and every `git config`
+# guard that depends on it. darwin.rb and linux.rb each install the git/gh
+# binaries their own way and then include this LAST, so these resources
+# converge after gh exists (the `gh auth setup-git` execute below shells out
+# to it) and after the remote_file has written user.signingkey.
 
 remote_file "#{node[:setup][:home]}/.gitconfig" do
   owner node[:setup][:user]

@@ -17,6 +17,6 @@ include_recipe "../cookbooks/functions/default"
 # (unbound home.local local-data fetch, auto-mitamae-target orchestrator key,
 # elastic-agent enrollment secrets) need the `aws` CLI on PATH, else they
 # silently skip / fall back under non-TTY apply.
-include_cookbook "awscli"
+include_cookbook "awscli::linux"
 include_cookbook "unbound"
 lxc_entry(tags: ["lxc", "dns-resolver"])

@@ -41,7 +41,7 @@ unless ["air", "neo"].include?(variant)
   return
 end
 
-include_cookbook "awscli"
+include_cookbook "awscli::darwin"
 
 user       = node[:setup][:user]
 group      = node[:setup][:group]

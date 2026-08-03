@@ -14,7 +14,7 @@ user = ENV["USER"]
 group = `id -gn`.strip
 
 include_cookbook "docker-engine"
-include_cookbook "awscli"
+include_platform_cookbook "awscli"
 
 # Case B (PR 4-3b): read /hydra/* via the fleet profile (pve-bootstrap-ssm,
 # granted ssm:GetParameter /hydra/* + aws/ssm kms:Decrypt in home-monitor —

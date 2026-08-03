@@ -24,7 +24,7 @@
 #
 # OS gate now lives at the include site (roles/lxc-core, Linux-only).
 
-include_cookbook "awscli"
+include_platform_cookbook "awscli"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys.
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
