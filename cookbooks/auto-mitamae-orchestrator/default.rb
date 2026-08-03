@@ -136,7 +136,12 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "#{ORCHESTRATOR_SSM_PATH} in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  skip_if: -> { File.exist?(ORCHESTRATOR_PRIVATE_KEY_PATH) },
+  # Existence + key shape: an empty or error-text file left by a failed SSM
+  # fetch no longer counts as "key present", so the next apply re-fetches
+  # rather than leaving the orchestrator unable to SSH the fleet. "PRIVATE KEY"
+  # matches both OpenSSH and PEM headers. Mode 0600 root:root — readable
+  # because this cookbook only runs on the monitoring LXC as root.
+  skip_if: -> { file_has_all?(ORCHESTRATOR_PRIVATE_KEY_PATH, ["PRIVATE KEY"]) },
 ) do
   directory "/root/.ssh" do
     owner "root"

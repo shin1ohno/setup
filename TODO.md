@@ -1,5 +1,33 @@
 # TODO
 
+## Elastic CA rotation is not detected by the cert skip_if guards (Medium)
+
+The content-aware `skip_if` migration (PR "content-aware skip_if") changed the
+two Elastic CA fetch gates from `File.exist?` to
+`file_has_all?(path, ["BEGIN CERTIFICATE"])` —
+`cookbooks/lxc-monitoring/default.rb` (`/data/monitoring/vector/elastic-ca.crt`)
+and `cookbooks/elastic-agent/default.rb` (`/etc/elastic-agent/certs/ca.crt`).
+That upgrade catches a truncated or error-text file, but **CA rotation is an
+explicit non-goal of it**: an OLD but well-formed PEM still satisfies the
+needle, so the gate keeps skipping.
+
+- **Trigger**: Terraform rotates the CA in SSM `/monitoring/elastic/ca/cert`
+  (ADR 0005 §認証 puts CA validity at 2 years) and every already-converged host
+  keeps serving the old PEM. Vector's `[sinks.elasticsearch].tls.ca_file` and
+  elastic-agent's `output.default.ssl.certificate_authorities` then fail TLS
+  against the re-issued ES certs — a fleet-wide ingest outage that no cookbook
+  apply self-heals, because the gate reports "already done".
+- **Why the needle cannot fix it**: the guard is a *content-shape* check, not a
+  *value-drift* check. Detecting rotation needs a comparison against the
+  authoritative SSM copy, which the skip_if deliberately avoids (it would put an
+  `aws ssm get-parameter` on every apply's compile path).
+- **First step**: add a value-drift check comparing the SSM cert's serial to the
+  locally installed PEM's — fetch the param, `openssl x509 -noout -serial` on
+  both, and re-fetch when they differ. Put it in the converge-time `execute`
+  (where the existing `sudo diff -q` guard already lives) rather than the
+  compile-time skip_if, and share one implementation between the two cookbooks.
+  Delete this entry in the resolving commit.
+
 ## docs/rust.md — apply the estate-lens retro's sandbox-EPERM addendum (Low)
 
 From the 2026-07-24 claude-md-audit removal verification: the estate-lens

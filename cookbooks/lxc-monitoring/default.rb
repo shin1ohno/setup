@@ -508,7 +508,18 @@ require_external_auth(
                 "pve-exporter-token, rtx-snmp-community, elastic/vector-password " \
                 "(ADR 0005 Phase 4 — write-only role for [sinks.elasticsearch]). " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  skip_if: -> { File.exist?(env_output_path) },
+  # Content-aware: needles are every KEY= files/generate_env.sh writes, so a
+  # new secret there re-fetches on hosts whose .env already exists instead of
+  # being silently dropped (~/.claude/rules/ruby.md "SSM-sourced .env
+  # generator: file-existence skip_if drops new KEY=VALUE lines silently").
+  # deploy_with_ssm_env does not fit: the placement notifies TWO resources
+  # (restart monitoring + generate snmp.yml) and the helper takes only one.
+  skip_if: lambda {
+    file_has_all?(env_output_path, %w[
+      GF_SECURITY_ADMIN_PASSWORD= PVE_TOKEN_VALUE=
+      RTX_SNMP_COMMUNITY= ELASTIC_VECTOR_PASSWORD=
+    ])
+  },
 ) do
   execute "generate monitoring .env" do
     command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
@@ -558,7 +569,13 @@ require_external_auth(
   instructions: "ES cluster (Phase 1b/3) must be provisioned first — Terraform " \
                 "writes the CA cert to /monitoring/elastic/ca/cert. Then this " \
                 "cookbook can fetch it.",
-  skip_if: -> { File.exist?(elastic_ca_target) },
+  # Existence + PEM shape: a truncated or error-text file (an SSM fetch that
+  # wrote a stray message) no longer counts as "already done", so the next
+  # apply re-fetches instead of leaving Vector with an unusable ca_file.
+  # NOT rotation detection — an OLD but well-formed PEM still skips; see the
+  # CA-rotation value-drift entry in TODO.md. Mode 0644, so readable by the
+  # non-root user a dev-workstation apply may run as.
+  skip_if: -> { file_has_all?(elastic_ca_target, ["BEGIN CERTIFICATE"]) },
 ) do
   execute "fetch elastic CA cert from SSM" do
     command <<~SH.strip

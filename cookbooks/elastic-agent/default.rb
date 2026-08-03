@@ -461,7 +461,11 @@ require_external_auth(
                  "--profile #{aws_profile} --region #{aws_region} > /dev/null 2>&1",
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "/monitoring/elastic/ca/cert in #{aws_region}.",
-  skip_if: -> { File.exist?(ca_output_path) },
+  # Existence + PEM shape (see the same guard in cookbooks/lxc-monitoring): a
+  # half-written or error-text ca.crt re-fetches instead of counting as done.
+  # NOT rotation detection — TODO.md tracks the value-drift gap. Mode 0644, so
+  # File.read is safe on the darwin/dev-workstation non-root applies too.
+  skip_if: -> { file_has_all?(ca_output_path, ["BEGIN CERTIFICATE"]) },
 ) do
   execute "fetch elastic-agent CA cert" do
     command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
