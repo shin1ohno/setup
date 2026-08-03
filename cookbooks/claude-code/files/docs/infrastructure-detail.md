@@ -88,6 +88,28 @@ This rule exists because the 2026-05-07 Phase A deployment hit each of these con
 
 ## systemd-timer-verification-gate
 
+**Which command actually answers "will this timer fire?"** — measured on Debian 13 / systemd 257 (2026-07-28):
+
+| Command | Monotonic timer (`OnBootSec`/`OnActiveSec`/`OnUnit*Sec`) | Calendar timer (`OnCalendar`) |
+|---|---|---|
+| `systemctl status <t>.timer` | `Trigger: Tue 2026-07-28 10:53:42 JST; 19min left` | `Trigger: Tue 2026-07-28 13:15:38 JST; 2h 41min left` |
+| `systemctl list-timers <t>.timer` | `NEXT` populated | `NEXT` populated |
+| `systemctl show <t>.timer --property=Trigger` | **empty** | **empty** |
+| `systemctl show <t>.timer --property=NextElapseUSecMonotonic` | duration, or `infinity` when dead | `0` |
+| `systemctl show <t>.timer --property=NextElapseUSecRealtime` | empty | timestamp |
+
+`Trigger` exists only as a rendered line in `systemctl status`; the `show` property of that name does not exist (the real one is `Triggers`, naming the unit the timer starts). So `show --property=Trigger` returns empty on a perfectly armed timer, and using it as the health check reports every timer as dead. For a cookbook guard, key on the next-elapse property that matches the schedule type:
+
+```
+not_if "systemctl show <name>.timer --property=NextElapseUSecMonotonic --value | grep -Eq '^[0-9]'"
+```
+
+**`RemainAfterExit` and `OnUnitInactiveSec` are mutually exclusive.** `RemainAfterExit=true` parks a oneshot at `active (exited)`, so the deactivation `OnUnitInactiveSec` counts from never arrives: the timer fires once and then reports `NextElapseUSecMonotonic=infinity` while `is-enabled`/`is-active` both still say healthy. Pick one remedy per unit.
+
+**Fixing the flag is not enough on a host that already ran the old unit.** `daemon-reload` does not retroactively deactivate a running unit, so a service left `active (exited)` from a `RemainAfterExit=true` era keeps the timer dead even after the corrected unit is installed. Recovery — also the right shape for an idempotent cookbook resource — is `systemctl stop <name>.service` (supplies the missing deactivation) followed by `systemctl restart <name>.timer` (recomputes the schedule), guarded on the next-elapse check above so it no-ops once armed.
+
+Origin: 2026-07-27 lxc-homebridge — a `Type=oneshot` + `OnUnitInactiveSec=1800` re-discovery timer shipped with `RemainAfterExit=true`, fired once, and stopped. Diagnosis was then nearly reversed a second time by reading `show --property=Trigger` (empty) on the *repaired* timer.
+
 **Common causes of `Trigger: n/a` for `Type=oneshot` services**:
 
 - `OnUnitActiveSec=Ns` on `Type=oneshot` without `RemainAfterExit=true` — the unit's "active" window is essentially zero (transitions inactive → activating → deactivating → inactive in milliseconds), so "N seconds after last activation" produces no future timestamp. Fix: switch to `OnUnitInactiveSec=Ns` (measures from deactivation), OR add `RemainAfterExit=true` if the unit's idempotent contract allows it.
