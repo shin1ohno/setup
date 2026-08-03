@@ -843,14 +843,12 @@ PLATFORM_ALLOW = %w[
 # must remove the entry (the ratchet FAILS on a clean file still listed).
 # Everything NOT listed is held at zero references from day one.
 PLATFORM_PENDING = %w[
-  cookbooks/altserver/default.rb
   cookbooks/arp-flux/default.rb
   cookbooks/auto-mitamae-orchestrator/default.rb
   cookbooks/awscli/default.rb
   cookbooks/build-essential/default.rb
   cookbooks/ctags/default.rb
   cookbooks/dot-config-nvim/default.rb
-  cookbooks/dot-config-zed/default.rb
   cookbooks/edge-agent/default.rb
   cookbooks/elastic-agent/default.rb
   cookbooks/envchain/default.rb
@@ -884,11 +882,6 @@ PLATFORM_PENDING = %w[
   cookbooks/lxc-samba/default.rb
   cookbooks/lxc-shared-user/default.rb
   cookbooks/lxc-systemd-hardening-fix/default.rb
-  cookbooks/mac-apps/default.rb
-  cookbooks/mac-settings/default.rb
-  cookbooks/mac-sudo/default.rb
-  cookbooks/macism/default.rb
-  cookbooks/macos-hub/default.rb
   cookbooks/mcp-probe/default.rb
   cookbooks/mcp/default.rb
   cookbooks/mosh/default.rb
@@ -901,7 +894,6 @@ PLATFORM_PENDING = %w[
   cookbooks/python/default.rb
   cookbooks/rbenv/default.rb
   cookbooks/rclone/default.rb
-  cookbooks/remind/default.rb
   cookbooks/roon/default.rb
   cookbooks/s3-backup/default.rb
   cookbooks/self-heal-loops/default.rb
@@ -913,9 +905,7 @@ PLATFORM_PENDING = %w[
   cookbooks/terraform/default.rb
   cookbooks/unbound-watchdog/default.rb
   cookbooks/unbound/default.rb
-  cookbooks/xcode/default.rb
   cookbooks/yq/default.rb
-  cookbooks/zed/default.rb
   cookbooks/zk/default.rb
   cookbooks/zlib/default.rb
   cookbooks/zsh/default.rb

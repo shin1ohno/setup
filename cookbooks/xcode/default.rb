@@ -10,8 +10,6 @@
 # Note: Xcode.app installation requires Apple ID authentication.
 # After running this recipe, manually run: xcodes install --latest
 
-return if node[:platform] != "darwin"
-
 # Ensure Xcode Command Line Tools are installed first
 # (Required for xcodes bottle installation and general development)
 # xcode-select --install launches a GUI dialog and returns immediately,

@@ -11,8 +11,6 @@
 # EDITOR / VISUAL env vars are left untouched (nvim cookbook owns those
 # at priority 50) so CLI git operations continue using nvim.
 
-return if node[:platform] != "darwin"
-
 execute "brew install --cask zed" do
   not_if { brew_cask?("zed") }
 end

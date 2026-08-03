@@ -24,10 +24,6 @@
 #
 # The org-managed /etc/sudoers.d/mscp drop-in only sets `Defaults log_allowed`
 # (sudo logging) — it does not touch timestamps, so it does not conflict.
-#
-# Gated to darwin.
-
-return unless node[:platform] == "darwin"
 
 user    = node[:setup][:user]
 root    = node[:setup][:root]
