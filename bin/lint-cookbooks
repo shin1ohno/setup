@@ -6,7 +6,12 @@
 # (.rb under cookbooks/ roles/ pve/ + the root entry recipes), skipping
 # cookbooks/*/files/** (those are shipped artifacts, not recipes).
 #
-# Checks:
+# Findings come in two tiers. FAIL findings land in `violations` and exit 1;
+# WARN findings land in `warnings`, print in their own block, and leave the exit
+# code alone — the tier for a drift class that is real but whose current hits are
+# known/accepted. Promoting a check is a one-line move between the two arrays.
+#
+# Checks (1-8 are FAIL tier):
 #   1. top-level `if/unless File.exist?`  — compile-time eval reads pre-converge
 #      state ("Mitamae evaluation model — top-level Ruby is compile-time").
 #      Code inside a `def` is exempt (runs at call time). allowlist: see ALLOW1.
@@ -44,9 +49,29 @@
 #      require_external_auth's non-TTY return is invisible to CI (how
 #      Regexp.last_match(1) shipped). Comment lines are skipped; `dig` is NOT in
 #      the set (35 legitimate uses on mitamae's node object).
+#   9. [FAIL] FLEET <-> edge-agent config drift — host-profile's `fleet` table is
+#      the offline identity mirror every host keys off, and edge-agent ships one
+#      files/config-<label>.toml per fleet host. Either direction can rot: a new
+#      fleet label with no config makes edge-agent fall back silently, and a
+#      config for a label nobody resolves is dead weight that reads as coverage.
+#      Exempt: sh1-cloud (guarded out of linux.rb) and es-N (ES LXCs are not
+#      edge-agent targets).
+#  10. [WARN] hosts.json <-> pve/*.rb <-> FLEET drift — the orchestrator only
+#      converges hosts listed in auto-mitamae-orchestrator/files/hosts.json, so a
+#      pve/lxc-*.rb absent from it is a CT that never auto-applies, and a
+#      hosts.json role pointing at a missing recipe fails at push time. Also
+#      cross-checks the es-N FLEET `ip` against the hosts.json `host` — two
+#      hand-maintained copies of one address. Exempt: pve/lxc-apm-server.rb
+#      (documented opt-out; it deliberately skips lxc_entry).
+#  11. [WARN] `case node[:platform]` with no `else` — an unknown platform falls
+#      through to nil instead of failing, so the recipe converges "successfully"
+#      with an unset path/package. Heredoc bodies are skipped so shell `if` in an
+#      add_profile block does not unbalance the walk.
 #
-# Usage:  bin/lint-cookbooks   # exit 1 on any violation
+# Usage:  bin/lint-cookbooks   # exit 1 on any FAIL-tier violation (WARN never
+#                              # affects the exit code)
 
+require "json"
 require "set"
 
 REPO_ROOT = File.expand_path("..", __dir__)
@@ -99,10 +124,11 @@ recipe_files =
   .sort
   .uniq
 
-violations = []
+violations = [] # FAIL tier — exit 1
+warnings   = [] # WARN tier — reported separately, exit code unaffected
 
-def add(violations, file, lineno, msg)
-  violations << "#{file}:#{lineno}: #{msg}"
+def add(bucket, file, lineno, msg)
+  bucket << "#{file}:#{lineno}: #{msg}"
 end
 
 # --- check 1: top-level File.exist? ----------------------------------------
@@ -568,9 +594,244 @@ recipe_files.each do |file|
   end
 end
 
+# --- shared: the FLEET identity table --------------------------------------
+#
+# cookbooks/host-profile/default.rb's `fleet` hash is the offline mirror of the
+# identity subset of the canonical registry (home-monitor contracts/devices.json
+# -> SSM /host-registry/devices), and checks 9 + 10 both key off it. Parsed by
+# brace depth rather than by a terminator line, because entries carry inline
+# `{ ... }` values and a reformat must not silently truncate the table.
+
+HOST_PROFILE     = "cookbooks/host-profile/default.rb"
+HOSTS_JSON       = "cookbooks/auto-mitamae-orchestrator/files/hosts.json"
+EDGE_AGENT_FILES = "cookbooks/edge-agent/files"
+
+def parse_fleet(path)
+  return {} unless File.file?(path)
+
+  lines = File.readlines(path).map(&:chomp)
+  start = lines.index { |l| l =~ /\A\s*fleet\s*=\s*\{/ }
+  return {} unless start
+
+  entries = {}
+  depth = 0
+  idx = start
+  while idx < lines.length
+    line = lines[idx]
+    unless line =~ /\A\s*#/
+      depth += line.count("{") - line.count("}")
+      entries[Regexp.last_match(1)] = { line: idx + 1, src: line } if
+        idx > start && line =~ /\A\s*"([^"]+)"\s*=>/
+    end
+    break if depth <= 0 && idx > start
+    idx += 1
+  end
+  entries
+end
+
+FLEET = parse_fleet(HOST_PROFILE)
+
+# edge-agent targets the bare-metal / laptop fleet only. sh1-cloud is guarded
+# out of linux.rb, and the ES LXCs ship their logs through lxc_entry's
+# elastic-agent tags instead.
+def edge_agent_exempt?(label)
+  label == "sh1-cloud" || label =~ /\Aes-\d\z/
+end
+
+# --- check 9: FLEET <-> edge-agent config consistency -----------------------
+
+if FLEET.empty?
+  add(violations, HOST_PROFILE, 1,
+      "could not parse the `fleet = {` table — checks 9 and 10 degrade to " \
+      "silent no-ops without it. Keep the literal `fleet = {` opener, or teach " \
+      "parse_fleet in bin/lint-cookbooks the new shape.")
+else
+  FLEET.each do |label, meta|
+    next if edge_agent_exempt?(label)
+    next if File.file?("#{EDGE_AGENT_FILES}/config-#{label}.toml")
+
+    add(violations, HOST_PROFILE, meta[:line],
+        "FLEET label #{label.inspect} has no #{EDGE_AGENT_FILES}/config-#{label}.toml. " \
+        "edge-agent selects its config by node[:profile][:label], so this host " \
+        "converges with no agent config at all. Add the config, or exempt the " \
+        "label in bin/lint-cookbooks edge_agent_exempt? with the reason.")
+  end
+
+  Dir["#{EDGE_AGENT_FILES}/config-*.toml"].sort.each do |path|
+    label = File.basename(path, ".toml").sub(/\Aconfig-/, "")
+    next if FLEET.key?(label)
+
+    add(violations, path, 1,
+        "no #{label.inspect} entry in the host-profile FLEET table, so no host " \
+        "ever resolves this label — the file is dead but reads as coverage. Add " \
+        "the FLEET entry, or delete the config.")
+  end
+end
+
+# --- check 10: hosts.json <-> pve/*.rb <-> FLEET consistency [WARN] ---------
+#
+# The auto-mitamae orchestrator converges exactly the hosts listed in
+# hosts.json, so drift here is invisible: a pve/lxc-*.rb missing from the list
+# is a CT that never auto-applies (it looks managed because its recipe exists),
+# and a role path pointing at a deleted recipe fails only at push time.
+
+PVE_HOSTS_EXEMPT = %w[
+  pve/lxc-apm-server.rb
+].to_set
+
+if !File.file?(HOSTS_JSON)
+  add(warnings, HOSTS_JSON, 1,
+      "missing — the auto-mitamae orchestrator has no fleet to converge.")
+else
+  hosts_lines = File.readlines(HOSTS_JSON).map(&:chomp)
+  hosts =
+    begin
+      JSON.parse(File.read(HOSTS_JSON))
+    rescue JSON::ParserError => e
+      add(warnings, HOSTS_JSON, 1,
+          "unparseable JSON (#{e.message}) — the orchestrator reads this file " \
+          "verbatim, so it converges nothing.")
+      nil
+    end
+
+  if hosts
+    line_of = lambda do |needle|
+      hit = hosts_lines.index { |l| l.include?(needle) }
+      hit ? hit + 1 : 1
+    end
+
+    # (i) every declared role recipe must exist
+    hosts.each do |entry|
+      role = entry["role"].to_s
+      next if role.empty? || File.file?(role)
+
+      add(warnings, HOSTS_JSON, line_of.call(role),
+          "role #{role.inspect} (label #{entry["label"].inspect}) does not exist " \
+          "in the repo — mitamae-runner fails on this host every cycle.")
+    end
+
+    # (ii) every LXC recipe must be in the orchestrator's fleet
+    declared = hosts.map { |h| h["role"] }.compact.to_set
+    Dir["pve/lxc-*.rb"].sort.each do |recipe|
+      next if PVE_HOSTS_EXEMPT.include?(recipe) || declared.include?(recipe)
+
+      add(warnings, recipe, 1,
+          "no #{HOSTS_JSON} entry — this CT is never auto-converged, so cookbook " \
+          "changes reach it only on a manual apply. Add an entry, or list the " \
+          "recipe in bin/lint-cookbooks PVE_HOSTS_EXEMPT with the opt-out reason.")
+    end
+
+    # (iii) the ES transport IPs live in two hand-maintained copies
+    by_label = {}
+    hosts.each { |h| by_label[h["label"]] = h }
+    %w[es-0 es-1 es-2].each do |label|
+      meta = FLEET[label]
+      next unless meta
+
+      fleet_ip = meta[:src][/"ip"\s*=>\s*"([^"]+)"/, 1]
+      json_ip  = by_label[label] && by_label[label]["host"]
+      next if fleet_ip && json_ip && fleet_ip == json_ip
+
+      add(warnings, HOST_PROFILE, meta[:line],
+          "FLEET #{label} ip=#{fleet_ip.inspect} disagrees with #{HOSTS_JSON} " \
+          "host=#{json_ip.inspect}. The ES node publishes the FLEET value as its " \
+          "transport_host while the orchestrator SSHes to the hosts.json one, so " \
+          "a split sends the cluster and its converger to different addresses.")
+    end
+  end
+end
+
+# --- check 11: `case node[:platform]` without else [WARN] ------------------
+#
+# A platform case with no else arm returns nil on an unrecognised platform, so
+# the recipe converges "successfully" with an unset path or package name instead
+# of failing where the gap is visible.
+
+# Block openers, anchored at the start of an expression (optionally after
+# `x = ` / `key: `) so postfix modifiers (`package "x" if darwin`) and `elsif`
+# are not counted.
+BLOCK_OPENER = /\A\s*(?:[@$]?[A-Za-z_]\w*[?!]?\s*[:=]\s*)?(if|unless|case|while|until|begin|for|def|class|module)\b/
+DO_BLOCK     = /\bdo\b(\s*\|[^|]*\|)?\s*(#.*)?\z/
+BLOCK_END    = /\A\s*end\b/
+
+# Heredoc bodies carry foreign syntax — an add_profile block's shell `if ... fi`
+# would open a block the walk never closes — so mask them before walking.
+def heredoc_lines(lines)
+  masked = Set.new
+  terminator = nil
+  lines.each_with_index do |line, idx|
+    if terminator
+      masked << idx
+      terminator = nil if line.strip == terminator
+      next
+    end
+    next if line =~ /\A\s*#/
+    m = line.match(/<<[-~]?(['"]?)([A-Z_]{2,})\1/)
+    terminator = m[2] if m
+  end
+  masked
+end
+
+def block_delta(line)
+  delta = 0
+  keyword = line[BLOCK_OPENER, 1]
+  if keyword
+    delta += 1
+    # `while x do` / `for x in y do` open ONE block, not two.
+    delta += 1 if line =~ DO_BLOCK && !%w[while until for].include?(keyword)
+  elsif line =~ DO_BLOCK
+    delta += 1
+  end
+  delta -= 1 if line =~ BLOCK_END
+  delta
+end
+
+recipe_files.each do |file|
+  lines  = File.readlines(file).map(&:chomp)
+  masked = heredoc_lines(lines)
+
+  lines.each_with_index do |line, idx|
+    next if masked.include?(idx) || line =~ /\A\s*#/
+    next unless line =~ /\bcase\s+node\[:platform\]/
+
+    depth = 1 # the `case` itself
+    has_else = false
+    j = idx + 1
+    while j < lines.length && depth > 0
+      l = lines[j]
+      unless masked.include?(j) || l =~ /\A\s*#/
+        has_else = true if depth == 1 && l =~ /\A\s*else\b/
+        depth += block_delta(l)
+      end
+      j += 1
+    end
+
+    if depth > 0
+      add(warnings, file, idx + 1,
+          "bin/lint-cookbooks could not balance this `case node[:platform]` to " \
+          "its `end` (hit EOF at depth #{depth}), so the else-arm check was " \
+          "inconclusive here. Fix block_delta rather than trusting the silence.")
+      next
+    end
+    next if has_else
+
+    add(warnings, file, idx + 1,
+        "`case node[:platform]` without else — returns nil on an unknown " \
+        "platform; add `else raise`.")
+  end
+end
+
 # --- report ----------------------------------------------------------------
 
 puts "cookbook lint (#{recipe_files.size} recipes scanned)"
+$stdout.flush # findings go to stderr; keep the two streams readable when merged
+
+unless warnings.empty?
+  warn ""
+  warn "WARN: #{warnings.size} warning(s) (advisory — exit code unaffected):"
+  warnings.sort.each { |w| warn "  #{w}" }
+end
+
 if violations.empty?
   puts "OK: no violations."
   exit 0
