@@ -110,17 +110,14 @@ ALLOW1 = {
 }.freeze
 
 # Check 3: cookbooks whose bare/STS auth gate is correct by design.
-#   mcp / codex-cli run on darwin where `aws login`'s DEFAULT profile is the
-#   right credential — adding --profile would break Mac MCP auth (case B, D5).
-#   mcp is a per-OS split cookbook, so BOTH recipes carry the gate: darwin.rb
-#   gates the Claude Desktop + Claude Code renders, linux.rb the Claude Code
-#   one. The linux gate is the same bare gate the pre-split default.rb already
-#   ran on Linux hosts (the render was hoisted out of the darwin branch long
-#   before this split); pinning a profile there is a separate design change.
+#   mcp/darwin.rb runs where `aws login`'s DEFAULT profile is the right
+#   credential — adding --profile would break Mac MCP auth (case B, D5).
+#   mcp/linux.rb and codex-cli carry NO gate since the 2026-08 gap decision:
+#   their renders resolve zero SSM parameters (the only ssm: server in
+#   servers.yml is darwin-pinned, and codex skips all pinned servers), so the
+#   old bare gates only made fleet LXCs silently skip work they could do.
 ALLOW3 = %w[
   cookbooks/mcp/darwin.rb
-  cookbooks/mcp/linux.rb
-  cookbooks/codex-cli/default.rb
 ].to_set
 
 # Check 5: cookbooks whose FULLY-BARE auth gate (no --profile/AWS_PROFILE) is
