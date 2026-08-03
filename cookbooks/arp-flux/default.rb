@@ -9,12 +9,9 @@
 # arp_announce=2 (Linux multi-homing best practice) eliminates the
 # cross-NIC reply path. Harmless on single-NIC hosts.
 #
-# Linux-only: macOS does not use /etc/sysctl.d. The cookbook is
-# included from linux.rb so platform gating is implicit, but we add
-# a defensive `only_if` in case future composition pulls it in
-# elsewhere.
-
-return unless node[:platform] != "darwin"
+# Linux-only: macOS does not use /etc/sysctl.d, so cookbooks/arp-flux/platform
+# marks the cookbook linux-only and a cross-OS include raises at the include
+# layer instead of silently declaring no resources.
 
 source = File.expand_path("../files/30-arp-flux.conf", __FILE__)
 

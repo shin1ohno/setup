@@ -17,8 +17,6 @@
 # stack — moving the role install set to shin1ohno is a Phase 5
 # follow-up.
 
-return if node[:platform] == "darwin"
-
 uid = node.dig(:lxc_shared_user, :uid) || 1000
 gid = node.dig(:lxc_shared_user, :gid) || 1000
 username = node.dig(:lxc_shared_user, :name) || "shin1ohno"

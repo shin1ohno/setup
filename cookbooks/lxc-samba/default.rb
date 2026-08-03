@@ -11,8 +11,6 @@
 # the bind-mount path (default /mnt/Media) and can run inside an
 # unprivileged LXC.
 
-return if node[:platform] == "darwin"
-
 samba_path = node[:samba_server][:share_path] rescue "/mnt/Media"
 samba_share = node[:samba_server][:share_name] rescue "Media"
 

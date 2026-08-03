@@ -854,8 +854,6 @@ PLATFORM_ALLOW = %w[
 # must remove the entry (the ratchet FAILS on a clean file still listed).
 # Everything NOT listed is held at zero references from day one.
 PLATFORM_PENDING = %w[
-  cookbooks/arp-flux/default.rb
-  cookbooks/auto-mitamae-orchestrator/default.rb
   cookbooks/awscli/default.rb
   cookbooks/build-essential/default.rb
   cookbooks/ctags/default.rb
@@ -876,20 +874,7 @@ PLATFORM_PENDING = %w[
   cookbooks/jdk/default.rb
   cookbooks/lazygit/default.rb
   cookbooks/libffi/default.rb
-  cookbooks/lxc-apm-server/default.rb
-  cookbooks/lxc-dev-workstation/default.rb
-  cookbooks/lxc-elasticsearch/default.rb
-  cookbooks/lxc-es-memory/default.rb
-  cookbooks/lxc-homebridge/default.rb
-  cookbooks/lxc-hydra/default.rb
-  cookbooks/lxc-kibana/default.rb
-  cookbooks/lxc-monitoring/default.rb
-  cookbooks/lxc-roon-mcp/default.rb
   cookbooks/lxc-roon/default.rb
-  cookbooks/lxc-samba/default.rb
-  cookbooks/lxc-shared-user/default.rb
-  cookbooks/lxc-systemd-hardening-fix/default.rb
-  cookbooks/mcp-probe/default.rb
   cookbooks/mcp/default.rb
   cookbooks/mosh/default.rb
   cookbooks/ncurses/default.rb
@@ -897,20 +882,15 @@ PLATFORM_PENDING = %w[
   cookbooks/obsidian_file_sync/default.rb
   cookbooks/ollama/default.rb
   cookbooks/pm2/default.rb
-  cookbooks/pve-host/default.rb
   cookbooks/python/default.rb
   cookbooks/rclone/default.rb
   cookbooks/roon/default.rb
   cookbooks/s3-backup/default.rb
-  cookbooks/self-heal-loops/default.rb
-  cookbooks/self-heal-observer/default.rb
   cookbooks/speedtest-cli/default.rb
   cookbooks/ssh/default.rb
   cookbooks/starship/default.rb
   cookbooks/tailscale/default.rb
   cookbooks/terraform/default.rb
-  cookbooks/unbound-watchdog/default.rb
-  cookbooks/unbound/default.rb
   cookbooks/yq/default.rb
   cookbooks/zk/default.rb
   cookbooks/zlib/default.rb
@@ -967,10 +947,6 @@ end
 # :expected_keys, which is why migrating to it also clears this check).
 SKIPIF_PENDING = %w[
   cookbooks/edge-agent/default.rb
-  cookbooks/lxc-es-memory/default.rb
-  cookbooks/lxc-kibana/default.rb
-  cookbooks/lxc-roon-mcp/default.rb
-  cookbooks/lxc-weave/default.rb
 ].to_set
 
 CONTENT_AWARE = /file_has_all\?|File\.read|run_command|\bsystem\(/

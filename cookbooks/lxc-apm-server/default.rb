@@ -21,8 +21,6 @@
 # Migration: this is a greenfield service on a brand-new CT, no docker
 # legacy to clean up.
 
-return if node[:platform] == "darwin"
-
 include_cookbook "awscli"
 
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))

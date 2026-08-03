@@ -22,8 +22,6 @@
 #
 # See docs/self-heal-github-issues-plan.md + ~/self-heal-observability-loop-design.md.
 
-return if node[:platform] == "darwin"
-
 detected_hostname = run_command("hostname -s", error: false).stdout.strip
 unless detected_hostname == "pro-dev"
   MItamae.logger.warn(

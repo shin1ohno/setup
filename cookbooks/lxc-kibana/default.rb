@@ -34,8 +34,6 @@
 # the first native apply. Data dir survives unchanged. After native
 # apply succeeds, the operator may remove ~/deploy/kibana/.
 
-return if node[:platform] == "darwin"
-
 include_cookbook "awscli"
 
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
@@ -226,10 +224,19 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "/monitoring/elastic/* in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  # Skip when env file AND CA cert already exist at the new locations.
-  skip_if: -> {
-    File.exist?(env_output_path) &&
-      File.exist?("/etc/kibana/certs/ca.crt")
+  # Content-aware: the needles are every KEY= files/generate_env.sh writes plus
+  # the CA's PEM header, so a new secret there — or a truncated / error-text
+  # artifact from a failed fetch — re-runs the gate instead of counting as
+  # converged (~/.claude/rules/ruby.md "SSM-sourced .env generator:
+  # file-existence skip_if drops new KEY=VALUE lines silently"). The PEM check
+  # is shape, NOT rotation detection: an old but well-formed CA still skips.
+  # Both files are readable because kibana applies as root (env 0640
+  # root:kibana, ca.crt 0640 root:kibana).
+  skip_if: lambda {
+    file_has_all?(env_output_path, %w[
+      KIBANA_PASSWORD= KIBANA_ENC_SO_KEY=
+      KIBANA_ENC_REPORT_KEY= KIBANA_ENC_SEC_KEY=
+    ]) && file_has_all?("/etc/kibana/certs/ca.crt", ["BEGIN CERTIFICATE"])
   },
 ) do
   execute "generate kibana secrets env" do
