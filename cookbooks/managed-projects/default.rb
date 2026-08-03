@@ -30,10 +30,47 @@ ssh_auth_ok = run_command(
   error: false,
 ).stdout.include?("successfully authenticated")
 
+# The AWS probe must name the SAME profile the clone will use. A codecommit
+# URI carries its own profile (`codecommit::<region>://<profile>@<repo>`) and
+# git-remote-codecommit hard-fails with ProfileNotFound when that profile is
+# absent, so a bare `aws sts get-caller-identity` answers for whatever identity
+# the environment happens to resolve — not for the one that matters. The bare
+# form therefore PASSES on a host that cannot clone, letting through exactly
+# the abort this gate exists to prevent.
+#
+# Observed 2026-08-02 on the sh1-cloud GCE box: its only profile is
+# `sh1-cloud`, the bare probe passed under AWS_PROFILE=sh1-cloud, and the
+# `sh1admn@home-monitor` clone then died with ProfileNotFound and took every
+# cookbook after managed-projects down with it. The fleet path has the same
+# shape latent — mitamae-runner.sh presets AWS_PROFILE=pve-bootstrap-ssm,
+# which has no codecommit grant.
+#
+# The `<profile>@` part is optional (git_remote_codecommit/__init__.py); when
+# it is absent the helper falls back to the ambient AWS_PROFILE / default
+# profile, so probe bare in that case to match.
+#
 # `== 0`, not `.zero?` — mitamae runs on mruby, which has no Integer#zero?.
 # `ruby -c` (CRuby) accepts it and CI's real dry-run is what catches it.
 # Matches the idiom already used at cookbooks/git/default.rb:28.
-aws_auth_ok = run_command("aws sts get-caller-identity >/dev/null 2>&1", error: false).exit_status == 0
+codecommit_profile = lambda do |uri|
+  after_scheme = uri.to_s.split("://")[1].to_s
+  after_scheme.include?("@") ? after_scheme.split("@")[0] : ""
+end
+
+# Memoised per profile: one probe per DISTINCT identity for the whole loop,
+# preserving the "probe once, not once per repo" property of the original.
+aws_auth_cache = {}
+aws_auth_ok = lambda do |uri|
+  profile = codecommit_profile.call(uri)
+  unless aws_auth_cache.key?(profile)
+    flag = profile == "" ? "" : " --profile #{profile}"
+    aws_auth_cache[profile] = run_command(
+      "aws sts get-caller-identity#{flag} >/dev/null 2>&1",
+      error: false,
+    ).exit_status == 0
+  end
+  aws_auth_cache[profile]
+end
 
 node[:managed_projects][:repos].each do |repo|
   # Repair a stored remote that drifted from the registry. `git_clone` below
@@ -74,7 +111,7 @@ node[:managed_projects][:repos].each do |repo|
 
   reachable =
     case transport
-    when :aws then aws_auth_ok
+    when :aws then aws_auth_ok.call(repo[:uri])
     when :ssh then ssh_auth_ok
     else true
     end
