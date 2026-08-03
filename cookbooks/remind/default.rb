@@ -7,15 +7,13 @@
 # reminder model (lists, due-date components, alarms). The tradeoff is a build
 # step plus a TCC "Reminders full access" grant on first run.
 #
-# macOS-only: swiftc + EventKit exist only on darwin. Self-gates so the recipe
-# is a no-op if ever reached on Linux.
+# macOS-only: swiftc + EventKit exist only on darwin, so cookbooks/remind/platform
+# marks the cookbook darwin-only and a cross-OS include raises at the include layer.
 #
 # Idempotency: rebuild only when the shipped source changes (sha256 sentinel)
 # or the installed binary is missing. A rebuild changes the ad-hoc signature's
 # cdhash, so macOS re-prompts for Reminders access after any source change; for
 # a rebuild-stable TCC identity, sign with a self-signed / Developer ID cert.
-
-return if node[:platform] != "darwin"
 
 home     = node[:setup][:home]
 src_dir  = "#{home}/.local/src/remind"

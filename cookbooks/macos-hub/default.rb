@@ -28,8 +28,6 @@
 # cookbooks/host-profile (node[:profile][:label]); edge_id == the label.
 # Hosts other than Air are skipped — same pattern as edge-agent.
 
-return unless node[:platform] == "darwin"
-
 # MQTT broker host for all Macs. Pro.home.local is the Linux server on
 # the LAN that runs mosquitto + weave-server + edge-agent.
 MQTT_HOST = "pro.home.local"

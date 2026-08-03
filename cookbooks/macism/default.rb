@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-return unless node[:platform] == "darwin"
-
 # macism is a Swift tool — `mise use go:github.com/laishulu/macism` does
 # not work (the repo is not a Go module). Upstream publishes raw binaries
 # `macism-arm64` and `macism-x86_64` on each GitHub release, with no
