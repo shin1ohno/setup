@@ -14,7 +14,7 @@ include_cookbook "zsh"
 include_cookbook "wget"
 
 # Modern CLI enhancement tools
-include_cookbook "fzf"
+include_platform_cookbook "fzf" # brew opt prefix vs /usr/share/doc shell wiring
 include_cookbook "fzf-tab"
 include_cookbook "zoxide"
 include_cookbook "bat"
@@ -26,7 +26,7 @@ include_cookbook "dot-zsh"
 include_cookbook "tmux"
 include_cookbook "dot-tmux"
 include_cookbook "herdr"
-include_cookbook "fonts"
+include_cookbook "fonts" if node[:platform] == "darwin" # user font dir is macOS-only
 include_cookbook "dot-config-alacritty"
 include_cookbook "dot-config-ghostty" if node[:platform] == "darwin"
 include_cookbook "dot-config-starship" # aws symbol width fix; cross-platform
@@ -34,5 +34,5 @@ include_cookbook "fastfetch"
 include_cookbook "pbcopy" unless node[:platform] == "darwin" # OSC 52 clipboard, Linux-only
 
 # Security and encryption
-include_cookbook "gnupg"
+include_platform_cookbook "gnupg" # brew `pinentry` vs apt `pinentry-curses`
 include_cookbook "envchain" if node[:platform] == "darwin"

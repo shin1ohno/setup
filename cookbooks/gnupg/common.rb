@@ -1,34 +1,11 @@
 # frozen_string_literal: true
-
-install_package "gnupg" do
-  darwin "gnupg"
-  ubuntu "gnupg"
-end
-
-# Pinentry binary path — set before the template renders.
-# - macOS: pinentry-mac (Homebrew) gives a native dialog; fall back to
-#   pinentry-tty for headless ssh sessions.
-# - Linux: pinentry-curses ships with the pinentry-curses apt package.
-node.reverse_merge!(
-  gnupg: {
-    pinentry_program: case node[:platform]
-                      when "darwin"
-                        "/opt/homebrew/bin/pinentry-tty"
-                      else
-                        "/usr/bin/pinentry-curses"
-                      end,
-  }
-)
-
-# Linux: pinentry-curses must be installed before the agent reloads, or
-# gpg-agent fails to launch pinentry on the first commit after the
-# config change.
-if node[:platform] != "darwin"
-  package "pinentry-curses" do
-    user node[:setup][:system_user]
-    not_if { run_command("dpkg-query -W -f='${Status}' pinentry-curses 2>/dev/null | grep -q 'install ok installed'", error: false).exit_status == 0 }
-  end
-end
+#
+# gnupg, OS-independent half: the ~/.gnupg directory, the agent config, and the
+# shell profile entry. Included LAST by darwin.rb and linux.rb, both of which
+# install gnupg + their own pinentry flavour and set
+# node[:gnupg][:pinentry_program] first -- the template below renders that
+# value, and the pinentry binary has to exist before the agent reloads onto the
+# new config.
 
 # Create .gnupg directory with proper permissions
 execute "mkdir -p #{node[:setup][:home]}/.gnupg" do
@@ -54,6 +31,10 @@ end
 # config to first-run — that prevented future TTL bumps and pinentry
 # changes from taking effect on existing hosts. mitamae's template
 # resource is content-hash idempotent on its own.
+#
+# `source "templates/..."` resolves against THIS file's cookbook, so the
+# template stays in cookbooks/gnupg/templates/ and both per-OS recipes reach it
+# through this shared include rather than each naming it.
 template "#{node[:setup][:home]}/.gnupg/gpg-agent.conf" do
   owner node[:setup][:user]
   group node[:setup][:group]
@@ -69,12 +50,6 @@ execute "reload gpg-agent" do
   command "gpg-connect-agent reloadagent /bye"
   user node[:setup][:user]
   action :nothing
-end
-
-# macOS still needs the curses fallback bundled by the `pinentry`
-# Homebrew formula (it ships pinentry-tty + pinentry-curses).
-if node[:platform] == "darwin"
-  package "pinentry"
 end
 
 # Add GnuPG to profile. Defer `gpg-connect-agent updatestartuptty` until

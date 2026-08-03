@@ -5,12 +5,16 @@ install_package "zsh" do
   ubuntu "zsh"
 end
 
-zsh_path = case node[:platform]
-           when "darwin"
-             "#{node[:homebrew][:prefix]}/bin/zsh"
-           when "ubuntu"
-             "/usr/bin/zsh"
-end
+# Value dispatch, not a split: every resource below is shared, only the
+# interpreter path and two probe commands differ. The `case node[:platform]`
+# this replaces had no `else`, so a platform outside darwin/ubuntu left
+# zsh_path nil and the chsh + hand-off resources silently converged against an
+# empty path; platform_value requires both arms, so that hole is closed and the
+# `unless zsh_path` guards the old form needed are gone with it.
+zsh_path = platform_value(
+  darwin: "#{node[:homebrew][:prefix]}/bin/zsh",
+  linux: "/usr/bin/zsh",
+)
 
 execute " sudo echo #{zsh_path} | sudo tee -a /etc/shells > /dev/null" do
   not_if "grep -q #{zsh_path} /etc/shells"
@@ -24,28 +28,22 @@ end
 # already uses for its own /etc/passwd check -- instead of re-running getent plus
 # grep inside each Proc on every apply.
 #
-# darwin must be excluded EXPLICITLY. macOS ships no `getent` and keeps local
-# accounts in Open Directory rather than /etc/passwd, so the NSS detection below
-# is unconditionally true on every Mac. Unguarded, that silently disabled the
-# chsh across the darwin fleet and made the .bash_profile resource overwrite that
-# file on every darwin apply.
-darwin = node[:platform] == "darwin"
-
 # The login shell as the SYSTEM records it. `$SHELL` is not always set in
 # mitamae's child shell, and when it is it reflects the parent shell's preference
 # rather than the system record -- so read the directory instead: dscl on darwin
-# (Open Directory), getent field 7 elsewhere (NSS, which also covers OS Login /
-# sssd / LDAP). Without the darwin arm this is always "" on a Mac, which is what
-# made the chsh non-idempotent for the three months before it was skipped
-# outright.
-login_shell =
-  if darwin
-    out = run_command("dscl . -read /Users/#{node[:setup][:user]} UserShell", error: false).stdout
-    out.split(":").last.to_s.strip
-  else
-    out = run_command("getent passwd #{node[:setup][:user]} 2>/dev/null", error: false).stdout
-    out.split(":")[6].to_s.strip
-  end
+# (Open Directory), getent elsewhere (NSS, which also covers OS Login / sssd /
+# LDAP). Without the darwin arm this is always "" on a Mac, which is what made
+# the chsh non-idempotent for the three months before it was skipped outright.
+#
+# Two values, one shared shape: the probe command and the field of its
+# colon-separated output that holds the shell -- last for `dscl`'s
+# "UserShell: /bin/zsh", index 6 for a passwd line.
+shell_probe = platform_value(
+  darwin: "dscl . -read /Users/#{node[:setup][:user]} UserShell",
+  linux: "getent passwd #{node[:setup][:user]} 2>/dev/null",
+)
+shell_field = platform_value(darwin: -1, linux: 6)
+login_shell = run_command(shell_probe, error: false).stdout.split(":")[shell_field].to_s.strip
 
 # NSS-directory accounts (GCE OS Login's libnss_oslogin, sssd, LDAP/NIS) resolve
 # fine through getent/PAM but have no LITERAL /etc/passwd line -- chsh edits that
@@ -53,13 +51,21 @@ login_shell =
 # /etc/passwd" for them. mitamae has no ignore_failure, so an unguarded failure
 # aborts the entire run, silently skipping every cookbook after this one
 # (roles/programming, roles/llm, etc.).
-nss_directory_account =
-  !darwin &&
-  run_command("grep -q \"^#{node[:setup][:user]}:\" /etc/passwd", error: false).exit_status != 0
+#
+# darwin must be excluded EXPLICITLY, which is why its probe is the constant
+# `true`: macOS keeps local accounts in Open Directory rather than /etc/passwd,
+# so the literal-line grep fails on every Mac and would mark the whole darwin
+# fleet as NSS-virtual -- silently disabling the chsh and making the
+# .bash_profile resource below overwrite that file on every darwin apply. An
+# exit-0 probe is the "chsh works here" answer, matching the old `!darwin &&`.
+passwd_line_probe = platform_value(
+  darwin: "true",
+  linux: "grep -q \"^#{node[:setup][:user]}:\" /etc/passwd",
+)
+nss_directory_account = run_command(passwd_line_probe, error: false).exit_status != 0
 
 execute "sudo chsh -s #{zsh_path} #{node[:setup][:user]}" do
   not_if {
-    next true unless zsh_path
     next true if login_shell == zsh_path
     # chsh cannot touch an NSS-directory account; the .bash_profile hand-off
     # below is what gets those onto zsh instead.
@@ -121,7 +127,6 @@ file "#{node[:setup][:home]}/.bash_profile" do
     fi
   PROFILE
   only_if {
-    next false unless zsh_path
     next false if login_shell == zsh_path
     next false unless nss_directory_account
     # Never clobber a .bash_profile this cookbook did not write. `file` +
