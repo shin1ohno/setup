@@ -10,8 +10,8 @@
 # own `include_cookbook` calls — no explicit dependency declaration here.
 #
 # Usage:
-#   COOKBOOK=elastic-agent ./bin/mitamae local test-cookbook.rb --dry-run
-#   COOKBOOK=mise          ./bin/mitamae local test-cookbook.rb
+#   COOKBOOK=elastic-agent::linux ./bin/mitamae local test-cookbook.rb --dry-run
+#   COOKBOOK=mise                 ./bin/mitamae local test-cookbook.rb
 #   COOKBOOK=zsh::linux    ./bin/mitamae local test-cookbook.rb --dry-run
 #     (per-OS split cookbooks: name the recipe explicitly; the bare name has
 #      no default.rb and raises. Requesting the OTHER OS's recipe — or a
@@ -28,7 +28,8 @@ include_recipe "cookbooks/functions/default"
 cookbook_name = ENV["COOKBOOK"].to_s
 if cookbook_name.empty?
   raise "Set COOKBOOK=<name> to choose which cookbook to apply " \
-        "(e.g. COOKBOOK=elastic-agent ./bin/mitamae local test-cookbook.rb)."
+        "(e.g. COOKBOOK=mise ./bin/mitamae local test-cookbook.rb, " \
+        "or COOKBOOK=elastic-agent::linux for a per-OS split cookbook)."
 end
 # Existence check is intentionally delegated to include_cookbook below;
 # it raises a clear "Cookbook <name> is not found" with the resolved
