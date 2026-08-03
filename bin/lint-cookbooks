@@ -28,7 +28,10 @@
 #      cookbooks are listed in BARE_OK. allowlist: see BARE_OK (+ ALLOW3).
 #   6. claude-code deploy-list drift        — files/{rules,docs,workflows,agents}/
 #      are deployed via explicit %w() lists, not Dir.glob, so a new file is a
-#      silent orphan until its name is added to the matching list.
+#      silent orphan until its name is added to the matching list. files/skills/
+#      is checked too: its loop ships only <name>/SKILL.md, so any helper script
+#      or template beside it needs its own remote_file (test-only trees are
+#      exempted by skills_exempt in the check).
 #   7. `owner` without `group`              — mitamae then chowns to the group it
 #      reads off the existing path, and on a host whose login user is NSS-virtual
 #      (GCE OS Login) it cannot read one, emitting the literal
@@ -435,6 +438,52 @@ if File.file?(cc_default)
           "%w() list — it will never reach ~/.claude/#{dir}/. Add it to the " \
           "list, or delete the orphan file. (Explicit-list deploy, not glob: " \
           "dropping a file in files/#{dir}/ does not wire it.)")
+    end
+  end
+
+  # skills/ is directory-based rather than flat, so the loop above cannot cover
+  # it: the skill-name loop ships exactly <name>/SKILL.md, and every other asset
+  # needs its own remote_file. That makes it the SAME silent-orphan class —
+  # todo-collect/remind_sync.rb was referenced by its own SKILL.md Step 6 and
+  # never deployed, so the Reminders sync failed on every host. Walk the tree
+  # and match each file against every `source "files/skills/..."` in the recipe.
+  #
+  # Exempt: test-only trees that deliberately stay repo-side. Keep in sync with
+  # the "intentionally excluded" comments in claude-code/default.rb.
+  skills_exempt = [
+    %r{\Awriting/references/fixtures/}, # Japanese AI-slop corpus, test data
+    %r{(\A|/)test_[^/]+\.rb\z},         # unit tests live beside their source
+  ]
+  skills_root = "cookbooks/claude-code/files/skills"
+  if File.directory?(skills_root)
+    shipped = Set.new
+    # (a) the per-skill loop deploys one SKILL.md per named skill
+    if (skill_list = cc_src[/%w\(([^)]*)\)\.each do \|skill_name\|/, 1])
+      skill_list.split.each { |s| shipped << "#{s}/SKILL.md" }
+    end
+    # (b) %w() lists whose source is files/skills/<prefix>/#{file_name}
+    cc_src.scan(
+      /%w\(([^)]*)\)\.each do \|file_name\|\s*\n\s*remote_file[^\n]*\n\s*source "files\/skills\/([^"]*)\/\#\{file_name\}"/,
+    ) { |names, prefix| names.split.each { |n| shipped << "#{prefix}/#{n}" } }
+    # (c) single-file remote_file blocks (literal path, no interpolation)
+    cc_src.scan(/source "files\/skills\/([^"\#]+)"/) { |(path)| shipped << path }
+
+    Dir.glob("#{skills_root}/**/*")
+       .select { |p| File.file?(p) }
+       .map { |p| p.sub("#{skills_root}/", "") }
+       .sort
+       .each do |rel|
+      next if shipped.include?(rel)
+      next if skills_exempt.any? { |re| rel.match?(re) }
+
+      idx = cc_src.index('source "files/skills/') || 0
+      lineno = cc_src[0...idx].count("\n") + 1
+      add(violations, cc_default, lineno,
+          "files/skills/#{rel} exists but no `source \"files/skills/...\"` in " \
+          "the recipe deploys it — it will never reach ~/.claude/skills/. The " \
+          "skill loop ships only SKILL.md, so a helper script or template needs " \
+          "its own remote_file. Add one, delete the orphan, or (test-only) " \
+          "exempt it in this check's skills_exempt.")
     end
   end
 end
