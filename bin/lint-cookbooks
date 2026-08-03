@@ -67,6 +67,14 @@
 #      through to nil instead of failing, so the recipe converges "successfully"
 #      with an unset path/package. Heredoc bodies are skipped so shell `if` in an
 #      add_profile block does not unbalance the walk.
+#  12. [FAIL] `node[:platform]` inside cookbooks/ (ratchet) — OS branching
+#      belongs at the entry/role layer (hurdle-removal plan stream B: per-OS
+#      recipes selected by the caller, install_package / platform_value /
+#      host-profile facts for values). PLATFORM_PENDING freezes the
+#      pre-migration state: a file listed there may still reference
+#      node[:platform] (it is the burn-down list), any OTHER cookbook file may
+#      not, and a migrated file MUST drop its PENDING entry in the same PR.
+#      Allowlist: functions + host-profile — the platform abstraction owners.
 #
 # Usage:  bin/lint-cookbooks   # exit 1 on any FAIL-tier violation (WARN never
 #                              # affects the exit code)
@@ -818,6 +826,131 @@ recipe_files.each do |file|
     add(warnings, file, idx + 1,
         "`case node[:platform]` without else — returns nil on an unknown " \
         "platform; add `else raise`.")
+  end
+end
+
+# --- check 12: node[:platform] inside cookbooks/ (migration ratchet) --------
+
+# The two files that legitimately own platform dispatch.
+PLATFORM_ALLOW = %w[
+  cookbooks/functions/default.rb
+  cookbooks/host-profile/default.rb
+].freeze
+
+# Pre-migration burn-down list, generated mechanically (files under cookbooks/
+# with a non-comment node[:platform] reference) when the ratchet landed. Files
+# here may keep their references until their stream-B migration PR; that PR
+# must remove the entry (the ratchet FAILS on a clean file still listed).
+# Everything NOT listed is held at zero references from day one.
+PLATFORM_PENDING = %w[
+  cookbooks/altserver/default.rb
+  cookbooks/arp-flux/default.rb
+  cookbooks/auto-mitamae-orchestrator/default.rb
+  cookbooks/awscli/default.rb
+  cookbooks/build-essential/default.rb
+  cookbooks/ctags/default.rb
+  cookbooks/dot-config-nvim/default.rb
+  cookbooks/dot-config-zed/default.rb
+  cookbooks/edge-agent/default.rb
+  cookbooks/elastic-agent/default.rb
+  cookbooks/envchain/default.rb
+  cookbooks/eternal-terminal/default.rb
+  cookbooks/fastfetch/default.rb
+  cookbooks/fd/default.rb
+  cookbooks/fonts/default.rb
+  cookbooks/fzf/default.rb
+  cookbooks/gcloud-cli/default.rb
+  cookbooks/gdbm/default.rb
+  cookbooks/git/default.rb
+  cookbooks/gnupg/default.rb
+  cookbooks/golang/default.rb
+  cookbooks/gpg-backup/default.rb
+  cookbooks/haskell/default.rb
+  cookbooks/herdr/default.rb
+  cookbooks/imagemagick/default.rb
+  cookbooks/iperf3/default.rb
+  cookbooks/jdk/default.rb
+  cookbooks/jq/default.rb
+  cookbooks/lazygit/default.rb
+  cookbooks/libffi/default.rb
+  cookbooks/lxc-apm-server/default.rb
+  cookbooks/lxc-dev-workstation/default.rb
+  cookbooks/lxc-elasticsearch/default.rb
+  cookbooks/lxc-es-memory/default.rb
+  cookbooks/lxc-homebridge/default.rb
+  cookbooks/lxc-hydra/default.rb
+  cookbooks/lxc-kibana/default.rb
+  cookbooks/lxc-monitoring/default.rb
+  cookbooks/lxc-roon-mcp/default.rb
+  cookbooks/lxc-roon/default.rb
+  cookbooks/lxc-samba/default.rb
+  cookbooks/lxc-shared-user/default.rb
+  cookbooks/lxc-systemd-hardening-fix/default.rb
+  cookbooks/mac-apps/default.rb
+  cookbooks/mac-settings/default.rb
+  cookbooks/mac-sudo/default.rb
+  cookbooks/macism/default.rb
+  cookbooks/macos-hub/default.rb
+  cookbooks/mcp-probe/default.rb
+  cookbooks/mcp/default.rb
+  cookbooks/mosh/default.rb
+  cookbooks/ncurses/default.rb
+  cookbooks/neovim/default.rb
+  cookbooks/obsidian_file_sync/default.rb
+  cookbooks/ollama/default.rb
+  cookbooks/pm2/default.rb
+  cookbooks/pve-host/default.rb
+  cookbooks/python/default.rb
+  cookbooks/rbenv/default.rb
+  cookbooks/rclone/default.rb
+  cookbooks/remind/default.rb
+  cookbooks/roon/default.rb
+  cookbooks/s3-backup/default.rb
+  cookbooks/self-heal-loops/default.rb
+  cookbooks/self-heal-observer/default.rb
+  cookbooks/smartmontools/default.rb
+  cookbooks/speedtest-cli/default.rb
+  cookbooks/ssh/default.rb
+  cookbooks/starship/default.rb
+  cookbooks/tailscale/default.rb
+  cookbooks/terraform/default.rb
+  cookbooks/tnef/default.rb
+  cookbooks/tree/default.rb
+  cookbooks/unbound-watchdog/default.rb
+  cookbooks/unbound/default.rb
+  cookbooks/wget/default.rb
+  cookbooks/xcode/default.rb
+  cookbooks/yq/default.rb
+  cookbooks/zed/default.rb
+  cookbooks/zk/default.rb
+  cookbooks/zlib/default.rb
+  cookbooks/zsh/default.rb
+].freeze
+
+recipe_files.each do |file|
+  next unless file.start_with?("cookbooks/")
+  next if PLATFORM_ALLOW.include?(file)
+
+  hits = []
+  File.foreach(file).with_index(1) do |raw, ln|
+    next if raw =~ /\A\s*#/
+    hits << ln if raw =~ /node\[:platform\]/
+  end
+
+  if PLATFORM_PENDING.include?(file)
+    if hits.empty?
+      add(violations, file, 1,
+          "migrated off node[:platform] but still listed in PLATFORM_PENDING — " \
+          "remove its entry from bin/lint-cookbooks in this PR (check 12 ratchet)")
+    end
+  else
+    hits.each do |ln|
+      add(violations, file, ln,
+          "node[:platform] in a cookbook — branch at the entry/role layer " \
+          "(per-OS recipe via include_platform_cookbook or a static ::darwin/" \
+          "::linux include), or use install_package / platform_value / " \
+          "node[:hw] facts (check 12)")
+    end
   end
 end
 
