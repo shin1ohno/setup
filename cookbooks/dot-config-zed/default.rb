@@ -28,8 +28,6 @@
 # currently install Zed on linux.rb hosts, so config-only deploy would
 # be a no-op there. Extend to linux when zed is bare-metal-linux scope.
 
-return if node[:platform] != "darwin"
-
 zed_config_dir = "#{node[:setup][:home]}/.config/zed"
 zed_themes_dir = "#{zed_config_dir}/themes"
 

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-return if node[:platform] != "darwin"
-
 %w(
   alacritty                 balenaetcher
   backblaze                 charles

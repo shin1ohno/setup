@@ -7,8 +7,6 @@
 # - AltServer: macOS companion app for AltStore
 # - jitterbugpair: CLI tool to generate pairing files for JIT debugging
 
-return if node[:platform] != "darwin"
-
 # Install AltServer via Homebrew Cask
 execute "brew reinstall --cask altserver" do
   not_if "brew list | fgrep -q altserver"
