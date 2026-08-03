@@ -3,7 +3,9 @@
 # Claude Code is Anthropic's agentic coding tool for the terminal
 # Installed via native installer (https://code.claude.com/docs/en/setup)
 
-include_cookbook "mcp"
+# mcp is a per-OS split cookbook (macOS also renders Claude Desktop's config);
+# claude-code itself runs on both, so dispatch rather than naming one recipe.
+include_platform_cookbook "mcp"
 
 claude_path = "#{node[:setup][:home]}/.local/bin/claude"
 profile_dir = "#{node[:setup][:root]}/profile.d"

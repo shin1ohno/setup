@@ -113,8 +113,14 @@ ALLOW1 = {
 # Check 3: cookbooks whose bare/STS auth gate is correct by design.
 #   mcp / codex-cli run on darwin where `aws login`'s DEFAULT profile is the
 #   right credential — adding --profile would break Mac MCP auth (case B, D5).
+#   mcp is a per-OS split cookbook, so BOTH recipes carry the gate: darwin.rb
+#   gates the Claude Desktop + Claude Code renders, linux.rb the Claude Code
+#   one. The linux gate is the same bare gate the pre-split default.rb already
+#   ran on Linux hosts (the render was hoisted out of the darwin branch long
+#   before this split); pinning a profile there is a separate design change.
 ALLOW3 = %w[
-  cookbooks/mcp/default.rb
+  cookbooks/mcp/darwin.rb
+  cookbooks/mcp/linux.rb
   cookbooks/codex-cli/default.rb
 ].to_set
 
@@ -873,13 +879,10 @@ PLATFORM_PENDING = %w[
   cookbooks/lazygit/default.rb
   cookbooks/libffi/default.rb
   cookbooks/lxc-roon/default.rb
-  cookbooks/mcp/default.rb
   cookbooks/mosh/default.rb
   cookbooks/ncurses/default.rb
   cookbooks/neovim/default.rb
   cookbooks/obsidian_file_sync/default.rb
-  cookbooks/ollama/default.rb
-  cookbooks/pm2/default.rb
   cookbooks/python/default.rb
   cookbooks/rclone/default.rb
   cookbooks/roon/default.rb
