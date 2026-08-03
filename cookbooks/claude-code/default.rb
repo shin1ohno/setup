@@ -434,6 +434,20 @@ end
   end
 end
 
+# Deploy the todo-collect helper script. The skills loop above ships SKILL.md
+# and nothing else, but /todo-collect Step 6 shells out to this file
+# (`ruby remind_sync.rb --config ... --apply`) — so SKILL.md alone leaves the
+# Apple Reminders mirror sync unrunnable on every host. Its sibling
+# test_remind_sync.rb is test-only and intentionally excluded, same as
+# writing/references/fixtures/ above.
+remote_file "#{node[:setup][:home]}/.claude/skills/todo-collect/remind_sync.rb" do
+  source "files/skills/todo-collect/remind_sync.rb"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
 # Deploy TODO pipeline config (docs/todo-management.md). sources.yaml is the
 # managed PERSONAL-source list for /todo-collect; work sources live in the
 # unmanaged ~/.claude/todo/sources.local.yaml, merged at runtime by the skill.
