@@ -1,13 +1,13 @@
 # Network connectivity and VPN
-include_cookbook "tailscale"
+include_platform_cookbook "tailscale"
 
 # Network testing and monitoring tools
-include_cookbook "speedtest-cli"
+include_platform_cookbook "speedtest-cli"
 include_cookbook "iperf3"
 
 # Remote access and file transfer
-include_cookbook "mosh"
-include_cookbook "eternal-terminal"
+include_platform_cookbook "mosh"
+include_platform_cookbook "eternal-terminal"
 include_cookbook "sshpass"
 include_cookbook "osc52-clipboard"
 

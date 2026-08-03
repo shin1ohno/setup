@@ -863,7 +863,6 @@ PLATFORM_PENDING = %w[
   cookbooks/awscli/default.rb
   cookbooks/build-essential/default.rb
   cookbooks/envchain/default.rb
-  cookbooks/eternal-terminal/default.rb
   cookbooks/fonts/default.rb
   cookbooks/fzf/default.rb
   cookbooks/gcloud-cli/default.rb
@@ -876,17 +875,13 @@ PLATFORM_PENDING = %w[
   cookbooks/jdk/default.rb
   cookbooks/libffi/default.rb
   cookbooks/lxc-roon/default.rb
-  cookbooks/mosh/default.rb
   cookbooks/ncurses/default.rb
   cookbooks/obsidian_file_sync/default.rb
   cookbooks/python/default.rb
   cookbooks/rclone/default.rb
   cookbooks/roon/default.rb
-  cookbooks/s3-backup/default.rb
-  cookbooks/speedtest-cli/default.rb
   cookbooks/ssh/default.rb
   cookbooks/starship/default.rb
-  cookbooks/tailscale/default.rb
   cookbooks/yq/default.rb
   cookbooks/zlib/default.rb
   cookbooks/zsh/default.rb

@@ -384,65 +384,66 @@ file "#{node[:setup][:home]}/.config/s3-backup/config.sample" do
   not_if "test -f #{node[:setup][:home]}/.config/s3-backup/config.sample"
 end
 
-# Linux-specific: systemd user service and timer
-if node[:platform] != "darwin"
-  directory "#{node[:setup][:home]}/.config/systemd/user" do
-    owner user
-    group node[:setup][:group]
-    mode "0755"
-  end
-
-  file "#{node[:setup][:home]}/.config/systemd/user/s3-backup.service" do
-    owner user
-    group node[:setup][:group]
-    mode "0644"
-    content <<~SERVICE
-      [Unit]
-      Description=S3 Backup Service - Securely backup sensitive files to S3
-      After=network-online.target
-      Wants=network-online.target
-
-      [Service]
-      Type=oneshot
-      ExecStart=#{setup_root}/bin/s3-backup backup
-      StandardOutput=journal
-      StandardError=journal
-
-      # Security hardening
-      NoNewPrivileges=yes
-      PrivateTmp=yes
-
-      [Install]
-      WantedBy=default.target
-    SERVICE
-  end
-
-  file "#{node[:setup][:home]}/.config/systemd/user/s3-backup.timer" do
-    owner user
-    group node[:setup][:group]
-    mode "0644"
-    content <<~TIMER
-      [Unit]
-      Description=Run S3 backup daily
-
-      [Timer]
-      # Run at 3:00 AM local time
-      OnCalendar=*-*-* 03:00:00
-      # Randomize start time within 30 minutes to avoid thundering herd
-      RandomizedDelaySec=1800
-      # Run missed backups on boot if system was off
-      Persistent=true
-
-      [Install]
-      WantedBy=timers.target
-    TIMER
-  end
-
-  # Note: systemctl --user requires D-Bus session, cannot run in mitamae context
-  # User should run after configuring ~/.config/s3-backup/config:
-  #   systemctl --user daemon-reload
-  #   systemctl --user enable --now s3-backup.timer
+# systemd user service and timer. This cookbook is linux-only (see
+# cookbooks/s3-backup/platform): the launchd side was never written, and the
+# only callers are roles/server — included from linux.rb — and
+# pve/lxc-housekeeping.rb.
+directory "#{node[:setup][:home]}/.config/systemd/user" do
+  owner user
+  group node[:setup][:group]
+  mode "0755"
 end
+
+file "#{node[:setup][:home]}/.config/systemd/user/s3-backup.service" do
+  owner user
+  group node[:setup][:group]
+  mode "0644"
+  content <<~SERVICE
+    [Unit]
+    Description=S3 Backup Service - Securely backup sensitive files to S3
+    After=network-online.target
+    Wants=network-online.target
+
+    [Service]
+    Type=oneshot
+    ExecStart=#{setup_root}/bin/s3-backup backup
+    StandardOutput=journal
+    StandardError=journal
+
+    # Security hardening
+    NoNewPrivileges=yes
+    PrivateTmp=yes
+
+    [Install]
+    WantedBy=default.target
+  SERVICE
+end
+
+file "#{node[:setup][:home]}/.config/systemd/user/s3-backup.timer" do
+  owner user
+  group node[:setup][:group]
+  mode "0644"
+  content <<~TIMER
+    [Unit]
+    Description=Run S3 backup daily
+
+    [Timer]
+    # Run at 3:00 AM local time
+    OnCalendar=*-*-* 03:00:00
+    # Randomize start time within 30 minutes to avoid thundering herd
+    RandomizedDelaySec=1800
+    # Run missed backups on boot if system was off
+    Persistent=true
+
+    [Install]
+    WantedBy=timers.target
+  TIMER
+end
+
+# Note: systemctl --user requires D-Bus session, cannot run in mitamae context
+# User should run after configuring ~/.config/s3-backup/config:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now s3-backup.timer
 
 # Create README with usage instructions
 file "#{setup_root}/bin/s3-backup.README.md" do
