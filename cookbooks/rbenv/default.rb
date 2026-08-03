@@ -3,19 +3,23 @@
 node.reverse_merge!(
   rbenv: {
     root: "/usr/share/rbenv",
-  },
-)
-
-if node[:platform] == "darwin"
-  node.reverse_merge!(
-    rbenv: {
-      # --disable-dtrace: the homebrew profile exports CPPFLAGS/CFLAGS with a
-      # glued `-isystem<prefix>/include`. Ruby's `make` passes $(CPPFLAGS) to
-      # dtrace when generating probes.h; dtrace can't parse the glued -isystem
-      # and dies with `invalid probe specifier system/...` → `make [probes.h]
-      # Error 1`. Disabling dtrace probes (unused here) sidesteps it without
-      # touching the global Homebrew env. See cookbooks/homebrew/environment.rb.
-      ruby_configure_opts: %W[
+    # RUBY_CONFIGURE_OPTS for `rbenv install` (exported by the :rbenv define
+    # below). Value-only platform difference: darwin points the build at the
+    # Homebrew kegs, linux builds against the distro -dev packages that
+    # roles/programming installs.
+    #
+    # Both branches are built eagerly — on linux node[:homebrew][:prefix] is
+    # nil, so the discarded darwin string interpolates to bare "/opt/..."
+    # paths. Harmless: the string is never read off darwin.
+    #
+    # --disable-dtrace: the homebrew profile exports CPPFLAGS/CFLAGS with a
+    # glued `-isystem<prefix>/include`. Ruby's `make` passes $(CPPFLAGS) to
+    # dtrace when generating probes.h; dtrace can't parse the glued -isystem
+    # and dies with `invalid probe specifier system/...` → `make [probes.h]
+    # Error 1`. Disabling dtrace probes (unused here) sidesteps it without
+    # touching the global Homebrew env. See cookbooks/homebrew/environment.rb.
+    ruby_configure_opts: platform_value(
+      darwin: %W[
         --with-gcc=clang CXX=clang++
         --with-out-ext=tk,tk/*
         --with-valgrind
@@ -31,12 +35,7 @@ if node[:platform] == "darwin"
         --enable-pthread
         --disable-dtrace
       ].join(" "),
-    },
-  )
-else
-  node.reverse_merge!(
-    rbenv: {
-      ruby_configure_opts: %w[
+      linux: %w[
         --with-out-ext=tk,tk/*
         --with-valgrind
         --disable-install-capi
@@ -44,9 +43,9 @@ else
         --enable-shared
         --enable-pthread
       ].join(" "),
-    },
-  )
-end
+    ),
+  },
+)
 
 backup_path = "#{node[:rbenv][:root]}-setup-backup-#{Time.now.to_i}"
 backup_cond = "test -d #{node[:rbenv][:root]} -a ! -d #{node[:rbenv][:root]}/.git"
@@ -179,12 +178,12 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
   end
 end
 
-# Resolve nproc at apply time so the profile entry is a static literal
-# (`export BUNDLE_JOBS=10`) and skips a ~5-10ms subprocess on every
-# shell start. The value rarely changes (only on hardware swaps); a
-# subsequent `mitamae` apply rewrites it.
-ncpu_cmd = node[:platform] == "darwin" ? "/usr/sbin/sysctl -n hw.ncpu" : "nproc"
-ncpu = run_command(ncpu_cmd).stdout.strip
+# Bake the CPU count in at apply time so the profile entry is a static literal
+# (`export BUNDLE_JOBS=10`) and skips a ~5-10ms subprocess on every shell
+# start. The value rarely changes (only on hardware swaps); a subsequent
+# `mitamae` apply rewrites it. host-profile resolves the count once per run
+# (sysctl on darwin, nproc elsewhere) — see cookbooks/host-profile.
+ncpu = node[:hw][:ncpu]
 add_profile "bundler" do
   bash_content "export BUNDLE_JOBS=#{ncpu}\n"
   fish_content "set -gx BUNDLE_JOBS #{ncpu}\n"
