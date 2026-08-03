@@ -33,8 +33,8 @@ include_cookbook "zed"
 include_cookbook "dot-config-zed"
 include_cookbook "gpg-backup"
 include_cookbook "remind"
-include_cookbook "edge-agent"
-include_cookbook "elastic-agent"
+include_cookbook "edge-agent::darwin"
+include_cookbook "elastic-agent::darwin"
 include_cookbook "macos-hub"
 
 # Gate visibility report — must stay the LAST include so its compile phase

@@ -70,14 +70,14 @@ unless node[:profile][:label] == "sh1-cloud"
   include_cookbook "bluez"
   include_cookbook "zeroconf"
   include_cookbook "broadcom-wifi"
-  include_cookbook "edge-agent"
+  include_cookbook "edge-agent::linux"
   # samba / smartmontools / obsidian_file_sync / s3-backup / gpg-backup
   # now live in roles/server/default.rb
 
   # Standalone Elastic Agent — ships system metrics + syslog/auth log to the
   # 3-node ES cluster. Per-host tags = ["bare-metal"].
   node.reverse_merge!(elastic_agent: { tags: ["bare-metal", "linux"] })
-  include_cookbook "elastic-agent"
+  include_cookbook "elastic-agent::linux"
 end
 
 # Gate visibility report — must stay the LAST include so its compile phase
