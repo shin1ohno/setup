@@ -22,7 +22,20 @@
 # A cookbook in ALLOWLIST is permitted to be unreachable (Phase 1 deletes the
 # dead cookbooks and empties this list). Any OTHER unreachable cookbook fails CI.
 #
-# Usage:  bin/audit-cookbook-reachability   # exit 1 on unexpected unreachable
+# FAIL conditions:
+#   1. a cookbook is unreachable and not allowlisted
+#   2. include_platform_cookbook "X" with only one of the two per-OS recipes
+#   3. a per-OS recipe (cookbooks/*/{darwin,linux}.rb) that no caller includes
+#   4. a STALE INCLUDE — an include whose target recipe file does not exist
+#
+# Condition 4 exists because reachability is keyed on the cookbook NAME: an
+# `include_cookbook "mcp"` left behind after mcp/default.rb became darwin.rb +
+# linux.rb still marks the mcp cookbook reached, so conditions 1-3 all pass while
+# every apply that walks that line dies on mitamae's "Cookbook mcp is not found
+# at cookbooks/mcp/default.rb". Before this check, the first thing to notice was
+# the CI dry-run (#817).
+#
+# Usage:  bin/audit-cookbook-reachability   # exit 1 on any FAIL condition
 #
 # This is a static approximation: variable / node-driven includes
 # (e.g. test-cookbook.rb's `include_cookbook ENV["COOKBOOK"]`) cannot be
@@ -60,14 +73,29 @@ reached_cookbooks = Set.new
 visited_files     = Set.new
 queue             = []
 half_split        = []
+missing_targets   = []
 
-def enqueue(path, queue, visited_files)
+# `origin` is the "<file>: <include as written>" description of the edge being
+# followed. When it is given and the target file does not exist, the edge is a
+# STALE INCLUDE: mitamae raises "Cookbook X is not found at ..." at compile
+# time, but nothing static caught it before this check existed — reached_cookbooks
+# is keyed on the cookbook NAME, so an include pointing at a recipe file deleted
+# by a per-OS split still marked its cookbook reachable and the audit passed.
+# (Proven by #817, whose stale `include_cookbook "mcp"` cleared audit + lint and
+# failed first in the CI dry-run.)
+#
+# origin is nil for edges whose target is guaranteed by construction — the entry
+# files, which ENTRY_FILES already filtered through File.file?.
+def enqueue(path, queue, visited_files, missing_targets = nil, origin = nil)
   return unless path
   # Normalize to a REPO_ROOT-relative path so BFS bookkeeping (and the per-OS
   # orphan check at the end) compares one canonical form regardless of how
   # the include was written (absolute expand_path vs relative join).
   path = path.sub("#{REPO_ROOT}/", "")
-  return unless File.file?(path)
+  unless File.file?(path)
+    missing_targets << "#{origin} -> #{path} does not exist" if origin && missing_targets
+    return
+  end
   return if visited_files.include?(path)
   visited_files << path
   queue << path
@@ -100,18 +128,24 @@ until queue.empty?
     next if raw =~ /\A\s*#/      # skip comment-only lines
     line = raw
 
+    # Only STRING-LITERAL includes are resolvable statically. The one dynamic
+    # include in the repo — test-cookbook.rb's `include_cookbook cookbook_name`
+    # (COOKBOOK env var) — has no quote and never matches, so it is excluded
+    # from the stale-target check for free rather than by name.
     line.scan(/\binclude_cookbook\s+"([^"]+)"/) do |m|
       cb = m[0].split("::").first
       reached_cookbooks << cb
       parts = m[0].split("::")
       parts << "default" if parts.length == 1
-      enqueue(File.join("cookbooks", *parts) + ".rb", queue, visited_files)
+      enqueue(File.join("cookbooks", *parts) + ".rb", queue, visited_files,
+              missing_targets, "#{file}: include_cookbook \"#{m[0]}\"")
     end
 
     line.scan(/\binclude_role\s+"([^"]+)"/) do |m|
       parts = m[0].split("::")
       parts << "default" if parts.length == 1
-      enqueue(File.join("roles", *parts) + ".rb", queue, visited_files)
+      enqueue(File.join("roles", *parts) + ".rb", queue, visited_files,
+              missing_targets, "#{file}: include_role \"#{m[0]}\"")
     end
 
     # include_platform_cookbook "X" dispatches to cookbooks/X/<os>.rb at apply
@@ -145,7 +179,8 @@ until queue.empty?
           File.join(dir, target) # bare intra-cookbook recipe
         end
       path += ".rb" unless path.end_with?(".rb")
-      enqueue(path, queue, visited_files)
+      enqueue(path, queue, visited_files,
+              missing_targets, "#{file}: include_recipe \"#{target}\"")
     end
 
     if line =~ /\blxc_entry\s*\(/
@@ -154,9 +189,14 @@ until queue.empty?
       # elastic-agent is a per-OS split cookbook; lxc_entry includes its LINUX
       # recipe statically (every LXC is linux). Enqueue the same file the helper
       # does, or elastic-agent/linux.rb reads as an orphan.
-      enqueue(File.join("cookbooks", LXC_ENTRY_COOKBOOK, "linux.rb"), queue, visited_files)
-      enqueue(File.join("cookbooks", LXC_ENTRY_TAIL, "default.rb"), queue, visited_files)
-      enqueue(File.join("roles", LXC_ENTRY_ROLE, "default.rb"), queue, visited_files)
+      # These three are real edges too: if lxc_entry's targets move or split,
+      # every LXC apply breaks, so a missing one is reported like any other.
+      enqueue(File.join("cookbooks", LXC_ENTRY_COOKBOOK, "linux.rb"), queue, visited_files,
+              missing_targets, "#{file}: lxc_entry(...)")
+      enqueue(File.join("cookbooks", LXC_ENTRY_TAIL, "default.rb"), queue, visited_files,
+              missing_targets, "#{file}: lxc_entry(...)")
+      enqueue(File.join("roles", LXC_ENTRY_ROLE, "default.rb"), queue, visited_files,
+              missing_targets, "#{file}: lxc_entry(...)")
     end
 
     # File-store cookbooks: a recipe that reads cookbooks/<name>/files/... by
@@ -181,6 +221,7 @@ end
 unreachable      = (all_cookbooks - reached_cookbooks).sort
 unexpected       = unreachable - ALLOWLIST
 stale_allowlist  = ALLOWLIST.select { |c| reached_cookbooks.include?(c) }
+missing_targets  = missing_targets.uniq.sort # one edge can be walked from several entries
 
 # Per-OS recipes that no caller ever includes (e.g. zsh::darwin referenced but
 # linux.rb orphaned after a partial migration). visited_files holds normalized
@@ -199,6 +240,17 @@ unless stale_allowlist.empty?
   stale_allowlist.each { |c| warn "  - #{c}" }
 end
 
+unless missing_targets.empty?
+  warn ""
+  warn "FAIL: #{missing_targets.size} include(s) whose target recipe does not exist (stale include):"
+  missing_targets.each { |msg| warn "  - #{msg}" }
+  warn ""
+  warn "mitamae raises \"... is not found at <path>\" on these at compile time."
+  warn "A per-OS split is the usual cause: cookbooks/<name>/default.rb was replaced"
+  warn "by darwin.rb + linux.rb, so callers need include_platform_cookbook \"<name>\""
+  warn "(dual-OS caller) or the static \"<name>::linux\" / \"<name>::darwin\" form."
+end
+
 unless half_split.empty?
   warn ""
   warn "FAIL: #{half_split.size} half-split cookbook reference(s) — include_platform_cookbook needs BOTH per-OS recipes:"
@@ -211,7 +263,7 @@ unless per_os_orphans.empty?
   per_os_orphans.each { |p| warn "  - #{p}" }
 end
 
-if unexpected.empty? && half_split.empty? && per_os_orphans.empty?
+if unexpected.empty? && half_split.empty? && per_os_orphans.empty? && missing_targets.empty?
   puts "OK: every cookbook is reachable or allowlisted."
   exit 0
 else
