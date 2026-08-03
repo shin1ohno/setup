@@ -862,8 +862,6 @@ PLATFORM_ALLOW = %w[
 PLATFORM_PENDING = %w[
   cookbooks/awscli/default.rb
   cookbooks/build-essential/default.rb
-  cookbooks/ctags/default.rb
-  cookbooks/dot-config-nvim/default.rb
   cookbooks/envchain/default.rb
   cookbooks/eternal-terminal/default.rb
   cookbooks/fonts/default.rb
@@ -876,12 +874,10 @@ PLATFORM_PENDING = %w[
   cookbooks/gpg-backup/default.rb
   cookbooks/haskell/default.rb
   cookbooks/jdk/default.rb
-  cookbooks/lazygit/default.rb
   cookbooks/libffi/default.rb
   cookbooks/lxc-roon/default.rb
   cookbooks/mosh/default.rb
   cookbooks/ncurses/default.rb
-  cookbooks/neovim/default.rb
   cookbooks/obsidian_file_sync/default.rb
   cookbooks/python/default.rb
   cookbooks/rclone/default.rb
@@ -891,9 +887,7 @@ PLATFORM_PENDING = %w[
   cookbooks/ssh/default.rb
   cookbooks/starship/default.rb
   cookbooks/tailscale/default.rb
-  cookbooks/terraform/default.rb
   cookbooks/yq/default.rb
-  cookbooks/zk/default.rb
   cookbooks/zlib/default.rb
   cookbooks/zsh/default.rb
 ].freeze
