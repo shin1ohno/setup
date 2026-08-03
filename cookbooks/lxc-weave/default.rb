@@ -235,11 +235,18 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "/monitoring/apm/* in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  # Skip when env file AND CA cert already exist. SSM regen on every
-  # apply would rotate the .env mtime + force-recreate the container;
-  # we want that only when the key/CA itself changes (manual rotation
-  # via bin/issue-apm-api-keys.sh or es_ca regen).
-  skip_if: -> { File.exist?(apm_env_path) && File.exist?(apm_ca_path) },
+  # Skip when the env file carries the header the generator writes AND the CA
+  # is a well-formed PEM. SSM regen on every apply would rotate the .env mtime
+  # + force-recreate the container; we want that only when the key/CA itself
+  # changes (manual rotation via bin/issue-apm-api-keys.sh or es_ca regen).
+  # Content-aware rather than File.exist? so a truncated or error-text artifact
+  # re-fetches instead of counting as done — NOT rotation detection; an old but
+  # well-formed pair still skips (~/.claude/rules/ruby.md "SSM-sourced .env
+  # generator: file-existence skip_if drops new KEY=VALUE lines silently").
+  skip_if: lambda {
+    file_has_all?(apm_env_path, ["OTEL_EXPORTER_OTLP_HEADERS=authorization=ApiKey"]) &&
+      file_has_all?(apm_ca_path, ["BEGIN CERTIFICATE"])
+  },
 ) do
   execute "generate weave-server APM env" do
     command <<~SH.strip

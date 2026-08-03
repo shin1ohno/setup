@@ -14,8 +14,6 @@
 #   - Pattern 1 break-glass tailscaled with tag:emergency-admin
 #     (subnet route advertise lives on pro-router LXC, not host)
 
-return if node[:platform] == "darwin"
-
 # Proxmox VE only — guard against accidental run on plain Debian.
 # /etc/pve is the canonical PVE marker (mounted by pve-cluster).
 unless File.directory?("/etc/pve")

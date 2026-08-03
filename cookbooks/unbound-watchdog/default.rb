@@ -15,8 +15,6 @@
 # resource with owner root triggers a failing sudo chown). User-space staging
 # dirs use the `directory` resource.
 
-return if node[:platform] == "darwin"
-
 user      = node[:setup][:user]
 group     = node[:setup][:group]
 files_dir = "#{node[:setup][:root]}/unbound-watchdog/files"

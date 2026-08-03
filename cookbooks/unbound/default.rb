@@ -13,8 +13,6 @@
 # Serving home.local locally removes the dependency on the (wedge-prone) VPC
 # Route53 forward path and mirrors what the RTX rtx_dns_server "hosts" block did.
 
-return if node[:platform] == "darwin"
-
 staging_dir = "#{node[:setup][:root]}/unbound"
 
 # AWS profile/region for the SSM fetch of home.local records. Reuse the

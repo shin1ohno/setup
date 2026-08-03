@@ -22,8 +22,6 @@
 #
 # Linux only — the monitoring LXC is Debian 13. macOS hosts never run this.
 
-return if node[:platform] == "darwin"
-
 # aws is also installed by auto-mitamae-orchestrator on this same recipe;
 # include_recipe dedups, so this is a safe no-op there but keeps the cookbook
 # self-contained (jq/curl/flock are added by the bootstrap-deps execute below).

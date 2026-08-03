@@ -17,8 +17,6 @@
 #
 # Linux only — Phase 4 will define a separate macOS pull track.
 
-return if node[:platform] == "darwin"
-
 include_cookbook "awscli"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys (per

@@ -19,8 +19,6 @@
 #     (provisioned by home-monitor/rds.tf).
 #   - frolicking-beaming-crescent.md Phase 6a: lxc-hydra includes this cookbook.
 
-return if node[:platform] == "darwin"
-
 include_cookbook "awscli"
 
 HYDRA_VERSION = "v2.3.0"

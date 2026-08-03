@@ -41,8 +41,6 @@
 # native apply succeeds, the operator may remove ~/deploy/elasticsearch/
 # from the LXC.
 
-return if node[:platform] == "darwin"
-
 include_cookbook "awscli"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys so the
