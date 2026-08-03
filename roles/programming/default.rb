@@ -3,8 +3,9 @@
 # Programming role: Programming languages and development environments
 # This role installs various programming languages and their toolchains
 
-# Build tools (includes Xcode for macOS, build-essential for Linux)
-include_cookbook "build-essential"
+# Build tools (Xcode Command Line Tools on macOS, the build-essential /
+# base-devel metapackage on Linux)
+include_platform_cookbook "build-essential"
 
 # Version configuration
 node.reverse_merge!(
@@ -27,11 +28,15 @@ node.reverse_merge!(
 # Ruby ecosystem with dependencies
 include_cookbook "gdbm"
 include_cookbook "berkeley-db"
-include_cookbook "libffi"
+include_platform_cookbook "libffi"  # darwin additionally exports LDFLAGS/CPPFLAGS for the keg-only brew libffi
 include_cookbook "libyaml"
 include_cookbook "readline"
-include_cookbook "ncurses"
-include_cookbook "zlib"
+# ncurses / zlib are Linux-only (cookbooks/<name>/platform marker): macOS
+# builds Ruby against the copies in the SDK.
+unless node[:platform] == "darwin"
+  include_cookbook "ncurses"
+  include_cookbook "zlib"
+end
 include_cookbook "rbenv"
 include_cookbook "ruby40"
 
@@ -39,16 +44,16 @@ include_cookbook "ruby40"
 include_cookbook "rust"
 include_cookbook "nodejs"
 include_platform_cookbook "pm2"  # launchd vs systemd startup wiring
-include_cookbook "haskell"
-include_cookbook "golang"
+include_platform_cookbook "haskell"  # stack from mise (darwin) vs upstream script (linux)
+include_platform_cookbook "golang"   # linux additionally needs the distro build deps
 
 # Python tooling
 include_cookbook "uv"
-include_cookbook "python"
+include_platform_cookbook "python"   # linux additionally needs the pyenv build deps
 
 # Development tools and version managers
 include_cookbook "mise"
-include_cookbook "jdk"
+include_platform_cookbook "jdk"      # corretto via mise (darwin) vs apt (linux)
 
 # Cloud development tools
 # awscli moved to roles/foundation (ssh-keys depends on it; foundation runs first).

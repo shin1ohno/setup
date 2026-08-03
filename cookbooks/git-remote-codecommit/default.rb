@@ -20,7 +20,7 @@
 #      git_clone fires through `sudo -H -u <user>` with PATH stripped to
 #      /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin and
 #      git emits "git: 'remote-codecommit' is not a git command".
-include_cookbook "python"
+include_platform_cookbook "python"
 
 execute "install git-remote-codecommit" do
   command "$HOME/.pyenv/shims/pip install git-remote-codecommit 'botocore[crt]'"

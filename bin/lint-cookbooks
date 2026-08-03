@@ -860,24 +860,14 @@ PLATFORM_ALLOW = %w[
 # must remove the entry (the ratchet FAILS on a clean file still listed).
 # Everything NOT listed is held at zero references from day one.
 PLATFORM_PENDING = %w[
-  cookbooks/build-essential/default.rb
   cookbooks/envchain/default.rb
   cookbooks/fonts/default.rb
   cookbooks/fzf/default.rb
-  cookbooks/gcloud-cli/default.rb
-  cookbooks/gdbm/default.rb
   cookbooks/gnupg/default.rb
-  cookbooks/golang/default.rb
-  cookbooks/haskell/default.rb
-  cookbooks/jdk/default.rb
-  cookbooks/libffi/default.rb
   cookbooks/lxc-roon/default.rb
-  cookbooks/ncurses/default.rb
-  cookbooks/python/default.rb
   cookbooks/roon/default.rb
   cookbooks/starship/default.rb
   cookbooks/yq/default.rb
-  cookbooks/zlib/default.rb
   cookbooks/zsh/default.rb
 ].freeze
 
