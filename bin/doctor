@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+#
+# bin/doctor — read-only preflight for a mitamae apply.
+#
+# Answers one question: which EXTERNAL prerequisites (the things mitamae cannot
+# supply for itself) are missing on THIS machine, and what is the exact command
+# that fixes each one. Every probe is a read — this script changes no state,
+# locally or remotely, so it is always safe to run.
+#
+#   FAIL — the apply cannot converge until this is fixed. Sets exit 1.
+#   WARN — the apply converges; something adjacent is degraded or skipped.
+#
+# Deliberately NOT `set -e`: every check must run to completion so the first
+# failure cannot hide the remaining ones. A truncated report is exactly the
+# failure mode this script exists to prevent.
+set -uo pipefail
+
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+FAILS=0
+WARNS=0
+
+_fix() { printf '%s\n' "$1" | sed 's/^/     /'; }
+pass() { printf 'PASS %s\n' "$1"; }
+warn() { printf 'WARN %s\n' "$1"; WARNS=$((WARNS + 1)); [ $# -ge 2 ] && _fix "fix: $2"; return 0; }
+fail() { printf 'FAIL %s\n' "$1"; FAILS=$((FAILS + 1)); [ $# -ge 2 ] && _fix "fix: $2"; return 0; }
+
+usage() {
+  cat <<'EOF'
+usage: bin/doctor [--type darwin|lxc|pve-host|bare-linux]
+Read-only preflight: reports every missing external prerequisite of a mitamae
+apply as PASS/WARN/FAIL with the exact fix command. Exit 1 when any FAIL.
+EOF
+}
+
+# `systemd-detect-virt -c` exits 1 (printing "none") on bare metal, hence the
+# `|| true`; the command-existence guard keeps a host without systemd from
+# being misread as a container by an empty substitution.
+detect_host_type() {
+  if [ "$(uname)" = Darwin ]; then
+    echo darwin
+  elif [ -d /etc/pve ]; then
+    echo pve-host
+  elif command -v systemd-detect-virt >/dev/null 2>&1 &&
+    [ "$(systemd-detect-virt -c 2>/dev/null || true)" != none ]; then
+    echo lxc
+  else
+    echo bare-linux
+  fi
+}
+
+has_type() { case " $* " in *" $HOST_TYPE "*) return 0 ;; *) return 1 ;; esac; }
+
+# 1. aws chain: binary -> credentials -> one representative read per grant.
+check_aws() {
+  if ! command -v aws >/dev/null 2>&1; then
+    fail "aws CLI absent — every SSM-gated cookbook skips on this run" \
+      "./bin/mitamae local <entry>.rb   # run 1: INSTALLS aws; all SSM gates skip
+./bin/mitamae local <entry>.rb   # run 2: REQUIRED — the gates pass now
+The gates test for aws while the recipe compiles, which is before run 1 has
+installed it, so a fresh machine always needs TWO applies of the same recipe."
+    return
+  fi
+  pass "aws CLI present ($(command -v aws))"
+
+  local cfg profile region arn param
+  cfg="$REPO_ROOT/cookbooks/ssh-keys/files/aws-config.json"
+  if [ ! -f "$cfg" ]; then
+    fail "bootstrap aws-config.json not found at $cfg" \
+      "run bin/doctor from a complete checkout of this repo"
+    return
+  fi
+  profile=$(sed -n 's/.*"aws_profile"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg")
+  region=$(sed -n 's/.*"aws_region"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg")
+  if [ -z "$profile" ] || [ -z "$region" ]; then
+    fail "could not read aws_profile/aws_region from $cfg" \
+      "restore the bootstrap pair in cookbooks/ssh-keys/files/aws-config.json"
+    return
+  fi
+
+  arn=$(aws sts get-caller-identity --profile "$profile" --region "$region" \
+    --query Arn --output text 2>/dev/null)
+  if [ -z "$arn" ]; then
+    fail "aws profile '$profile' cannot authenticate in $region" \
+      "aws configure --profile $profile   # then re-run bin/doctor"
+    return
+  fi
+  pass "aws identity ($profile) = $arn"
+
+  # One parameter per grant prefix the fleet actually reads. --query keeps the
+  # value out of stdout; a SecureString still needs kms:Decrypt, so probing
+  # with --with-decryption is what the cookbooks themselves do.
+  for param in /host-registry/devices /hydra/google-client-id \
+    /memory/aurora-endpoint /monitoring/elastic/ca/cert; do
+    if aws ssm get-parameter --name "$param" --with-decryption \
+      --profile "$profile" --region "$region" \
+      --query 'Parameter.Name' --output text >/dev/null 2>&1; then
+      pass "ssm read $param"
+    else
+      warn "ssm read $param denied or absent" \
+        "grant this prefix (+ its KMS EncryptionContext) to $profile in
+home-monitor's pve-bootstrap-ssm IAM policy, then terraform apply"
+    fi
+  done
+}
+
+# 2. Sentinel written by the gate-report cookbook when an apply skipped gates
+#    only because a tool was still missing — i.e. the two-apply case above.
+check_rerun_sentinel() {
+  local sentinel="${HOME}/.setup_shin1ohno/.gate-rerun-required"
+  if [ -f "$sentinel" ]; then
+    warn "previous apply skipped tool_missing gates — it did not fully converge" \
+      "./bin/mitamae local <entry>.rb   # re-run the SAME recipe; the tools exist now"
+  else
+    pass "no pending gate re-run"
+  fi
+}
+
+# 3. Host identity: cookbooks/host-profile resolves node[:profile] by matching
+#    `hostname -s` against the in-repo FLEET table (key, hostname_override or
+#    alias). An unregistered host silently gets a nil label.
+check_hostname_registered() {
+  local h hp
+  h=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
+  hp="$REPO_ROOT/cookbooks/host-profile/default.rb"
+  if [ ! -f "$hp" ]; then
+    warn "cookbooks/host-profile/default.rb not found — cannot verify '$h'"
+    return
+  fi
+  if sed -n '/^fleet = {/,/^}/p' "$hp" | grep -oE '"[^"]+"' | tr -d '"' |
+    tr '[:upper:]' '[:lower:]' | grep -vxE 'hostname_override|aliases|ip' |
+    grep -qx "$h"; then
+    pass "hostname '$h' is registered in the host-profile FLEET table"
+  else
+    fail "hostname '$h' is not in the host-profile FLEET table" \
+      "add it to the FLEET table in cookbooks/host-profile/default.rb (use
+hostname_override/aliases when the label differs from \`hostname -s\`) AND to
+home-monitor's contracts/devices.json, then terraform apply"
+  fi
+}
+
+# 4. gh: `gh auth status` exits 1 when logged out — read its rc directly, since
+#    piping it through anything returns the pipe's rc and masks the failure.
+check_gh_auth() {
+  if ! command -v gh >/dev/null 2>&1; then
+    warn "gh CLI absent" "the apply installs it; re-run bin/doctor afterwards"
+    return
+  fi
+  local rc
+  gh auth status >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    pass "gh authenticated"
+  else
+    warn "gh not authenticated (rc=$rc)" "gh auth login"
+  fi
+}
+
+# 5. gpg: probe SIGNING CAPABILITY in git's own invocation shape, not key
+#    presence — `gpg --list-secret-keys` succeeds for a key gpg cannot use.
+#    Mirrors the guard in cookbooks/git/default.rb.
+check_gpg_signing() {
+  local key sign
+  key=$(git config --global --get user.signingkey 2>/dev/null)
+  sign=$(git config --global --get commit.gpgsign 2>/dev/null)
+  if [ -z "$key" ] || [ "$sign" = false ]; then
+    pass "gpg signing not configured"
+  elif printf x | gpg --batch --yes -bsau "$key" -o /dev/null >/dev/null 2>&1; then
+    pass "gpg can sign with $key"
+  else
+    warn "commit.gpgsign=true but gpg cannot sign with $key — commits will fail" \
+      "gpg-connect-agent reloadagent /bye && echo test | gpg --clearsign > /dev/null"
+  fi
+}
+
+# 6. tailscale: absent binary is not a defect on hosts that never join the
+#    tailnet, so say nothing at all in that case.
+check_tailscale() {
+  command -v tailscale >/dev/null 2>&1 || return 0
+  if tailscale status >/dev/null 2>&1; then
+    pass "tailscale connected"
+  else
+    warn "tailscale installed but not connected" \
+      "sudo tailscale up   # the tailscale/pve-host cookbook logs this host's auth-key command"
+  fi
+}
+
+# 7. Headless claude credentials, checked only where a loop actually consumes
+#    them. `claude auth status` is NOT usable here: setup-token mints a
+#    long-lived token read from an env file, so auth status still says false.
+check_claude_token() {
+  local sh_token="${HOME}/.claude/self-heal-token.env"
+  if [ -d /opt/es-memory ]; then
+    if [ -s /opt/es-memory/keeper-claude.env ]; then
+      pass "memory-keeper token present"
+    else
+      warn "memory-keeper token absent — its timers stay idle" \
+        "claude setup-token, then write CLAUDE_CODE_OAUTH_TOKEN=<token> to
+/opt/es-memory/keeper-claude.env (mode 600)"
+    fi
+  fi
+  if [ -x /usr/local/bin/self-heal-resolve-run.sh ]; then
+    if [ -s "$sh_token" ]; then
+      pass "self-heal durable token present"
+    elif [ -s "${HOME}/.claude/.credentials.json" ]; then
+      warn "self-heal falls back to interactive credentials, which expire" \
+        "claude setup-token, then write CLAUDE_CODE_OAUTH_TOKEN=<token> to $sh_token"
+    else
+      warn "self-heal loops have no claude credential — every run exits early" \
+        "claude setup-token, then write CLAUDE_CODE_OAUTH_TOKEN=<token> to $sh_token"
+    fi
+  fi
+}
+
+# 8. Egress + LAN name resolution.
+check_network() {
+  if curl -fsI --max-time 5 https://github.com >/dev/null 2>&1; then
+    pass "https://github.com reachable"
+  else
+    fail "https://github.com unreachable — nothing in the apply works without it" \
+      "check egress/DNS/proxy on this host, then re-run bin/doctor"
+  fi
+  if curl -fsI --max-time 5 https://artifacts.elastic.co >/dev/null 2>&1; then
+    pass "https://artifacts.elastic.co reachable"
+  else
+    warn "https://artifacts.elastic.co unreachable — elastic-agent install will fail" \
+      "check egress to elastic.co; the rest of the apply is unaffected"
+  fi
+  if has_type lxc pve-host bare-linux; then
+    if getent hosts es-0.home.local >/dev/null 2>&1; then
+      pass "LAN DNS resolves es-0.home.local"
+    else
+      warn "LAN DNS cannot resolve es-0.home.local" \
+        "point resolv.conf at the LAN resolver; cookbooks addressing *.home.local will fail"
+    fi
+  fi
+}
+
+HOST_TYPE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --type) HOST_TYPE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --type=*) HOST_TYPE="${1#--type=}"; shift ;;
+    -h | --help) usage; exit 0 ;;
+    *) printf 'unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+case "${HOST_TYPE:-auto}" in
+  darwin | lxc | pve-host | bare-linux) ;;
+  auto) HOST_TYPE=$(detect_host_type) ;;
+  *) printf 'unknown host type: %s\n' "$HOST_TYPE" >&2; usage >&2; exit 2 ;;
+esac
+
+printf 'bin/doctor — host type: %s (%s)\n\n' "$HOST_TYPE" "$(hostname -s 2>/dev/null)"
+
+check_aws
+check_rerun_sentinel
+has_type darwin bare-linux && check_hostname_registered
+has_type darwin bare-linux lxc && check_gh_auth
+has_type darwin bare-linux && check_gpg_signing
+check_tailscale
+has_type lxc && check_claude_token
+check_network
+
+printf '\n%d FAIL, %d WARN\n' "$FAILS" "$WARNS"
+[ "$FAILS" -eq 0 ] || exit 1
