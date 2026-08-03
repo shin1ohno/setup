@@ -36,10 +36,12 @@ generator_script = File.join(File.dirname(__FILE__), "files", "generate_config.s
 temp_path = "#{generated_dir}/claude_desktop_config.json"
 output_path = "#{claude_desktop_config_dir}/claude_desktop_config.json"
 
-# Both renders resolve /mcp/* SSM parameters, so one gate covers them. Block
-# here until AWS auth is in place — interactive pause + re-check loop; a
-# non-TTY host (fleet apply, CI) warns and skips instead. linux.rb declares the
-# same gate around the register-only body; keep the two argument lists in sync.
+# Both darwin renders resolve /mcp/* SSM parameters (the Desktop config and
+# the darwin-side register both fetch the obsidian key), so one gate covers
+# them. Block here until AWS auth is in place — interactive pause + re-check
+# loop; a non-TTY host warns and skips instead. linux.rb deliberately has NO
+# gate: its render resolves zero SSM parameters (the only ssm: server is
+# darwin-pinned), so this gate is darwin-only by design (2026-08 gap decision).
 require_external_auth(
   tool_name: "AWS CLI (for MCP server SSM params)",
   # Probe the ACTUAL SSM path the generators read (/mcp/obsidian-api-key) so the
