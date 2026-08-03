@@ -38,7 +38,7 @@ include_cookbook "ruby40"
 # Other programming languages
 include_cookbook "rust"
 include_cookbook "nodejs"
-include_cookbook "pm2"
+include_platform_cookbook "pm2"  # launchd vs systemd startup wiring
 include_cookbook "haskell"
 include_cookbook "golang"
 
