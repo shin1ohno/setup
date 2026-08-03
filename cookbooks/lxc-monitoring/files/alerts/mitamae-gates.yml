@@ -1,0 +1,75 @@
+groups:
+  - name: mitamae-gates
+    interval: 30s
+    rules:
+      # require_external_auth gates that were SKIPPED during the host's last
+      # mitamae apply. Fed by cookbooks/gate-report, which writes
+      # /var/lib/node_exporter/textfile/mitamae-gates.prom at the end of EVERY
+      # apply — including when attention == 0, so a recovered host clears this
+      # alert instead of holding the last non-zero sample forever.
+      #
+      # A skipped gate means a cookbook silently did nothing: the SSM-backed
+      # .env was not regenerated, the cert was not fetched, the service kept
+      # running on stale config. The apply still reports success, which is
+      # exactly why this needs an alert rather than a log line.
+      #
+      # `for: 3h` is sized off the fleet converge cadence, NOT off human
+      # response time. auto-mitamae-target/files/mitamae-runner.sh throttles a
+      # drift-free host to RECONCILE_INTERVAL_SEC (3600) + a per-host jitter of
+      # 0..RECONCILE_JITTER_SEC (3600), so the worst-case gap between two
+      # applies on an idle host is ~7200s plus one 5-min orchestrator cycle and
+      # the apply itself (~7800s). `tool_missing` self-heals on the next apply
+      # (the gate checks at COMPILE time while the installer converges later in
+      # the same run), so anything shorter than one full reconcile window would
+      # page on every normal fresh-host bootstrap. At 3h the host has had a
+      # complete window to re-converge: still firing == genuinely stuck.
+      - alert: MitamaeGateNeedsAttention
+        expr: mitamae_gate_attention_total > 0
+        for: 3h
+        labels:
+          severity: warning
+          component: mitamae-gates
+        annotations:
+          summary: "{{ $labels.host }} ({{ $labels.instance }}) has {{ $value }} skipped mitamae gate(s)"
+          description: |
+            mitamae_gate_attention_total on {{ $labels.host }} has been > 0 for a
+            full reconcile window. One or more require_external_auth gates keep
+            skipping, so the cookbooks behind them are no-ops every apply while
+            the apply itself reports success.
+            Identify the gate and reason first — `mitamae_gate_skip{gate="...",
+            reason="tool_missing|auth_unavailable|user_skip"}` carries both:
+              PromQL: mitamae_gate_skip{host="{{ $labels.host }}"} == 1
+            auth_unavailable is the common one (missing SSM grant / expired
+            profile) — run `bin/doctor` on the host, which reports each failed
+            prerequisite with its fix command. tool_missing at this age means
+            the follow-up apply that should have picked up the freshly-installed
+            tool never happened — check auto-mitamae is still converging the
+            host (AutoMitamaeApplyStale covers that independently).
+            Runbook: ssh root@192.168.1.10 'pct exec <ct> -- bash -lc "cat /var/lib/node_exporter/textfile/mitamae-gates.prom; cd /root/setup && ./bin/doctor"'
+
+      # Liveness guard for the reporter itself. gate-report rewrites the .prom
+      # on every apply, so a frozen timestamp means applies stopped reaching the
+      # end of the run — either the apply is aborting on an earlier cookbook or
+      # auto-mitamae stopped converging this host. Without this, a host that
+      # stops applying keeps serving its last (possibly all-clear) gauge from
+      # the textfile and looks healthy forever.
+      #
+      # 3h for the same cadence arithmetic as above: ~7800s is a legitimate gap
+      # on a drift-free host that drew max jitter, so 7200s (two nominal
+      # intervals) would false-positive on those hosts.
+      - alert: MitamaeGateReportStale
+        expr: time() - mitamae_gate_report_timestamp_seconds > 10800
+        for: 10m
+        labels:
+          severity: warning
+          component: mitamae-gates
+        annotations:
+          summary: "{{ $labels.host }} gate report not refreshed in 3h+"
+          description: |
+            mitamae_gate_report_timestamp_seconds for {{ $labels.host }} is older
+            than 3h — longer than the worst-case reconcile window — so the host's
+            mitamae apply is no longer reaching the gate-report tail. The gate
+            gauges it still exports are stale and must not be trusted as
+            all-clear. Likely an apply failing before the end of the run, or
+            auto-mitamae no longer converging this host.
+            Runbook: ssh root@192.168.1.10 'pct exec <ct> -- bash -lc "tail -80 /tmp/auto-mitamae.log; ls -l /var/lib/node_exporter/textfile/mitamae-gates.prom"'
