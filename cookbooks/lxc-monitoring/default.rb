@@ -361,6 +361,19 @@ remote_file "#{deploy_dir}/alerts/memory.yml" do
   notifies :run, "execute[restart monitoring]"
 end
 
+# mitamae require_external_auth gate visibility. Fed by the
+# mitamae_gate_* textfile gauges cookbooks/gate-report writes at the end of
+# every apply on each fleet host. A skipped gate makes its cookbook a silent
+# no-op while the apply still reports success, so the gauge is the only
+# fleet-wide signal; MitamaeGateReportStale guards the reporter itself.
+remote_file "#{deploy_dir}/alerts/mitamae-gates.yml" do
+  source "files/alerts/mitamae-gates.yml"
+  owner user
+  group group
+  mode "0644"
+  notifies :run, "execute[restart monitoring]"
+end
+
 # Vector (RTX syslog → Elasticsearch). Replaces the prior Promtail syslog
 # target: RTX1210/RTX830 firmware emits non-standard syslog (`<PRI>tag msg`
 # with no TIMESTAMP/HOSTNAME) that neither RFC5424 nor RFC3164 strict
