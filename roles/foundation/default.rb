@@ -39,7 +39,7 @@ end
 include_cookbook "homebrew" if node[:platform] == "darwin"
 
 # Auth-critical toolchain, in dependency order.
-include_cookbook "git"      # darwin: brew git + mise gh / linux: apt git,git-lfs,gh
-include_cookbook "ssh"      # ssh client config (no deps)
-include_cookbook "awscli"   # self-contained installer; ssh-keys depends on it
+include_platform_cookbook "git"    # darwin: brew git + mise gh / linux: apt git,git-lfs,gh
+include_platform_cookbook "ssh"    # ssh client config (no deps)
+include_platform_cookbook "awscli" # self-contained installer; ssh-keys depends on it
 include_cookbook "ssh-keys" # SSM host-registry fetch → private key + authorized_keys + ssh config

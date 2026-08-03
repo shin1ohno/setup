@@ -32,7 +32,7 @@
 # Operator apply (LXC, from inside the CT):
 #   ./bin/mitamae local pve/lxc-<name>.rb
 
-include_cookbook "awscli"
+include_cookbook "awscli::linux"
 
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
 aws_profile = ssh_keys_config["aws_profile"]

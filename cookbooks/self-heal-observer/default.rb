@@ -25,7 +25,7 @@
 # aws is also installed by auto-mitamae-orchestrator on this same recipe;
 # include_recipe dedups, so this is a safe no-op there but keeps the cookbook
 # self-contained (jq/curl/flock are added by the bootstrap-deps execute below).
-include_cookbook "awscli"
+include_cookbook "awscli::linux"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys (per
 # CLAUDE.md "Auth-check gate must match the cookbook's actual invocation
