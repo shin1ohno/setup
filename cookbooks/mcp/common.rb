@@ -9,7 +9,7 @@
 include_cookbook "nodejs"
 
 # Ensure AWS CLI is available for SSM parameter retrieval
-include_cookbook "awscli"
+include_platform_cookbook "awscli"
 
 # Ensure yq is available for YAML processing
 include_cookbook "yq"

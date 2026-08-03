@@ -17,7 +17,7 @@
 #
 # Linux only — Phase 4 will define a separate macOS pull track.
 
-include_cookbook "awscli"
+include_cookbook "awscli::linux"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys (per
 # CLAUDE.md "Auth-check gate must match the cookbook's actual invocation

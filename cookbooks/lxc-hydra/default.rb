@@ -19,7 +19,7 @@
 #     (provisioned by home-monitor/rds.tf).
 #   - frolicking-beaming-crescent.md Phase 6a: lxc-hydra includes this cookbook.
 
-include_cookbook "awscli"
+include_cookbook "awscli::linux"
 
 HYDRA_VERSION = "v2.3.0"
 HYDRA_BINARY  = "/usr/local/bin/hydra"

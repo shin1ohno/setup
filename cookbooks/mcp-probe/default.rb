@@ -19,7 +19,7 @@
 #     Hydra client first (per the require_external_auth instructions
 #     below) — fetch-secrets.sh fails until those SSM params exist.
 
-include_cookbook "awscli"
+include_cookbook "awscli::linux"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys so
 # the require_external_auth check_command matches the actual SSM

@@ -18,7 +18,7 @@
 # Tool names are preserved 1:1 so the existing claude.ai connector
 # (mcp__claude_ai_ai_memory__*) keeps working.
 
-include_cookbook "awscli"
+include_cookbook "awscli::linux"
 
 # Pin the scoped fleet AWS profile (pve-bootstrap-ssm) so the auth gate and the
 # .env generator target the same IAM principal — see CLAUDE.md "Auth-check gate
