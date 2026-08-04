@@ -25,10 +25,13 @@ font-thicken            = true
 grapheme-width-method   = unicode
 
 # ===== Shell Integration =====
-# ssh-terminfo auto-installs xterm-ghostty on remote hosts (prevents vim/tmux/clear breakage).
-# no-cursor keeps cursor-style=block at the prompt (shell-integration otherwise switches to bar).
+# ssh-terminfo: the integrated ssh wrapper installs xterm-ghostty on remote
+# hosts (infocmp | tic); ssh-env falls back to TERM=xterm-256color when the
+# remote lacks tic. Both need Ghostty >= 1.2 — an older build rejected them as
+# invalid, which is why they were once removed (1d1cf0e). Removing them again
+# brings back "missing or unsuitable terminal: xterm-ghostty" on ssh targets.
 shell-integration          = detect
-shell-integration-features = cursor,no-sudo,title
+shell-integration-features = cursor,no-sudo,title,ssh-env,ssh-terminfo
 
 # ===== Keybinds (additions; macOS defaults handle cmd+t/w/d/shift+d/[/]/k/enter/shift+,) =====
 keybind = global:cmd+grave_accent=toggle_quick_terminal
