@@ -1,9 +1,11 @@
 {
   "comment": "Per-host expected `process.name` patterns for the Phase 3 process-liveness alerting. Each entry maps a host (Elastic Agent's host.name short name) to the list of process.name values that should ALWAYS be visible in the metrics-system.process-default index when the service stack is healthy. Probed against live ES data 2026-05-10 — see PR #298 commit body for the per-host probe output. Hosts not listed (housekeeping = timer-only no daemons; pro-router = currently OOM-looping at 512MB, fix separately) are excluded from rules. NOTE: the `pro` PVE host's process list is the host PID namespace, which includes processes leaking up from the LXCs it runs. Only list processes there that are busy enough to stay inside the system.process top-20-by-CPU + top-20-by-memory cap (PR #289) even on the busy host. `hydra` is intentionally NOT monitored on `pro` — it is a tiny idle process (~0.8% CPU, ~0% mem) that falls out of pro's capped metricset for >10 min and false-positives; it is already covered reliably by its own `hydra` host entry (CT106, ~2 docs/min). See issue #569.",
 
+  "_comment_process_name_truncation": "`process.name` is the OS comm field, truncated to 15 characters. Names longer than that MUST be written here in their truncated form, because setup-process-alerts.sh matches with an exact `term` query — the untruncated spelling silently matches zero docs and the rule then fires forever as a false 'Process down'. This is why the Roon entries read `RoonAppliance.e` and not `RoonAppliance.exe` (17 chars): a live term-query probe returns 19 docs/10m for `RoonAppliance.e` and 0 for `RoonAppliance.exe`. Verify any new entry with a real term query before adding it, rather than writing the name you expect from `ps`.",
+
   "_window_minutes": { "_default": 5, "samba": 10, "pro": 10 },
 
-  "roon":         ["RoonServer", "RoonAppliance", "RAATServer"],
+  "roon":         ["RoonServer.exe", "RoonAppliance.e", "RAATServer.exe"],
   "samba":        ["smbd", "nmbd"],
   "pro-dev":      ["tailscaled"],
   "hydra":        ["hydra"],
@@ -15,5 +17,5 @@
   "es-1":         ["java", "controller"],
   "es-2":         ["java", "controller"],
   "kibana":       ["MainThread"],
-  "pro":          ["RoonAppliance", "prometheus", "vector"]
+  "pro":          ["RoonAppliance.e", "prometheus", "vector"]
 }
