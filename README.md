@@ -36,6 +36,8 @@ any container — so the right one matters.
 | Service LXC | `lxc-hydra`, `lxc-memory`, `lxc-monitoring`, `lxc-roon`, `lxc-roon-mcp`, `lxc-weave`, `lxc-samba`, `lxc-housekeeping`, `lxc-consent`, `lxc-pro-router`, `lxc-es-0`/`lxc-es-1`/`lxc-es-2` (Elasticsearch cluster), `lxc-kibana`, `lxc-apm-server` | matching `pve/lxc-<service>.rb` | Service-specific (existing). Apply all PVE-virtualized LXCs in parallel via `bin/apply-pve-lxcs` |
 | macOS | `air`, `ohnos-macbook` | `darwin.rb` | macOS dev environment + mac-settings, mac-apps, macism, altserver, gpg-backup, edge-agent, elastic-agent, macos-hub |
 
+Zed から `sh1-cloud` を使う場合は、[Zed remote development runbook](docs/runbook/zed-sh1-cloud.md) を参照。SSH の会社固有差分は private overlay、Zed client/server 設定はこのリポジトリが管理する。
+
 Override the `linux.rb` container guard with `MITAMAE_FORCE_BARE_METAL=1`
 only if `systemd-detect-virt -c` misclassifies a genuine bare-metal host.
 

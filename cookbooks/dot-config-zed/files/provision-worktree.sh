@@ -12,9 +12,10 @@
 #
 # Robustness contract: this MUST NOT block worktree creation. Every step is
 # guarded and the script ALWAYS exits 0. mise is referenced by absolute path
-# because a GUI-launched Zed has a stripped PATH (same reason the LSP binaries
-# are pinned in settings.json). macOS-only cookbook, so bash / cp / command -v
-# are all available.
+# because a Zed client/server process may have a stripped PATH (same reason the
+# LSP binaries are pinned in settings.json). The cookbook deploys this on the
+# macOS client and sh1-cloud's Linux remote; bash / cp / command -v are present
+# on both.
 set -u
 main="${1:-${ZED_MAIN_GIT_WORKTREE:-}}"
 new="${2:-${ZED_WORKTREE_ROOT:-}}"

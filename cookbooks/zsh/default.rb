@@ -104,6 +104,20 @@ end
 # creation, and naming an owner would trigger a chown that fails on exactly the
 # NSS-virtual accounts this block exists for (mitamae reads their group as the
 # literal "UNKNOWN").
+zed_remote_environment =
+  if node[:profile][:label] == "sh1-cloud"
+    <<~PROFILE
+
+      # Zed obtains each remote project's environment from the account's login
+      # shell. NSS still reports bash here, and this non-interactive path must not
+      # source the zsh-only profile, so expose the setup-managed toolchain shims
+      # directly. Missing directories are harmless PATH entries on a fresh host.
+      export PATH="$HOME/.local/share/mise/shims:$HOME/.rbenv/shims:$HOME/.pyenv/shims:$HOME/go/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+    PROFILE
+  else
+    ""
+  end
+
 file "#{node[:setup][:home]}/.bash_profile" do
   mode "644"
   content <<~PROFILE
@@ -125,6 +139,7 @@ file "#{node[:setup][:home]}/.bash_profile" do
     if [ -f "$HOME/.profile" ]; then
       . "$HOME/.profile"
     fi
+    #{zed_remote_environment}
   PROFILE
   only_if {
     next false if login_shell == zsh_path

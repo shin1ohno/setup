@@ -31,6 +31,12 @@ include_role "programming"
 include_role "llm"
 include_role "extras"
 
+# sh1-cloud is used as a Zed SSH remote. The GUI stays on the Mac; this deploys
+# only the headless server's settings, LSP binaries, and global worktree hook to
+# the Linux account. Zed itself installs/updates ~/.zed_server on first connect.
+# Keep this host-scoped: physical Linux workstations do not run Zed remotely.
+include_cookbook "dot-config-zed" if node[:profile][:label] == "sh1-cloud"
+
 # Legacy roles for backwards compatibility
 include_role "manage" # Managed projects setup
 include_role "network" # Network configuration
@@ -83,4 +89,3 @@ end
 # Gate visibility report — must stay the LAST include so its compile phase
 # runs after every require_external_auth gate has recorded its outcome.
 include_cookbook "gate-report"
-

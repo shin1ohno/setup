@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# Zed editor configuration. Mirrors the dot-config-ghostty pattern:
-# stages settings.json + keymap.json + the bundled Glassy Nord theme
-# under ~/.config/zed/. Zed auto-reloads these on save, so a fresh
-# mitamae apply takes effect without restarting the editor.
+# Zed editor and remote-server configuration. Mirrors the dot-config-ghostty
+# pattern: stages settings.json + keymap.json + the bundled Glassy Nord theme
+# under ~/.config/zed/. Zed auto-reloads these on save, so a fresh mitamae
+# apply takes effect without restarting the editor or remote server.
 #
 # Files:
 #   ~/.config/zed/settings.json                — UI, vim mode, theme,
@@ -24,9 +24,10 @@
 #                                                 (transparent / blurred
 #                                                 Nord, dark+light)
 #
-# Scope: darwin only — Zed runs on linux too but the cookbook does not
-# currently install Zed on linux.rb hosts, so config-only deploy would
-# be a no-op there. Extend to linux when zed is bare-metal-linux scope.
+# Scope: the local macOS Zed client plus sh1-cloud's Linux headless server.
+# linux.rb includes this cookbook only for the sh1-cloud profile. The Linux box
+# deliberately does NOT install the GUI: the Mac client owns the UI and Zed
+# automatically installs the exactly-matching binary under ~/.zed_server.
 
 zed_config_dir = "#{node[:setup][:home]}/.config/zed"
 zed_themes_dir = "#{zed_config_dir}/themes"
@@ -55,12 +56,12 @@ template "#{zed_config_dir}/settings.json" do
   source "templates/settings.json.erb"
 end
 
-# Install solargraph into the active rbenv ruby so Zed's Ruby extension
-# can spawn the LSP via the absolute shim path pinned in settings.json.
-# System ruby (2.6 on macOS) is too old for solargraph's prism dep,
-# which is why Zed's auto-install path fails.
-rbenv_bin = "#{node[:setup][:home]}/.rbenv/bin/rbenv"
-solargraph_shim = "#{node[:setup][:home]}/.rbenv/shims/solargraph"
+# Install solargraph into the active rbenv ruby so Zed's Ruby extension can
+# spawn the LSP via the absolute shim path pinned in settings.json. The system
+# Ruby is not a supported toolchain (macOS 2.6 is too old for solargraph's
+# prism dependency; Linux should use the same repo-managed Ruby as terminals).
+rbenv_bin = "#{node[:rbenv][:root]}/bin/rbenv"
+solargraph_shim = "#{node[:rbenv][:root]}/shims/solargraph"
 
 execute "gem install solargraph (rbenv active)" do
   command "#{rbenv_bin} exec gem install solargraph && #{rbenv_bin} rehash"
@@ -70,11 +71,11 @@ end
 
 # Install gopls into ~/go/bin so Zed's Go LSP can spawn it via the absolute
 # path pinned in settings.json. Zed's own gopls auto-install shells out to
-# `go install` and is unreliable under a GUI-launched Zed's stripped PATH,
-# so install it deterministically here. Go is managed by mise (see
-# cookbooks/golang); the shim is self-contained and resolves the active go
-# without needing mise on PATH. only_if guards a fresh machine where the go
-# toolchain has not been installed yet (next apply picks it up).
+# `go install` and is unreliable when the Zed process has a stripped PATH, so
+# install it deterministically here on both the local client and remote host.
+# Go is managed by mise (see cookbooks/golang); the shim is self-contained and
+# resolves the active go without needing mise on PATH. only_if guards a fresh
+# machine where the Go toolchain has not converged yet (next apply picks it up).
 go_shim = "#{node[:setup][:home]}/.local/share/mise/shims/go"
 gopls_bin = "#{node[:setup][:home]}/go/bin/gopls"
 

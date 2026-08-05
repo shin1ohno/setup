@@ -10,9 +10,16 @@
   "theme": "Glassy Nord Dark",
   // Zed's integrated terminal does not inherit buffer_font_family; set it
   // explicitly so coralline's powerline glyphs (U+E0B6 caps) render instead
-  // of showing as `?`.
+  // of showing as `?`. sh1-cloud's OS Login directory entry reports bash and
+  // cannot be changed with chsh, so its server-side settings explicitly start
+  // zsh; that is also what loads the setup-managed toolchain environment.
   "terminal": {
-    "font_family": "SauceCodePro Nerd Font Mono"
+    "font_family": "SauceCodePro Nerd Font Mono",
+<% if node[:profile][:label] == "sh1-cloud" %>
+    "shell": { "program": "/usr/bin/zsh" }
+<% else %>
+    "shell": "system"
+<% end %>
   },
   "which_key": {
     "enabled": true
@@ -88,6 +95,27 @@
   "indent_guides": {
     "enabled": true
   },
+<% if node[:profile][:label] == "sh1-cloud" %>
+  // Zed replaces its built-in exclusions when this setting is present, so
+  // retain the complete default list before adding the remote HOME's large
+  // tool/cache trees. Repo-scoped projects are the primary guard; these extra
+  // entries keep an accidentally restored HOME workspace from walking the
+  // mise installs and Zed server again.
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.svn",
+    "**/.hg",
+    "**/.jj",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings",
+    "**/.cache",
+    "**/.local",
+    "**/.zed_server"
+  ],
+<% end %>
 
   // ── Indentation (per-language overrides below) ─────────────────────
   "tab_size": 2,
@@ -97,6 +125,24 @@
   "session": {
     "trust_all_worktrees": true
   },
+<% if node[:profile][:label] == "air" %>
+  // sh1-cloud's transport and OS Login identity live in the private
+  // mercari-setup overlay's `Host sh1-cloud` stanza. Zed shells out to the
+  // system ssh client, so only the stable alias belongs here. Keep projects
+  // repo-scoped: opening remote `~` indexes hundreds of thousands of files and
+  // exhausts inotify; these roots cover the three repos present on the box.
+  "ssh_connections": [
+    {
+      "host": "sh1-cloud",
+      "nickname": "sh1-cloud",
+      "projects": [
+        { "paths": ["~/ManagedProjects/zp-SHIN"] },
+        { "paths": ["~/ManagedProjects/kouzoh-p-terraform"] },
+        { "paths": ["~/ManagedProjects/setup"] }
+      ]
+    }
+  ],
+<% end %>
   "agent_servers": {
     "codex-acp": {
       "type": "registry"
@@ -134,7 +180,7 @@
   "lsp": {
     "solargraph": {
       "binary": {
-        "path": "<%= node[:setup][:home] %>/.rbenv/shims/solargraph",
+        "path": "<%= node[:rbenv][:root] %>/shims/solargraph",
         "arguments": ["stdio"]
       }
     },
