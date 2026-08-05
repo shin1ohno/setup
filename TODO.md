@@ -360,3 +360,40 @@ NOT defects.
   (same substitution the `ssh-keys` entry above records). Verify by touching a
   template input so the notify fires, and by applying to a fresh CT for the
   `ensure … exists` pair.
+
+## sh1-cloud — every owner/group resource re-chowns on every apply (Low)
+
+On the GCE OS Login box `sh1-cloud`, mitamae reports `owner will change from
+'UNKNOWN' to 'sh1_mercari_com'` for EVERY resource carrying `owner`/`group`, on
+every apply. The account resolves through NSS with no literal `/etc/passwd`
+line, so mitamae cannot map the existing file's uid back to a name, always reads
+`UNKNOWN`, always sees a mismatch, and always re-chowns. Observed 2026-08-05 on
+a `COOKBOOK=zed-remote-server` apply, but it is NOT specific to that cookbook —
+`cookbooks/host-profile`'s own `~/.setup_shin1ohno`, `profile.d` and `bin`
+directories show the identical line in the same run, so this is repo-wide on
+this host and predates the Zed work.
+
+- **Impact today**: cosmetic and non-fatal. The chown succeeds (the files are
+  already owned by that user), so nothing breaks — but no resource on this host
+  is ever reported as up to date, which makes an apply's output unreadable for
+  spotting a REAL change, and it is the same root condition that check 7 exists
+  to catch in its failing form (`owner` without `group` → literal
+  `chown <user>:UNKNOWN` → resource failure).
+- **Trigger for it to become real**: any resource on this host whose chown
+  target is NOT already correct (a root-owned path, a file created by another
+  account). The chown then fails, and mitamae has no `ignore_failure`, so it
+  aborts the whole run and silently skips every cookbook after it.
+- **Reason deferred**: the fix is a repo-wide policy decision, not a local edit.
+  `cookbooks/zsh` already omits `owner`/`group` on its `~/.bash_profile`
+  resource for exactly this reason (comment at `cookbooks/zsh/default.rb`,
+  `.bash_profile` block) — mitamae runs AS the target user, so a $HOME resource
+  is correctly owned on creation and naming an owner buys nothing. Extending
+  that to every $HOME-scoped resource touches dozens of cookbooks and needs a
+  lint check to hold the line, which is its own PR.
+- **First step**: count the blast radius with
+  `git grep -c 'owner node\[:setup\]\[:user\]' cookbooks/ | wc -l`, then decide
+  between (a) dropping `owner`/`group` on resources whose path is under
+  `node[:setup][:home]` and adding a lint check that forbids re-adding them, or
+  (b) leaving them and accepting the noise on NSS hosts. Note that (a) must NOT
+  touch resources placed into system paths via `execute "sudo install ..."` —
+  those legitimately name an owner.
