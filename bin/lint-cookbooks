@@ -85,6 +85,12 @@
 #      done-claim. SKIPIF_PENDING freezes the pre-migration state exactly like
 #      check 12: a listed file may still have a raw site, any other file may
 #      not, and migrating MUST drop the entry in the same PR.
+#  14. [FAIL] duplicated shared artifact drift — `remote_file`'s `source`
+#      resolves inside the calling cookbook, so an artifact both a darwin and a
+#      linux cookbook must ship (Zed's create_worktree hook) exists as two
+#      copies. The duplication is accepted; drift is not, because a fix applied
+#      to one copy leaves the other broken and nothing else compares them.
+#      Pairs: see DUPLICATE_PAIRS.
 #
 # Usage:  bin/lint-cookbooks   # exit 1 on any FAIL-tier violation (WARN never
 #                              # affects the exit code)
@@ -977,6 +983,41 @@ recipe_files.each do |file|
           "deploy_with_ssm_env with :expected_keys (check 13)")
     end
   end
+end
+
+# --- check 14: deliberately-duplicated shared artifacts must stay identical --
+
+# Zed's create_worktree hook has to exist on whichever machine the worktree is
+# created on, so the client cookbook (darwin) and the remote-server cookbook
+# (linux) each ship a copy. `remote_file`'s `source` resolves inside the calling
+# cookbook, so there is no way to reference one file from both — the duplication
+# is the accepted cost of keeping the two cookbooks separate. What is NOT
+# acceptable is the copies drifting: a fix applied to one side would silently
+# leave the other broken, and nothing else in the repo compares them.
+#
+# Add a pair here whenever a new artifact is duplicated for the same reason.
+DUPLICATE_PAIRS = [
+  ["cookbooks/dot-config-zed/files/provision-worktree.sh",
+   "cookbooks/zed-remote-server/files/provision-worktree.sh"],
+  ["cookbooks/dot-config-zed/templates/tasks.json.erb",
+   "cookbooks/zed-remote-server/templates/tasks.json.erb"],
+].freeze
+
+DUPLICATE_PAIRS.each do |left, right|
+  missing = [left, right].reject { |p| File.file?(p) }
+  unless missing.empty?
+    add(violations, missing.first, 1,
+        "declared in bin/lint-cookbooks DUPLICATE_PAIRS but missing — restore " \
+        "it, or drop the pair from DUPLICATE_PAIRS in the same PR (check 14)")
+    next
+  end
+
+  next if File.binread(left) == File.binread(right)
+
+  add(violations, right, 1,
+      "must be byte-identical to #{left} (deliberate copy for the other " \
+      "platform's cookbook) but differs — apply the edit to BOTH copies " \
+      "(check 14)")
 end
 
 # --- report ----------------------------------------------------------------

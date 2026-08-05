@@ -97,6 +97,16 @@
   "session": {
     "trust_all_worktrees": true
   },
+<% unless @ssh_connections_json.empty? %>
+  // Hosts this Mac can open as Zed SSH remotes. The VALUE is injected from
+  // ~/.config/zed/ssh-connections.local.json (see the cookbook header) so the
+  // host list is not a property of this repo; the key is omitted entirely when
+  // that file is absent. Transport — hostname, login user, key, jump host —
+  // belongs to ssh_config, which Zed shells out to, so only a stable alias
+  // reaches this file. Keep each entry's projects repo-scoped: opening a remote
+  // `~` indexes the whole home directory and exhausts inotify watchers.
+  "ssh_connections": <%= @ssh_connections_json %>,
+<% end %>
   "agent_servers": {
     "codex-acp": {
       "type": "registry"
@@ -134,7 +144,7 @@
   "lsp": {
     "solargraph": {
       "binary": {
-        "path": "<%= node[:setup][:home] %>/.rbenv/shims/solargraph",
+        "path": "<%= node[:rbenv][:root] %>/shims/solargraph",
         "arguments": ["stdio"]
       }
     },

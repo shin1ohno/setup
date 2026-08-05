@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# Zed editor configuration. Mirrors the dot-config-ghostty pattern:
-# stages settings.json + keymap.json + the bundled Glassy Nord theme
-# under ~/.config/zed/. Zed auto-reloads these on save, so a fresh
-# mitamae apply takes effect without restarting the editor.
+# Zed editor configuration — the LOCAL CLIENT half. Mirrors the
+# dot-config-ghostty pattern: stages settings.json + keymap.json + the bundled
+# Glassy Nord theme under ~/.config/zed/. Zed auto-reloads these on save, so a
+# fresh mitamae apply takes effect without restarting the editor.
 #
 # Files:
 #   ~/.config/zed/settings.json                — UI, vim mode, theme,
@@ -24,12 +24,64 @@
 #                                                 (transparent / blurred
 #                                                 Nord, dark+light)
 #
-# Scope: darwin only — Zed runs on linux too but the cookbook does not
-# currently install Zed on linux.rb hosts, so config-only deploy would
-# be a no-op there. Extend to linux when zed is bare-metal-linux scope.
+# Scope: darwin only — this is the UI host. A Linux box reached over SSH runs
+# its own headless server, whose settings are a DIFFERENT (much smaller) set:
+# see cookbooks/zed-remote-server. Zed's own docs split it that way — the two
+# Zeds do not read each other's main settings file — so keymap, fonts and themes
+# have no effect server-side and are deliberately absent there.
 
 zed_config_dir = "#{node[:setup][:home]}/.config/zed"
 zed_themes_dir = "#{zed_config_dir}/themes"
+
+# ssh_connections is client-side state whose VALUE is site-specific: the hosts a
+# given Mac may reach, and the repo paths on them, are not properties of this
+# repo. Read them from an optional machine-local file so a private overlay owns
+# the value while this cookbook keeps owning the file. Same delivery channel as
+# codex's ~/.codex/config-preamble.toml (cookbooks/codex-cli/files/
+# generate_config.sh) — a file, because a node attribute cannot cross the
+# separate mitamae invocations an overlay wrapper runs.
+#
+# Contract: a JSON ARRAY of Zed ssh_connections entries. Absent, unreadable or
+# empty -> the key is omitted entirely and Zed keeps its own default. The write
+# has to land in an EARLIER invocation than this one; the read below is compile
+# time, so a same-run writer would be one apply too late.
+#
+# Ternary, not `if File.exist?`: bin/lint-cookbooks check 1 flags a top-level
+# `if ... File.exist?` line (compile-time state read) and a Proc is not exempt
+# either, so the predicate goes in an expression and the resource tests a local.
+# The rescue covers EPERM/EACCES — a user-space path can be on a synced volume
+# that denies the read outright rather than reporting absence.
+#
+# The content is PARSED before it is spliced, not just read. This cookbook does
+# not own the file, and the fragment lands inside settings.json — so a truncated
+# or hand-broken file would make the WHOLE settings file invalid JSON and drop
+# Zed back to defaults for every setting, not just this one. Validating turns
+# that into "one key omitted, one WARN". mitamae ships JSON (see
+# cookbooks/lxc-pro-router), so this needs no require.
+ssh_connections_path = "#{zed_config_dir}/ssh-connections.local.json"
+ssh_connections_json =
+  begin
+    raw = File.exist?(ssh_connections_path) ? File.read(ssh_connections_path).to_s.strip : ""
+    if raw.empty?
+      ""
+    elsif JSON.parse(raw).is_a?(Array)
+      raw
+    else
+      MItamae.logger.warn(
+        "[dot-config-zed] #{ssh_connections_path} is valid JSON but not an " \
+        "array of ssh_connections entries — rendering settings.json without " \
+        "ssh_connections.",
+      )
+      ""
+    end
+  rescue StandardError => e
+    MItamae.logger.warn(
+      "[dot-config-zed] #{ssh_connections_path} could not be read or parsed " \
+      "(#{e.class}: #{e.message}) — rendering settings.json without " \
+      "ssh_connections.",
+    )
+    ""
+  end
 
 directory zed_config_dir do
   owner node[:setup][:user]
@@ -52,15 +104,18 @@ template "#{zed_config_dir}/settings.json" do
   # (Zed historically writes 600 since it can contain API tokens for
   # extension model providers).
   mode "600"
+  variables(ssh_connections_json: ssh_connections_json)
   source "templates/settings.json.erb"
 end
 
 # Install solargraph into the active rbenv ruby so Zed's Ruby extension
 # can spawn the LSP via the absolute shim path pinned in settings.json.
 # System ruby (2.6 on macOS) is too old for solargraph's prism dep,
-# which is why Zed's auto-install path fails.
-rbenv_bin = "#{node[:setup][:home]}/.rbenv/bin/rbenv"
-solargraph_shim = "#{node[:setup][:home]}/.rbenv/shims/solargraph"
+# which is why Zed's auto-install path fails. Paths come from
+# node[:rbenv][:root] (roles/programming resolves it before darwin.rb reaches
+# this cookbook) rather than a hardcoded ~/.rbenv.
+rbenv_bin = "#{node[:rbenv][:root]}/bin/rbenv"
+solargraph_shim = "#{node[:rbenv][:root]}/shims/solargraph"
 
 execute "gem install solargraph (rbenv active)" do
   command "#{rbenv_bin} exec gem install solargraph && #{rbenv_bin} rehash"
@@ -96,6 +151,10 @@ end
 # created git worktree (copies gitignored env files + `mise trust`) so a Parallel
 # Agents thread can use it immediately. Always exits 0 — never blocks worktree
 # creation.
+#
+# cookbooks/zed-remote-server ships a byte-identical copy for the remote side —
+# a worktree created in a remote project is created ON the remote, so the hook
+# has to exist there too. bin/lint-cookbooks asserts the two stay identical.
 remote_file "#{zed_config_dir}/provision-worktree.sh" do
   owner node[:setup][:user]
   group node[:setup][:group]
