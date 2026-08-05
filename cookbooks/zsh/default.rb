@@ -125,6 +125,15 @@ file "#{node[:setup][:home]}/.bash_profile" do
     if [ -f "$HOME/.profile" ]; then
       . "$HOME/.profile"
     fi
+
+    # Tools that read a project's environment from the account's LOGIN SHELL land
+    # on this fall-through: the directory still reports bash, and a
+    # non-interactive login shell must not exec zsh (the guard above needs a tty),
+    # so the zsh-only profile is never sourced. Zed's SSH remote is the case that
+    # surfaced it -- it resolved none of the repo-managed toolchains. Expose the
+    # shims directly. Absent directories are harmless PATH entries on a fresh
+    # host, so this needs no per-tool guard.
+    export PATH="$HOME/.local/share/mise/shims:$HOME/.rbenv/shims:$HOME/.pyenv/shims:$HOME/go/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
   PROFILE
   only_if {
     next false if login_shell == zsh_path
