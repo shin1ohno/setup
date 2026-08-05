@@ -54,6 +54,10 @@ Example: "Look up all reviews for this brand" → 1 agent per brand in backgroun
 Example: "Find bindings for this board" → 1 agent per brand group in background
 ```
 
+## synthesis-stage-data-by-path
+
+Origin: 2026-08-05 — a two-phase workflow (6 discovery streams → 6 category verifiers → 1 synthesis) lost its synthesis step to `API Error: Server error mid-response`, returning `catalog: null` while all 12 upstream agents had succeeded. Two causes, both in how the synthesis call was built: the script interpolated the whole verified dataset (248KB of JSON) into the synthesis prompt, and asked one agent for a 6-section catalog in a single response. Resuming with the dataset written to a file (the prompt carried only the path plus the jq commands to read columns) and the output split across two agents by section range succeeded — the upstream agents replayed from cache, so only the synthesis re-ran. Both fixes are cheap and independent of the failure being transient: the prompt size grows with the fan-out, which is exactly the case the fan-out exists for.
+
 ## background-agent-deadline-tracking
 
 Origin: 2026-07 aa4b0e75 (status? asked 3× + 2 stall reports in one session) / 29d690f1 (30 min silent, user prompted "止まってませんか") / 2ec1c07b.

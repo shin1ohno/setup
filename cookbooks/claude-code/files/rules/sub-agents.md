@@ -134,6 +134,17 @@ When collecting information from multiple sources (URLs, products, brands, categ
 
 Detail (numbered breakdown + examples): see `~/.claude/docs/sub-agents-detail.md#bulk-research-pattern`.
 
+## Synthesis Stage — Pass Data by Path, Split the Output
+
+A synthesis stage that merges N upstream streams fails in two ways that both look like a flaky API rather than a design error: an oversized prompt and an oversized single response.
+
+- **Pass the aggregate by file path, never inline.** Have each upstream stream write its result to a file (or write the merged array yourself), and give the synthesis agent the PATH plus the jq/Read commands to pull out the columns it needs. Never interpolate upstream JSON or transcript text into the synthesis prompt — the prompt grows with the number of streams, so this breaks exactly when the fan-out was worth doing. Tell the agent not to `cat` the whole file either.
+- **Split a large deliverable across agents or sections.** When the output is a catalog, a multi-service inventory, or a long report, assign disjoint section ranges to separate agents and concatenate, instead of asking one agent for the whole thing. Each agent then reads only the slice of data its sections need.
+
+Symptom to recognise: the orchestrator returns `null` (or an empty string) for the synthesis step while every upstream stream succeeded, with a mid-response server error in the failure list. Resume with the data moved to a file and the output split; the upstream stages replay from cache, so only the synthesis re-runs.
+
+Detail (origin): see `~/.claude/docs/sub-agents-detail.md#synthesis-stage-data-by-path`.
+
 ## Long-Running Tasks
 
 When a sub-agent needs to execute a task that runs longer than a few minutes (stability tests, load tests, multi-cycle benchmarks):
