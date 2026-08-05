@@ -38,6 +38,11 @@ name = "nord"
 # tmux: set -g mouse on  (herdr default is already true; explicit for clarity)
 mouse_capture = true
 
+# Label split-pane borders with the detected agent (default false). Named
+# agents (`herdr agent start <name>`) are the unit the CLI addresses, so
+# reading which pane holds which agent off the border beats `agent list`.
+show_agent_labels_on_pane_borders = true
+
 [advanced]
 # tmux: set -g history-limit 50000  (NOTE: herdr counts BYTES, not lines) → ~20 MB
 scrollback_limit_bytes = 20971520
@@ -46,3 +51,29 @@ scrollback_limit_bytes = 20971520
 # tmux: tmux-continuum @continuum-restore 'on' — herdr resumes Claude/Codex/etc.
 # native agent sessions after a server restart.
 resume_agents_on_restore = true
+
+# ── Japanese input (no tmux counterpart; herdr 0.8.0 [experimental]) ─────────
+# These keys are documented as experimental, so re-run `herdr config check`
+# after a version bump — the validator reports an unknown key by name and
+# exits 1, which is how a rename surfaces (verified: it flags an injected
+# bogus key while accepting every key here).
+[experimental]
+# Prefix mode (ctrl+a) with a Japanese IME active otherwise loses the
+# following keystroke to the IME. This switches the host input source to an
+# ASCII layout for the duration of prefix mode and restores it on exit.
+# macOS/Windows only and best-effort per upstream, so it is a no-op on the
+# Linux hosts — it is here for `air`.
+switch_ascii_input_source_in_prefix = true
+
+# Agent TUIs paint their own cursor and hide the terminal one, which leaves
+# macOS input methods with nowhere to anchor the candidate window when typing
+# Japanese into an agent. This exposes the focused pane's cursor to the outer
+# terminal. The trade-off upstream names is a spurious cursor in apps that
+# hide it WITHOUT painting a replacement (vim normal mode), which is exactly
+# why the allow-list below is set rather than left empty (empty = every
+# focused pane).
+reveal_hidden_cursor_for_cjk_ime = true
+cjk_ime_agents = ["claude", "codex"]
+# Matches the current upstream default; pinned because the surrounding keys
+# are experimental and a default shift would change the cursor silently.
+cjk_ime_cursor_shape = "steady_block"
