@@ -23,6 +23,9 @@ herdr_version = "0.8.0"
 #   for t in macos-aarch64 macos-x86_64 linux-aarch64 linux-x86_64; do
 #     curl -fsSL ".../v<ver>/herdr-$t" | shasum -a 256
 #   done
+# Nothing else is hand-maintained across a bump: the agent skill and the zsh
+# completion below are generated from whichever binary this pin installs, and
+# their guards compare content, so both refresh on the next apply.
 checksums = {
   "macos-aarch64" => "d53a9f93fccfdfcc55632927bf51002f5add0aa7990bcdf508ffbd84ac658178",
   "macos-x86_64"  => "77cb5afd6c8fcaaaf3bc28e474ec01c209331ad08094e20d7f8aa9b0bb78d649",
@@ -118,4 +121,86 @@ add_profile "herdr-hr" do
       && herdr session attach "$session" || herdr
   }
   EOS
+end
+
+# Agent skill for Claude Code + Codex CLI. herdr ships its own instructions
+# inside the binary (`herdr --skill` — 195 lines at 0.8.0, covering the CLI
+# surface, the pane/agent lifecycle states, and the "never stop the server you
+# did not start" safety rules), so generate from the pinned binary instead of
+# vendoring a copy that silently rots at the next bump. files/skill-local.md
+# appends what upstream cannot know: config.toml is a cookbook render target,
+# `herdr update` fights the version pin, and `hr` is the session entry point.
+# The skill self-gates on HERDR_ENV=1, so it stays inert outside a herdr pane.
+skill_local = File.join(File.dirname(__FILE__), "files", "skill-local.md")
+# One composition, used by both the install command and its guard. Emitting on
+# stdout lets the guard be a plain `| cmp -s - <dst>` (no process substitution,
+# so it works under mitamae's /bin/sh), and makes a herdr bump OR an edit to
+# skill-local.md regenerate both copies on the next apply.
+skill_body = %({ "#{herdr_path}" --skill; printf "\\n"; cat "#{skill_local}"; })
+
+# Both agents read <name>/SKILL.md from their own skills dir and share the same
+# YAML frontmatter shape, so one composed file serves both. Every entry recipe
+# that includes roles/core (this cookbook) also includes roles/llm (claude-code,
+# codex-cli) — darwin.rb, linux.rb, cookbooks/lxc-dev-workstation — so neither
+# destination lands on a host without the agent that reads it. Codex discovers
+# $CODEX_HOME/skills/<name> (its bundled set lives under skills/.system).
+{
+  ".claude/skills/herdr" => "Claude Code",
+  ".codex/skills/herdr" => "Codex CLI",
+}.each do |rel_dir, agent|
+  skill_dir = "#{node[:setup][:home]}/#{rel_dir}"
+
+  directory skill_dir do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+  end
+
+  execute "install herdr agent skill for #{agent}" do
+    user node[:setup][:user]
+    # bash -c for `set -o pipefail` (dash rejects it), same as the install
+    # above. Compose into a temp file and `install` it so a mid-pipeline
+    # failure cannot leave a half-written SKILL.md in place.
+    command <<~SH.strip
+      bash -c '
+        set -euo pipefail
+        tmp="$(mktemp)"
+        trap "rm -f $tmp" EXIT
+        #{skill_body} > "$tmp"
+        install -m 0644 "$tmp" "#{skill_dir}/SKILL.md"
+      '
+    SH
+    not_if "bash -c '#{skill_body}' | cmp -s - #{skill_dir}/SKILL.md"
+  end
+end
+
+# zsh completion. `herdr completion zsh` emits a clap script whose line 1 is
+# `#compdef herdr`, so it autoloads from fpath with no sourcing hook.
+# ~/.local/share/zsh/site-functions is put on fpath pre-compinit by
+# cookbooks/dot-zsh, but its `directory` resource lives in cookbooks/mise
+# (roles/programming, which runs AFTER roles/core) — declare it here so a fresh
+# host converges in one pass.
+zsh_comp_dir = "#{node[:setup][:home]}/.local/share/zsh/site-functions"
+zsh_comp = "#{zsh_comp_dir}/_herdr"
+
+directory zsh_comp_dir do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+end
+
+execute "generate herdr zsh completion" do
+  user node[:setup][:user]
+  command <<~SH.strip
+    bash -c '
+      set -euo pipefail
+      tmp="$(mktemp)"
+      trap "rm -f $tmp" EXIT
+      "#{herdr_path}" completion zsh > "$tmp"
+      install -m 0644 "$tmp" "#{zsh_comp}"
+    '
+  SH
+  # Content compare, not mise's `test -f`: the script enumerates subcommands,
+  # so a version bump has to regenerate it rather than keep a stale copy.
+  not_if "'#{herdr_path}' completion zsh | cmp -s - #{zsh_comp}"
 end
