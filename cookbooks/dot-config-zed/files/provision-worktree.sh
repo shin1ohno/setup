@@ -12,9 +12,17 @@
 #
 # Robustness contract: this MUST NOT block worktree creation. Every step is
 # guarded and the script ALWAYS exits 0. mise is referenced by absolute path
-# because a GUI-launched Zed has a stripped PATH (same reason the LSP binaries
-# are pinned in settings.json). macOS-only cookbook, so bash / cp / command -v
-# are all available.
+# because the Zed process invoking this hook does not inherit a login shell's
+# PATH (same reason the LSP binaries are pinned in settings.json) — on the Mac
+# because Zed was launched from the Dock, on a remote because the headless server
+# is spawned over ssh without one.
+#
+# Deployed by BOTH cookbooks/dot-config-zed (macOS client) and
+# cookbooks/zed-remote-server (Linux remote): a worktree is created on whichever
+# machine owns the project, so the hook has to exist on both. The two copies are
+# byte-identical and bin/lint-cookbooks check 14 enforces that — edit both.
+# Everything used here is present on both platforms: bash, cp, command -v, and
+# ~/.local/bin/mise (verified on air and sh1-cloud).
 set -u
 main="${1:-${ZED_MAIN_GIT_WORKTREE:-}}"
 new="${2:-${ZED_WORKTREE_ROOT:-}}"
