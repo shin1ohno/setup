@@ -51,14 +51,34 @@ zed_themes_dir = "#{zed_config_dir}/themes"
 # either, so the predicate goes in an expression and the resource tests a local.
 # The rescue covers EPERM/EACCES — a user-space path can be on a synced volume
 # that denies the read outright rather than reporting absence.
+#
+# The content is PARSED before it is spliced, not just read. This cookbook does
+# not own the file, and the fragment lands inside settings.json — so a truncated
+# or hand-broken file would make the WHOLE settings file invalid JSON and drop
+# Zed back to defaults for every setting, not just this one. Validating turns
+# that into "one key omitted, one WARN". mitamae ships JSON (see
+# cookbooks/lxc-pro-router), so this needs no require.
 ssh_connections_path = "#{zed_config_dir}/ssh-connections.local.json"
 ssh_connections_json =
   begin
-    File.exist?(ssh_connections_path) ? File.read(ssh_connections_path).to_s.strip : ""
+    raw = File.exist?(ssh_connections_path) ? File.read(ssh_connections_path).to_s.strip : ""
+    if raw.empty?
+      ""
+    elsif JSON.parse(raw).is_a?(Array)
+      raw
+    else
+      MItamae.logger.warn(
+        "[dot-config-zed] #{ssh_connections_path} is valid JSON but not an " \
+        "array of ssh_connections entries — rendering settings.json without " \
+        "ssh_connections.",
+      )
+      ""
+    end
   rescue StandardError => e
     MItamae.logger.warn(
-      "[dot-config-zed] #{ssh_connections_path} exists but could not be read " \
-      "(#{e.class}) — rendering settings.json without ssh_connections.",
+      "[dot-config-zed] #{ssh_connections_path} could not be read or parsed " \
+      "(#{e.class}: #{e.message}) — rendering settings.json without " \
+      "ssh_connections.",
     )
     ""
   end
