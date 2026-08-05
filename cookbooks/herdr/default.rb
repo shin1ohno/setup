@@ -89,13 +89,20 @@ remote_file "#{node[:setup][:home]}/.config/herdr/config.toml" do
   source "files/config.toml"
 end
 
-# `hr` — fzf-powered session switcher, the herdr analog of `tm` (cookbooks/fzf
-# `fzf-advanced`). herdr is client/server, so there is no tmux switch-client vs
-# attach-session split — a single `--session` / `session attach` works whether
-# or not a client is already running.
+# `hr` — fzf-powered session launcher, the herdr analog of `tm` (cookbooks/fzf
+# `fzf-advanced`).
 #   hr <name>  → create-or-attach the named session (`herdr --session <name>`)
 #   hr         → fzf-pick an existing session and attach; fall back to the
-#                default session (`herdr`) when none is picked or none exist.
+#                default session (`herdr`).
+# Corrected 2026-08-05 — the previous comment claimed this works "whether or not
+# a client is already running" and that the fallback covers a "none exist" case.
+# Neither holds: it is an OUTER-SHELL launcher, not a tmux `switch-client`.
+# Nested launch is refused while experimental.allow_nested = false, so from
+# inside a pane the user must detach (prefix+q) first. And `session list` always
+# contains `default`, so the empty-list branch is dead — the `|| herdr` fallback
+# actually fires on fzf cancel, list failure and attach failure alike, which
+# masks real errors. Left as-is deliberately: tightening it changes the
+# launcher's runtime behaviour and belongs in its own change.
 # Named `hr` (not `hd`) because `hd` collides with util-linux's hexdump alias
 # (/usr/bin/hd) on Linux.
 # Names are parsed from the tabular `session list` (skip header), mirroring the
