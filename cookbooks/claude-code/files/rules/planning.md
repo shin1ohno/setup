@@ -53,6 +53,8 @@ Propose the decomposition BEFORE the user asks for parallelism — shipping a se
 
 **Exception**: when the dependency graph is genuinely serial (each stage's output is the next stage's input), a serial plan is fine — but write one line stating why parallel decomposition isn't offered. Never default to serial silently. (The CLAUDE.md "Inverse — NOT new plan triggers" mechanical-sweep case is out of scope for this rule.)
 
+**Do NOT fix the downstream stream count when it depends on an upstream discovery**: when a later phase fans out over whatever an earlier phase enumerates (verify each finding, migrate each call site, deep-read each source), the count is unknown at plan time and a guessed cap silently truncates coverage. Run the discovery phase on its own first, then derive the fan-out from the actual count — `ceil(N / batch_size)`, or one stream per category when the items group naturally — and launch the second phase with that number. Two invocations you stay between beats one invocation with a guessed cap: you read the real count, and any cap you do impose is a stated decision rather than a silent one. Origin: 2026-08-05 — a workflow fixed its verify fan-out at 8 while discovery returned 99 entries; the run had to be stopped mid-flight and re-shaped into category-based streams, wasting the first run's verify budget.
+
 Origin: 2026-06-15 sage TS→Rust full rewrite — serial phase plan rejected at ExitPlanMode, the only revision request was "make it parallel where possible" (Claude re-shaped it to Wave 0 contract freeze → 9 File-Exclusivity streams); recurred 2026-07-04 in a separate project with the same up-front instruction.
 
 ## Architecture Discussion Gates
