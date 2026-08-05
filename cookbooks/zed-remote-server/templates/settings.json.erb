@@ -1,0 +1,111 @@
+{
+  // Zed HEADLESS SERVER settings for this host — managed by
+  // cookbooks/zed-remote-server. Edits here are overwritten on the next apply.
+  //
+  // Only keys that affect SERVER operations belong in this file. UI settings
+  // (fonts, theme, vim, keymap, ssh_connections) are read from the CLIENT's own
+  // settings.json and have no effect here; the two Zeds do not read each other's
+  // main settings file.
+
+  // ── Integrated terminal ────────────────────────────────────────────────
+  // The terminal for a remote project runs on this host, so the shell choice is
+  // server-side. Pinned rather than left to "system" because a directory-managed
+  // account (GCE OS Login, sssd, LDAP) hands out /bin/bash and `chsh` cannot
+  // change it — cookbooks/zsh installs the bash->zsh login hand-off for exactly
+  // those hosts, and this pins the same endpoint for Zed, which does not go
+  // through a login shell.
+  //
+  // A literal path, NOT a converge-time `command -v zsh` probe: mitamae compiles
+  // every recipe before converging any resource, so a probe here would read the
+  // state BEFORE cookbooks/zsh's install_package ran and would report zsh absent
+  // on a first apply. Every linux host this repo manages gets zsh from
+  // roles/core, and cookbooks/zsh uses this same path for its linux arm.
+  "terminal": {
+    "shell": { "program": "/usr/bin/zsh" }
+  },
+
+  // ── Worktree scan ──────────────────────────────────────────────────────
+  // Zed REPLACES its built-in exclusions when this key is present, so the nine
+  // defaults are restated before the additions. Repo-scoped projects are the
+  // real guard — this only keeps an accidentally-opened HOME workspace from
+  // walking the tool caches, the mise installs and Zed's own server tree.
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.svn",
+    "**/.hg",
+    "**/.jj",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings",
+    "**/.cache",
+    "**/.local",
+    "**/.zed_server"
+  ],
+
+  // ── Per-language server selection / formatting ─────────────────────────
+  // Formatting runs through the language server, so indentation and formatter
+  // choice resolve here rather than on the client.
+  "languages": {
+    "Ruby": {
+      "language_servers": ["solargraph"]
+    },
+    "Python": {
+      "tab_size": 4,
+      // ruff handles formatting; basedpyright (Zed default) handles types.
+      "formatter": { "language_server": { "name": "ruff" } },
+      "format_on_save": "on"
+    },
+    "Go": {
+      // gofmt uses tabs; match it so manual typing is consistent pre-save.
+      "hard_tabs": true,
+      "tab_size": 4
+    }
+  },
+
+  // ── Language servers ───────────────────────────────────────────────────
+  // Absolute paths for every binary this cookbook installs. Zed's auto-install
+  // resolves against the server process's PATH, which is not the login shell's,
+  // so an unpinned binary is found only by accident.
+  "lsp": {
+    "solargraph": {
+      "binary": {
+        "path": "<%= node[:rbenv][:root] %>/shims/solargraph",
+        "arguments": ["stdio"]
+      }
+    },
+    "rust-analyzer": {
+      // Use clippy for `check` instead of plain `cargo check`.
+      "initialization_options": {
+        "check": { "command": "clippy" }
+      }
+    },
+    "vtsls": {
+      "settings": {
+        "typescript": {
+          "inlayHints": {
+            "parameterNames": { "enabled": "all", "suppressWhenArgumentMatchesName": false },
+            "parameterTypes": { "enabled": true },
+            "variableTypes": { "enabled": true }
+          }
+        }
+      }
+    },
+    "gopls": {
+      "binary": {
+        "path": "<%= node[:setup][:home] %>/go/bin/gopls",
+        "arguments": []
+      },
+      "initialization_options": {
+        "codelenses": {
+          "test": true,
+          "generate": true,
+          "tidy": true,
+          "upgrade_dependency": true,
+          "vendor": true
+        }
+      }
+    }
+  }
+}

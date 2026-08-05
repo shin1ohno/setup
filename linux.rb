@@ -31,6 +31,18 @@ include_role "programming"
 include_role "llm"
 include_role "extras"
 
+# Zed SSH-remote server config for this host: language-server paths, the
+# integrated-terminal shell and the worktree-provisioning hook. The GUI stays on
+# the Mac client (cookbooks/dot-config-zed) and Zed installs its own
+# version-matched ~/.zed_server on first connect, so nothing here installs Zed.
+#
+# Unconditional on purpose. Any bare-metal host this repo manages can be opened
+# as a remote, the cookbook is inert until someone connects, and hostname-gating
+# it would reintroduce a per-host branch that CI cannot reach (a runner matches
+# no cookbooks/host-profile FLEET entry, so node[:profile][:label] is nil there).
+# Placed after roles/programming, which resolves node[:rbenv][:root].
+include_cookbook "zed-remote-server"
+
 # Legacy roles for backwards compatibility
 include_role "manage" # Managed projects setup
 include_role "network" # Network configuration
