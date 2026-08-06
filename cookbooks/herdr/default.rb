@@ -82,6 +82,28 @@ directory "#{node[:setup][:home]}/.config/herdr" do
   mode "755"
 end
 
+# Link smart-splits.nvim's bundled herdr plugin. This must precede the config
+# below, whose ctrl+hjkl bindings invoke `smart-splits.nvim.{left,down,up,right}`
+# — an unlinked action still validates (`config check` passes) but the keys are
+# dead until the plugin is registered.
+#
+# The plugin is the same checkout lazy.nvim already clones for neovim, so no new
+# code enters the machine; herdr runs its scripts/herdr-navigate.sh on each of
+# those keypresses. Registration lives in ~/.config/herdr/plugins.json rather
+# than the config file, hence the separate execute; guard on that file so the
+# check needs no running server. `only_if` on the manifest keeps hosts without
+# this neovim plugin (or with a different plugin manager) from failing the run —
+# they simply keep herdr's prefix+h/j/k/l defaults.
+smart_splits_root = "#{node[:setup][:home]}/.local/share/nvim/lazy/smart-splits.nvim"
+herdr_plugins_json = "#{node[:setup][:home]}/.config/herdr/plugins.json"
+
+execute "link smart-splits.nvim herdr plugin" do
+  user node[:setup][:user]
+  command "'#{herdr_path}' plugin link '#{smart_splits_root}'"
+  only_if "test -f '#{smart_splits_root}/herdr-plugin.toml'"
+  not_if "grep -q 'smart-splits.nvim' '#{herdr_plugins_json}' 2>/dev/null"
+end
+
 remote_file "#{node[:setup][:home]}/.config/herdr/config.toml" do
   owner node[:setup][:user]
   group node[:setup][:group]

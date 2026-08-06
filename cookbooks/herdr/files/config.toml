@@ -18,31 +18,12 @@ split_horizontal = "prefix+\\"
 # reload config  (tmux: bind R source-file) — matches herdr default prefix+shift+r
 reload_config = "prefix+shift+r"
 
-# pane focus = prefix-less Ctrl+hjkl, matching the tmux + smart-splits.nvim
-# muscle memory (tmux used vim-tmux-navigator's bare Ctrl-hjkl).
-#
-# CAVEAT (corrected 2026-08-05 — the previous note here had it backwards):
-# smart-splits.nvim DOES support herdr; it ships a dedicated backend
-# (lua/smart-splits/mux/herdr.lua) that drives `herdr pane edges/focus`, and
-# AstroNvim already maps <C-hjkl> to its move_cursor_*. The breakage is on THIS
-# side: binding the four keys here makes herdr consume them before any pane
-# sees them, so inside neovim they move herdr panes instead of neovim splits,
-# and every pane loses the shell's own Ctrl+l (clear) and Ctrl+h (backspace).
-#
-# Upstream's fix is process-aware routing, which needs the smart-splits herdr
-# plugin rather than these bindings:
-#   herdr plugin link ~/.local/share/nvim/lazy/smart-splits.nvim
-# then replace the four lines below with [[keys.command]] plugin_action
-# bindings for smart-splits.nvim.{left,down,up,right} (requires herdr >= 0.7.0
-# and jq). The plugin asks `herdr pane process-info` whether the focused pane
-# runs vim/neovim and forwards or moves accordingly, returning the key to the
-# app at an edge with no neighbour. Not done here yet: linking a plugin runs
-# third-party code, so it is a separate decision.
-# Until then, use Ctrl+w h/j/k/l for neovim splits.
-focus_pane_left = "ctrl+h"
-focus_pane_down = "ctrl+j"
-focus_pane_up = "ctrl+k"
-focus_pane_right = "ctrl+l"
+# Pane focus is NOT bound to bare Ctrl+hjkl here — see the smart-splits.nvim
+# plugin_action bindings at the bottom of this file. Binding `focus_pane_*` to
+# those keys (as this file did until 2026-08-06) makes herdr consume them before
+# any pane sees them: inside neovim they moved herdr panes instead of neovim
+# splits, and every pane lost the shell's own Ctrl+l (clear) and Ctrl+h
+# (backspace). herdr's own prefix+h/j/k/l defaults still work.
 
 [theme]
 # tmux: arcticicestudio/nord-tmux
@@ -56,6 +37,47 @@ mouse_capture = true
 # agents (`herdr agent start <name>`) are the unit the CLI addresses, so
 # reading which pane holds which agent off the border beats `agent list`.
 show_agent_labels_on_pane_borders = true
+
+# Order the agent panel as an attention queue instead of by location (default
+# "spaces"): blocked first, then unseen-done, working, seen-idle, unknown, with
+# the latest transition first inside each group. This is the ordering upstream
+# designed the panel around when several agents run at once. Consequence: an
+# agent's position — and therefore its indexed jump number — moves as states
+# change, so never target an agent by panel position.
+agent_panel_sort = "priority"
+sidebar_width = 32
+
+# Two packed rows per agent: urgency + identity + state on the first, location
+# and task title on the second. rows_by_agent REPLACES rows for that agent kind
+# (keys are kinds, not instance names), which is why the first row repeats; the
+# override swaps `pane` for the agent's own terminal title, which is where
+# Claude and Codex put the current task.
+[ui.sidebar.agents]
+row_gap = 0
+rows = [
+  [{ token = "state_icon", bold = true }, { token = "agent", bold = true }, "state_text"],
+  [{ token = "workspace", fg = "#88c0d0" }, "tab", "pane"],
+]
+
+[ui.sidebar.agents.rows_by_agent]
+claude = [
+  [{ token = "state_icon", bold = true }, { token = "agent", bold = true }, "state_text"],
+  [{ token = "workspace", fg = "#88c0d0" }, "tab", "terminal_title_stripped"],
+]
+codex = [
+  [{ token = "state_icon", bold = true }, { token = "agent", bold = true }, "state_text"],
+  [{ token = "workspace", fg = "#88c0d0" }, "tab", "terminal_title_stripped"],
+]
+
+# Hand notifications to the outer terminal (OSC 9 for Ghostty/iTerm2/WezTerm,
+# OSC 99 for Kitty) so a background agent going blocked or done reaches the
+# laptop across ssh. There is no fallback for an unrecognised terminal, and
+# nothing is queued while detached — the priority-sorted panel above is the
+# reattach fallback. `system` is useless on this box (no display, no
+# notify-send) and sound is too (no player installed).
+[ui.toast]
+delivery = "terminal"
+delay_seconds = 1
 
 [advanced]
 # tmux: set -g history-limit 50000  (NOTE: herdr counts BYTES, not lines) → ~20 MB
@@ -80,8 +102,11 @@ resume_agents_on_restore = true
 # Prefix mode (ctrl+a) with a Japanese IME active otherwise loses the
 # following keystroke to the IME. This switches the host input source to an
 # ASCII layout for the duration of prefix mode and restores it on exit.
-# macOS/Windows only and best-effort per upstream, so it is a no-op on the
-# Linux hosts — it is here for `air`.
+# Upstream calls it "the host input source" and a no-op outside macOS/Windows,
+# so the machine that performs the switch is wherever the FOREGROUND CLIENT
+# runs: nothing happens under `ssh sh1-cloud; herdr` (Linux client), and it can
+# apply under `herdr --remote sh1-cloud` from air (macOS client). Which config
+# a remote client reads for this key is undocumented.
 switch_ascii_input_source_in_prefix = true
 
 # Agent TUIs paint their own cursor and hide the terminal one, which leaves
@@ -96,3 +121,79 @@ cjk_ime_agents = ["claude", "codex"]
 # Matches the current upstream default; pinned because the surrounding keys
 # are experimental and a default shift would change the cursor silently.
 cjk_ime_cursor_shape = "steady_block"
+
+# ── Command bindings ────────────────────────────────────────────────────────
+# `[[keys.command]]` is an array-of-tables (a `[keys.command]` map is a TOML
+# parse error) and lives at the end of the file because opening it would stop
+# any further bare keys being added to `[keys]`.
+#
+# Seamless Ctrl+hjkl across neovim splits and herdr panes, replacing the
+# `focus_pane_*` bindings this file used to carry. cookbooks/herdr/default.rb
+# links the plugin from the smart-splits.nvim checkout that lazy.nvim clones;
+# its script asks `herdr pane process-info` whether the focused pane runs
+# vim/neovim, forwards the key into the pane when it does (so neovim handles its
+# own splits and calls back to cross a pane boundary at the edge), moves herdr
+# focus when it does not, and hands the key back to the application at an edge
+# with no neighbour — which is what keeps the shell's Ctrl+l and Ctrl+h working.
+# Requires herdr >= 0.7.0 and jq (apt's /usr/bin/jq, not the mise shim, so the
+# server finds it regardless of PATH).
+#
+# Consequence worth knowing: in a pane that has a neighbour in that direction,
+# the key moves focus rather than reaching the application — so Ctrl+l clears
+# the screen only in a pane with nothing to its right. Same trade-off
+# vim-tmux-navigator had. The script honours
+# SMART_SPLITS_HERDR_PASSTHROUGH_RE (e.g. '^(claude|codex)$') in the server's
+# environment to always forward instead, at the cost of not being able to leave
+# those panes with these keys; not set here.
+[[keys.command]]
+key = "ctrl+h"
+type = "plugin_action"
+command = "smart-splits.nvim.left"
+description = "navigate left (vim/herdr)"
+
+[[keys.command]]
+key = "ctrl+j"
+type = "plugin_action"
+command = "smart-splits.nvim.down"
+description = "navigate down (vim/herdr)"
+
+[[keys.command]]
+key = "ctrl+k"
+type = "plugin_action"
+command = "smart-splits.nvim.up"
+description = "navigate up (vim/herdr)"
+
+[[keys.command]]
+key = "ctrl+l"
+type = "plugin_action"
+command = "smart-splits.nvim.right"
+description = "navigate right (vim/herdr)"
+
+# Modal tools. A popup is session-modal: it owns all input until the program
+# exits, gets no HERDR_PANE_ID, and has agent detection disabled — so never run
+# an agent in one. Sizes accept "1%".."100%" or an integer cell count.
+[[keys.command]]
+key = "prefix+alt+g"
+type = "popup"
+command = "lazygit"
+description = "open lazygit"
+width = "90%"
+height = "90%"
+
+[[keys.command]]
+key = "prefix+alt+s"
+type = "popup"
+command = "exec \"${SHELL:-sh}\" -l"
+description = "open scratch shell"
+width = "80%"
+height = "80%"
+
+# Live agent table. HERDR_BIN_PATH is the binary the server itself runs, which
+# survives a version bump under the running server.
+[[keys.command]]
+key = "prefix+alt+a"
+type = "popup"
+command = "watch -n 1 -d '$HERDR_BIN_PATH agent list | jq -r \".result.agents[] | [(.name // .agent), .agent_status, .terminal_title_stripped] | @tsv\"'"
+description = "watch agent status"
+width = "90%"
+height = "80%"
