@@ -20,11 +20,25 @@ reload_config = "prefix+shift+r"
 
 # pane focus = prefix-less Ctrl+hjkl, matching the tmux + smart-splits.nvim
 # muscle memory (tmux used vim-tmux-navigator's bare Ctrl-hjkl).
-# CAVEAT: herdr is NOT a smart-splits.nvim multiplexer target (it supports
-# tmux/wezterm/kitty/zellij only), so seamless vim-split <-> pane transit does
-# NOT work — inside neovim, smart-splits intercepts Ctrl+hjkl and stops at the
-# window edge instead of crossing into the next herdr pane. These bindings move
-# between herdr panes only outside neovim.
+#
+# CAVEAT (corrected 2026-08-05 — the previous note here had it backwards):
+# smart-splits.nvim DOES support herdr; it ships a dedicated backend
+# (lua/smart-splits/mux/herdr.lua) that drives `herdr pane edges/focus`, and
+# AstroNvim already maps <C-hjkl> to its move_cursor_*. The breakage is on THIS
+# side: binding the four keys here makes herdr consume them before any pane
+# sees them, so inside neovim they move herdr panes instead of neovim splits,
+# and every pane loses the shell's own Ctrl+l (clear) and Ctrl+h (backspace).
+#
+# Upstream's fix is process-aware routing, which needs the smart-splits herdr
+# plugin rather than these bindings:
+#   herdr plugin link ~/.local/share/nvim/lazy/smart-splits.nvim
+# then replace the four lines below with [[keys.command]] plugin_action
+# bindings for smart-splits.nvim.{left,down,up,right} (requires herdr >= 0.7.0
+# and jq). The plugin asks `herdr pane process-info` whether the focused pane
+# runs vim/neovim and forwards or moves accordingly, returning the key to the
+# app at an edge with no neighbour. Not done here yet: linking a plugin runs
+# third-party code, so it is a separate decision.
+# Until then, use Ctrl+w h/j/k/l for neovim splits.
 focus_pane_left = "ctrl+h"
 focus_pane_down = "ctrl+j"
 focus_pane_up = "ctrl+k"
@@ -48,8 +62,13 @@ show_agent_labels_on_pane_borders = true
 scrollback_limit_bytes = 20971520
 
 [session]
-# tmux: tmux-continuum @continuum-restore 'on' — herdr resumes Claude/Codex/etc.
-# native agent sessions after a server restart.
+# NOT the tmux-continuum equivalent (corrected 2026-08-05). herdr restores
+# layout, cwd and focus on its own; this key only enables the conditional agent
+# branch of that structural restore, and it revives a CONVERSATION only for an
+# agent whose official integration reported a native session reference. A
+# restart kills every process: ordinary panes come back as fresh shells, and
+# pane text is lost unless experimental pane_history is on. Measured 2026-08-05:
+# 0 of 6 live agents carried a session reference.
 resume_agents_on_restore = true
 
 # ── Japanese input (no tmux counterpart; herdr 0.8.0 [experimental]) ─────────
