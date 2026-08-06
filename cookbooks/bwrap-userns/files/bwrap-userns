@@ -1,0 +1,22 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# Grant unprivileged user namespaces to the packaged bubblewrap, and confine
+# nothing else.
+#
+# Ubuntu 24.04 sets kernel.apparmor_restrict_unprivileged_userns=1. An
+# unconfined binary that creates an unprivileged user namespace is transitioned
+# into the unprivileged_userns profile, which carries `audit deny capability`,
+# so bwrap cannot write uid_map and every sandboxed exec dies with
+#   bwrap: setting up uid map: Permission denied
+# Ubuntu's own bubblewrap package ships no profile for its binary (the .deb
+# contains only /usr/bin/bwrap), so this is the missing half.
+#
+# `flags=(unconfined)` means this profile mediates only what it names — here the
+# userns permission — rather than restricting bwrap's own file/network access.
+# That is the pattern Ubuntu documents for third-party bubblewrap users.
+profile bwrap-userns /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  include if exists <local/bwrap-userns>
+}
