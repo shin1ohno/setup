@@ -557,6 +557,18 @@ jobs:
         ./bin/audit-cookbook-reachability
         ./bin/lint-cookbooks
 
+    - name: hr shell function regression suite
+      run: |
+        # cookbooks/herdr/files/hr.sh is the `hr` session launcher deployed to
+        # profile.d. The suite stubs herdr and fzf on PATH and asserts every
+        # failure path returns non-zero without launching anything; it runs each
+        # case under bash AND zsh because zsh is the login shell on these hosts
+        # and does not word-split unquoted parameters the way bash does.
+        # zsh is not on the runner image by default.
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq zsh
+        bash cookbooks/herdr/files/test-hr.sh cookbooks/herdr/files/hr.sh
+
     - name: Validate JSON files
       run: |
         # Check if any JSON files exist and validate them

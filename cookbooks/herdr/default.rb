@@ -114,21 +114,23 @@ end
 # `hr` — fzf-powered session launcher, the herdr analog of `tm` (cookbooks/fzf
 # `fzf-advanced`).
 #   hr <name>  → create-or-attach the named session (`herdr --session <name>`)
-#   hr         → fzf-pick an existing session and attach; fall back to the
-#                default session (`herdr`).
-# Corrected 2026-08-05 — the previous comment claimed this works "whether or not
-# a client is already running" and that the fallback covers a "none exist" case.
-# Neither holds: it is an OUTER-SHELL launcher, not a tmux `switch-client`.
-# Nested launch is refused while experimental.allow_nested = false, so from
-# inside a pane the user must detach (prefix+q) first. And `session list` always
-# contains `default`, so the empty-list branch is dead — the `|| herdr` fallback
-# actually fires on fzf cancel, list failure and attach failure alike, which
-# masks real errors. Left as-is deliberately: tightening it changes the
-# launcher's runtime behaviour and belongs in its own change.
+#   hr         → fzf-pick a listed session and attach it
+# It is an OUTER-SHELL launcher, not a tmux `switch-client`: nested launch is
+# refused while experimental.allow_nested = false, so the function detects
+# HERDR_ENV=1 and tells the user to detach (prefix+q) instead of letting herdr
+# print its own refusal. Every other failure path returns non-zero and launches
+# nothing — see the header of files/hr.sh for what the old `|| herdr` tail hid.
+#
+# The body lives in files/hr.sh rather than a heredoc here so that it is a real
+# shell file: syntax-checkable, and driven by files/test-hr.sh, whose 18 cases
+# run under both bash and zsh in CI. That suite was written against the spec by
+# a different author than the implementation and is mutation-checked — it fails
+# 14 of 18 against the pre-hardening function, which is what makes a green run
+# mean something.
 # Named `hr` (not `hd`) because `hd` collides with util-linux's hexdump alias
 # (/usr/bin/hd) on Linux.
-# Names are parsed from the tabular `session list` (skip header), mirroring the
-# no-json-parser style of `tm`.
+# Names are parsed from the tabular `session list` (skip header, skip blanks),
+# mirroring the no-json-parser style of `tm`.
 #
 # Remove the orphaned `hd` profile script left on machines that applied the
 # pre-rename cookbook (PR #425). Without this, `50-herdr-hd.sh` lingers and
@@ -140,16 +142,7 @@ end
 end
 
 add_profile "herdr-hr" do
-  bash_content <<~'EOS'
-  hr() {
-    if [ -n "$1" ]; then
-      herdr --session "$1"
-      return
-    fi
-    session=$(herdr session list 2>/dev/null | awk 'NR>1 {print $1}' | fzf --exit-0) \
-      && herdr session attach "$session" || herdr
-  }
-  EOS
+  bash_content File.read(File.join(File.dirname(__FILE__), "files", "hr.sh"))
 end
 
 # Agent skill for Claude Code + Codex CLI. herdr ships its own instructions
