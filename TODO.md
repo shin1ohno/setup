@@ -1,5 +1,35 @@
 # TODO
 
+## Roon process-name toggles re-fire 4 false "Process down" alerts per update (Medium)
+
+`setup-process-alerts.sh` builds one `.es-query` rule per (host, process) pair and
+matches `process.name` with an exact `term` query. Roon Server's launcher
+alternates between exec'ing `./RoonServer.exe` and
+`/opt/RoonServer/Server/RoonServer` across auto-updates, so the comm-derived
+`process.name` toggles between the `.exe` and extension-less spellings while the
+on-disk file and `process.executable` stay put. Every toggle makes all four Roon
+rules (`roon` ×3 + `pro` ×1) match zero docs and fire a false "Process down" that
+can never auto-resolve, because the name they query no longer exists.
+
+- **Observed twice in 3 days**: 2026-08-04T17:01Z (extension-less -> `.exe`,
+  issues #829-#832, fixed by PR #833) and 2026-08-06T19:04Z (`.exe` ->
+  extension-less, issues #848-#850, fixed by the PR that adds this entry). Both
+  handovers were gapless in `metrics-system.process-default` — Roon never went
+  down. Each occurrence costs 4 false issues plus a name-flip PR.
+- **Why the current fix does not close it**: flipping the four values in
+  `expected-processes.json` tracks the name Roon happens to use today. It is
+  correct until the next toggle and then wrong in exactly the same way. Listing
+  both spellings does NOT work either — each list element becomes its own rule,
+  so the currently-absent spelling would fire permanently.
+- **First step**: teach `setup-process-alerts.sh` to accept a list of
+  alternative spellings for ONE rule — let an entry be a nested array
+  (`["RoonServer", "RoonServer.exe"]`) built into a `terms` query (OR) instead of
+  a `term` query, with a flat string keeping today's exact-match behaviour. Keep
+  the rule name keyed on the first spelling so the prune phase stays stable, and
+  verify against live ES that the rebuilt rules still match for every existing
+  host before rollout (a wrong `terms` shape would silently blind every
+  process-liveness rule in the fleet). Delete this entry in the resolving commit.
+
 ## Elastic CA rotation is not detected by the cert skip_if guards (Medium)
 
 The content-aware `skip_if` migration (PR "content-aware skip_if") changed the
