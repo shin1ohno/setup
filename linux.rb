@@ -43,6 +43,14 @@ include_role "extras"
 # Placed after roles/programming, which resolves node[:rbenv][:root].
 include_cookbook "zed-remote-server"
 
+# Ubuntu 24.04's AppArmor userns restriction breaks bubblewrap, which is the
+# only sandbox backend Codex CLI (roles/llm above) has on Linux — without this,
+# every sandboxed Codex exec fails and the agent can only run unsandboxed.
+# Unconditional and outside the sh1-cloud guard below: the fix is needed on the
+# cloud box too, and every resource in the cookbook no-ops where the kernel
+# restriction is absent.
+include_cookbook "bwrap-userns"
+
 # Legacy roles for backwards compatibility
 include_role "manage" # Managed projects setup
 include_role "network" # Network configuration
