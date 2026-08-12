@@ -88,6 +88,76 @@ execute "bring up vmbr1" do
 end
 
 # ------------------------------------------------------------------------
+# Resolver order (/etc/resolv.conf)
+# ------------------------------------------------------------------------
+# The host's resolv.conf predates the unbound LAN resolver (CT 118 / .61,
+# cookbooks/unbound) that replaced the RTX1210 forwarder: it listed the RTX
+# proxy (.253) first and a PUBLIC resolver (1.1.1.1) as the only fallback.
+# That pairing loses the whole host's telemetry whenever the RTX stops
+# answering :53 — observed 2026-08-12 (self-heal #855/#856/#857):
+#
+#   1. The RTX kept routing (ping OK, gateway fine) but stopped answering
+#      UDP/53, so every lookup fell through to 1.1.1.1.
+#   2. 1.1.1.1 is authoritative-negative for the private `home.local` zone,
+#      so `es-0.home.local` came back NXDOMAIN — "no such host" instead of
+#      "resolver unavailable". elastic-agent treats that as permanent:
+#      `Exporting failed. Dropping data` / `Drop batch`, unbuffered. pro's
+#      metrics stopped fleet-wide (11.5 min from 09:12Z, 22 min from
+#      09:41Z), and the Kibana es-query rule "Document count is 0 in the
+#      last 10m" then fired one false "Process down" per process.
+#
+# So the public resolver is dropped on purpose, not merely reordered: it can
+# never answer home.local, and its only effect there is to turn a retryable
+# timeout into a permanent NXDOMAIN. unbound leads (it serves home.local
+# locally plus TCP/53, and forwards everything else to Cloudflare DoT), which
+# is the order the RTX already hands DHCP clients — home-monitor/rtx-hnd.tf
+# `dns_servers = [dns-resolver, vpc_resolver, 1.1.1.1]`. The RTX stays as the
+# secondary, so a CT 118 outage is no worse than today's behaviour (and
+# unbound-watchdog, included from pve-host.rb, restarts a wedged unbound).
+#
+# The file is written whole rather than appended so the nameserver list stays
+# converged. `options no-aaaa` is carried here for that reason; the later
+# dns-prefer-ipv4 cookbook (via lxc_entry -> lxc-core) finds it already
+# present and no-ops on its `grep -qE '^options[[:space:]].*no-aaaa'` guard.
+#
+# Override per host via node[:pve_host][:nameservers] / [:dns_search] when
+# adding a 2nd PVE node on a different LAN.
+
+resolv_staging = "#{node[:setup][:root]}/pve-host/resolv.conf"
+resolv_system  = "/etc/resolv.conf"
+nameservers    = node.dig(:pve_host, :nameservers) || ["192.168.1.61", "192.168.1.253"]
+dns_search     = node.dig(:pve_host, :dns_search) || "home.local"
+
+# Built by joining lines rather than a squiggly heredoc: the nameserver list is
+# variable-length, and a multi-line interpolation inside <<~ is dedented from
+# the literal source lines only, so the 2nd and later entries would land at
+# column 0 by accident rather than by intent.
+resolv_content = [
+  "# Managed by setup/cookbooks/pve-host. Do not edit /etc/resolv.conf by",
+  "# hand - the next mitamae run will overwrite it.",
+  "search #{dns_search}",
+]
+nameservers.each { |ns| resolv_content << "nameserver #{ns}" }
+resolv_content << "options no-aaaa"
+
+file resolv_staging do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  content "#{resolv_content.join("\n")}\n"
+end
+
+# /etc/resolv.conf is 0644, so the diff guard is readable by the non-root
+# apply user (rules/ruby.md "Guard must be evaluatable under mitamae's actual
+# runtime privilege"). No resolver daemon owns the file on this host —
+# systemd-resolved / networkd / NetworkManager are all inactive and both
+# bridges are `inet static`, so nothing regenerates it behind us.
+execute "install /etc/resolv.conf (unbound first, no public fallback)" do
+  command "sudo install -m 644 -o root -g root #{resolv_staging} #{resolv_system}"
+  not_if "diff -q #{resolv_staging} #{resolv_system} 2>/dev/null"
+end
+
+# ------------------------------------------------------------------------
 # Data disk mounts: sdb (Media) and sdc (data)
 # ------------------------------------------------------------------------
 # These external ext4 disks survived the auto-install untouched (the ZFS
