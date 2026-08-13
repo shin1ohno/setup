@@ -113,6 +113,8 @@ Before writing any terraform resource for a CLI-driven physical network device (
 
 Detail (full bash blocks + RTX1210/RTX830 constraint table + origin): see `~/.claude/docs/infrastructure-detail.md#physical-network-device-snmp-probe`.
 
+**Cutover safety**: when the change reconfigures a LIVE device's interface roles / bridge membership / addressing / admin access (not just adds monitoring), run the cutover-safety checklist BEFORE the work — (1) boot-source check (`show environment` 実行中設定ファイル; inserted recovery USB boots its stale config on EVERY restart while `save` writes internal CONFIG0), (2) deadman restart + staged save (batch unsaved, `save` only after basic-connectivity verification), (3) explicit reboot after bridge/L2-membership changes (fe80 link-locals are NOT regenerated at runtime — interface stays v6-down with correct config), (4) single-command firmware-acceptance canary in admin mode before `terraform apply` (schema validation ≠ firmware acceptance), (5) mirror≠evidence (a source chain's permissive fallback can mask placement bugs — verify mechanism, not placement). Detail + origin (2026-08-12 HND loopback cutover: 2 rollbacks + 1 shipped filter bug): see `~/.claude/docs/infrastructure-detail.md#physical-network-device-cutover-safety`.
+
 ## Blocked Command Boundary
 
 When a command is blocked by any permission restriction — `sudo` required, tool-permission denied, project hook guard (e.g., mitamae dry-run guard), or user-declined approval — immediately present the blocked command prefixed with `!` so the user can run it in-session:
