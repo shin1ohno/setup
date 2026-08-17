@@ -80,4 +80,6 @@ list モードはここで整形出力（store 別 → テーマ別、期日つ�
 
 ## ループ化
 
-手動週 1 起動（cron 化は運用が安定してから別途判断）。`/todo-collect`（毎日、外部ソースからの capture 収集）とは独立のループ — collect が「入口」、reconcile が「出口」。
+**sh1-cloud で週次 LIVE 無人実行**: `todo-reconcile.timer`（月曜 08:13 JST、zp-SHIN overlay の `mercari-claude-todo` cookbook が配置）。無人 run の書込境界は 2 点で通常の LIVE と異なる: (a) forget は 1 run 上限つき（既定 15 件）で機械的証拠のあるものだけ、(b) TODO.md はループ専有の worktree 内で commit までを skill が行い、**push と `gh pr create` は runner shell 側**が実行する（merge は誰もしない）。ai-memory はこのホストに未登録なので個人 store は毎回「未列挙」。
+
+対話セッションからの手動起動（dry-run / list モード）はこれまでどおり。`/todo-collect`（毎日、外部ソースからの capture 収集）とは独立のループ — collect が「入口」、reconcile が「出口」。
