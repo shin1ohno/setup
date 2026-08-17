@@ -135,8 +135,12 @@ cjk_ime_cursor_shape = "steady_block"
 # own splits and calls back to cross a pane boundary at the edge), moves herdr
 # focus when it does not, and hands the key back to the application at an edge
 # with no neighbour — which is what keeps the shell's Ctrl+l and Ctrl+h working.
-# Requires herdr >= 0.7.0 and jq (apt's /usr/bin/jq, not the mise shim, so the
-# server finds it regardless of PATH).
+# Requires herdr >= 0.7.0, and a smart-splits.nvim revision new enough to ship
+# herdr-plugin.toml — AstroNvim's lazy_snapshot pins an older one, so
+# ~/.config/nvim overrides that pin. jq is optional rather than required: the
+# script resolves it from the PATH the server inherited (the mise shim answers
+# on hosts with no /usr/bin/jq) and, when it finds none, skips only the Vim
+# detection — focus still moves and the key still falls through at an edge.
 #
 # Consequence worth knowing: in a pane that has a neighbour in that direction,
 # the key moves focus rather than reaching the application — so Ctrl+l clears
