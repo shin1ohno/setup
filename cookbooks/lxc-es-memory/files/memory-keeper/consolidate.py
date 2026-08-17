@@ -28,9 +28,10 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from es_client import ESClient, ESError, content_hash, cosine, now_iso  # noqa: E402
+from es_client import ESClient, ESError, cosine, now_iso  # noqa: E402
 import voyage_client  # noqa: E402
 import claude_judge  # noqa: E402
+import merge_rules  # noqa: E402
 
 
 def _env(name, default):
@@ -153,20 +154,16 @@ def _promote(es, now):
             errors += 1
             break
 
-        prov_new = {"agent": "memory-keeper", "source_class": "promoted", "written_at": now}
-        fact_doc = {
-            "content": claim,
-            "embedding": emb,
-            "memory_type": "fact",
-            "tags": [],
-            "entities": [],
-            "provenance": prov_new,
-            "reconcile_status": "raw",
-            "content_hash": content_hash(claim),
-            "derived_from": sup_ids,
-            "use_count": 0,
-            "last_used_at": now,
-        }
+        # Same construction site as the merges, so the field rules live in one
+        # module. Promotion deliberately does NOT inherit the episodes' tags —
+        # see merge_rules.promoted_fact_doc for why that loses no routing key.
+        fact_doc = merge_rules.promoted_fact_doc(
+            claim=claim,
+            embedding=emb,
+            supporting_srcs=[ep_by_id.get(i, {}).get("_source", {}) for i in sup_ids],
+            now=now,
+            derived_from=sup_ids,
+        )
         try:
             res = es.index_doc(FACT_INDEX, fact_doc, refresh="wait_for")
             new_id = res["_id"]
@@ -195,7 +192,11 @@ def _near_dup(es, now):
                 "must_not": [{"exists": {"field": "superseded_by"}}],
             }
         },
-        "_source": ["content", "embedding", "provenance"],
+        # tags and entities are load-bearing here: the merge below unions them,
+        # and a field missing from _source unions with [] and silently drops the
+        # loser's routing key — the fix would ship inert. Both this body and the
+        # per-neighbour kNN body need them.
+        "_source": ["content", "embedding", "provenance", "tags", "entities"],
     }
     facts = es.search(FACT_INDEX, body)["hits"]["hits"]
     superseded_now = set()
@@ -237,7 +238,11 @@ def _near_dup(es, now):
                 "filter": {"bool": {"must_not": [{"exists": {"field": "superseded_by"}}]}},
             },
             "size": 6,
-            "_source": ["content", "embedding", "provenance"],
+            # tags and entities are load-bearing here: the merge below unions them,
+        # and a field missing from _source unions with [] and silently drops the
+        # loser's routing key — the fix would ship inert. Both this body and the
+        # per-neighbour kNN body need them.
+        "_source": ["content", "embedding", "provenance", "tags", "entities"],
         }
         try:
             neighbors = es.search(FACT_INDEX, knn_body)["hits"]["hits"]
@@ -256,19 +261,48 @@ def _near_dup(es, now):
             if cos > DUP_SUPERSEDE:
                 n_ts = n.get("_source", {}).get("provenance", {}).get("written_at", "")
                 older, newer = (fid, nid) if f_ts <= n_ts else (nid, fid)
+                # Index a merged doc and supersede BOTH, instead of pointing the
+                # older at the newer and walking away. The pointer-only write
+                # orphaned everything the loser carried — including its tags, so a
+                # todo-tagged fact deduped against an untagged paraphrase stopped
+                # being enumerable, which is the dominant tag-loss path in the
+                # keeper: reconcile's prompt prefers NOOP for paraphrases and NOOP
+                # does not supersede, so duplicates arrive HERE to be removed.
+                #
+                # Above this threshold the two texts are near-identical by
+                # construction, so the survivor's content is taken verbatim and
+                # its vector is already in vmap: no embedding call, no judge call.
+                older_hit, newer_hit = (h, n) if older == fid else (n, h)
+                merged_doc = merge_rules.near_dup_merge_doc(
+                    older_src=older_hit.get("_source", {}),
+                    newer_src=newer_hit.get("_source", {}),
+                    older_id=older,
+                    newer_id=newer,
+                    embedding=vmap.get(newer),
+                    now=now,
+                )
                 try:
-                    es.update(
-                        FACT_INDEX,
-                        older,
-                        {"superseded_by": newer, "superseded_at": now, "reconcile_status": "reconciled"},
-                        refresh="false",
+                    new_id = es.index_doc(FACT_INDEX, merged_doc, refresh="wait_for")["_id"]
+                    for victim in (older, newer):
+                        es.update(
+                            FACT_INDEX,
+                            victim,
+                            {"superseded_by": new_id, "superseded_at": now,
+                             "reconcile_status": "reconciled"},
+                            refresh="false",
+                        )
+                        superseded_now.add(victim)
+                        superseded_count += 1
+                    print(
+                        f"AUDIT near-dup merge new_id={new_id} superseded={older},{newer} "
+                        f"cos={cos:.4f} tags={merged_doc['tags']}",
+                        file=sys.stderr,
                     )
-                    superseded_now.add(older)
-                    superseded_count += 1
-                    print(f"AUDIT near-dup supersede older={older} by={newer} cos={cos:.4f}", file=sys.stderr)
                 except ESError:
                     errors += 1
-                if older == fid:
+                # fid may have been the survivor OR the loser; either way it is
+                # spent once it has been folded, so stop pairing it.
+                if fid in superseded_now:
                     break
             elif DUP_REPORT_LOW <= cos <= DUP_SUPERSEDE:
                 reports.append((fid, nid, round(cos, 4)))

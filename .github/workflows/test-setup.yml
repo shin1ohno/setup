@@ -592,6 +592,17 @@ jobs:
         # against the pre-fix backend 17 of the cases fail.
         python3 cookbooks/lxc-es-memory/files/memory-mcp/test_tag_preservation.py
 
+    - name: memory-keeper merge-rules regression suite
+      run: |
+        # cookbooks/lxc-es-memory/files/memory-keeper folds facts together in two
+        # places, and both used to lose the loser's tags: reconcile's UPDATE took
+        # the target's tags only, and consolidate's near-dup pass wrote a bare
+        # superseded_by pointer that orphaned everything the older doc carried.
+        # The suite asserts the pure merge rules AND the query bodies, because a
+        # correct rule fed by a _source list that never fetched `tags` unions with
+        # [] and ships inert — reproduced, that state fails 2 of the cases.
+        python3 cookbooks/lxc-es-memory/files/memory-keeper/test_merge_rules.py
+
     - name: Background-launch Stop hook regression suite
       run: |
         # hooks/warn-background-launch-no-progress.rb is the mechanical backstop
