@@ -150,6 +150,16 @@ ordered=(
     # Discover saved search. Single file declares both (index-pattern first,
     # search second) so references resolve within the one import.
     "${SAVED_OBJECTS_DIR}/wlx-discover.ndjson"
+    # WLX roaming / re-association churn dashboard. Reuses the logs-wlx-default
+    # data view declared by wlx-discover.ndjson above, so that file must stay
+    # ahead of these. Panels first, dashboard last so its references resolve.
+    "${SAVED_OBJECTS_DIR}/wlx-churn-lens-reject-metric.ndjson"
+    "${SAVED_OBJECTS_DIR}/wlx-churn-lens-assoc-over-time.ndjson"
+    "${SAVED_OBJECTS_DIR}/wlx-churn-lens-sta-table.ndjson"
+    "${SAVED_OBJECTS_DIR}/wlx-churn-lens-ap-bar.ndjson"
+    "${SAVED_OBJECTS_DIR}/wlx-churn-lens-code-donut.ndjson"
+    "${SAVED_OBJECTS_DIR}/wlx-churn-search.ndjson"
+    "${SAVED_OBJECTS_DIR}/wlx-churn-dashboard.ndjson"
 )
 
 failures=0
