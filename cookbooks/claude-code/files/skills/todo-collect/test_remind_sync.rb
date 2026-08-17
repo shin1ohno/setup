@@ -245,7 +245,7 @@ class TestSyncPlannerRules < Minitest::Test
 
   # Egress guard: a store absent from mirror.stores is never mirrored.
   def test_egress_guard_unlisted_store_not_mirrored
-    m = memory_item(id: "m1", content: "TODO (work): internal thing。", store: "memory-local")
+    m = memory_item(id: "m1", content: "TODO (work): internal thing。", store: "memory-work")
     p = plan(reminders: [], memory_items: [m])
 
     assert_empty p["reminder_actions"]
@@ -287,8 +287,8 @@ class TestMirrorContentPolicy < Minitest::Test
 
   def test_policy_title_link_notes_url_and_token_only
     add = add_for(FULL_CONTENT.sub("TODO: ", "TODO (work): "),
-                  store: "memory-local",
-                  stores: [{ "name" => "memory-local", "policy" => "title-link" }])
+                  store: "memory-work",
+                  stores: [{ "name" => "memory-work", "policy" => "title-link" }])
 
     assert_equal "https://github.com/o/r/pull/1\n[ai-todo:m1]", add["notes"]
     refute_includes add["notes"], "完了条件" # body never leaves for iCloud

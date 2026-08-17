@@ -2,25 +2,25 @@
 
 Doctrine for when and how to search + save durable knowledge. `@`-imported by CLAUDE.md, so this file is always-loaded. The self-hosted Cognee stack (REST `localhost:8001`, ChromaDB, `docker compose cognee`, `bulk_ingest`, the `~/ingest/drop/` watcher) and its MCP tools (`cognify` / `save_interaction` / cognee `search`) were fully retired. The memory-v2 stack is now the single knowledge store — use its tools (`recall` / `remember` / `ingest`).
 
-## Local write fallback (host-agnostic)
-
-If a knowledge-WRITE tool (`remember`, `ingest`, `revise`, `forget`) is denied in this session, a local memory MCP may be registered on this host for writes — use the local equivalent instead (`mcp__memory-local__*`). READS (`recall`, `browse`) continue to use whichever connector is available (hosted or local). On hosts where the local server is not registered, the connector write tools are allowed and this note is a no-op.
-
 ## Connector timeout ≠ service down — curl the endpoint before declaring an outage
 
-When an MCP connector call (`recall` / `remember` / `browse`) hangs or times out mid-session, probe the backing endpoint directly before treating the service as down: `curl -si --max-time 8 <endpoint URL>`. Any HTTP response (401 / 406 / 200) proves the service is alive and the fault is connector-local (OAuth session, transport) — continue via a fallback path (the local memory MCP, curl-MCP for loopback servers, or defer the write) and retry the connector later; it often recovers within the session. No response / connection refused = genuine outage. This is the memory/MCP specialization of `rules/debugging.md`'s Noisy Non-Failure Pattern. Origin: 2026-07-08 — the ai-memory connector timed out for ~40 min while `mcp.ohno.be` answered 401 in 0.06s; writes proceeded via the local store and the connector recovered mid-session.
+When an MCP connector call (`recall` / `remember` / `browse`) hangs or times out mid-session, probe the backing endpoint directly before treating the service as down: `curl -si --max-time 8 <endpoint URL>`. Any HTTP response (401 / 406 / 200) proves the service is alive and the fault is connector-local (OAuth session, transport) — continue via a fallback path (another registered store, curl-MCP for loopback servers, or defer the write) and retry the connector later; it often recovers within the session. No response / connection refused = genuine outage. This is the memory/MCP specialization of `rules/debugging.md`'s Noisy Non-Failure Pattern. Origin: 2026-07-08 — the ai-memory connector timed out for ~40 min while `mcp.ohno.be` answered 401 in 0.06s; writes proceeded via the local store and the connector recovered mid-session.
 
 ## "local" is NOT air-gapped — verify egress before routing work-sensitive data
 
-`memory-local` (127.0.0.1) names the **MCP server location**, not the LLM/embedding backend. Embedding may call **external vendor APIs** (Voyage, OpenAI, etc.) depending on container config, so "local" storage can still **egress content to a third party** on every write. Before routing any work-sensitive content (employer KPIs, product metrics, internal business data) through a local MCP:
+A store's name — `local`, `work`, a loopback port, a box you own — names the **MCP server location**, not the LLM/embedding backend. Embedding may call **external vendor APIs** (Voyage, OpenAI, etc.) depending on server config, so self-hosted storage can still **egress content to a third party** on every write. Before routing any work-sensitive content (employer KPIs, product metrics, internal business data) through a store:
 
-1. Probe the actual egress:
+1. Probe the actual egress — read the embedding config the server process runs with:
 
    ```bash
-   docker exec local-es-memory-memory-mcp-1 env | grep -iE 'LLM_(PROVIDER|ENDPOINT|MODEL)|EMBEDDING_(PROVIDER|ENDPOINT)|VOYAGE|OPENAI|ANTHROPIC'
+   # systemd-managed server (e.g. es-memory-mcp): endpoints live in the unit's EnvironmentFile
+   systemctl show <unit> -p Environment -p EnvironmentFiles
+   sudo grep -iE 'LLM_(PROVIDER|ENDPOINT|MODEL)|EMBEDDING_(PROVIDER|ENDPOINT)|VOYAGE|OPENAI|ANTHROPIC' <env file>
+   # container-managed server
+   docker exec <memory-mcp container> env | grep -iE 'LLM_(PROVIDER|ENDPOINT|MODEL)|EMBEDDING_(PROVIDER|ENDPOINT)|VOYAGE|OPENAI|ANTHROPIC'
    ```
 
-2. Read where each `*_ENDPOINT` actually points — the provider *name* decides nothing. A vendor API (`api.openai.com`, …) makes that MCP equivalent to that vendor for data-sensitivity purposes: route work data through it only when the vendor is sanctioned for that data class, and **never** to a personal home-lab / personal Notion. A **company-sanctioned gateway** URL (an internal LLM proxy) with local storage is the opposite case — that store is then the *correct* sink for work-derived knowledge, and pushing that knowledge to a personal hosted store instead is the actual violation. `EMBEDDING_PROVIDER=openai` beside a gateway endpoint means the gateway's OpenAI-compatible API, not OpenAI. Probe per container: containers get replaced, so a retired container's direct-vendor route is not evidence about the current one.
+2. Read where each `*_ENDPOINT` actually points — the provider *name* decides nothing. A vendor API (`api.openai.com`, …) makes that MCP equivalent to that vendor for data-sensitivity purposes: route work data through it only when the vendor is sanctioned for that data class, and **never** to a personal home-lab / personal Notion. A **company-sanctioned gateway** URL (an internal LLM proxy) with local storage is the opposite case — that store is then the *correct* sink for work-derived knowledge, and pushing that knowledge to a personal hosted store instead is the actual violation. `EMBEDDING_PROVIDER=openai` beside a gateway endpoint means the gateway's OpenAI-compatible API, not OpenAI — and a `VOYAGE_API_KEY` variable name says nothing either, the VALUE may be a gateway key. Probe per deployment: servers get replaced and stores get retired, so a previous deployment's route is not evidence about the current one.
 3. For structured data that only needs exact comparison (a KPI snapshot, a metrics diff), prefer a **local file (JSON)** — zero egress, exact diff, and the semantic graph adds nothing for fixed numbers.
 
 The name `local` is not evidence of air-gap. Origin: 2026-06-19 kpi-delta-monitor loop — `docker exec env` showed `LLM_ENDPOINT=https://api.openai.com/v1`; routing Mercari KPI through it would have egressed to OpenAI. Snapshot moved to a local JSON file.

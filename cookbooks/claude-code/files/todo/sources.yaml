@@ -14,7 +14,7 @@
 #   query:   adapter-specific selector (tasklist name, emoji, lookback window,
 #            search modifier; for apple-reminders: the Reminders list name to
 #            capture from)
-#   sink:    ai-memory | memory-local   (work sources MUST sink to memory-local)
+#   sink:    ai-memory | memory-work   (work sources MUST sink to memory-work)
 #   enabled: true | false
 #
 # apple-reminders adapter: sweeps the named Reminders list via `remind --dump`.
@@ -28,7 +28,7 @@
 # explicit class → auto-remember with provenance `reminders:<externalId>`.
 # The source's `sink` is the DEFAULT for its candidates: a mixed personal/work
 # list gets sensitivity-routed at normalization (work-shaped content →
-# memory-local), same routing doctrine as todo-management.md.
+# memory-work), same routing doctrine as todo-management.md.
 #
 # mirror: section (end of file) — Apple Reminders is also a SURFACE for open
 # memory todos: /todo-collect Step 6 mirrors each open todo of the listed
@@ -49,10 +49,10 @@
 #
 # Example local override (~/.claude/todo/sources.local.yaml) for work Slack:
 #   sources:
-#     - { name: slack-saved,    class: explicit, adapter: slack-saved,    query: "",        sink: memory-local, enabled: true }
-#     - { name: slack-pin,      class: explicit, adapter: slack-reaction, query: "pushpin", sink: memory-local, enabled: true }
-#     - { name: slack-self-dm,  class: explicit, adapter: slack-self-dm,  query: "",        sink: memory-local, enabled: true }
-#     - { name: work-cal-notes, class: inferred, adapter: calendar-notion-notes, query: "7d", sink: memory-local, enabled: true }
+#     - { name: slack-saved,    class: explicit, adapter: slack-saved,    query: "",        sink: memory-work, enabled: true }
+#     - { name: slack-pin,      class: explicit, adapter: slack-reaction, query: "pushpin", sink: memory-work, enabled: true }
+#     - { name: slack-self-dm,  class: explicit, adapter: slack-self-dm,  query: "",        sink: memory-work, enabled: true }
+#     - { name: work-cal-notes, class: inferred, adapter: calendar-notion-notes, query: "7d", sink: memory-work, enabled: true }
 
 sources:
   - name: google-tasks-inbox
@@ -77,7 +77,7 @@ sources:
     enabled: true
 
 # Apple Reminders mirror — public default mirrors the PERSONAL store only
-# (ai-memory, policy full). The work store (memory-local) is deliberately NOT
+# (ai-memory, policy full). The work store (memory-work) is deliberately NOT
 # mirrored here: opt in via ~/.claude/todo/sources.local.yaml (zp-SHIN overlay)
 # with `policy: title-link`, so no work-todo body text egresses to iCloud
 # (title + first URL + link token only — iCloud is a third-party egress
