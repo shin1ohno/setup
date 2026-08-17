@@ -576,8 +576,32 @@ jobs:
         # knowledge path, and a returned parent id that no get/revise/forget
         # could resolve. It stubs httpx/voyage/identity, so it needs no
         # dependencies and never touches ES. Both polarities are asserted —
-        # against the pre-fix backend 6 of the 13 cases fail.
+        # against the pre-fix backend 6 of the cases fail.
         python3 cookbooks/lxc-es-memory/files/memory-mcp/test_tags_and_ids.py
+
+    - name: memory-mcp tag-preservation regression suite
+      run: |
+        # The other ways a tag stopped being a usable routing key: the
+        # content_hash dedup discarding the caller's tags, a re-ingest replacing
+        # a tagged document with an untagged one, recall omitting tags from hits
+        # it can filter on, browse reporting a page with no total (so a
+        # truncated enumeration read as the whole set), and _filter_clause
+        # turning an unknown key into an empty result instead of an error.
+        # Several assertions are on the query body, because a helper fix that
+        # never changes what the caller asks ES for ships inert. Both polarities:
+        # against the pre-fix backend 17 of the cases fail.
+        python3 cookbooks/lxc-es-memory/files/memory-mcp/test_tag_preservation.py
+
+    - name: memory-keeper merge-rules regression suite
+      run: |
+        # cookbooks/lxc-es-memory/files/memory-keeper folds facts together in two
+        # places, and both used to lose the loser's tags: reconcile's UPDATE took
+        # the target's tags only, and consolidate's near-dup pass wrote a bare
+        # superseded_by pointer that orphaned everything the older doc carried.
+        # The suite asserts the pure merge rules AND the query bodies, because a
+        # correct rule fed by a _source list that never fetched `tags` unions with
+        # [] and ships inert — reproduced, that state fails 2 of the cases.
+        python3 cookbooks/lxc-es-memory/files/memory-keeper/test_merge_rules.py
 
     - name: Background-launch Stop hook regression suite
       run: |

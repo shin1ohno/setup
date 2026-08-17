@@ -2,7 +2,7 @@
 
 Load when: creating or saving a TODO (any "あとでやる" / deferred work / personal task), answering "open な TODO は?" / "TODO 見せて", running `/todo-collect` or `/todo-reconcile`, or deciding where a captured item belongs.
 
-Designed 2026-07-06 (E2E discussion). Decisions locked there: TODO.md and issues stay **parallel** (no promotion machinery); reconcile is a manual weekly skill (cron later, if ever); personal tasks are in scope; evidence-based auto-close.
+Designed 2026-07-06 (E2E discussion). Decisions locked there: TODO.md and issues stay **parallel** (no promotion machinery); reconcile is a manual weekly skill (cron later, if ever); personal tasks are in scope; evidence-based auto-close. The "cron later" branch was taken on 2026-08-17 for the WORK half only — both loops now run on a timer on sh1-cloud (see Cadence below); the personal half stayed manual because its two dependencies live on air.
 
 ## Stores (sources of truth)
 
@@ -12,6 +12,8 @@ Designed 2026-07-06 (E2E discussion). Decisions locked there: TODO.md and issues
 | ai-memory `tags:["todo"]` | personal / cross-project / no-repo | `forget(id)` on completion; weekly reconcile is the backstop |
 | memory-work `tags:["todo"]` | WORK no-repo TODOs (Mercari) | same; work data never routes to personal ai-memory (egress rule in `knowledge-persistence.md`) |
 | GitHub / zp issues | execution queue for autonomous loops | existing close protocols (self-heal / zp loops) |
+
+**Enumeration is only complete when the count says so**: a memory store is read with `browse(filters: {tags: "todo"}, limit: N)`, and `browse` has no cursor — omit `limit` and the server's default of 50 truncates the answer silently. Always pass `limit` and compare the returned count against the response's `total` (`truncated: true` means they differ). A truncated enumeration is a THIRD state, distinct from a store that could not be reached (`未列挙`) and one that answered empty (`0 件`): record it as `truncated 残数` and never collapse it into either, because both a dedup pass and a completion check read "absent" as "gone". Same silent-cap rule the Slack sweep already follows.
 
 **Federation principle**: issues and TODO.md are NEVER copied into memory. `list` / `reconcile` enumerate them at read time (`gh search issues --assignee=@me --state=open`, `ls ~/ManagedProjects/*/TODO.md`). The collector copies only *raw captures* (unstructured marks). Copying store-to-store creates split-brain.
 
@@ -68,7 +70,9 @@ Config: `~/.claude/todo/sources.yaml` (cookbook-managed) merged at runtime with 
 
 **Sink routing = sensitivity routing**: each source declares its sink. Work sources (Mercari Slack, work calendar) → `memory-work`; personal sources → `ai-memory`. This is the same egress rule as `knowledge-persistence.md` "local is NOT air-gapped" — a work capture in personal ai-memory is a violation, not a convenience.
 
-**Runtime constraints** (2026-08 facts): claude.ai-authenticated connectors (Slack, calendar-linked Notion) are absent in headless runs — that is the sole remaining blocker for unattended work-source collection. The store is no longer one: memory-work is a single-node ES on `sh1-cloud` behind an OIDC proxy, reachable from every work host, so work-source collection runs in any interactive session on any of them (the LAN-scope constraint died with the air-local store, retired 2026-08-17). Headless automation still covers only `gh` / `gws`-backed sources. Daily cadence: trigger `/todo-collect` at the start of the first interactive session of the day (pairs naturally with `/morning-triage`).
+**Runtime constraints** (2026-08-17, measured on sh1-cloud with claude 2.1.233): a headless `claude -p` **can** reach the claude.ai connectors — the Slack tools load through `ToolSearch` and `slack_search_public("is:saved")` returned rows on two consecutive probes — so the connector is no longer the blocker for unattended work-source collection. Do not re-derive that claim from an older note; re-probe it if a run behaves as if the tools are missing. What headless still cannot do is host-specific: `gws` answers 401 (`invalid_rapt`) until someone re-auths in a browser, the `remind` CLI is macOS-only (so the Reminders mirror runs on air only), and ai-memory is not registered on sh1-cloud (so the personal store is enumerable only from a personal host). The store side is settled: memory-work is a single-node ES on `sh1-cloud` behind an OIDC proxy, reachable from every work host (the LAN-scope constraint died with the air-local store, retired 2026-08-17).
+
+**Cadence**: the work half runs unattended on sh1-cloud — `todo-collect.timer` daily 07:23 JST, `todo-reconcile.timer` Mon 08:13 JST, both from zp-SHIN's `mercari-claude-todo` cookbook (runner + prompt design: `~/.claude/docs/claude-cli-headless.md`). The personal half (Reminders mirror, ai-memory sinks, Google Tasks) still runs interactively, pairing naturally with `/morning-triage`. Two rules make the unattended runs honest: they never write `inferred` captures (no approver is present — candidates go to the ledger for the next interactive session), and every source they cannot reach is recorded as "not swept, with reason" rather than as zero.
 
 ## Apple Reminders integration (remind CLI)
 

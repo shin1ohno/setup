@@ -452,3 +452,41 @@ this host and predates the Zed work.
   (`ls /mnt/Media` and any backup target, plus `git log -- pve/lxc-housekeeping.rb`
   for when the mount was introduced); then either restore the directory from
   backup or drop/repoint `mp0` in the CT config and in `home-monitor`.
+
+## `/todo-collect` の Slack saved sweep が End of results に到達しない (Medium)
+
+2026-08-17 の初回無人 run（sh1-cloud、`todo-collect-run.sh`）で `is:saved` を 6 ページ
+（120 件）辿っても投稿日 2025-04 まで遡り続け、End of results 未到達で打ち切った。ledger には
+truncated として残数不明のまま明記されている（silent cap は避けられている）。
+
+- **前回記録との矛盾**: 2026-07-08 の ledger は「115 件フル sweep（6 ページ、End of results 到達）」
+  と書いているが、同じ 6 ページで到達しないことが今回判明した。当時も打ち切っていた可能性が高く、
+  「全件見た」という前提で候補を絞っていた分の取りこぼしが残っている。
+- **なぜ現状の指示では閉じないか**: SKILL.md は「`cursor` を End of results まで辿る」と指示する
+  だけで、saved の総数が MCP 検索の実用ページ数を超えるケースの打ち切り規則を持たない。毎日の無人
+  run が同じ 120 件を再ページングし、末尾には永久に到達しない。
+- **最初の一歩**: `is:saved` に `before:` を組み合わせた時間窓分割ページング（saved は保存状態の
+  リストなので、投稿日の窓を古い方へずらしながら各窓で End of results を確定させる）を実測する。
+  実用ページ数の上限が窓分割でも越えられないなら、「候補化は直近 N 日の投稿に限り、それ以前は毎回
+  truncated 残数つきで明記する」を SKILL.md に明文化する。完了条件: sweep が End of results に
+  到達する、または打ち切り規則が SKILL.md に明記され ledger に残数が出る（このエントリは対応
+  コミットで削除）。
+
+## ledger.md が全時代を 1 ファイルに抱え、承認待ちキューが履歴に埋もれる (Medium)
+
+`~/.claude/todo/ledger.md` は日次 collect と週次 reconcile が追記する単一ファイルで、
+2026-08-17 の 2 run だけで 256 行のうち約 120 行を占めた。両 SKILL.md は「前回 run の
+disposition を参照して再列挙を省略」と指示しているため、1 run あたりのコンテキスト費用が
+**open backlog ではなく全時代のファイルサイズ**に比例して増える。
+
+- **なぜ prose の規律では閉じないか**: 承認待ちキュー（無人 collect が書く inferred 候補）が
+  履歴と同じファイルに同居している。「reconcile は candidate セクションを消さない」という
+  不変条件を #899 と kouzoh/zp-SHIN#163 で明文化したが、これはモデルが守るべき規則であって
+  構造的な保証ではない。ファイルが 1 本である限り、全文再生成の誘惑は残る。
+- **最初の一歩**: `~/.claude/todo/runs/<date>-<loop>.md`（write-once の実行ログ、自動 run は
+  読み返さない）と `~/.claude/todo/candidates.md`（open な候補のみ。承認・却下で行が消えるので
+  サイズは O(open)）に分割する。影響範囲は SKILL.md 2 本 + overlay の prompt 2 本 + runner の
+  `LEDGER` 定数（+ 既存 ledger.md を 1 回だけ分割する移行スクリプト）。
+- 緊急ではない（現在 256 行）。数千行に達する前に着手する。完了条件: 候補キューが open 件数に
+  比例するファイルに分離され、reconcile が履歴を読まずに 1 サイクル完走する（このエントリは
+  対応コミットで削除）。
