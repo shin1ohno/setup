@@ -47,9 +47,25 @@ ALL_ALIAS = os.environ.get("ALL_ALIAS", "memory-all")
 RRF_K = 60
 EPISODE_TTL_DAYS = 90
 INGEST_JOB_THRESHOLD = 40  # >40 chunks → background job
+# browse has no cursor, so a caller wanting a full enumeration raises `limit`.
+# Cap it below ES's index.max_result_window (10000) so an over-large ask fails
+# with a reason instead of a raw 500 from ES.
+BROWSE_MAX_LIMIT = 1000
 _FORGET_SENTINEL = "forget"  # non-null superseded_by marker for logical delete
 _SUPERSEDE_SCRIPT = (
     "ctx._source.superseded_by = params.sb; ctx._source.superseded_at = params.at;"
+)
+# Additive tags union on a doc that already exists. This is the one in-place
+# content-ish mutation the store permits (the keeper's rule is supersede-only,
+# with superseded_by/at, reconcile_status, use_count and last_used_at as the
+# in-place exceptions). A union earns its place there because it is monotone,
+# idempotent and commutative: it can never remove a routing key, replaying it is
+# free, and two writers racing cannot lose one of their tags. Rationale:
+# docs/adr/0007-memory-tags-are-a-routing-key.md.
+_TAG_UNION_SCRIPT = (
+    "if (ctx._source.tags == null) { ctx._source.tags = new ArrayList(); } "
+    "for (t in params.tags) { if (!ctx._source.tags.contains(t)) "
+    "{ ctx._source.tags.add(t); } }"
 )
 
 # Re-export for callers (server routes type=knowledge through content_hash doc_key).
@@ -58,7 +74,7 @@ __all__ = [
     "ingest_document", "append_episode", "revise", "supersede",
     "get_with_chain", "browse", "stats", "bump_use_counts",
     "FACT_INDEX", "KNOWLEDGE_INDEX", "EPISODE_INDEX", "STATS_INDEX", "ALL_ALIAS",
-    "AuthzError",
+    "AuthzError", "QueryError", "BROWSE_MAX_LIMIT",
 ]
 
 # Module-level async client — bound to uvicorn's event loop on first use.
@@ -127,11 +143,65 @@ def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+class QueryError(ValueError):
+    """A filter key or limit a query cannot honour.
+
+    Raised instead of running the query anyway. The old behaviour passed every
+    key straight through as a term clause, so a typo, a wrong case, or a field
+    that does not exist matched nothing and came back as an empty result — a
+    caller could not tell "no such key" from "no such data". That is the same
+    silent-ignore class as the tags argument that used to be dropped on the
+    knowledge write path (#885): the request succeeded, the answer was wrong.
+    """
+
+
+def _filterable_fields() -> tuple[frozenset[str], frozenset[str]]:
+    """(term-filterable, date-only) field names, derived from the mappings.
+
+    Derived rather than restated so a field added to _common_props/_INDEX_DEFS
+    becomes filterable without a second edit here — a hand-maintained copy is
+    how the two-site recall projection drifted. Nested objects are flattened to
+    their dotted paths (provenance.agent, …), which is what ES filters on.
+    """
+    term_ok: set[str] = set()
+    dates: set[str] = set()
+    for index in (FACT_INDEX, KNOWLEDGE_INDEX, EPISODE_INDEX):
+        for name, spec in _INDEX_DEFS[index]["mappings"]["properties"].items():
+            if "properties" in spec:
+                for sub, sub_spec in spec["properties"].items():
+                    path = f"{name}.{sub}"
+                    (dates if sub_spec.get("type") == "date" else term_ok).add(path)
+                continue
+            kind = spec.get("type")
+            if kind == "date":
+                dates.add(name)
+            elif kind in ("keyword", "integer"):
+                term_ok.add(name)
+    return frozenset(term_ok), frozenset(dates)
+
+
 def _filter_clause(filters: dict[str, Any] | None) -> list[dict]:
+    """term/terms clauses for an allowlisted set of keys.
+
+    A list value is OR (terms), a scalar is exact (term) — there is no AND-over-
+    tags shape. `content` (analyzed text) and `embedding` (vector) are rejected
+    rather than allowed to produce nonsense matches, and date fields are rejected
+    with the reason, since only term/terms are expressible here.
+    """
     if not filters:
         return []
+    term_ok, dates = _filterable_fields()
     out: list[dict] = []
     for k, v in filters.items():
+        if k in dates:
+            raise QueryError(
+                f"filter key {k!r} is a date field and only term/terms filters are "
+                f"supported here, so a range cannot be expressed. "
+                f"Filterable keys: {', '.join(sorted(term_ok))}")
+        if k not in term_ok:
+            raise QueryError(
+                f"unknown filter key {k!r}. Filterable keys: "
+                f"{', '.join(sorted(term_ok))}")
         if isinstance(v, list):
             out.append({"terms": {k: v}})
         else:
@@ -187,6 +257,23 @@ async def _es_json(method: str, path: str, body: dict | None = None) -> dict:
     resp = await _es.request(method, path, json=body)
     _raise_for_status(resp, method, path)
     return resp.json()
+
+
+async def _union_tags(index: str, doc_id: str, tags: list) -> None:
+    """Add `tags` to an existing doc, touching nothing else.
+
+    retry_on_conflict is load-bearing: bump_use_counts runs _update_by_query over
+    the same docs after every recall, so a version conflict here is routine
+    rather than exceptional — and losing the retry would drop the tag silently,
+    which is the failure this whole change exists to remove.
+    """
+    if not tags:
+        return
+    await _es_json(
+        "POST", f"/{index}/_update/{doc_id}?refresh=wait_for&retry_on_conflict=3",
+        {"script": {"lang": "painless", "source": _TAG_UNION_SCRIPT,
+                    "params": {"tags": list(tags)}}},
+    )
 
 
 async def _bulk_index(index: str, docs: list[dict]) -> int:
@@ -463,11 +550,16 @@ async def recall(query: str, memory_type: str | None = None, top_k: int = 10,
     if top3:
         _spawn(bump_use_counts(top3))
 
+    # `tags` belongs in the projection: recall ACCEPTS a tag filter, so a caller
+    # enumerating by tag could filter on one and then not see which tags came
+    # back. browse and get both return it (they project the whole _source), so
+    # recall was the only read tool that dropped it.
     hits = [{
         "id": _id,
         "content": src.get("content", ""),
         "memory_type": src.get("memory_type"),
         "score": comp,
+        "tags": src.get("tags") or [],
         "provenance": src.get("provenance", {}),
         "superseded": False,
     } for _id, comp, src in top]
@@ -482,11 +574,22 @@ async def recall(query: str, memory_type: str | None = None, top_k: int = 10,
 # remember_fact (contract §4)
 # --------------------------------------------------------------------------- #
 async def remember_fact(content: str, tags: list | None, provenance: dict) -> dict:
-    """content_hash exact-match dedup on memory-fact (non-superseded) → noop;
-    else embed → index reconcile_status=raw with ?refresh=wait_for."""
+    """content_hash exact-match dedup on memory-fact (non-superseded) → noop
+    (applying any NEW tags to the doc that already exists); else embed → index
+    reconcile_status=raw with ?refresh=wait_for.
+
+    The dedup branch used to discard `tags` entirely, which made a tag lost for
+    good: `remember("X", tags=["todo"])` against an already-stored untagged "X"
+    returned a cheerful noop and left the todo unenumerable by
+    browse(filters={"tags": "todo"}) — the exact rot docs/todo-management.md
+    warns about. Tags are a routing key, so the dedup hit unions them in.
+    """
     h = content_hash(content)
     body = {
         "size": 1,
+        # Only the two fields this branch reads. Without the projection ES ships
+        # the whole _source, i.e. a 1024-float embedding, on every dedup hit.
+        "_source": ["reconcile_status", "tags"],
         "query": {"bool": {
             "must": [{"term": {"content_hash": h}}],
             "must_not": [{"exists": {"field": "superseded_by"}}],
@@ -495,12 +598,20 @@ async def remember_fact(content: str, tags: list | None, provenance: dict) -> di
     existing = (await _es_json("POST", f"/{FACT_INDEX}/_search", body))["hits"]["hits"]
     if existing:
         top = existing[0]
-        return {
+        src = top.get("_source", {})
+        have = src.get("tags") or []
+        # Preserve caller order, drop duplicates, keep only what is genuinely new.
+        missing = list(dict.fromkeys(t for t in (tags or []) if t not in have))
+        out = {
             "action": "noop",
             "id": top["_id"],
             "routed_type": "fact",
-            "reconcile_status": top["_source"].get("reconcile_status", "raw"),
+            "reconcile_status": src.get("reconcile_status", "raw"),
         }
+        if missing:
+            await _union_tags(FACT_INDEX, top["_id"], missing)
+            out["tags_added"] = missing
+        return out
 
     vec = (await voyage.embed_documents([content]))[0]
     prov = dict(provenance or {})
@@ -536,7 +647,10 @@ async def ingest_document(document: str, dataset: str, doc_key: str | None = Non
                           tags: list | None = None) -> dict:
     """Chunk → embed → index NEW chunks (parent_id = new synthetic doc id) →
     supersede the prior version's chunks (new-first, no empty window). >40 chunks
-    runs in a background job; a job_id is returned and surfaced in stats()."""
+    runs in a background job; a job_id is returned and surfaced in stats().
+
+    tags=None inherits the superseded version's tags; tags=[] clears them.
+    """
     doc_key = doc_key or content_hash(document)
     chunks = chunk_text(document)
     if not chunks:
@@ -563,10 +677,34 @@ async def ingest_document(document: str, dataset: str, doc_key: str | None = Non
     return {"doc_id": new_doc_id, "chunk_count": count}
 
 
+async def _prior_doc_tags(dataset: str, doc_key: str) -> list:
+    """Tags on the live version of (dataset, doc_key); [] when there is none."""
+    body = {
+        "size": 1,
+        "_source": ["tags"],
+        "sort": [{"chunk_index": {"order": "asc"}}],
+        "query": {"bool": {
+            "must": [{"term": {"dataset": dataset}}, {"term": {"doc_key": doc_key}}],
+            "must_not": [{"exists": {"field": "superseded_by"}}],
+        }},
+    }
+    hits = (await _es_json("POST", f"/{KNOWLEDGE_INDEX}/_search", body))["hits"]["hits"]
+    return (hits[0].get("_source", {}).get("tags") or []) if hits else []
+
+
 async def _ingest_chunks(chunks: list[str], dataset: str, doc_key: str,
                          new_doc_id: str, provenance: dict | None,
                          derived_from: list | None = None,
                          tags: list | None = None) -> int:
+    # tags=None means "not specified" and INHERITS the version being superseded;
+    # tags=[] is an explicit clear. Without that distinction an upsert of an
+    # unchanged document — server.remember(type='knowledge') routes through
+    # doc_key=content_hash(content), so re-remembering the same text lands here —
+    # replaced a tagged document with an untagged one and the routing key was
+    # gone. `revise` already carries the prior tags forward; this makes the
+    # re-ingest path agree with it.
+    if tags is None:
+        tags = await _prior_doc_tags(dataset, doc_key)
     vecs = await voyage.embed_documents(chunks)
     prov = dict(provenance or {})
     prov.setdefault("written_at", _now_iso())
@@ -866,7 +1004,22 @@ async def _resolve_chain(id: str, source: dict) -> list[dict]:
 
 
 async def browse(memory_type: str | None = None, filters: dict | None = None,
-                 sort: str = "provenance.written_at:desc", limit: int = 50) -> list[dict]:
+                 sort: str = "provenance.written_at:desc", limit: int = 50) -> dict:
+    """Page of non-superseded memories, WITH the matching total.
+
+    Returns {"items": [...], "total": N, "truncated": bool,
+    "total_is_lower_bound": bool}. The total is the reason this returns an
+    envelope rather than a bare list: there is no cursor and no offset here, so
+    without it a caller cannot tell a store holding exactly `limit` matches from
+    one holding a thousand — an enumeration silently loses its tail and reports
+    the page as the whole set. ES already carries the count in the same response
+    this function parses, so it costs no extra round trip.
+
+    `total_is_lower_bound` is ES's track_total_hits ceiling (10000 by default):
+    past it the count comes back as a lower bound, not an exact figure.
+    """
+    if not isinstance(limit, int) or limit < 1 or limit > BROWSE_MAX_LIMIT:
+        raise QueryError(f"limit must be an int in 1..{BROWSE_MAX_LIMIT}, got {limit!r}")
     index = _index_for(memory_type)
     flt = _filter_clause(filters)
     flt.append(_not_superseded())
@@ -886,7 +1039,14 @@ async def browse(memory_type: str | None = None, filters: dict | None = None,
         s = {k: v for k, v in h.get("_source", {}).items() if k != "embedding"}
         s["id"] = h["_id"]
         items.append(s)
-    return items
+    total_obj = res.get("hits", {}).get("total") or {}
+    total = total_obj.get("value", len(items))
+    return {
+        "items": items,
+        "total": total,
+        "truncated": total > len(items),
+        "total_is_lower_bound": total_obj.get("relation", "eq") != "eq",
+    }
 
 
 async def stats() -> dict:
