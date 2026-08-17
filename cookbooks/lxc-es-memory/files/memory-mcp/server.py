@@ -152,9 +152,13 @@ async def remember(content: str, type: str = "auto", tags: list | None = None,
 
     if routed == "knowledge":
         prov = identity.build_provenance(ident, session_id, "tool-output")
+        # tags MUST be forwarded here. The fact and episode branches pass them
+        # through; this branch silently dropped them, so every knowledge write
+        # landed with tags: [] and no tag filter — including tags:["todo"], the
+        # key the TODO pipeline routes on — ever matched anything.
         res = await be.ingest_document(content, dataset="notes",
                                        doc_key=be.content_hash(content),
-                                       provenance=prov)
+                                       provenance=prov, tags=tags or [])
         return {
             "action": "added",
             "id": res.get("doc_id") or res.get("job_id"),
@@ -178,13 +182,14 @@ async def remember(content: str, type: str = "auto", tags: list | None = None,
 
 @mcp.tool(annotations=_ann(idempotentHint=True))
 async def ingest(document: str, dataset: str, doc_key: str | None = None,
-                 ctx: Context = None) -> dict:
+                 tags: list | None = None, ctx: Context = None) -> dict:
     """Ingest a document into the knowledge store with upsert semantics: re-ingest
     of the same (dataset, doc_key) supersedes the prior version's chunks. Large
     documents return a job_id; poll memory_stats for progress."""
     ident = identity.parse_identity(_headers(ctx))
     prov = identity.build_provenance(ident, _session_id(ctx), "tool-output")
-    return await be.ingest_document(document, dataset, doc_key, provenance=prov)
+    return await be.ingest_document(document, dataset, doc_key, provenance=prov,
+                                    tags=tags or [])
 
 
 @mcp.tool(annotations=_ann(destructiveHint=True))

@@ -569,6 +569,16 @@ jobs:
         sudo apt-get install -y -qq zsh
         bash cookbooks/herdr/files/test-hr.sh cookbooks/herdr/files/hr.sh
 
+    - name: memory-mcp write-path regression suite
+      run: |
+        # cookbooks/lxc-es-memory/files/memory-mcp is the memory-v2 MCP server.
+        # The suite covers two silent write-path defects: tags dropped on the
+        # knowledge path, and a returned parent id that no get/revise/forget
+        # could resolve. It stubs httpx/voyage/identity, so it needs no
+        # dependencies and never touches ES. Both polarities are asserted —
+        # against the pre-fix backend 6 of the 13 cases fail.
+        python3 cookbooks/lxc-es-memory/files/memory-mcp/test_tags_and_ids.py
+
     - name: Background-launch Stop hook regression suite
       run: |
         # hooks/warn-background-launch-no-progress.rb is the mechanical backstop
