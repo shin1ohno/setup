@@ -19,6 +19,7 @@ Full discipline (examples, fallbacks, probe gates): rules/ask-user-question.md�
 - **Deferred work / RAG gap → TODO.md** with description, reason, concrete first step. Delete the entry in the resolving commit. No-repo / cross-project / personal TODOs → memory `remember(tags:["todo"])` + close condition (work-derived → memory-work, never personal ai-memory); echo a one-line receipt (destination + close condition) after every capture. Full routing + collect/reconcile loops: `~/.claude/docs/todo-management.md`
 - **First turn ambiguity → AskUserQuestion**. Background launch ≠ clarified intent
 - **Every conclusion**: save to memory; verify with `recall` on key terms. See `@~/.claude/docs/knowledge-persistence.md`
+- **ファイル記憶 → MCP ストアは自動ミラー**（`hooks/mirror-file-memory.rb`、PostToolUse + SessionStart sweep）。同じ内容を手で `ingest` し直さない。ミラーは `tool-output` なので `remember(type='fact')` の代わりにはならない。失敗ログは `~/.claude/memory-mirror.log`
 - **Every meaningful unit of work**: commit immediately
 - **Dual-managed file**: source `~/ManagedProjects/setup/cookbooks/claude-code/files/CLAUDE.md`, deploy `~/.claude/CLAUDE.md`. Update both, `diff` to verify
 

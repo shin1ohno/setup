@@ -2,6 +2,16 @@
 
 Doctrine for when and how to search + save durable knowledge. `@`-imported by CLAUDE.md, so this file is always-loaded. The self-hosted Cognee stack (REST `localhost:8001`, ChromaDB, `docker compose cognee`, `bulk_ingest`, the `~/ingest/drop/` watcher) and its MCP tools (`cognify` / `save_interaction` / cognee `search`) were fully retired. The memory-v2 stack is now the single knowledge store — use its tools (`recall` / `remember` / `ingest`).
 
+## ファイル記憶は自動で MCP ストアにミラーされる — 手で二重書きしない
+
+harness native のファイル記憶（`~/.claude/projects/<slug>/memory/*.md`）は、`hooks/mirror-file-memory.rb` が MCP ストアへ自動でミラーする。memory ファイルを Write / Edit した時点で PostToolUse hook が該当ファイルだけを送り、SessionStart の `--sweep` が取りこぼし（他ホスト・手編集・hook が lock を取れなかった場合）を回収する。**同じ内容を `remember` / `ingest` で手動でもう一度書かないこと** — doc_key が `<host>/<project-slug>/<slug>` で upsert されるので、手書きの重複だけが残る。
+
+3 点の含意:
+
+- **ミラーは `fact` の代替にならない**。`ingest` は server 側で `source_class=tool-output` 固定（どのホストから書いても `user-stated` にはならない）。ユーザー属性・嗜好・決定は従来どおり `remember(type='fact')` で保存する — `recall` が「指示として扱ってよい」と教えるのは `user-stated` の `fact` だけ。
+- **ファイル側が正本**。逆方向（MCP → ファイル）の同期は無い。ファイルを削除すると次の sweep が `forget(doc_id)` を呼んでミラーも消える。
+- **失敗は静かに落ちない**。hook は書き込みを絶対にブロックせず `exit 0` するが、失敗は `~/.claude/memory-mirror.log` に 1 行残り、sweep 側は SessionStart の additionalContext で「recall から引けない状態」を通知する。ミラー先は `~/.claude/memory-mirror.json`（`{"server","dataset","enabled"}`）で決まり、この config が無いホストでは hook 自体が no-op。
+
 ## Connector timeout ≠ service down — curl the endpoint before declaring an outage
 
 When an MCP connector call (`recall` / `remember` / `browse`) hangs or times out mid-session, probe the backing endpoint directly before treating the service as down: `curl -si --max-time 8 <endpoint URL>`. Any HTTP response (401 / 406 / 200) proves the service is alive and the fault is connector-local (OAuth session, transport) — continue via a fallback path (another registered store, curl-MCP for loopback servers, or defer the write) and retry the connector later; it often recovers within the session. No response / connection refused = genuine outage. This is the memory/MCP specialization of `rules/debugging.md`'s Noisy Non-Failure Pattern. Origin: 2026-07-08 — the ai-memory connector timed out for ~40 min while `mcp.ohno.be` answered 401 in 0.06s; writes proceeded via the local store and the connector recovered mid-session.

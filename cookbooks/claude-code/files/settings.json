@@ -103,6 +103,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/check-whitespace-lines.rb"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/mirror-file-memory.rb"
           }
         ]
       }
@@ -114,6 +118,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/mcp-health-check.rb"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/mirror-file-memory.rb --sweep"
           }
         ]
       },
