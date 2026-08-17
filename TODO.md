@@ -427,3 +427,22 @@ this host and predates the Zed work.
   (b) leaving them and accepting the noise on NSS hosts. Note that (a) must NOT
   touch resources placed into system paths via `execute "sudo install ..."` —
   those legitimately name an owner.
+
+## `/todo-collect` の Slack saved sweep が End of results に到達しない (Medium)
+
+2026-08-17 の初回無人 run（sh1-cloud、`todo-collect-run.sh`）で `is:saved` を 6 ページ
+（120 件）辿っても投稿日 2025-04 まで遡り続け、End of results 未到達で打ち切った。ledger には
+truncated として残数不明のまま明記されている（silent cap は避けられている）。
+
+- **前回記録との矛盾**: 2026-07-08 の ledger は「115 件フル sweep（6 ページ、End of results 到達）」
+  と書いているが、同じ 6 ページで到達しないことが今回判明した。当時も打ち切っていた可能性が高く、
+  「全件見た」という前提で候補を絞っていた分の取りこぼしが残っている。
+- **なぜ現状の指示では閉じないか**: SKILL.md は「`cursor` を End of results まで辿る」と指示する
+  だけで、saved の総数が MCP 検索の実用ページ数を超えるケースの打ち切り規則を持たない。毎日の無人
+  run が同じ 120 件を再ページングし、末尾には永久に到達しない。
+- **最初の一歩**: `is:saved` に `before:` を組み合わせた時間窓分割ページング（saved は保存状態の
+  リストなので、投稿日の窓を古い方へずらしながら各窓で End of results を確定させる）を実測する。
+  実用ページ数の上限が窓分割でも越えられないなら、「候補化は直近 N 日の投稿に限り、それ以前は毎回
+  truncated 残数つきで明記する」を SKILL.md に明文化する。完了条件: sweep が End of results に
+  到達する、または打ち切り規則が SKILL.md に明記され ledger に残数が出る（このエントリは対応
+  コミットで削除）。

@@ -59,7 +59,9 @@ list モードはここで整形出力（store 別 → テーマ別、期日つ�
 
 ### Step 3 — ledger 書き出し（dry-run / LIVE）
 
-`~/.claude/todo/ledger.md` を再生成する（`mkdir -p ~/.claude/todo`）。先頭に「生成物 — 手編集禁止（真実源は各 store）」の注記。内容: 実行日時 / モード / store 別 open 一覧 / 分類結果 / 期日接近 / 未列挙 store の WARN / 列挙が打ち切られた store の `truncated 残数`。
+`~/.claude/todo/ledger.md` に自分のセクションを**追記**する（`mkdir -p ~/.claude/todo`）。先頭に「生成物 — 手編集禁止（真実源は各 store）」の注記。内容: 実行日時 / モード / store 別 open 一覧 / 分類結果 / 期日接近 / 未列挙 store の WARN / 列挙が打ち切られた store の `truncated 残数`。
+
+**collect の「候補（未承認）」セクションは消さない**。ledger は生成物だが、同時に collect が inferred 候補を置く場所 = 承認待ちキューそのもの（無人 collect は候補を書くだけで保存しない）。全文再生成すると未承認候補が消え、日次 collect + 週次 reconcile の組み合わせでは 1 週間分が消える。過去の自分のセクションを畳むのは可、candidate セクションは残す。
 
 3 値を混ぜないこと: **未列挙**（store に到達できなかった = 不明）/ **0 件**（store が応答して空）/ **truncated 残数**（一部だけ既知）。打ち切りを「0 件」や「未列挙」に丸めると、消えた TODO と見ていない TODO が区別できなくなる。
 
