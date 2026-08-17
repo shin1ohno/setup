@@ -209,10 +209,14 @@ source = '''
   }
 
   # ---------------------------------------------------------------------
-  # WLX WiFi AP (WLX402 .5 / WLX323 .41) parsing. App-events-only per the
-  # 2026-06-06 capture/cost decision: the kernel node-management churn and
-  # the ROAMING_ASSIST RSSI spam are dropped. Both APs are Qualcomm-based;
-  # .5 emits `<PRI>[MODULE] msg` (no space after PRI), .41 emits
+  # WLX WiFi AP (WLX402 .5 / WLX323 .6) parsing. Kernel node-management churn
+  # is dropped per the 2026-06-06 capture/cost decision. ROAMING_ASSIST was
+  # dropped alongside it but is kept again since 2026-08-17: it carries
+  # WLX323's roaming decisions (RSSI vs threshold), which is what any
+  # AP-to-AP churn analysis rests on, and dropping it while keeping the
+  # equivalent ROAMING_11KV Compare lines was inconsistent. Costs ~1 event/s.
+  # Both APs are Qualcomm-based;
+  # .5 emits `<PRI>[MODULE] msg` (no space after PRI), .6 emits
   # `<PRI> [MODULE] <CODE> msg` (leading space) — strip_whitespace + the
   # optional <CODE> capture handle both. The RTX stages above never match
   # AP messages (different format), so they leave AP events untouched.
@@ -226,12 +230,8 @@ source = '''
     msg = strip_whitespace(to_string(.message))
     .message = msg
 
-    # Drop high-volume / low-value lines (kernel node mgmt, driver debug,
-    # roaming RSSI comparisons).
+    # Drop high-volume / low-value lines (kernel node mgmt, driver debug).
     if match(msg, r'(node_cleanup|_ieee80211_free_node|ieee80211_sta_leave|_ieee80211_node_leave|station free|wmi_unified_|net_ratelimit|own address as source|\[0:I:ANY\])') {
-      abort
-    }
-    if starts_with(msg, "[ROAMING_ASSIST]") {
       abort
     }
 
@@ -264,10 +264,22 @@ source = '''
       .ap = ap_m.ap
     }
 
-    # Disassoc reason code.
-    rc = parse_regex(msg, r'Reason Code: (?P<reason_code>\d+)') ?? null
+    # Disassoc / assoc-failure reason code. Two spellings on the wire: the
+    # app-layer "Reason Code: 7" and the kernel's "assoc failed with
+    # reason=30". Only the first was matched until 2026-08-17, which left the
+    # kernel form — the more common one, and the one carrying the temporary
+    # assoc rejections — unextracted.
+    rc = parse_regex(msg, r'(?:Reason Code:\s*|reason[=\s])(?P<reason_code>\d+)') ?? null
     if !is_null(rc) {
       .reason_code = to_int(rc.reason_code) ?? null
+    }
+
+    # Auth/assoc response status code: "<0102> Sent AUTH RES to STA (..).
+    # Status Code: 126". 0 means accepted; anything else is the AP's stated
+    # reason for turning the client away.
+    sc = parse_regex(msg, r'Status Code:\s*(?P<status_code>\d+)') ?? null
+    if !is_null(sc) {
+      .status_code = to_int(sc.status_code) ?? null
     }
 
     # DHCP ([MON]): CLT:{mac} + YIP:{ip}.
