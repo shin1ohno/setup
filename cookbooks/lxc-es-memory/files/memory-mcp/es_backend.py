@@ -532,7 +532,8 @@ async def remember_fact(content: str, tags: list | None, provenance: dict) -> di
 # ingest_document (contract §4) — document-level upsert
 # --------------------------------------------------------------------------- #
 async def ingest_document(document: str, dataset: str, doc_key: str | None = None,
-                          provenance: dict | None = None) -> dict:
+                          provenance: dict | None = None,
+                          tags: list | None = None) -> dict:
     """Chunk → embed → index NEW chunks (parent_id = new synthetic doc id) →
     supersede the prior version's chunks (new-first, no empty window). >40 chunks
     runs in a background job; a job_id is returned and surfaced in stats()."""
@@ -553,16 +554,19 @@ async def ingest_document(document: str, dataset: str, doc_key: str | None = Non
             "chunk_count": len(chunks),
             "started_at": _now_iso(),
         }
-        _spawn(_ingest_job(job_id, chunks, dataset, doc_key, new_doc_id, provenance))
+        _spawn(_ingest_job(job_id, chunks, dataset, doc_key, new_doc_id, provenance,
+                           tags=tags))
         return {"job_id": job_id}
 
-    count = await _ingest_chunks(chunks, dataset, doc_key, new_doc_id, provenance)
+    count = await _ingest_chunks(chunks, dataset, doc_key, new_doc_id, provenance,
+                                 tags=tags)
     return {"doc_id": new_doc_id, "chunk_count": count}
 
 
 async def _ingest_chunks(chunks: list[str], dataset: str, doc_key: str,
                          new_doc_id: str, provenance: dict | None,
-                         derived_from: list | None = None) -> int:
+                         derived_from: list | None = None,
+                         tags: list | None = None) -> int:
     vecs = await voyage.embed_documents(chunks)
     prov = dict(provenance or {})
     prov.setdefault("written_at", _now_iso())
@@ -572,7 +576,7 @@ async def _ingest_chunks(chunks: list[str], dataset: str, doc_key: str,
             "content": chunk,
             "embedding": vec,
             "memory_type": "knowledge",
-            "tags": [],
+            "tags": tags or [],
             "entities": [],
             "provenance": prov,
             "use_count": 0,
@@ -612,9 +616,11 @@ async def _supersede_prior_doc(dataset: str, doc_key: str, new_doc_id: str, now:
     return res.get("updated", 0)
 
 
-async def _ingest_job(job_id: str, chunks, dataset, doc_key, new_doc_id, provenance) -> None:
+async def _ingest_job(job_id: str, chunks, dataset, doc_key, new_doc_id, provenance,
+                      tags: list | None = None) -> None:
     try:
-        count = await _ingest_chunks(chunks, dataset, doc_key, new_doc_id, provenance)
+        count = await _ingest_chunks(chunks, dataset, doc_key, new_doc_id, provenance,
+                                     tags=tags)
         _JOBS[job_id].update(status="done", chunk_count=count, finished_at=_now_iso())
     except Exception as exc:  # noqa: BLE001 — background job; record failure
         _JOBS[job_id].update(status="error", error=str(exc), finished_at=_now_iso())
@@ -669,6 +675,22 @@ async def _get_target_meta(doc_id: str) -> dict | None:
 async def _get_by_id_any(doc_id: str) -> dict | None:
     res = await _es_json("POST", f"/{ALL_ALIAS}/_search",
                          {"size": 1, "query": {"ids": {"values": [doc_id]}}})
+    hits = res["hits"]["hits"]
+    if hits:
+        return hits[0]
+
+    # Fall back to a knowledge PARENT id. `ingest_document` and `revise` return
+    # the synthetic `parent_id` they minted (`doc_id` / `new_id`), which is NOT
+    # an ES _id — so an ids query misses it and every follow-up get / revise /
+    # forget answered "id not found" for the very id the write had just handed
+    # back. Resolving it here makes the returned id usable, which is what the
+    # tool contract implies; callers should not have to run a recall to
+    # re-discover a chunk id first.
+    res = await _es_json(
+        "POST", f"/{KNOWLEDGE_INDEX}/_search",
+        {"size": 1,
+         "sort": [{"chunk_index": "asc"}],
+         "query": {"term": {"parent_id": doc_id}}})
     hits = res["hits"]["hits"]
     return hits[0] if hits else None
 
@@ -768,7 +790,8 @@ async def revise(id: str, content: str, provenance: dict, grant: str, agent: str
         doc_key = src.get("doc_key") or content_hash(content)
         new_doc_id = uuid4().hex
         chunks = chunk_text(content)
-        await _ingest_chunks(chunks, dataset, doc_key, new_doc_id, prov, derived_from=[id])
+        await _ingest_chunks(chunks, dataset, doc_key, new_doc_id, prov,
+                             derived_from=[id], tags=src.get("tags") or [])
         old_parent = src.get("parent_id")
         if old_parent:
             await _supersede_parent(old_parent, new_doc_id, now)
