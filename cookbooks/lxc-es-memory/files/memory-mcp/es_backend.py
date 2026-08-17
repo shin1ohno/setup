@@ -654,14 +654,18 @@ async def append_episode(content: str, tags: list | None, provenance: dict) -> d
 # Target resolution + supersede/revise (contract §3 authz, §4)
 # --------------------------------------------------------------------------- #
 async def _get_target_meta(doc_id: str) -> dict | None:
-    """Resolve an id across the memory-all alias → {index, source_class, agent,
-    source}."""
-    res = await _es_json("POST", f"/{ALL_ALIAS}/_search",
-                         {"size": 1, "query": {"ids": {"values": [doc_id]}}})
-    hits = res["hits"]["hits"]
-    if not hits:
+    """Resolve an id → {index, source_class, agent, source}.
+
+    Delegates to `_get_by_id_any` so there is exactly ONE id-resolution path.
+    This function used to run its own ids-only query, which meant #885's
+    parent-id fallback reached `get` but not `revise` / `supersede` — those go
+    through here, so a caller passing the id `remember` had just returned still
+    got "id not found". Two lookups for one concept is how that happened; keep
+    it at one.
+    """
+    h = await _get_by_id_any(doc_id)
+    if h is None:
         return None
-    h = hits[0]
     src = h.get("_source", {})
     prov = src.get("provenance") or {}
     return {

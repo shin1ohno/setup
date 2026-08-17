@@ -261,6 +261,44 @@ def test_id_lookup_falls_back_to_parent_id():
           len(calls) == 2 and calls[1][1]["sort"] == [{"chunk_index": "asc"}])
 
 
+def test_target_meta_resolves_a_parent_id():
+    """The revise / supersede path must resolve a parent id too.
+
+    #885 put the fallback in `_get_by_id_any` only, and this suite asserted that
+    function directly — so it passed while `revise(<returned id>)` still failed,
+    because `_get_target_meta` ran its own ids-only query. Assert the lookup the
+    WRITE PATH actually uses, not just the helper the fix touched.
+    """
+    calls = []
+
+    async def fake_es_json(method, path, body=None):
+        calls.append((path, body))
+        if len(calls) == 1:  # ids query misses
+            return {"hits": {"hits": []}}
+        return {"hits": {"hits": [{
+            "_id": "chunk0", "_index": be.KNOWLEDGE_INDEX,
+            "_source": {"parent_id": "parent9", "tags": ["todo"],
+                        "provenance": {"source_class": "tool-output",
+                                       "agent": "someone"}},
+        }]}}
+
+    orig = be._es_json
+    be._es_json = fake_es_json
+    try:
+        meta = run(be._get_target_meta("parent9"))
+    finally:
+        be._es_json = orig
+
+    check("_get_target_meta resolves a parent id", meta is not None,
+          "revise/supersede would answer 'id not found'")
+    check("_get_target_meta reports the resolved index",
+          meta and meta["index"] == be.KNOWLEDGE_INDEX)
+    check("_get_target_meta carries provenance through",
+          meta and meta["source_class"] == "tool-output" and meta["agent"] == "someone")
+    check("_get_target_meta shares the one lookup path", len(calls) == 2,
+          f"{len(calls)} queries — expected the ids query plus the parent_id fallback")
+
+
 def test_id_lookup_returns_none_when_absent():
     async def fake_es_json(method, path, body=None):
         return {"hits": {"hits": []}}
@@ -278,6 +316,7 @@ def test_id_lookup_returns_none_when_absent():
 for fn in (test_tags_on_chunks, test_tags_default_empty,
            test_ingest_document_forwards_tags, test_revise_carries_tags_forward,
            test_id_lookup_prefers_es_id, test_id_lookup_falls_back_to_parent_id,
+           test_target_meta_resolves_a_parent_id,
            test_id_lookup_returns_none_when_absent):
     # A test that raises is a FAIL, not an abort: against the pre-fix backend the
     # tags cases raise TypeError, and swallowing the rest of the run there would
