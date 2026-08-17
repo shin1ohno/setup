@@ -1,7 +1,7 @@
 ---
 name: todo-reconcile
 description: |
-  全 TODO ストア（各 repo の TODO.md、ai-memory / memory-local の tags:["todo"]、
+  全 TODO ストア（各 repo の TODO.md、ai-memory / memory-work の tags:["todo"]、
   federated な GitHub issues）を横断列挙し、項目ごとに 2 秒 probe で stale を検出して
   済み / 前提消滅 / 継続 / 要判断 に分類する、TODO 管理パイプラインの週次棚卸しループ skill。
   probe なしの即答列挙（list モード）も担当。結果は ~/.claude/todo/ledger.md に書き出す。
@@ -33,7 +33,7 @@ TODO 管理パイプライン（`~/.claude/docs/todo-management.md`）の「完�
 ### Step 0 — 列挙（全モード）
 
 1. TODO.md 横断: `ls ~/ManagedProjects/*/TODO.md` → 各ファイルの `##` エントリを抽出（description / first step / dated status を保持）
-2. memory: 到達可能な store それぞれで `browse(filters: {tags: "todo"})`（ai-memory と memory-local の両方）。片方に到達できない場合は WARN して続行し、その store の項目は「未列挙」として ledger に明記する — 「0 件」と報告してはならない
+2. memory: 到達可能な store それぞれで `browse(filters: {tags: "todo"})`（ai-memory と memory-work の両方）。片方に到達できない場合は WARN して続行し、その store の項目は「未列挙」として ledger に明記する — 「0 件」と報告してはならない
 3. federated issues: `gh search issues --assignee=@me --state=open`（+ shin1ohno/setup の open self-heal issues）。読み取り列挙のみ — memory へ複製しない
 4. legacy sweep（移行期のみ）: tag なしで memory に漏れ込んだ TODO 形エントリを `recall`（例: query「TODO 未完了 あとで deferred 作業」, top_k=15）で拾い、候補として提案する（処置は tags:["todo"] 付き再保存 or forget、Step 2 の承認フローに乗せる）
 

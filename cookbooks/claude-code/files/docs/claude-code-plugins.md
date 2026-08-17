@@ -21,7 +21,7 @@ Applies equally to **MCP tools / tool-groups the user explicitly asked for** (e.
 
 **Absence triage — ToolSearch 0 件 ≠ 不在**（CLAUDE.md「Negative search is not evidence of absence」の ToolSearch 特化形）: claude.ai 系コネクタは切断/認証失効中はツールカタログに注入されず、再認証すれば注入される — 未注入は状態シグナルであって恒常仕様ではない。「不在」と断定する前に 3 手で triage する:
 
-1. **Positive control** — 動作中コネクタの既知ツール名（例 `select:mcp__memory-local__recall`）で ToolSearch が schema を返すことを確認し、索引自体の生死と切り分ける。
+1. **Positive control** — 動作中コネクタの既知ツール名（例 `select:mcp__memory-work__recall`）で ToolSearch が schema を返すことを確認し、索引自体の生死と切り分ける。
 2. **`claude mcp get "<exact name>"` で Scope 確認** — `Scope: claude.ai config` のコネクタは `claude mcp list` が Connected 表示でも当該 CLI セッションに未注入のことがある。この場合の第一仮説は「切断/認証失効」で、対処は上記 (b) の re-enable path（/mcp・mcp-auth）。
 3. **過去使用実績を probe** — transcript grep（`mcp__<server>__` の tool_use）/ recall で直近の使用実績を確認。実績があれば「不在」はほぼ誤りで「切断」が正しい。
 

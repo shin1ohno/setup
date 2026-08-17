@@ -6,14 +6,14 @@ description: |
   Apple Reminders（remind --dump）、Claude Code transcript の deferral 発話、
   カレンダー連携 Notion 議事録 — を sweep し、
   TODO 形に正規化（完了条件の起草 + provenance 付与）して機密性 routing どおりの
-  memory store（ai-memory / memory-local）に tags:["todo"] で書き込む毎日ループ skill。
+  memory store（ai-memory / memory-work）に tags:["todo"] で書き込む毎日ループ skill。
   explicit ソース（明示マーク）は自動保存 + 領収書 1 行、inferred ソース（推論抽出）は
   候補提案のみ（承認後に保存）。dedup は provenance キー。結果は ~/.claude/todo/ledger.md
   に追記。設計の真実源は ~/.claude/docs/todo-management.md。
   「todo collect」「TODO 集めて」「capture 集めて」「TODO 収集」でトリガー。
   注: ソース側の状態は絶対に変更しない（Task の完了化・saved 解除等をしない）。
   例外は連携ストアの Apple Reminders のみ（リンクトークン annotate と close 伝播 complete）。
-  仕事ソースの sink は memory-local 固定 — 個人 ai-memory へ流すのは egress 違反。
+  仕事ソースの sink は memory-work 固定 — 個人 ai-memory へ流すのは egress 違反。
 user-invocable: true
 ---
 
@@ -45,7 +45,7 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
 - `slack-reaction`: search `hasmy::<emoji>:`（query の emoji、既定 `pushpin`）。full sweep（全ページ）
 - `slack-self-dm`: 自分の self-DM を search（`in:` 自 user、`channel_types=im`、from:自分）。self-DM は自分が今書くので後方 lookback は任意
 - `google-tasks`（explicit）: `gws tasks tasks list --params '{"tasklist":"<id>"}'` の needsAction のみ（query = tasklist 名）。gws はサブコマンド固有フラグを持たず**引数は全て `--params` JSON 渡し**（`--tasklist` 等は unexpected argument で落ちる）
-- `apple-reminders`（explicit）: capture lists（= config の apple-reminders ソースの query リスト群 + `mirror.list`）ごとに `remind --dump --list <名前>` を実行。未完了・notes に `[ai-todo:…]` トークン無し・どの open memory todo からも `reminders:<externalId>` で未参照・due が capture horizon 内（既定 14 日、`capture.due_horizon_days` で変更・負値で無効 — 先の予定 reminder は Reminders 自身が通知を担うので取り込まない）、の 4 条件を満たすものが candidate（Step 6 の remind_sync.rb が返す `capture_candidates` と同一規則）。explicit class なので自動 remember + provenance `reminders:<externalId>`。**sink は既定値** — Inbox は個人/work 混在ソースなので候補ごとに内容で routing する（work 形 → memory-local。todo-management.md の capture routing と同一）
+- `apple-reminders`（explicit）: capture lists（= config の apple-reminders ソースの query リスト群 + `mirror.list`）ごとに `remind --dump --list <名前>` を実行。未完了・notes に `[ai-todo:…]` トークン無し・どの open memory todo からも `reminders:<externalId>` で未参照・due が capture horizon 内（既定 14 日、`capture.due_horizon_days` で変更・負値で無効 — 先の予定 reminder は Reminders 自身が通知を担うので取り込まない）、の 4 条件を満たすものが candidate（Step 6 の remind_sync.rb が返す `capture_candidates` と同一規則）。explicit class なので自動 remember + provenance `reminders:<externalId>`。**sink は既定値** — Inbox は個人/work 混在ソースなので候補ごとに内容で routing する（work 形 → memory-work。todo-management.md の capture routing と同一）
 - `transcript-deferral`（inferred）: `~/.claude/projects/*/*.jsonl` の直近 query 期間（既定 7d）から deferral 発話（「あとでやる」「後回し」「TODO にして」等）のうち領収書行（「→ … に保存」）が続かないものを抽出
 - `calendar-notion-notes`（inferred）: `gws calendar` の直近イベント → 説明欄の Notion リンク → notion fetch → action item（自分宛て）抽出
 
@@ -59,7 +59,7 @@ provenance キー（Slack permalink / task id / event id / transcript の sessio
 
 ### Step 4 — 書込 or 提案
 
-- explicit → sink へ `remember(content, type='fact', tags=['todo'])` + 領収書 1 行（「→ memory-local に保存。完了条件: X」）
+- explicit → sink へ `remember(content, type='fact', tags=['todo'])` + 領収書 1 行（「→ memory-work に保存。完了条件: X」）
 - inferred → dedup 済みの**全項目**を候補として提示（少数なら AskUserQuestion バッチ、多数なら ledger の候補セクションに全件列挙）、承認分のみ書込。**silent drop 禁止** — actionable でない（参照 / 期限切れ等）と判断した項目も黙って捨てず、候補に「除外候補（理由つき、既定 skip）」として残す。ユーザーが後で拾い直せる状態を保つ
 
 ### Step 5 — ledger 追記
