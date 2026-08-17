@@ -210,7 +210,7 @@ Applies to any prose output — formal docs AND chat replies (structural enforce
 
 ## Session Retrospective
 
-After 3+ commits, launch `session-retrospective` agent in background. `/retro` is the manual entry. "Blocked on manual" trigger covered in Behavioral Principles.
+After 3+ commits, launch `session-retrospective` agent in background. `/retro` is the manual entry. "Blocked on manual" trigger covered in Behavioral Principles. Retro findings are persisted in full to the session's memory MCP on return (per-proposal `knowledge` notes + a session hub `episode`, linked by a shared retro-key tag) — before and regardless of user selection. Only user-approved proposals are implemented into CLAUDE.md/rules/hooks/skills; adoption decisions (adopted/rejected) are revised back onto the saved notes.
 
 ## Compaction
 
