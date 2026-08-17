@@ -13,6 +13,8 @@ Designed 2026-07-06 (E2E discussion). Decisions locked there: TODO.md and issues
 | memory-work `tags:["todo"]` | WORK no-repo TODOs (Mercari) | same; work data never routes to personal ai-memory (egress rule in `knowledge-persistence.md`) |
 | GitHub / zp issues | execution queue for autonomous loops | existing close protocols (self-heal / zp loops) |
 
+**Enumeration is only complete when the count says so**: a memory store is read with `browse(filters: {tags: "todo"}, limit: N)`, and `browse` has no cursor — omit `limit` and the server's default of 50 truncates the answer silently. Always pass `limit` and compare the returned count against the response's `total` (`truncated: true` means they differ). A truncated enumeration is a THIRD state, distinct from a store that could not be reached (`未列挙`) and one that answered empty (`0 件`): record it as `truncated 残数` and never collapse it into either, because both a dedup pass and a completion check read "absent" as "gone". Same silent-cap rule the Slack sweep already follows.
+
 **Federation principle**: issues and TODO.md are NEVER copied into memory. `list` / `reconcile` enumerate them at read time (`gh search issues --assignee=@me --state=open`, `ls ~/ManagedProjects/*/TODO.md`). The collector copies only *raw captures* (unstructured marks). Copying store-to-store creates split-brain.
 
 ## Capture routing

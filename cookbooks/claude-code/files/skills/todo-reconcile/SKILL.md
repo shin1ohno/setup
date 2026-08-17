@@ -33,7 +33,8 @@ TODO 管理パイプライン（`~/.claude/docs/todo-management.md`）の「完�
 ### Step 0 — 列挙（全モード）
 
 1. TODO.md 横断: `ls ~/ManagedProjects/*/TODO.md` → 各ファイルの `##` エントリを抽出（description / first step / dated status を保持）
-2. memory: 到達可能な store それぞれで `browse(filters: {tags: "todo"})`（ai-memory と memory-work の両方）。片方に到達できない場合は WARN して続行し、その store の項目は「未列挙」として ledger に明記する — 「0 件」と報告してはならない
+2. memory: 到達可能な store それぞれで `browse(filters: {tags: "todo"}, limit: 500)`（ai-memory と memory-work の両方）。片方に到達できない場合は WARN して続行し、その store の項目は「未列挙」として ledger に明記する — 「0 件」と報告してはならない
+   - **`limit` を明示し、返却が全件かを `total` と突き合わせる**: `browse` は cursor を持たないので、`limit` を省くとサーバ既定の 50 件で無言に切れる。応答の `total` が返却件数より大きい（= `truncated: true`）場合は `truncated 残数 = total - 返却件数` を ledger に明記し、tag を足す / store を分ける等でクエリを狭めて残りを引く。`total` を返さない旧サーバ相手では「返却件数がちょうど `limit`」を打ち切りの tell とする（Slack sweep と同じ silent cap 禁止の規律）
 3. federated issues: `gh search issues --assignee=@me --state=open`（+ shin1ohno/setup の open self-heal issues）。読み取り列挙のみ — memory へ複製しない
 4. legacy sweep（移行期のみ）: tag なしで memory に漏れ込んだ TODO 形エントリを `recall`（例: query「TODO 未完了 あとで deferred 作業」, top_k=15）で拾い、候補として提案する（処置は tags:["todo"] 付き再保存 or forget、Step 2 の承認フローに乗せる）
 
@@ -58,7 +59,9 @@ list モードはここで整形出力（store 別 → テーマ別、期日つ�
 
 ### Step 3 — ledger 書き出し（dry-run / LIVE）
 
-`~/.claude/todo/ledger.md` を再生成する（`mkdir -p ~/.claude/todo`）。先頭に「生成物 — 手編集禁止（真実源は各 store）」の注記。内容: 実行日時 / モード / store 別 open 一覧 / 分類結果 / 期日接近 / 未列挙 store の WARN。
+`~/.claude/todo/ledger.md` を再生成する（`mkdir -p ~/.claude/todo`）。先頭に「生成物 — 手編集禁止（真実源は各 store）」の注記。内容: 実行日時 / モード / store 別 open 一覧 / 分類結果 / 期日接近 / 未列挙 store の WARN / 列挙が打ち切られた store の `truncated 残数`。
+
+3 値を混ぜないこと: **未列挙**（store に到達できなかった = 不明）/ **0 件**（store が応答して空）/ **truncated 残数**（一部だけ既知）。打ち切りを「0 件」や「未列挙」に丸めると、消えた TODO と見ていない TODO が区別できなくなる。
 
 ### Step 4 — 適用（LIVE のみ）
 
@@ -66,7 +69,7 @@ list モードはここで整形出力（store 別 → テーマ別、期日つ�
 
 - memory todo: `forget(id)`。legacy 再保存は `remember(content, type='fact', tags=['todo'])`（完了条件を補筆）+ 元エントリ forget
 - TODO.md: 対象 repo でブランチ作成 → エントリ削除 / dated status 追記 → commit → PR（`~/.claude/rules/git-commit.md` 規律。main 直 push 禁止）
-- 適用後: 該当 store を再列挙し、消えた / 更新されたことを確認してから完了報告（Verify-before-done）
+- 適用後: 該当 store を再列挙し（同じく `limit` 明示 + `total` 突き合わせ）、消えた / 更新されたことを確認してから完了報告（Verify-before-done）。打ち切られた再列挙で「消えた」と判定してはならない — 見えていないだけの可能性がある
 
 ## 検証ゲート（最重要）
 
