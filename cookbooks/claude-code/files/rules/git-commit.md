@@ -33,7 +33,7 @@ Absent an explicit opt-in OR an established convention, always go PR branch → 
 
 **The convention signal is per-file-class, not per-repo**: a repo can have HANDOFF/log files that go direct-to-main while code changes still go through PRs. When the file being committed is a different class than the historical direct-to-main commits, the convention does NOT apply — fall back to PR branch.
 
-Origin: 2026-05-05 PVE migration — asked PR-vs-direct ceremony when git-log already answered.
+Origin: see docs/git-commit-detail.md#default-to-pr-branch
 
 **Deny-list scope note**: The `Bash(git push:*)` deny entry only matches commands that *start with* `git push` — a compound `cd /repo && git push ...`, or a non-GitHub remote whose URL form is exotic (CodeCommit `codecommit::...`, GitLab via custom remote, internal Gitea), can bypass the matcher. The behavioral rule is the reliable enforcement, not the deny entry: always present a blocked push as `! git push <remote> <branch>` and let the user run it, and apply the same `!` user-authorization rule manually for any push to a non-GitHub remote. Do not exploit the compound-form loophole to auto-push; treat the deny entry as a backstop, not a complete safety net.
 
@@ -49,11 +49,11 @@ When a PR you created has all required checks green, do NOT present `! gh pr mer
 
 **Fallback**: only when `gh pr merge` is denied by project-local settings (deny/ask) do you revert to presenting `! gh pr merge <n> --squash --delete-branch` for the user.
 
-**Generalizes beyond merges**: this self-execute-after-explicit-authorization shape applies to any auto-mode-classifier-blocked production mutation (license changes, service restarts, config pushes) — do the read-only verify inline, present/ask for the specific mutation, then self-execute on authorization. See `~/.claude/rules/infrastructure.md` "Auto-Mode Classifier Boundary — Production Reads vs Production Mutations".
+**Generalizes beyond merges**: this self-execute-after-explicit-authorization shape applies to any auto-mode-classifier-blocked production mutation (license changes, service restarts, config pushes) — do the read-only verify inline, present/ask for the specific mutation, then self-execute on authorization. See `~/ManagedProjects/setup/.claude/rules/infrastructure.md` "Auto-Mode Classifier Boundary — Production Reads vs Production Mutations".
 
 **kouzoh org exception — revised 2026-07-24**: the auto-mode classifier's denial of kouzoh/* self-merge is NON-DETERMINISTIC, not structural. Headless zp runner sessions (permissionMode=auto — org managed policy disables bypassPermissions) successfully merged #52/#54/#55 (07-03), #57/#58 (07-06), #56/#76 (07-22), #77/#78 (07-23), while the SAME runner was denied on #76 minutes before its own success and #79/#81 were denied consecutively on 07-23; one interactive deny observed 2026-07-08 (#73). Critically, the classifier's deny reasons quote the user's OWN recorded boundary — this line's former "structurally denies" wording and the runner prompt's "merge is blocked" note — so recording "skip the attempt" is self-fulfilling and raises the deny rate. Therefore: when the merge gate is satisfied (all required checks green incl. policy-bot, CLEAN/UNSTABLE), ATTEMPT `gh pr merge` once — do NOT pre-skip on this record. `gh pr merge` succeeds silently (empty stdout — #58/#77/#78), so ALWAYS verify with `gh pr view <n> --json state,mergedAt` before concluding either way. Only on an actual deny fall back to presenting `! gh -R kouzoh/<repo> pr merge <n> --merge --delete-branch` (zp convention: merge commit). Headless zp loops keep the runner-shell deterministic merge sweep as the first path (the "delegated to a runner-shell sweep" exception in CLAUDE.md's Progress-ledger rule refers to that sweep design — it is not grounds for an in-session skip). If an attempt outcome contradicts this line again, update this line in the same run; a headless runner that cannot edit this repo writes the reversal to memory with tags:["todo"] so the next interactive session syncs this line.
 
-Origin: 2026-07 — re-presented `! gh pr merge` after the user had already authorized merging, forcing a re-authorization round-trip. Detail: see `~/.claude/docs/git-commit-detail.md#merge-execution-default`.
+Origin: see docs/git-commit-detail.md#merge-execution-default
 
 ### Post-merge cleanup — same turn as the merge
 
@@ -84,7 +84,7 @@ git -C /path/to/repo branch --show-current  # before the first Write
 
 If the current branch is not the intended one (typically: not `main`, not a branch created for this task), cut a fresh branch from `origin/main` BEFORE editing. The "Before writing any file" wording is easily missed when the editing session spans many turns and never touches `git add` until late.
 
-Origin: 2026-05-11 CLAUDE.md trim — 5+ Writes on an unrelated open PR's branch.
+Origin: see docs/git-commit-detail.md#config-editing-branch-check
 
 ### Branch check immediately before `gh pr create`
 
@@ -105,7 +105,7 @@ cat /tmp/pr-body.md | gh pr create --base main --head feat/my-branch --title "..
 
 The `--head` form is the safest — gh uses the explicit branch regardless of CWD's current branch state.
 
-Origin: 2026-05-09 multi-stream worktree — PR shipped with wrong stream's diff (current branch drifted between commit and PR-create).
+Origin: see docs/git-commit-detail.md#pr-create-branch-check
 
 ### Multi-repo tasks
 
@@ -116,7 +116,7 @@ When a task spans 2+ repositories (e.g., CWD is `weave`, edits land in `edge-age
 
 Tool-side CWD resets (Bash sandbox reverts to the primary working directory on each invocation) mean a cd-based branch check only describes the primary repo; a CWD-based check is insufficient when edits reach into a sibling repo via absolute paths. Run the check per-repo, explicitly naming the path with `git -C`.
 
-Origin: 2026-04-23 iOS — bare branch check described primary CWD, not the sibling repo edited.
+Origin: see docs/git-commit-detail.md#multi-repo-branch-check
 
 ### Cross-repo propagation: enumerate first
 
@@ -129,7 +129,7 @@ grep -rln '"air"\|"pro"' ~/ManagedProjects/*/ 2>/dev/null
 
 If the grep surfaces K repos, the plan should list K branch/PR pairs up front. Do not start the first repo's PR and discover the second repo's need mid-flight — the user sees sequential round-trips where one coordinated planning step would have sufficed.
 
-Origin: 2026-04-25 `neo` host add — `home-monitor/ssh-devices.tf` discovered as a second sequential PR.
+Origin: see docs/git-commit-detail.md#cross-repo-propagation
 
 ### Re-check after any long-running background operation
 
@@ -165,7 +165,7 @@ The standard pattern for moving an existing commit onto its own clean branch:
 
 Never cherry-pick onto an existing feature branch unless that branch is the cherry-pick's intended destination. The "branch is not main" heuristic is insufficient — the branch may be another in-flight feature (the user's WIP, a sibling task) that has nothing to do with the commit you're moving.
 
-Origin: 2026-04-25 cherry-picked onto the user's unrelated WIP branch.
+Origin: see docs/git-commit-detail.md#cherry-pick-branch-check
 
 ### Branch overlap pre-flight: open PR file scope
 
@@ -211,7 +211,7 @@ gh pr create --base main --title "..." --body-file /tmp/pr-body.md
 
 The body file is plain Markdown — no escaping, no quoting concerns, no parser ambiguity. Apply unconditionally when the PR body has any of: backticks, code fences, `$()`, `${...}`, single quotes inside double quotes, or multi-paragraph structure.
 
-Origin: 2026-05-05 — inline HEREDOC with backticks made `gh pr create` print `--title string` usage hints and abort.
+Origin: see docs/git-commit-detail.md#pr-body-file
 
 ### When the harness blocks `--body-file` — pipe via stdin
 
@@ -225,7 +225,7 @@ cat /tmp/pr-body.md | (cd /path/to/repo && gh pr create --base main --title "...
 
 `--body-file -` reads from stdin. The body content flows through the pipe, the harness sees it inline, and the deny rule doesn't fire. The body file stays as the source of truth on disk; the pipe is just the audit-friendly delivery channel.
 
-Origin: 2026-05-07 — `--body-file /tmp/...` denied right after a Write the verifier window had advanced past.
+Origin: see docs/git-commit-detail.md#body-file-stdin
 
 ### Cross-sandbox TMPDIR isolation — never reference a `$TMPDIR` file across sandbox modes
 
@@ -244,7 +244,7 @@ This sidesteps all three `--body-file` failure modes at once (backtick mis-parse
 
 **User-run `!` commands are outside the isolation boundary too**: the scratchpad (`/private/tmp/claude-501/...`) and the command-sandbox `$TMPDIR` are invisible from the user's terminal. Writing one of those paths into a `!` command you present for the user to run — `git commit -F <path>`, an `scp`/`rsync` source, any command taking `-f`/`-F`/`--file` — is a composition bug: the user's run fails with `fatal: could not read log file <path>: No such file or directory`. Fix by inlining via heredoc (`git commit -F - <<'EOF' … EOF`) or writing the content to a user-visible path under the target repo's `.git/`.
 
-Pre-emit check: before writing out any `!` block, scan it for a `/private/tmp/claude-501` or sandbox-`$TMPDIR` path. If one is present, do not present it — switch to the inline heredoc or `.git/`-path form. 相対パスの cwd 依存・ツール呼び出しタグ断片（`</parameter>` 等）の検査は `~/.claude/rules/shell.md`「User-run block self-containment」を参照 — 同じ pre-emit タイミングで併走する。
+Pre-emit check: before writing out any `!` block, scan it for a `/private/tmp/claude-501` or sandbox-`$TMPDIR` path. If one is present, do not present it — switch to the inline heredoc or `.git/`-path form. 相対パスの cwd 依存・ツール呼び出しタグ断片（`</parameter>` 等）の検査は `~/ManagedProjects/setup/.claude/rules/shell.md`「User-run block self-containment」を参照 — 同じ pre-emit タイミングで併走する。
 
 Detail (mechanism + 2-option remediation + origins): see `~/.claude/docs/git-commit-detail.md#cross-sandbox-tmpdir`.
 
@@ -258,13 +258,13 @@ When a post-commit block is planned (`push → gh pr create → gh pr checks`), 
 
 **Intermittent HTTPS timeouts are transient too**: when an already-sandbox-disabled `gh` call (`pr create` / `merge` / `view` / `api`) fails with `dial tcp …:443: i/o timeout`, treat it like the `pr checks --watch` transient rule — retry up to 3 times (immediately → 5s → 15s) before diagnosing. An SSH `git push` succeeding while HTTPS times out confirms the degradation is network-layer, not repo-side. A merge that timed out may or may not have landed: probe `gh pr view <n> --json state` before re-issuing. Origin: 2026-07-08 — ~10 intermittent 443 timeouts across one session; every operation succeeded on retry while SSH pushes worked throughout.
 
-Origin: 2026-06-26 — every gh/HTTPS call across PR #556/#563/#564 required a sandbox-disabled retry; SSH push succeeded in-sandbox.
+Origin: see docs/git-commit-detail.md#gh-network-sandbox
 
 **`gh auth refresh` REFUSES to run while `GITHUB_TOKEN` is exported** — and on these machines it always is. The zsh cookbook ships `~/.setup_shin1ohno/profile.d/50-github-token.sh` (setup#597, for mise's GitHub rate limit) which exports `gh auth token` into every interactive shell. `gh` treats an exported `GITHUB_TOKEN`/`GH_TOKEN` as an override and refuses the OAuth flow outright: `The value of the GITHUB_TOKEN environment variable is being used for authentication. To refresh credentials stored in GitHub CLI, first clear the value from the environment.` Any `gh auth refresh` — in a runbook, a script, or a `!` block — needs `env -u GITHUB_TOKEN`, and so does **every subsequent `gh` call that must use the refreshed credential**: the shell's `GITHUB_TOKEN` still holds the OLD token after a refresh, so wrapping only the refresh leaves the next command on the stale scope.
 
 Before writing a scope-expanding runbook, check what the current token actually has and whether the web UI avoids the round-trip entirely: `curl -sI https://api.github.com/user -H "Authorization: token $GITHUB_TOKEN" | grep -i x-oauth-scopes`. Prefer the web UI for one-off account-level operations (adding an SSH key, adding a signing key) — `gh auth refresh -s admin:public_key` widens the keyring token *permanently*, and because `50-github-token.sh` re-exports it, every tool reading `GITHUB_TOKEN` in every shell can then manage SSH keys on the account. Same browser-interaction count, durably wider blast radius.
 
-Origin: 2026-08-01 sh1-cloud — a runbook step `gh auth refresh -h github.com -s admin:public_key` failed on gh's own refusal; the fix needed `env -u` on both that and the follow-up `gh ssh-key add`, and the scope widening was avoidable by pasting into github.com/settings/keys instead.
+Origin: see docs/git-commit-detail.md#gh-auth-refresh
 
 ## GPG Signing Failures
 
@@ -284,7 +284,7 @@ Do not bypass signing with `-c commit.gpgsign=false` unless the user explicitly 
 
 Before emitting the GPG cache-refresh `!` line, scan the line you are about to write and verify both halves are intact. If you cannot fit the full command on a single line, emit it as a fenced code block (which preserves it as one logical unit) — never inline-formatted at the end of a sentence where the line wrap can swallow trailing tokens.
 
-Origin: 2026-05-04 retro — emitted `... echo "test" | gp` truncated mid-word; cold pinentry cache failed the next commit.
+Origin: see docs/git-commit-detail.md#gpg-signing-failures
 
 ## Working directory `.git` check before first file write
 

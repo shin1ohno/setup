@@ -25,7 +25,7 @@ This repository does NOT configure:
 - AWS-managed EC2 (Amazon Linux 2023, `nrt-subnet-router`) — see `~/ManagedProjects/home-monitor/scripts/tailscale-setup/`
 - Physical network devices (YAMAHA RTX) — see `~/ManagedProjects/home-monitor/`
 
-**Decision rule** for new fixes: when the root cause reproduces across multiple Linux / macOS hosts (even if discovered on one specific host), the fix belongs here. The Cross-OS Scope Gate rule in `~/.claude/rules/infrastructure.md` covers the inverse case (don't drop OS-specific Ubuntu fixes into a cookbook that also runs on AL2023).
+**Decision rule** for new fixes: when the root cause reproduces across multiple Linux / macOS hosts (even if discovered on one specific host), the fix belongs here. The Cross-OS Scope Gate rule in `~/ManagedProjects/setup/.claude/rules/infrastructure.md` covers the inverse case (don't drop OS-specific Ubuntu fixes into a cookbook that also runs on AL2023).
 
 ### Core Structure
 
@@ -136,7 +136,7 @@ Auto-mitamae: `cookbooks/auto-mitamae-target` installs a systemd timer on each L
 
 - Always test cookbook changes with `--dry-run` first
 - Project hooks in `.claude/hooks/`: `guard-mitamae-dry-run.rb` blocks **`sudo mitamae`** without `--dry-run` for Claude. Bare `./bin/mitamae local <recipe>.rb` (no outer sudo) is allowed even without `--dry-run` — cookbooks elevate per-resource via `execute "sudo ..."`, which still hits the user's sudo prompt for each privileged step. Add `--dry-run` whenever the apply must NOT be allowed to actually run, even without sudo. `remind-cookbook-dry-run.rb` reminds Claude to run dry-run after cookbook edits
-- **sudo context by host type**: `cookbooks/` resources use `execute "sudo install …"` for system paths and `mitamae runs without sudo` per `~/.claude/rules/ruby.md` — but this rule applies to the OUTER mitamae invocation differently per host:
+- **sudo context by host type**: `cookbooks/` resources use `execute "sudo install …"` for system paths and `mitamae runs without sudo` per `~/ManagedProjects/setup/.claude/rules/ruby.md` — but this rule applies to the OUTER mitamae invocation differently per host:
   - **Bare-metal Linux + macOS** (`pro`, `air`, `ohnos-macbook`): run `./bin/mitamae local <platform>.rb` as the regular user. Do NOT prepend `sudo` — it changes `$HOME` to `/root` and breaks rbenv/mise/pyenv PATH resolution (recipes that compute paths from `ENV["HOME"]` end up with `/root/.rbenv` etc., then later resources try to write there as the regular user and fail)
   - **Service LXCs** (`pve/lxc-*.rb`): the LXC's only user IS root. Run `./bin/mitamae local pve/lxc-<name>.rb` from inside the CT — no sudo prefix needed (already root)
   - When presenting apply commands as `!` to the user, infer host type from the recipe path: `pve/lxc-*.rb` → no sudo, anything else → no sudo. The rare exception is `pve/pve-host.rb` which runs on the bare-metal PVE host as root anyway. The recipe path is the reliable signal — never default to `sudo` "to be safe"
@@ -162,3 +162,8 @@ Host registry の canonical source は **AWS SSM Parameter `/host-registry/devic
 
 廃案 (Phase A round-table で却下): submodule 経由配送 (cross-VCS auth + protocol.codecommit.allow=always 運用負担)、第 3 リポ抽出 (privilege aggregation anti-pattern)、モノレポ化 (IAM 信頼境界破壊)。詳細: `docs/adr/0001-0004-*.md`。
 
+## Always-loaded project rules (moved from global ~/.claude/rules 2026-08-17)
+
+@~/ManagedProjects/setup/.claude/rules/ruby.md
+@~/ManagedProjects/setup/.claude/rules/shell.md
+@~/ManagedProjects/setup/.claude/rules/infrastructure.md

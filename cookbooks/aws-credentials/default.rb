@@ -53,7 +53,7 @@ profile_arg = bootstrap ? " --profile '#{bootstrap}'" : ""
 # is insufficient because it passes for any valid IAM identity, while
 # a least-privilege identity (e.g. pve-bootstrap-ssm in home-monitor)
 # may have valid credentials but no ssm:GetParameter on the credential
-# paths it would otherwise rotate. See ~/.claude/rules/infrastructure.md
+# paths it would otherwise rotate. See ~/ManagedProjects/setup/.claude/rules/infrastructure.md
 # "IAM principal that cannot self-rotate" — this rule generalisation.
 #
 # If the probe fails (no auth, no SSM permission, network gone, etc.)
@@ -82,7 +82,7 @@ if auth_probe.exit_status != 0
     "Skipping profile sync. Possible causes: bootstrap profile not yet " \
     "configured, profile lacks ssm:GetParameter on the credential paths " \
     "(common for least-privilege fleet identities — see " \
-    "~/.claude/rules/infrastructure.md 'IAM principal that cannot self-rotate'), " \
+    "~/ManagedProjects/setup/.claude/rules/infrastructure.md 'IAM principal that cannot self-rotate'), " \
     "or transient SSM unavailability. To bootstrap a fresh LXC, run " \
     "bin/bootstrap-lxc-creds <CT>. To rotate creds via this cookbook, " \
     "ensure bootstrap_profile has ssm:GetParameter on the configured " \

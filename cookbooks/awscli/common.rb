@@ -21,7 +21,7 @@ end
 # auth probe returns exit 127 (command not found), and in non-TTY contexts
 # require_external_auth silently skips the gated block — masquerading as
 # "auth not configured" when the actual cause is missing $PATH. See
-# ~/.claude/rules/ruby.md "sudo secure_path strips user home" for the
+# ~/ManagedProjects/setup/.claude/rules/ruby.md "sudo secure_path strips user home" for the
 # analogous pattern with user-installed shims.
 #
 # Pre-split this call sat at the END of each platform arm; here it runs at the

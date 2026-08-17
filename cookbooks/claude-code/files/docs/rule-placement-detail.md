@@ -1,0 +1,3 @@
+Load when editing permission-boundary rule lines, AskUserQuestion labels, or runner prompts
+
+**Rule text is classifier input**: permission-boundary に触れるルール行・AskUserQuestion ラベル・skill/runner プロンプト文は、auto-mode classifier の denial 理由として**逐語引用**される（実測 2026-07-23: kouzoh org exception の文言を引いた headless merge denial ×3、runner note の記述を引いた denial）。禁止行は説明文ではなく実行時挙動を変える設定値として扱う: (a) 書くときは観測日と観測モード（interactive / headless）を併記する。(b)「成功したら行を更新」型の反転条件は、その行自体が classifier に引用されて成功を防ぐため auto mode 下では構造的に発火しにくい — 反転観測が得られたら行の改訂を同一 turn で行う。(c) classifier denial を settings.json への allow 自動追記（cookbook 等）で回避する edit はそれ自体 Self Modification として deny される（実測 2026-07-23）— 是正レバーはルール文の改訂と対話での明示指示のみ。

@@ -72,7 +72,7 @@ platform 分岐（88 cookbook）は調査の結果ほぼ正当 — 統一対象�
   cookbooks/claude-code/files/ 配下はドキュメントなので検査対象外とする）
 - Integer `owner`/`group`: 違反 0 件（claude-code/files/rules/*.md の hit はドキュメント例）
 - `check_command` の profile（**2026-06-13 再調査で当初の見立てを訂正**。下記「案 B（SSM profile 統一）スコープ」が正）:
-  - 当初 plan は「`--profile` の有無」を違反基準にしたが**誤り**。正しい規約（`~/.claude/rules/ruby.md`
+  - 当初 plan は「`--profile` の有無」を違反基準にしたが**誤り**。正しい規約（`~/ManagedProjects/setup/.claude/rules/ruby.md`
     "Auth-check gate must match the cookbook's actual invocation profile"）は
     「check_command の profile が同一ブロックの実呼び出しと一致するか（mismatch 検出）」
   - bare↔bare（check も実呼び出しも profile なし）は整合が取れており**規約違反ではない**。
@@ -104,7 +104,7 @@ bare 4 件は **2 つの正当な auth モデル**に分かれ、機械的に「
 | `pve/lxc-consent` | CT 110（LXC 専用） | **案 B migrate 対象**: 明示 `--profile` 化 |
 | `cookbooks/memory-server` | （Phase 1 で削除） | **対象外** |
 
-**案 B migrate の必須前提（着手前に probe、`~/.claude/rules/aws-iam.md`「Multi-profile auth chain —
+**案 B migrate の必須前提（着手前に probe、`~/.claude/docs/aws-iam.md`「Multi-profile auth chain —
 enumerate every profile's IAM scope at design time」）**:
 
 `/hydra/*` SSM path を**どの profile が読めるか**を確定してから migrate する。機械的に
@@ -135,10 +135,10 @@ lxc-praeco:28 / auto-mitamae-target:30 を踏襲）。bare の execute はそれ
    before/after で取得し diff。差分ゼロ（またはリソース名変更のみ）を PR 本文に記載
 3. **canary はグローバル mutex**: orchestrator の cron 退避（pause → canary CT 適用 → 機能検証 →
    merge → cron 復帰）は同時に 1 ストリームしか実行できない。並列ストリームは canary 窓を直列化すること。
-   手順は `~/.claude/rules/infrastructure.md` "Auto-mitamae Fleet Cookbook Validation" に従う
+   手順は `~/ManagedProjects/setup/.claude/rules/infrastructure.md` "Auto-mitamae Fleet Cookbook Validation" に従う
 4. **マージは直列**: 複数 PR を同時にマージしない。マージごとに fleet の
    `auto_mitamae_last_apply_status{result="success"}` を確認してから次をマージ
-5. **mitamae 既知罠の遵守**（`~/.claude/rules/ruby.md` 全節）: トップレベル Ruby はコンパイル時評価 /
+5. **mitamae 既知罠の遵守**（`~/ManagedProjects/setup/.claude/rules/ruby.md` 全節）: トップレベル Ruby はコンパイル時評価 /
    owner は String / check_command は実呼び出しと同じ profile / skip_if の content-aware 化 /
    remote_file の not_if 設計 / WARN ログでの skip 通知
 6. **mise 移行は `/verify-mise-backend` の 5-check 必須**（`~/.claude/rules/mise-migration.md`。

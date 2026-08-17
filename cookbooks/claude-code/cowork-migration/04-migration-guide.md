@@ -134,11 +134,11 @@ Anthropic best practices いわく「description が skill 発火の鍵」。各
 | 元ファイル | 配備先プロジェクト | 配備方法 |
 |---|---|---|
 | `rules/frontend-dev.md` | Next.js / Vite を使う各プロジェクト | プロジェクト root に `CLAUDE.md` または `AGENTS.md` を置き、必要箇所を抜粋 |
-| `rules/infrastructure.md`（AWS cosmetic-drift, blast radius） | `home-monitor`, `setup` | 各 repo の `CLAUDE.md` の Infrastructure 節 |
+| `~/ManagedProjects/setup/.claude/rules/infrastructure.md`（AWS cosmetic-drift, blast radius） | `home-monitor`, `setup` | 各 repo の `CLAUDE.md` の Infrastructure 節 |
 | `rules/ios-build.md` | `edge-agent`, `weave` | iOS-related repo の `ios/CLAUDE.md` |
 | `rules/mise-migration.md` | `setup` | `cookbooks/CLAUDE.md` または専用 `MISE.md` |
 | `rules/release-plz.md` | `nuimo-rs`, `weave`, `edge-agent`, `roon-rs` | 各 repo の `CLAUDE.md` の Release 節 |
-| `rules/ruby.md` | `setup` | `cookbooks/CLAUDE.md` の Ruby 節 |
+| `~/ManagedProjects/setup/.claude/rules/ruby.md` | `setup` | `cookbooks/CLAUDE.md` の Ruby 節 |
 | `rules/rust.md` | Rust crate を持つ各 repo | 各 repo の `CLAUDE.md` の Rust 節 |
 | `rules/weave-protocol.md` | `weave`, `edge-agent` | `crates/weave-contracts/CLAUDE.md` |
 

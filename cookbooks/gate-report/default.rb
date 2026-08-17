@@ -30,7 +30,7 @@ rerun_required = events.any? { |e| e[:reason] == :tool_missing }
 
 # Report lines and metric labels are compile-time-built strings embedded into
 # execute commands. Strip everything outside a conservative charset so shell
-# quoting / history expansion can never bite (~/.claude/rules/shell.md).
+# quoting / history expansion can never bite (~/ManagedProjects/setup/.claude/rules/shell.md).
 gate_report_sanitize_line = ->(s) { s.to_s.gsub(%r{[^A-Za-z0-9 _.,:()/=+*{}\[\]-]}, "") }
 gate_report_sanitize_label = lambda do |s|
   s.to_s.downcase.gsub(/[^a-z0-9]+/, "_").sub(/\A_+/, "").sub(/_+\z/, "")[0, 60]

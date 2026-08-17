@@ -58,13 +58,13 @@
 | `rules/claude-code-plugins.md` | **Code-only** | Claude Code plugin 連携ルール | 持ち込まない |
 | `rules/data-collection.md` | **Preference** | Failure escalation ladder は OS 非依存 | preferences に統合 |
 | `rules/frontend-dev.md` | **Project memory** | Next.js / Vite 前提のプロジェクトに固有 | 該当 repo の `CLAUDE.md` か Cowork project memory に |
-| `rules/infrastructure.md` | **Project memory + Preference 部分** | 「Blast radius awareness」「Long-running operations」「Blocked command boundary」は preference 化候補。AWS cosmetic-drift 等は home-monitor 等の repo 専用 | 一部 preferences、残りは home-monitor の memory に |
+| `~/ManagedProjects/setup/.claude/rules/infrastructure.md` | **Project memory + Preference 部分** | 「Blast radius awareness」「Long-running operations」「Blocked command boundary」は preference 化候補。AWS cosmetic-drift 等は home-monitor 等の repo 専用 | 一部 preferences、残りは home-monitor の memory に |
 | `rules/ios-build.md` | **Project memory** | weave-ios-core プロジェクト専用 | edge-agent / weave repo の memory に |
 | `rules/mise-migration.md` | **Project memory**（setup repo） | setup cookbook 固有 | setup repo の memory に |
 | `rules/release-plz.md` | **Project memory**（Rust repos） | Rust crates 用 | Rust repo（nuimo-rs / weave / edge-agent）の memory に |
-| `rules/ruby.md` | **Project memory**（mitamae） | mitamae DSL 固有 | setup repo の memory に |
+| `~/ManagedProjects/setup/.claude/rules/ruby.md` | **Project memory**（mitamae） | mitamae DSL 固有 | setup repo の memory に |
 | `rules/rust.md` | **Project memory**（Rust） | cargo workflow 固有 | Rust repos の memory に |
-| `rules/shell.md` | **Preference** 部分 + **Project memory** | "Locality check" 「Never chain two sudo」は preference 候補。残りは shell scripting に近い | preferences に圧縮抜粋 |
+| `~/ManagedProjects/setup/.claude/rules/shell.md` | **Preference** 部分 + **Project memory** | "Locality check" 「Never chain two sudo」は preference 候補。残りは shell scripting に近い | preferences に圧縮抜粋 |
 | `rules/remote-trigger.md` | **Code-only** | RemoteTrigger API 専用 | 持ち込まない |
 | `rules/weave-protocol.md` | **Project memory** | weave-server / edge-agent 固有 | weave repo の memory に |
 

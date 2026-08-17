@@ -226,7 +226,7 @@ require_external_auth(
   # changes (manual rotation via bin/issue-apm-api-keys.sh or es_ca regen).
   # Content-aware rather than File.exist? so a truncated or error-text artifact
   # re-fetches instead of counting as done — NOT rotation detection; an old but
-  # well-formed pair still skips (~/.claude/rules/ruby.md "SSM-sourced .env
+  # well-formed pair still skips (~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env
   # generator: file-existence skip_if drops new KEY=VALUE lines silently").
   skip_if: lambda {
     file_has_all?(apm_env_path, ["OTEL_EXPORTER_OTLP_HEADERS=authorization=ApiKey"]) &&

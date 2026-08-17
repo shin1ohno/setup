@@ -158,7 +158,7 @@ require_external_auth(
                 "Then press Enter.",
   # Content-aware: the needles are every KEY= files/generate_env.sh writes, so
   # a key added there re-fetches on hosts whose .env predates it instead of
-  # being silently dropped (~/.claude/rules/ruby.md "SSM-sourced .env
+  # being silently dropped (~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env
   # generator: file-existence skip_if drops new KEY=VALUE lines silently").
   # The v2 gate below already had this shape. Readable because this cookbook
   # only runs on the es-memory LXC as root (env is 0600 root:root).
@@ -178,7 +178,7 @@ require_external_auth(
 end
 
 # Place the env (converge-time only_if, not compile-time File.exist? — see
-# ~/.claude/rules/ruby.md mitamae evaluation model).
+# ~/ManagedProjects/setup/.claude/rules/ruby.md mitamae evaluation model).
 remote_file env_path do
   source env_temp_path
   owner "root"
@@ -311,7 +311,7 @@ end
 # v2 .env (EnvironmentFile) from SSM. SECOND require_external_auth block, gated
 # on the new /memory/voyage-api-key param (same scoped profile as v1). The
 # skip_if is CONTENT-AWARE (grep VOYAGE_API_KEY), not File.exist? — per
-# ~/.claude/rules/ruby.md the file-existence form makes a generator key change a
+# ~/ManagedProjects/setup/.claude/rules/ruby.md the file-existence form makes a generator key change a
 # silent no-op on a host whose .env predates it.
 generate_env_v2_script = File.join(File.dirname(__FILE__), "files", "generate_env_v2.sh")
 env_v2_temp_path = "#{generated_dir}/memory-v2.env"
@@ -335,7 +335,7 @@ require_external_auth(
 end
 
 # Place the v2 env (converge-time only_if, not compile-time File.exist? — see
-# ~/.claude/rules/ruby.md mitamae evaluation model).
+# ~/ManagedProjects/setup/.claude/rules/ruby.md mitamae evaluation model).
 remote_file env_path_v2 do
   source env_v2_temp_path
   owner "root"

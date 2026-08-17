@@ -42,7 +42,7 @@ loop_home = "/home/#{loop_user}" if loop_home.nil? || loop_home.empty?
 
 staging_dir = "#{node[:setup][:root]}/self-heal-loops"
 
-# Defensive dirs (per ~/.claude/rules/ruby.md). Staging lives under setup_root
+# Defensive dirs (per ~/ManagedProjects/setup/.claude/rules/ruby.md). Staging lives under setup_root
 # (root-owned under auto-mitamae); logs live under the loop user's ~/.claude.
 directory node[:setup][:root] do
   mode "755"
