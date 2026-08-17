@@ -149,6 +149,8 @@ test "$(git -C /Users/sh1/ManagedProjects/setup branch --show-current)" = "fix/X
 
 If the `branch --show-current` test fails the chain aborts before staging, surfacing the drift immediately rather than after the commit lands on the wrong branch. **Do NOT** split `git checkout -b` into a separate Bash invocation from the commit — branch context does not survive the CWD reset between calls.
 
+**EnterWorktree-isolated session: the chained form is refused there — serialize into plain calls.** Inside an EnterWorktree session the harness rejects both any `git -C` aimed at the shared checkout and compound git commands ("too complex to verify that it stays inside the worktree") — including this `&&`-chain and even a single git call with an output redirect. Run single-purpose git calls from the worktree cwd instead (`git add <files>`, then `git commit -m …`), no `-C`, no chains. Branch drift is not a risk there: the worktree has exactly one branch checked out and no sibling process switches it. Everywhere else the chained form above remains required. Detail: see `~/.claude/docs/git-commit-detail.md#worktree-isolated-serialization`.
+
 ### Cherry-pick is a commit operation — branch check applies
 
 `git cherry-pick` does not involve `git add`, so the "check before git add" trigger above is not reached. Before any `git cherry-pick`, run `git branch --show-current` and confirm the target is the intended branch — typically a fresh branch created from `origin/main` for this specific task, not whatever branch happens to be checked out.
