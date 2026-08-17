@@ -43,7 +43,7 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
 
 - `slack-saved`: search `is:saved`（Later の In progress + Archived を返す）。full sweep（全ページ）
 - `slack-reaction`: search `hasmy::<emoji>:`（query の emoji、既定 `pushpin`）。full sweep（全ページ）
-- `slack-self-dm`: 自分の self-DM を search（`in:` 自 user、`channel_types=im`、from:自分）。self-DM は自分が今書くので後方 lookback は任意
+- `slack-self-dm`: 自分の self-DM を search（`in:` 自 user、`channel_types=im`、from:自分）。self-DM は自分が今書くので後方 lookback は任意。**`[todo-loop]` で始まるメッセージは除外**（sh1-cloud の headless ループが自分の実行結果を self-DM に投げるので、capture ではなくこのパイプライン自身の通知）
 - `google-tasks`（explicit）: `gws tasks tasks list --params '{"tasklist":"<id>"}'` の needsAction のみ（query = tasklist 名）。gws はサブコマンド固有フラグを持たず**引数は全て `--params` JSON 渡し**（`--tasklist` 等は unexpected argument で落ちる）
 - `apple-reminders`（explicit）: capture lists（= config の apple-reminders ソースの query リスト群 + `mirror.list`）ごとに `remind --dump --list <名前>` を実行。未完了・notes に `[ai-todo:…]` トークン無し・どの open memory todo からも `reminders:<externalId>` で未参照・due が capture horizon 内（既定 14 日、`capture.due_horizon_days` で変更・負値で無効 — 先の予定 reminder は Reminders 自身が通知を担うので取り込まない）、の 4 条件を満たすものが candidate（Step 6 の remind_sync.rb が返す `capture_candidates` と同一規則）。explicit class なので自動 remember + provenance `reminders:<externalId>`。**sink は既定値** — Inbox は個人/work 混在ソースなので候補ごとに内容で routing する（work 形 → memory-work。todo-management.md の capture routing と同一）
 - `transcript-deferral`（inferred）: `~/.claude/projects/*/*.jsonl` の直近 query 期間（既定 7d）から deferral 発話（「あとでやる」「後回し」「TODO にして」等）のうち領収書行（「→ … に保存」）が続かないものを抽出
@@ -89,4 +89,8 @@ Apple Reminders を open memory todo の surface（mirror）として同期す�
 
 ## ループ化
 
-毎日 1 回、その日最初の対話セッション冒頭で起動（`/morning-triage` と対で回すのが自然）。headless 自動化は Slack connector が headless で使えない制約により、`gws` / `gh` 系ソースのみ先行可。`/todo-reconcile`（週 1 の出口 = 棚卸し）とは独立 — collect は「入口」。
+**work ソースは sh1-cloud で無人実行**: `todo-collect.timer`（毎日 07:23 JST、zp-SHIN overlay の `mercari-claude-todo` cookbook が配置）。Slack connector が headless から呼べることは 2026-08-17 に実測済み（claude 2.1.233 で `slack_search_public("is:saved")` が 2 連続でヒット）— 以前の「headless では connector が使えない」制約は無効。無人 run は 2 点だけ挙動が変わる: inferred を書き込まず ledger の候補セクションに残す（承認者不在）、到達できないソース（gws 401 / remind CLI 不在 / ai-memory 未登録）を「未 sweep + 理由」で明記する。
+
+**personal ソースは対話実行のまま**: Reminders mirror（Step 6）と ai-memory sink は air の remind CLI と個人 store に依存するので、その日最初の対話セッション冒頭で起動（`/morning-triage` と対で回すのが自然）。ledger に前日の無人 run の候補が溜まっているので、その承認もここで行う。
+
+`/todo-reconcile`（週 1 の出口 = 棚卸し）とは独立 — collect は「入口」。
