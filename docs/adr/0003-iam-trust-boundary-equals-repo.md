@@ -57,4 +57,4 @@ ADR 0002 参照。`home-identity` への write 権限保有者が IAM 発行 + c
 - ADR 0001 (monorepo rejected)
 - ADR 0002 (third repo rejected)
 - ADR 0004 (host registry distribution via SSM)
-- `~/.claude/rules/aws-iam.md` "IAM principal that cannot self-rotate — design `bootstrap_profile` chain accordingly"
+- `~/.claude/docs/aws-iam.md` "IAM principal that cannot self-rotate — design `bootstrap_profile` chain accordingly"

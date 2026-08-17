@@ -42,7 +42,7 @@ aws_region = aws_config["aws_region"]
 #   both inherit that env → deterministic, no per-cookbook --profile pin
 #   required.
 #
-# Pin-match lint invariant (~/.claude/rules/ruby.md "Auth-check gate"):
+# Pin-match lint invariant (~/ManagedProjects/setup/.claude/rules/ruby.md "Auth-check gate"):
 # gate and ops are both bare → bare↔bare consistency, no false gate.
 # Listed in bin/lint-cookbooks BARE_OK (same category as mcp/local-mcp).
 host_registry_check = "aws ssm get-parameter --name /host-registry/devices " \

@@ -9,7 +9,7 @@ Load before `gh pr create` on a cookbook change. Each check catches a recurring 
    git diff origin/main...HEAD | grep -oE '192\.168\.[0-9]+\.[0-9]+' | sort -u
    jq -r '.devices | to_entries[] | "\(.value.lxc.ip // .value.tailscale.ip // "?")"' ~/ManagedProjects/home-monitor/contracts/devices.json | sort -u
    ```
-   Any IP in the diff not in devices.json is a hardcoded fabrication — fix or document. See `~/.claude/rules/ruby.md` "IP literal must come from contracts/devices.json".
+   Any IP in the diff not in devices.json is a hardcoded fabrication — fix or document. See `~/ManagedProjects/setup/.claude/rules/ruby.md` "IP literal must come from contracts/devices.json".
 
 2. **Healthcheck command unquoted shell variables**: every `healthcheck.test` in docker-compose.yml in the diff must single-quote any `${VAR}` substituted from `.env`. Probe:
    ```
@@ -29,7 +29,7 @@ Load before `gh pr create` on a cookbook change. Each check catches a recurring 
    ```
    body=$(curl -sk -u elastic:$PW "$ES/_license"); type=$(printf '%s' "$body" | sed -n 's/.*"type" *: *"\([^"]*\)".*/\1/p'); echo "type=[$type]"
    ```
-   A parser that silently mis-extracts a field either re-runs a mutation on every converge (false-negative idempotency) or permanently skips a required mutation (false-positive) — both look clean in the PR diff and only misbehave on the real target. Sibling failure mode: `~/.claude/rules/ruby.md` "Guard must be evaluatable under mitamae's actual runtime privilege" (guard can't even run, vs. this — guard runs but parses wrong).
+   A parser that silently mis-extracts a field either re-runs a mutation on every converge (false-negative idempotency) or permanently skips a required mutation (false-positive) — both look clean in the PR diff and only misbehave on the real target. Sibling failure mode: `~/ManagedProjects/setup/.claude/rules/ruby.md` "Guard must be evaluatable under mitamae's actual runtime privilege" (guard can't even run, vs. this — guard runs but parses wrong).
 
 6. **Secret-placeholder token appears exactly once in a globally-substituted template**: any committed template with a placeholder (`@@KEY@@`, `{{SECRET}}`, …) rendered via global substitution (`sed 's/…/…/g'`, `envsubst`) must have that token appear ONLY at its intended substitution site. Probe:
    ```

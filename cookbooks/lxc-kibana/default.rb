@@ -227,7 +227,7 @@ require_external_auth(
   # Content-aware: the needles are every KEY= files/generate_env.sh writes plus
   # the CA's PEM header, so a new secret there — or a truncated / error-text
   # artifact from a failed fetch — re-runs the gate instead of counting as
-  # converged (~/.claude/rules/ruby.md "SSM-sourced .env generator:
+  # converged (~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env generator:
   # file-existence skip_if drops new KEY=VALUE lines silently"). The PEM check
   # is shape, NOT rotation detection: an old but well-formed CA still skips.
   # Both files are readable because kibana applies as root (env 0640

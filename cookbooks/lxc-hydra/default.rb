@@ -137,7 +137,7 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on /memory/* + /hydra/* + aws/ssm kms:Decrypt in #{aws_region} (home-monitor pve-bootstrap-ssm policy). On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter to retry.",
   # Content-aware: re-fetch when the installed .env predates a key the
   # generator now writes. A bare File.exist? would pin a host to the old file
-  # forever (~/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence
+  # forever (~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence
   # skip_if drops new KEY=VALUE lines silently"). deploy_with_ssm_env does not
   # fit here — placement is a `sudo install` to a root-owned system path, not a
   # remote_file. Readable because this cookbook only runs on CT 106 as root.

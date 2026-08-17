@@ -65,7 +65,7 @@ query($owner:String!,$name:String!,$number:Int!){
 
 - `statusCheckRollup` / `mergeStateStatus` and the rest ARE still valid `gh pr view --json` fields — only `reviewThreads` is rejected there. When one `gh pr view --json` call would need both, split `reviewThreads` out to the GraphQL query above and leave the other fields on `gh pr view`.
 - In a headless environment where `gh api` is approval-gated, unresolved-thread state is unobtainable — do NOT guess it resolved; escalate with a needs-human label and stop (this ends the dead-probe-every-run loop).
-- jq negation: use the `select(.isResolved | not)` form — `!=` / bare `!` break under interactive zsh history expansion (consistent with `rules/shell.md`).
+- jq negation: use the `select(.isResolved | not)` form — `!=` / bare `!` break under interactive zsh history expansion (consistent with `~/ManagedProjects/setup/.claude/rules/shell.md`).
 
 **Verification gate before pushing the fix commit**: count unresolved threads, count comments you've addressed. If the numbers don't match, re-fetch — there is at least one comment from a review submission you didn't see.
 
@@ -176,6 +176,8 @@ Origin: 2026-05-03 LXC bootstrap — edited 14 files in `~/setup-main/` (no `.gi
 
 Origin: 2026-07 — 3 sessions / 2 repos (setup #624, #632; sage #11→#21) each re-presented `! gh pr merge` after the user had already authorized merging in chat, forcing a re-authorization round-trip; #13–#21 merged autonomously with no objection once the pattern was corrected.
 
+Origin: 2026-07 — re-presented `! gh pr merge` after the user had already authorized merging, forcing a re-authorization round-trip. Detail: see `~/.claude/docs/git-commit-detail.md#merge-execution-default`.
+
 Guard (c)/(d) origins: 2026-07 55206b98 — `mergeStateStatus: CLEAN` was read as "reviews resolved" and a PR with unresolved review threads was declared merge-ready (CLEAN only means no-conflict + required-checks-pass); 2026-07 65589d06 — the immediately-before-merge probe returned `UNKNOWN` (GitHub's async mergeability computation) and a re-poll a few seconds later resolved it, confirming re-poll (not BLOCKED-skip) as the correct handling.
 
 ## recheck-after-background-op
@@ -283,3 +285,47 @@ Remove the lock and retry ONCE only when (a)(b)(c) all hold (`rm -f .git/index.l
 **Why the triage protocol is permanently needed**: even after the statusline fix, the git polling of IDEs like Cursor / Zed is out of our control, so `index.lock` contention keeps happening — the triage above is the durable response, the `GIT_OPTIONAL_LOCKS=0` convention only covers scripts we write.
 
 Origin: 2026-06-19〜07-06 — 18 real-error sessions across 3 repos (setup / zp-SHIN / orca). 96eb691b (a 1-second statusline poll was the root cause → #663); 0791ced1 (Cursor-IDE-origin stale lock ×2); 41598c5a (Zed-polling-origin transient → moved to a worktree).
+
+## default-to-pr-branch
+
+Origin: 2026-05-05 PVE migration — asked PR-vs-direct ceremony when git-log already answered.
+
+## config-editing-branch-check
+
+Origin: 2026-05-11 CLAUDE.md trim — 5+ Writes on an unrelated open PR's branch.
+
+## pr-create-branch-check
+
+Origin: 2026-05-09 multi-stream worktree — PR shipped with wrong stream's diff (current branch drifted between commit and PR-create).
+
+## multi-repo-branch-check
+
+Origin: 2026-04-23 iOS — bare branch check described primary CWD, not the sibling repo edited.
+
+## cross-repo-propagation
+
+Origin: 2026-04-25 `neo` host add — `home-monitor/ssh-devices.tf` discovered as a second sequential PR.
+
+## cherry-pick-branch-check
+
+Origin: 2026-04-25 cherry-picked onto the user's unrelated WIP branch.
+
+## pr-body-file
+
+Origin: 2026-05-05 — inline HEREDOC with backticks made `gh pr create` print `--title string` usage hints and abort.
+
+## body-file-stdin
+
+Origin: 2026-05-07 — `--body-file /tmp/...` denied right after a Write the verifier window had advanced past.
+
+## gh-network-sandbox
+
+Origin: 2026-06-26 — every gh/HTTPS call across PR #556/#563/#564 required a sandbox-disabled retry; SSH push succeeded in-sandbox.
+
+## gh-auth-refresh
+
+Origin: 2026-08-01 sh1-cloud — a runbook step `gh auth refresh -h github.com -s admin:public_key` failed on gh's own refusal; the fix needed `env -u` on both that and the follow-up `gh ssh-key add`, and the scope widening was avoidable by pasting into github.com/settings/keys instead.
+
+## gpg-signing-failures
+
+Origin: 2026-05-04 retro — emitted `... echo "test" | gp` truncated mid-word; cold pinentry cache failed the next commit.

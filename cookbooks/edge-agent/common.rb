@@ -63,7 +63,7 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "/monitoring/apm/* in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  # Content-aware, not bare existence (check 13 / ~/.claude/rules/ruby.md): a
+  # Content-aware, not bare existence (check 13 / ~/ManagedProjects/setup/.claude/rules/ruby.md): a
   # truncated apm.env or a ca.crt holding an AWS error string would otherwise
   # count as converged forever. Needles are the exact tokens the two gated
   # generators below write. Still NOT rotation detection — a valid-shaped but

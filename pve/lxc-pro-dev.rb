@@ -75,7 +75,7 @@ include_cookbook "lxc-dev-workstation"
 # whenever the route is already absent. The .service is NOT
 # `enable --now`'d directly; the timer drives it.
 
-# Defensive parent-dir guard per ~/.claude/rules/ruby.md "Defensive
+# Defensive parent-dir guard per ~/ManagedProjects/setup/.claude/rules/ruby.md "Defensive
 # `directory` resource for `node[:setup][:root]` and its subdirs".
 directory node[:setup][:root] do
   mode "755"

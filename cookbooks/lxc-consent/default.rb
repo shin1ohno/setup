@@ -20,7 +20,7 @@ include_platform_cookbook "awscli"
 # granted ssm:GetParameter /hydra/* + aws/ssm kms:Decrypt in home-monitor —
 # verified by a live decrypt probe) instead of the prior bare/default profile.
 # The check_command and the generator's aws calls use the same profile
-# (~/.claude/rules/ruby.md auth-gate rule; bin/lint-cookbooks enforces).
+# (~/ManagedProjects/setup/.claude/rules/ruby.md auth-gate rule; bin/lint-cookbooks enforces).
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
 aws_profile = ssh_keys_config["aws_profile"]
 aws_region  = ssh_keys_config["aws_region"]
@@ -128,7 +128,7 @@ env_output_path = "#{deploy_dir}/.env"
 # content-aware skip_if: the gate re-fetches unless the placed .env already
 # carries EVERY key below. A bare File.exist? skip would leave a host that
 # converged before a key was added stuck on the old file forever
-# (~/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence skip_if
+# (~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence skip_if
 # drops new KEY=VALUE lines silently"). Keep :expected_keys in sync with the
 # generator's heredoc — that list IS the drift detector.
 deploy_with_ssm_env "consent" do

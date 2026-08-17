@@ -8,7 +8,7 @@ This file is the always-loaded summary. Long examples + origin notes are in `~/.
 
 **Topic-specific rules** (split out 2026-05-07 to keep this file scannable):
 
-- AWS / IAM / SSM / Terraform — see `~/.claude/rules/aws-iam.md`
+- AWS / IAM / SSM / Terraform — see `~/.claude/docs/aws-iam.md`
 - PVE LXC operational gotchas — see `~/.claude/docs/pve-lxc-detail.md`
 - Docker Compose patterns — see `~/.claude/docs/docker-compose.md`
 - Tailscale routing — see `~/.claude/docs/tailscale.md`
@@ -88,7 +88,7 @@ Dry-run passing is the commit gate for cookbook changes. Never leave cookbook ch
 
 ## Cross-OS Scope Gate Before Cookbookifying a Hotfix
 
-When codifying a manual fix into a cookbook, before writing the resource block, identify the target host(s) the cookbook actually runs on and confirm the fix applies to that OS — the host where the manual hotfix worked is not always representative of every host the cookbook covers (`dpkg-divert` is Debian/Ubuntu only; `systemd-resolved`'s `resolvconf` shim is recent-Ubuntu only; AL2023 has neither). If the cookbook runs on hosts that don't satisfy the precondition, gate the resource with `only_if` (an explicit guard, not silent failure), and state the target OS in the commit message ("Ubuntu 24.04 ships ..."), not just the symptom. For scripts shipped via `remote_file` / `files/`, audit their external-command deps for macOS portability (`mitamae --dry-run` does not execute shipped scripts) — see `~/.claude/rules/shell.md` "macOS External-Command Audit for Ported Linux Scripts".
+When codifying a manual fix into a cookbook, before writing the resource block, identify the target host(s) the cookbook actually runs on and confirm the fix applies to that OS — the host where the manual hotfix worked is not always representative of every host the cookbook covers (`dpkg-divert` is Debian/Ubuntu only; `systemd-resolved`'s `resolvconf` shim is recent-Ubuntu only; AL2023 has neither). If the cookbook runs on hosts that don't satisfy the precondition, gate the resource with `only_if` (an explicit guard, not silent failure), and state the target OS in the commit message ("Ubuntu 24.04 ships ..."), not just the symptom. For scripts shipped via `remote_file` / `files/`, audit their external-command deps for macOS portability (`mitamae --dry-run` does not execute shipped scripts) — see `~/ManagedProjects/setup/.claude/rules/shell.md` "macOS External-Command Audit for Ported Linux Scripts".
 
 Detail (5-question worked checklist + grep example + anti-pattern + origin): see `~/.claude/docs/infrastructure-detail.md#cross-os-scope-gate`.
 
