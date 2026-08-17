@@ -155,22 +155,11 @@ When a sub-agent needs to execute a task that runs longer than a few minutes (st
 
 ## Background Agent Progress Tracking
 
-Background / long-running work (>10 min — workflow batch, Ultraplan, remote research, multi-agent fan-out) is fire-and-forget-PROHIBITED. Launching one and closing the turn with "完了時に通知が来ます" is a violation: a completion notification is NOT a reliable terminal signal — sub-agents die silently on rate-limit / `Connection closed` with no notification. Instead:
+**A launch and its observation loop are ONE unit.** Any background start expected to exceed ~10 min (workflow batch, Ultraplan, remote research, multi-agent fan-out) must, in the SAME turn, (a) state the expected duration in one line and (b) establish the observation loop — a `Monitor`, an until-loop, or a `ScheduleWakeup`. A launch with no observation loop is prohibited, and closing the turn with "完了時に通知が来ます" is a violation: a completion notification is not a reliable terminal signal (sub-agents die silently on rate-limit / `Connection closed`). Answer a user's "status?" / "止まってませんか" with concrete progress — done N/M, most-recent completed stream, last-activity time — before resuming any other work. Observe before you kill: no `TaskStop` until tool activity on the observation source is zero across 2 consecutive probes, and read the transcript tail to classify stuck vs recovering first.
 
-1. **On launch**: state the expected duration in one line.
-2. **During the run**: poll observable state (`journal.jsonl`, `TaskList`, output file) every 5-10 min via a Monitor / until-loop and emit a 1-line progress note — done N/M, most-recent completed stream, last-activity time. Do not go silent.
-3. **On a user "status?" / "止まってませんか"**: answer immediately with concrete progress BEFORE resuming other work — never defer to "next turn", never fall back to passive "完了したら通知が来ます".
-4. **Stall detection — observe BEFORE kill**: judge "progress" by the observation source. For an in-session Task-tool agent that is `journal.jsonl` / TaskList; for an external headless `claude -p` process it is that process's transcript JSONL (`~/.claude/projects/<proj-dir>/<uuid>.jsonl` — stdout arrives only at exit, but the transcript is written incrementally during the run). Absence of an external artifact (no commit/PR for N minutes) is NOT evidence of a stall — the agent may be recovering from a working-tree collision, and killing it there strands nearly-finished work. `TaskStop`/kill ONLY when tool activity on the observation source is zero across 2 consecutive probes; before killing, read the transcript tail to classify stuck vs recovering. Origin: 2026-06-27 bca7dadc — a resolve session that looked "13-min stuck" was recovering from a shared-tree collision, and the kill was the direct cause of the issue going unresolved.
+**Mechanical backstop**: `hooks/warn-background-launch-no-progress.rb` (Stop, non-blocking) fires a reminder when a turn ends after a `Task` / `Workflow` / `run_in_background` launch with no observation call and no progress line since. It exists because this section — already spelled out in full since 2026-07 — still fired in 5 separate sessions over the following 30 days (2026-07-28〜08-05: 「SubAgent動いてなくないですか？」「続けて。workflowが止まってるように見える」「終わってませんか？」「左のpaneのAgentの状況わかる？」「続けて、SubAgentの様子も確認」). Prose alone is measurably insufficient here.
 
-Deadline guide — set an internal deadline and, if it passes without completion, escalate in the next turn via AskUserQuestion (wait longer with a stated minute count / restart with a narrower scope / proceed without the agent's output):
-
-- Research / codebase audit: **15 min**
-- Plan-level analysis (Ultraplan, multi-repo design): **30 min**
-- Large multi-repo audit or domain research: **60 min**
-
-Do not re-launch the same agent with the same prompt expecting a different result. If it silently fails once, the second attempt usually fails the same way — narrow the scope or switch tools.
-
-Detail (origin): see `~/.claude/docs/sub-agents-detail.md#background-agent-deadline-tracking`.
+Deadline guide, stall-detection mechanics, and the re-launch ban: see `~/.claude/docs/sub-agents-detail.md#background-agent-deadline-tracking`.
 
 ## Tool Selection Guide
 

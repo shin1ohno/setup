@@ -41,6 +41,16 @@ When a task requires research before planning, run research and planning in para
 
 **Anti-pattern**: launching research, then announcing "I'll plan when results arrive" and waiting. This is idle time that violates the planning rule.
 
+## Requested-Partition Fidelity — mirror the asked-for breakdown into the deliverable
+
+When the request itself enumerates required partitions — outcomes to evaluate separately, viewpoints, segments, scoring axes, comparison targets — those partitions become the deliverable's section headings **1:1**. A partition with no evidence keeps its section and says so (「証拠なし」/「データ未取得」); it is never silently merged away or dropped. Merging or omitting a partition is a scope decision → AskUserQuestion before starting, not after delivering.
+
+When the work is handed to a workflow or sub-agent, put the partition list into the `schema` keys so a missing partition fails structurally instead of arriving as a plausible-looking imbalance.
+
+Same discipline as CLAUDE.md's 増分更新の棚卸し (diff line counts against the prior version, mark unverified rows) — this is that rule applied to the FIRST version.
+
+Origin: 2026-07-24 — a knowledge-worker overtime study whose request spelled out five outcome classes ((1) physical health (2) mental health: depression / anxiety / burnout (3) cognition (4) productivity (5) employment sustainability) came back weighted toward vascular disease. The user rejected it (「いずれも肉体労働を中心とした、物理的な血管などの疾患に寄りすぎていませんか？…その前提で調査と分析をやり直して欲しいです」) and one whole deep-research workflow run was wasted.
+
 ## Parallel-Stream Decomposition — Default Plan Shape
 
 For a large rewrite, migration, or multi-module / multi-repo implementation with 3+ independent delivery units, default the plan to a contracts-first parallel shape — do NOT default to a serial phase plan:
@@ -58,6 +68,14 @@ Propose the decomposition BEFORE the user asks for parallelism — shipping a se
 Origin: 2026-06-15 sage TS→Rust full rewrite — serial phase plan rejected at ExitPlanMode, the only revision request was "make it parallel where possible" (Claude re-shaped it to Wave 0 contract freeze → 9 File-Exclusivity streams); recurred 2026-07-04 in a separate project with the same up-front instruction.
 
 ## Architecture Discussion Gates
+
+### Standard Mechanism First — justify every added layer
+
+Before a plan includes a NEW mechanism — a tunnel, a proxy, a bespoke key/secret distribution path, a wrapper script, a sync daemon — decide in one line whether the platform's **standard** mechanism alone satisfies the requirement (`authorized_keys` + plain ssh, the official CLI's default auth path, a direct IAM grant, the service's own scheduler), and write that decision into the plan. If the standard mechanism suffices and you still choose the extra layer, state the reason it buys (smaller exposed surface, audit requirement, existing fleet convention) and put the choice through AskUserQuestion. A plan that introduces an added layer without this line is incomplete.
+
+This is distinct from CLAUDE.md's **Existing-facility probe** (reuse what this repo already ships) — that one asks "does a facility exist here?", this one asks "does the platform already do this without any facility?".
+
+Origin: 2026-07-30 sh1-cloud — the user pushed the solution shape back three times in one session (「普通にssh authorize keyを登録しておけばいいだけじゃないんですか？なぜここでtailscaleを使うのでしょう？」「ちょっとソリューションがズレている気がします。tailscaleで同じネットワークで入り、tailscaleに依存しない普通のsshでログインしたいです」「ちょっと待って。githubにsshできるように鍵を設定する方が良いのでは？」), each time against a layer proposed ahead of the plain mechanism. The end state kept Tailscale as the network but moved auth back to plain ssh keys.
 
 ### Cross-Repo Design Decisions
 
