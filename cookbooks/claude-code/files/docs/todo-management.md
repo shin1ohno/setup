@@ -10,7 +10,7 @@ Designed 2026-07-06 (E2E discussion). Decisions locked there: TODO.md and issues
 |---|---|---|
 | `<repo>/TODO.md` | repo-scoped actionable work | entry deleted in the resolving commit (existing CLAUDE.md rule) |
 | ai-memory `tags:["todo"]` | personal / cross-project / no-repo | `forget(id)` on completion; weekly reconcile is the backstop |
-| memory-local `tags:["todo"]` | WORK no-repo TODOs (Mercari) | same; work data never routes to personal ai-memory (egress rule in `knowledge-persistence.md`) |
+| memory-work `tags:["todo"]` | WORK no-repo TODOs (Mercari) | same; work data never routes to personal ai-memory (egress rule in `knowledge-persistence.md`) |
 | GitHub / zp issues | execution queue for autonomous loops | existing close protocols (self-heal / zp loops) |
 
 **Federation principle**: issues and TODO.md are NEVER copied into memory. `list` / `reconcile` enumerate them at read time (`gh search issues --assignee=@me --state=open`, `ls ~/ManagedProjects/*/TODO.md`). The collector copies only *raw captures* (unstructured marks). Copying store-to-store creates split-brain.
@@ -21,7 +21,7 @@ Routing is Claude's job — the user just utters intent ("これ TODO にして"
 
 1. Repo-scoped actionable work → that repo's `TODO.md` (description / reason / concrete first step)
 2. Fleet observable anomaly → self-heal path (ES state → issue)
-3. Work (Mercari) task → `zp-issue-create` if issue-ripe, else memory-local `remember(content, type='fact', tags=['todo'])`
+3. Work (Mercari) task → `zp-issue-create` if issue-ripe, else memory-work `remember(content, type='fact', tags=['todo'])`
 4. No-repo / cross-project / personal → ai-memory `remember(content, type='fact', tags=['todo'])`
 
 **Contract (all stores)** — every TODO records:
@@ -66,13 +66,13 @@ Config: `~/.claude/todo/sources.yaml` (cookbook-managed) merged at runtime with 
 
 **Dedup**: by provenance (Slack permalink / task id / event id / transcript position), so re-sweeps never duplicate. Sources are never mutated (no auto-complete of Google Tasks, no un-bookmarking).
 
-**Sink routing = sensitivity routing**: each source declares its sink. Work sources (Mercari Slack, work calendar) → `memory-local`; personal sources → `ai-memory`. This is the same egress rule as `knowledge-persistence.md` "local is NOT air-gapped" — a work capture in personal ai-memory is a violation, not a convenience.
+**Sink routing = sensitivity routing**: each source declares its sink. Work sources (Mercari Slack, work calendar) → `memory-work`; personal sources → `ai-memory`. This is the same egress rule as `knowledge-persistence.md` "local is NOT air-gapped" — a work capture in personal ai-memory is a violation, not a convenience.
 
-**Runtime constraints** (2026-07 facts): claude.ai-authenticated connectors (Slack) are absent in headless runs; memory-local is LAN-scoped (air). Work-source collection therefore runs interactively on air; headless automation can start only with `gh` / `gws`-backed personal sources. Daily cadence until then: trigger `/todo-collect` at the start of the first interactive session of the day (pairs naturally with `/morning-triage`).
+**Runtime constraints** (2026-08 facts): claude.ai-authenticated connectors (Slack, calendar-linked Notion) are absent in headless runs — that is the sole remaining blocker for unattended work-source collection. The store is no longer one: memory-work is a single-node ES on `sh1-cloud` behind an OIDC proxy, reachable from every work host, so work-source collection runs in any interactive session on any of them (the LAN-scope constraint died with the air-local store, retired 2026-08-17). Headless automation still covers only `gh` / `gws`-backed sources. Daily cadence: trigger `/todo-collect` at the start of the first interactive session of the day (pairs naturally with `/morning-triage`).
 
 ## Apple Reminders integration (remind CLI)
 
-真実源は変わらず memory store（ai-memory=個人 / memory-local=work）。Apple Reminders は 2 役を担う連携ストア:
+真実源は変わらず memory store（ai-memory=個人 / memory-work=work）。Apple Reminders は 2 役を担う連携ストア:
 
 - **surface (mirror)**: open な memory todo を専用リスト（default "Claude"）に 1:1 でミラー — Siri / iOS / watch から見え、完了にできる面
 - **capture 入口**: ユーザーが Siri / iOS で作った reminder を `/todo-collect` の `apple-reminders` adapter（explicit class）が memory に正規化取込
@@ -94,7 +94,7 @@ fixpoint: apply 2 回で収束、3 回目は全規則 0 件（冪等）。
 | store | policy | reminder に出る内容 |
 |---|---|---|
 | ai-memory（個人） | `full` | title = content 先頭文（接頭辞除去・100 文字打切）、notes = 完了条件行 + 最初の URL + トークン行 |
-| memory-local（work） | `title-link` | title 同様、notes = 最初の URL + トークン行のみ（本文を iCloud に出さない） |
+| memory-work（work） | `title-link` | title 同様、notes = 最初の URL + トークン行のみ（本文を iCloud に出さない） |
 
 public default（`sources.yaml` の `mirror:`）は ai-memory/full のみ。work store のミラーは zp-SHIN overlay の `sources.local.yaml` で opt-in（title-link 固定）— iCloud は第三者 egress 面であり、`knowledge-persistence.md`「local is NOT air-gapped」と同じ判断基準を適用する。due は content が `期日: YYYY-MM-DD[ HH:MM]` にマッチした時のみ `--due` で付与。
 
@@ -111,6 +111,6 @@ public default（`sources.yaml` の `mirror:`）は ai-memory/full のみ。work
 | AC5 | capture E2E + dedup | Inbox に手動 reminder 1 件 → collect で remember 1 件（provenance 付き）、再実行で新規 0 件 |
 | AC6 | close A（reminder 完了 → memory forget） | mirror reminder を complete → 次 plan の `memory_actions` にリンク先 id の forget が 1 件 |
 | AC7 | close B（memory forget → reminder complete） | memory todo を forget → MEM.json から除いて `--apply` → `--dump --include-completed` で該当 reminder が `completed:true` |
-| AC8 | egress guard | memory-local の todo を含む MEM.json + default config（sources.yaml のみ）で plan → `reminder_actions` に該当 add が 0 件 |
+| AC8 | egress guard | memory-work の todo を含む MEM.json + default config（sources.yaml のみ）で plan → `reminder_actions` に該当 add が 0 件 |
 | AC9 | dual-managed diff 一致 | `diff` で cookbook source（sources.yaml / SKILL.md / todo-management.md / remind_sync.rb）と `~/.claude` 配下 deploy 先が全対で差分 0 |
 | AC10 | PR CI green + merge | `gh pr checks <n>` 全 green かつ `gh pr view <n> --json state` = `MERGED` |
