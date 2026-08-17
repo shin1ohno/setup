@@ -134,6 +134,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/detect-prose-menu.rb"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/warn-background-launch-no-progress.rb"
           }
         ]
       }

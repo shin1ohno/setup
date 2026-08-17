@@ -61,6 +61,8 @@ Origin: 2026-07 — re-presented `! gh pr merge` after the user had already auth
 
 ガード 3 点: (a) 削除スコープは今 merge した PR のブランチに限定 — 全体 sweep は Branch Cleanup Survey（`docs/git-commit-detail.md#branch-cleanup-survey`、AskUserQuestion 付き）のまま。`/clean_gone` は全 [gone] ブランチを一括 `-D` するため、このフォロースルーには使わない。(b) 対象ブランチが checkout 中の場合: 未コミット WIP は作業ツリーに属しブランチには属さないので削除回避の理由にならない（stash → main へ checkout → 削除 → stash pop）。ただし autonomous loop が working tree を共有するリポでは shared HEAD を checkout しない — この場合と、ブランチが別 worktree に checkout 中の場合（`branch -D` が失敗する）は削除をスキップしてよい。(c) 削除しない場合は probe 済みの正確な理由を 1 行で報告する（例:「feat/X は worktree .claude/worktrees/X に checkout 中のため保持」）— 推測の理由（「WIP upstream なので」等）を書かない。Origin: 2026-06-24〜29 の 6 セッションで「マージしたので git pull してブランチ掃除」の同一指示が反復; 削除回避理由の誤説明で確認往復（2026-06-27）。
 
+**EnterWorktree セッションの撤収も同 turn**: EnterWorktree で作業したセッションは、PR が `gh pr view <n> --json state` で MERGED と確認できた時点で撤収まで完了させる — `ExitWorktree(action: "remove")` → head ブランチ削除（squash merge は `-D`）→ 呼び出し元リポの local main を `git fetch --prune` + ff 更新。ガード (b) の「別 worktree に checkout 中ならスキップしてよい」は、**その worktree が自分のもの（このセッションが EnterWorktree で作った）である場合には適用しない** — 自分の worktree は撤収対象であって削除回避の理由ではない。撤収しない場合は probe 済みの理由を 1 行で報告する（未 merge の兄弟 PR がその worktree に依存している等）。Origin: 2026-07-24〜08-06 の 4 セッションで「ブランチを掃除してmainに戻りたい」「worktreeは削除できますか？」が反復 — setup / zp-SHIN は shared-tree 回避で worktree 利用が既定なので、ガード (b) をそのまま読むと撤収漏れが構造的に残る。
+
 ## Branch Check Before First Commit
 
 Before writing any file or running `git add` in a repo that is part of the current task, run `git branch --show-current` and `git log --oneline -3`. If the current branch is not `main` and was not created for this task, stop and create a new branch from `origin/main`:

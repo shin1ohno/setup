@@ -569,6 +569,16 @@ jobs:
         sudo apt-get install -y -qq zsh
         bash cookbooks/herdr/files/test-hr.sh cookbooks/herdr/files/hr.sh
 
+    - name: Background-launch Stop hook regression suite
+      run: |
+        # hooks/warn-background-launch-no-progress.rb is the mechanical backstop
+        # for rules/sub-agents.md "Background Agent Progress Tracking". The suite
+        # feeds synthetic Stop transcripts and asserts both polarities (fires on
+        # an unobserved launch, stays quiet on an observed / completed one), so
+        # neither an always-fire nor a no-op version passes.
+        bash cookbooks/claude-code/files/hooks/test-warn-background-launch-no-progress.sh \
+          cookbooks/claude-code/files/hooks/warn-background-launch-no-progress.rb
+
     - name: Validate JSON files
       run: |
         # Check if any JSON files exist and validate them

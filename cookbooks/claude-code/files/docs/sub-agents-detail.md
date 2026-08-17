@@ -60,9 +60,25 @@ Origin: 2026-08-05 — a two-phase workflow (6 discovery streams → 6 category 
 
 ## background-agent-deadline-tracking
 
+Deadline guide — set an internal deadline at launch and, if it passes without completion, escalate in the next turn via AskUserQuestion (wait longer with a stated minute count / restart with a narrower scope / proceed without the agent's output):
+
+- Research / codebase audit: **15 min**
+- Plan-level analysis (Ultraplan, multi-repo design): **30 min**
+- Large multi-repo audit or domain research: **60 min**
+
+Polling cadence: every 5-10 min against observable state (`journal.jsonl`, `TaskList`, the output file), emitting a 1-line progress note each time. Do not go silent between polls.
+
+Stall detection — observe BEFORE kill. Judge "progress" by the observation source that actually updates during the run. For an in-session Task-tool agent that is `journal.jsonl` / `TaskList`; for an external headless `claude -p` process it is that process's transcript JSONL (`~/.claude/projects/<proj-dir>/<uuid>.jsonl` — stdout arrives only at exit, but the transcript is written incrementally). Absence of an EXTERNAL artifact (no commit / PR for N minutes) is NOT evidence of a stall — the agent may be recovering from a working-tree collision, and killing it there strands nearly-finished work. `TaskStop` / kill only when tool activity on the observation source is zero across 2 consecutive probes, and read the transcript tail to classify stuck vs recovering before killing.
+
+Do not re-launch the same agent with the same prompt expecting a different result. If it silently fails once, the second attempt usually fails the same way — narrow the scope or switch tools.
+
 Origin: 2026-07 aa4b0e75 (status? asked 3× + 2 stall reports in one session) / 29d690f1 (30 min silent, user prompted "止まってませんか") / 2ec1c07b.
 
 Origin: 2026-04-23 two consecutive Ultraplan agents failed silently; the user had to notice and restart.
+
+Origin: 2026-06-27 bca7dadc — a resolve session that looked "13-min stuck" was in fact recovering from a shared-tree collision; the kill was the direct cause of the issue going unresolved. This is why the kill gate is "2 consecutive zero-activity probes + transcript tail", not elapsed silence.
+
+Origin (the mechanical backstop): 2026-07-28〜08-05, five sessions where the USER had to ask whether the agent was alive — 「SubAgent動いてなくないですか？」(cd0e58ba) /「続けて、SubAgentの様子も確認」(6dce40db) /「続けて。workflowが止まってるように見える」(95c93439) /「終わってませんか？」(18721f4c) /「左のpaneのAgentの状況わかる？」(a15e3419). All five post-date the rule's own codification, which is the evidence that moved this from prose-only to a Stop hook (`hooks/warn-background-launch-no-progress.rb`). The hook is non-blocking by the same reasoning as `detect-prose-menu.rb`: a legitimately-parked background job must still be able to end its turn, so the hook reminds rather than traps.
 
 ## 60-second-rule
 
