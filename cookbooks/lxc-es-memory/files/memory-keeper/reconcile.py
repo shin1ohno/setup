@@ -21,9 +21,10 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from es_client import ESClient, ESError, content_hash, now_iso  # noqa: E402
+from es_client import ESClient, ESError, now_iso  # noqa: E402
 import voyage_client  # noqa: E402
 import claude_judge  # noqa: E402
+import merge_rules  # noqa: E402
 
 
 def _env(name, default):
@@ -211,21 +212,21 @@ def main():
             continue
 
         now = now_iso()
-        prov = dict(target_src.get("provenance", {}) or {})
-        prov["written_at"] = now
-        new_doc = {
-            "content": merged,
-            "embedding": new_emb,
-            "memory_type": "fact",
-            "tags": target_src.get("tags", []),
-            "entities": target_src.get("entities", []),
-            "provenance": prov,
-            "reconcile_status": "reconciled",
-            "content_hash": content_hash(merged),
-            "derived_from": [target_id, fid],
-            "use_count": 0,
-            "last_used_at": now,
-        }
+        # What the merged doc inherits is decided in merge_rules, shared with
+        # consolidate's near-dup pass. It used to be inlined here and took the
+        # TARGET's tags only, so folding a tags:["todo"] fact into an untagged one
+        # left the todo unenumerable; and it took the target's provenance, which
+        # could downgrade a user-stated fact to tool-output and let a machine
+        # agent supersede content that came from the user.
+        new_doc = merge_rules.merged_fact_doc(
+            incoming_src=src,
+            target_src=target_src,
+            incoming_id=fid,
+            target_id=target_id,
+            content=merged,
+            embedding=new_emb,
+            now=now,
+        )
         try:
             res = es.index_doc(FACT_INDEX, new_doc, refresh="wait_for")
             new_id = res["_id"]
