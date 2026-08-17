@@ -51,7 +51,9 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
 
 ### Step 2 — dedup
 
-provenance キー（Slack permalink / task id / event id / transcript の session+行）で照合し、既出は skip。照合先: 対象 store の `browse(filters: {tags: "todo"})` の provenance 記載 + 前回 ledger。
+provenance キー（Slack permalink / task id / event id / transcript の session+行）で照合し、既出は skip。照合先: 対象 store の `browse(filters: {tags: "todo"}, limit: 500)` の provenance 記載 + 前回 ledger。
+
+**`limit` 明示と `total` 突き合わせは必須**: ここが dedup の照合先なので、`limit` を省いてサーバ既定の 50 件で無言に切れると**既に捕獲済みの TODO を新規と誤認して二重に作る**。応答の `truncated` が true（`total` > 返却件数）なら ledger に `truncated 残数` を明記し、その回は dedup を「不完全」として扱って新規保存を保留する（Slack sweep と同じ silent cap 禁止）。
 
 ### Step 3 — 正規化
 
@@ -70,7 +72,8 @@ provenance キー（Slack permalink / task id / event id / transcript の sessio
 
 Apple Reminders を open memory todo の surface（mirror）として同期する（設計と sync 5 規則: `~/.claude/docs/todo-management.md` の「Apple Reminders integration」）。実装は同 skill ディレクトリの `remind_sync.rb` — 状態ファイルを持たず、毎回 2 つのダンプから plan を導出する（リンクは reminder notes 末尾の `[ai-todo:<memory-id>]` トークンと memory content 内の `reminders:<externalId>` provenance のみ）。
 
-1. **memory dump 作成**: 両 store の `browse(filters: {tags: "todo"})` 結果（open のみ）を `[{"id","store","content","tags"}]` の JSON に整形して MEM.json へ
+1. **memory dump 作成**: 両 store の `browse(filters: {tags: "todo"}, limit: 500)` 結果（open のみ）を `[{"id","store","content","tags"}]` の JSON に整形して MEM.json へ。
+   **打ち切った dump で apply してはならない**: `truncated` が true のまま進めると、`remind_sync` は落ちた分を「memory 側に無い」と読み、sync 規則 5 に従って**まだ open な TODO の reminder を完了させる**。`total` と返却件数が一致しない場合は `limit` を上げて引き直し、それでも一致しなければ Step 6 を skip して ledger に `truncated 残数` と skip 理由を残す
 2. **config 作成**: sources.yaml + sources.local.yaml の merge 結果から `{"mirror":{...},"capture":{"lists":[...],"sink":"..."}}` を CONFIG.json へ（capture.lists = apple-reminders ソースの query リスト群）
 3. **1 回目 apply**: `ruby remind_sync.rb --config CONFIG.json --memory-dump MEM.json --apply`。reminder_actions（mklist→add→annotate→complete）は script 自身が remind CLI で実行する。stdout JSON のうち skill が MCP で実行するのは: `memory_actions`（forget — reminder 完了を機械的証拠として対応 store の todo を閉じる）と `capture_candidates`（Step 2-4 の dedup→正規化→書込フローに乗せる。explicit なので自動 remember + 領収書）
 4. **2 回目 apply**: 同コマンドを再実行 — capture で新規 remember した分への annotate（notes に `[ai-todo:<id>]` 追記）が走って収束する
@@ -85,7 +88,7 @@ Apple Reminders を open memory todo の surface（mirror）として同期す�
 - **sink 越境禁止**: work 系 adapter（Mercari Slack 等）の sink が `ai-memory` になっていたら書き込まずに停止して警告（egress 違反）
 - **Slack sweep は全ページ取得を確認**: `End of results` まで辿ったか（1 ページ=20 件ちょうどで止まっていないか）。saved / reaction に `after:` を付けていないか（付けると投稿日フィルタで古い保存分が全部消える）。打ち切る場合は ledger に truncated 残数を明記（silent cap 禁止）
 - inferred 項目は承認なしに書き込まない。actionable でないと判断した分も silent drop せず候補に理由つきで残す
-- 書込後、`browse` で着地を確認してから領収書を出す（Verify-before-done）
+- 書込後、`browse`（`limit` 明示）で着地を確認してから領収書を出す（Verify-before-done）。打ち切られた応答で「着地していない」と判定しない — `total` を見て判断する
 
 ## ループ化
 
