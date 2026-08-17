@@ -37,8 +37,8 @@ Include these metrics in the agent prompt as structured data.
 
 Fetch prior retrospectives from the session's memory MCP (whichever memory connector this host registers):
 
-1. `browse(filters: {tags: ["retro-proposal"]}, limit: 30, sort: "written_at:desc")` — recent proposal notes with their adoption `Status`; fall back to `recall` on the session's main topics if `browse` filtering is unavailable
-2. Include the results in the agent prompt so the dedup guard can exclude adopted proposals and avoid re-proposing rejected ones
+1. Primary: `recall(query: "retro-proposal", top_k: 30)` — every proposal note opens with the literal marker line `retro-proposal <retro-key>` (Step 2), so lexical recall retrieves them. Secondary: `browse(filters: {tags: ["retro-proposal"]})` where tag persistence works — do NOT rely on tags alone (verified 2026-08-17 on memory-work: `remember`'s tags are silently dropped and tag filters match nothing)
+2. Include the results (with each note's adoption `Status`) in the agent prompt so the dedup guard can exclude adopted proposals and avoid re-proposing rejected ones
 
 If the memory connector is unavailable (auth expired, not registered), write "past retro records unavailable" into the agent prompt and continue — do not block the retrospective.
 
@@ -67,9 +67,9 @@ Launch the `session-retrospective` agent in the background using the Agent tool:
 When the agent returns, save the complete retrospective to the session's memory MCP BEFORE presenting it — every retro is persisted, independent of which proposals the user later approves:
 
 1. Build the retro-key: `retro-<YYYYMMDD>-<project dirname>-<first 8 chars of the session UUID>` (no UUID available → use `<HHMM>`)
-2. Session hub note — `remember(type='episode', tags: ["retro", "<retro-key>"])`: date, project, host, session metrics, Section A (Patterns to Reinforce) in full, and the title list of all proposals
-3. One note per proposal — `remember(type='knowledge', tags: ["retro", "<retro-key>", "retro-proposal"])`: the proposal verbatim (Type / Target file / Pattern observed / Proposed change / Priority), `Status: proposed`, and the retro-key in the body
-4. Record the memory id returned by each `remember` call — Step 6 revises them
+2. Session hub note — `remember(type='episode', tags: ["retro", "<retro-key>"])`, content opening with the marker line `retro-hub <retro-key>`: date, project, host, session metrics, Section A (Patterns to Reinforce) in full, and the title list of all proposals
+3. One note per proposal — `remember(type='knowledge', tags: ["retro", "<retro-key>", "retro-proposal"])`, content opening with the marker line `retro-proposal <retro-key>`: the proposal verbatim (Type / Target file / Pattern observed / Proposed change / Priority) and `Status: proposed`
+4. The retro-key marker line in the content is the durable link between the notes — tags are best-effort metadata only (some memory-v2 deployments drop them; see Step 0). Do not trust the id `remember` returns for later edits either: it can be a parent id that `get`/`revise` cannot resolve (observed on memory-work) — Step 6 re-resolves operable ids
 5. Echo a one-line receipt: `retro persisted: <N> proposals + hub → <retro-key>`
 
 If the memory write fails (connector auth expired, server down), still present the findings and state the failed persistence explicitly so the save can be re-run after re-auth — never silently drop the retro.
@@ -103,10 +103,12 @@ After implementation, sync deploy targets and commit.
 
 ### Step 6: Write Back Adoption Decisions
 
-After Step 5 completes (or the user declines every proposal), update each saved proposal note via `revise(id, content)` — same content with the `Status:` line changed:
+After Step 5 completes (or the user declines every proposal), write the decisions back onto the saved notes:
 
-- `Status: adopted (commit <hash> / PR #<n>)` for implemented proposals
-- `Status: rejected (<user's stated reason, if any>)` for declined proposals
-- Leave `Status: proposed` untouched when the user defers the decision (e.g. a background retro whose selection has not happened yet)
-
-Also revise the hub note with a one-line adoption summary (`adopted X / rejected Y / deferred Z`), and echo a receipt line.
+1. Re-resolve the operable note ids: `recall`/`browse` for the retro-key marker and take each hit's `id` (these are the revisable ids; the ids captured at Step 2 may not be)
+2. `revise(id, content)` each proposal note — same content with the `Status:` line changed:
+   - `Status: adopted (commit <hash> / PR #<n>)` for implemented proposals
+   - `Status: rejected (<user's stated reason, if any>)` for declined proposals
+   - Leave `Status: proposed` untouched when the user defers the decision (e.g. a background retro whose selection has not happened yet)
+3. Also revise the hub note with a one-line adoption summary (`adopted X / rejected Y / deferred Z`), and echo a receipt line
+4. If a `revise` fails, append the decision instead as a new note — `remember(type='knowledge')` opening with `retro-adoption <retro-key>`, naming the proposal and its decision — so the adoption record survives even on a store where revise is broken. Never silently drop a decision.

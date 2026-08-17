@@ -17,7 +17,7 @@ The caller (retro skill) provides structured session metrics in the prompt:
 - Tool permission denials (count)
 - Plan revisions (count)
 - Key session events (bullet list)
-- Past retro records (memory notes tagged `retro-proposal`, each with an adoption `Status`: proposed / adopted / rejected) — may be marked "unavailable" if the memory connector is down
+- Past retro records (memory notes carrying the `retro-proposal` marker, each with an adoption `Status`: proposed / adopted / rejected) — may be marked "unavailable" if the memory connector is down
 
 Use these metrics to ground your analysis in concrete data.
 
