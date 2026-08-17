@@ -29,15 +29,15 @@
 | 18 | `rules/editing.md` | Code-only | ✅ C 節 |
 | 19 | `rules/frontend-dev.md` | Project memory | ✅ C 節 |
 | 20 | `rules/git-commit.md` | Code-only | ✅ C 節 |
-| 21 | `rules/infrastructure.md` | Project memory + Preference 部分 | ✅ C 節 |
+| 21 | `~/ManagedProjects/setup/.claude/rules/infrastructure.md` | Project memory + Preference 部分 | ✅ C 節 |
 | 22 | `rules/ios-build.md` | Project memory | ✅ C 節 |
 | 23 | `rules/mcp-config.md` | Code-only | ✅ C 節 |
 | 24 | `rules/mise-migration.md` | Project memory | ✅ C 節 |
 | 25 | `rules/release-plz.md` | Project memory | ✅ C 節 |
 | 26 | `rules/remote-trigger.md` | Code-only | ✅ C 節 |
-| 27 | `rules/ruby.md` | Project memory | ✅ C 節 |
+| 27 | `~/ManagedProjects/setup/.claude/rules/ruby.md` | Project memory | ✅ C 節 |
 | 28 | `rules/rust.md` | Project memory | ✅ C 節 |
-| 29 | `rules/shell.md` | Preference 部分 + Project memory | ✅ C 節 |
+| 29 | `~/ManagedProjects/setup/.claude/rules/shell.md` | Preference 部分 + Project memory | ✅ C 節 |
 | 30 | `rules/sub-agents.md` | Preference + Skill 候補 | ✅ C 節 |
 | 31 | `rules/weave-protocol.md` | Project memory | ✅ C 節 |
 | 32 | `rules/writing.md` | Bundle（writing skill 内） | ✅ C 節 |

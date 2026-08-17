@@ -171,10 +171,6 @@ Deadline guide, stall-detection mechanics, and the re-launch ban: see `~/.claude
 | 2+ independent research tasks | Background sub-agents (parallel) |
 | Multi-brand/category survey | 1 agent per category (background) |
 
-## Polling Sleeps Need the `timeout` Parameter
-
-When monitoring an external loop (an agent tree, a deploy, a CI run) with `sleep N; <probe>` in the Bash tool, the tool's **default timeout is 120s**, so any `sleep` at or above it is SIGTERM'd (exit 143) and the probe never runs — the wait looks like a tool failure. Set `timeout` explicitly (ms) and keep a single sleep at ~175s or less; for a longer wait use `run_in_background: true` and read the output file, per the 60-Second Rule below. Emit a one-line progress note between polls rather than a silent chain of sleeps: a multi-minute silent sleep reads as a hang and invites a rejection. Origin: 2026-07-27 — `sleep 240` and `sleep 285` both died at the default timeout and one was rejected by the user mid-monitor.
-
 ## 60-Second Rule for Inline Commands
 
 Any single Bash command or pipeline expected to run for more than 60 seconds MUST be launched inside a background sub-agent (foreground Agent with `run_in_background: true`, OR `Bash` with `run_in_background: true` if simple). The main conversation must remain interactive while the command runs — never block a turn waiting on a multi-minute compile/build/apply.

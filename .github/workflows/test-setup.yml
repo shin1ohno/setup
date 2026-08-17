@@ -550,7 +550,7 @@ jobs:
     - name: Cookbook guardrails (reachability + lint)
       run: |
         # Phase 0 of docs/refactoring/plan.md. Fail CI on dead/unreachable
-        # cookbooks and on the mitamae footguns in ~/.claude/rules/ruby.md.
+        # cookbooks and on the mitamae footguns in ~/ManagedProjects/setup/.claude/rules/ruby.md.
         # The linter's own header comment is the canonical check list (FAIL +
         # WARN tiers) — keep the enumeration there, not here, so this comment
         # cannot go stale as checks are added.

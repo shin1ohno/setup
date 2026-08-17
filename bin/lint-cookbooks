@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 #
 # Guardrail (Phase 0 of docs/refactoring/plan.md): static checks for the
-# mitamae footguns codified in ~/.claude/rules/ruby.md. Runs over every recipe
+# mitamae footguns codified in ~/ManagedProjects/setup/.claude/rules/ruby.md. Runs over every recipe
 # (.rb under cookbooks/ roles/ pve/ + the root entry recipes), skipping
 # cookbooks/*/files/** (those are shipped artifacts, not recipes).
 #
@@ -357,7 +357,7 @@ recipe_files.each do |file|
       add(violations, file, 1,
           "auth gate uses a BARE check_command but the cookbook's aws operations " \
           "use profile(s) #{op_profiles.to_a.inspect}. Gate and operations must " \
-          "use the same profile (~/.claude/rules/ruby.md auth-check gate rule).")
+          "use the same profile (~/ManagedProjects/setup/.claude/rules/ruby.md auth-check gate rule).")
     end
   else
     gp = concrete.reject { |p| p == :bare }
@@ -594,7 +594,7 @@ end
 # all of these, so the gap only surfaces at converge — and the dry-run jobs
 # catch it ONLY where they actually execute the line, which is why
 # Regexp.last_match(1) shipped behind require_external_auth's non-TTY return
-# (~/.claude/rules/ruby.md "mruby API constraints").
+# (~/ManagedProjects/setup/.claude/rules/ruby.md "mruby API constraints").
 #
 # `dig` is intentionally absent from this set: recipe Ruby has ~35 legitimate
 # `node.dig(...)` calls that converge fine on mitamae's node object.
@@ -879,7 +879,7 @@ end
 # A `skip_if:` that only asks "does the file exist?" makes the gate permanently
 # skip on every host that already converged — so a NEW key added to the
 # generator, or a half-written/error-text artifact, never triggers a re-fetch
-# (~/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence skip_if
+# (~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence skip_if
 # drops new KEY=VALUE lines silently"). The predicate must inspect CONTENT.
 #
 # Content-aware forms accepted (any one clears the lambda):

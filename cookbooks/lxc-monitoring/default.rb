@@ -508,7 +508,7 @@ require_external_auth(
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
   # Content-aware: needles are every KEY= files/generate_env.sh writes, so a
   # new secret there re-fetches on hosts whose .env already exists instead of
-  # being silently dropped (~/.claude/rules/ruby.md "SSM-sourced .env
+  # being silently dropped (~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env
   # generator: file-existence skip_if drops new KEY=VALUE lines silently").
   # deploy_with_ssm_env does not fit: the placement notifies TWO resources
   # (restart monitoring + generate snmp.yml) and the helper takes only one.

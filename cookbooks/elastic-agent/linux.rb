@@ -166,7 +166,7 @@ require_external_auth(
   instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
                 "/monitoring/elastic/* in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. Then press Enter.",
-  # Content-aware skip (per ~/.claude/rules/ruby.md "SSM-sourced .env generator:
+  # Content-aware skip (per ~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env generator:
   # file-existence skip_if drops new KEY=VALUE lines silently"): on the billing
   # host the env file may already exist from a prior apply that predates the AWS
   # keys, so a bare File.exist? would never add them. Regenerate when billing is

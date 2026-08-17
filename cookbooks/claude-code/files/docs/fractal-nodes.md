@@ -41,7 +41,7 @@ the main tree, `~/.fractal`, the gpg-agent socket) for `radio`, `node finish`,
 `cost`, and signed commits — so the sandbox value fractal seeds is the one to
 mirror. Writing a config with an approval-free, sandbox-disabled profile is a
 mutation the auto-mode classifier blocks: surface the exact command, get explicit
-authorization naming the setting, then run it (see `rules/infrastructure.md`
+authorization naming the setting, then run it (see `~/ManagedProjects/setup/.claude/rules/infrastructure.md`
 "Auto-Mode Classifier Boundary").
 
 ## Cost caps only work when the model is explicit

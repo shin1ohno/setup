@@ -122,7 +122,7 @@ the security posture must be RE-AUDITED before acting. FLAGGED for human review.
   `options no-aaaa` to `/etc/resolv.conf` fleet-wide. Once the upstream
   fix lands the cookbook can be removed (or kept as defense-in-depth).
 - First step: home-monitor 側 RTX terraform / config を確認。
-  `~/.claude/rules/infrastructure.md` "Physical Network Device Pre-Plan
+  `~/ManagedProjects/setup/.claude/rules/infrastructure.md` "Physical Network Device Pre-Plan
   SNMP Probe" に沿って RTX へ SSH probe → `show config | grep dns` で
   current `dns server select` を把握 → upstream DNS を IPv6 NXDOMAIN を
   即返すリゾルバ (1.1.1.1 / 8.8.8.8 直結) に切替、または `dns server
@@ -203,7 +203,7 @@ idempotent enforce-execute in `cookbooks/mac-settings/default.rb`, so a
   `darwin.rb` apply, mini would idle-sleep again and #603-class alerts would flap.
 - First step when revisiting: decide the enforcement channel — either (a) bring
   mini under a periodic self-apply (a user-mode launchd timer running
-  `mitamae local darwin.rb`, per `~/.claude/rules/ruby.md` "automating mitamae"),
+  `mitamae local darwin.rb`, per `~/ManagedProjects/setup/.claude/rules/ruby.md` "automating mitamae"),
   or (b) a tiny standalone launchd job that re-asserts `pmset -c sleep 0` on load.
   (a) is broader but keeps mini current with all cookbooks; (b) is minimal.
 

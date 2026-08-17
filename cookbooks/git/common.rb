@@ -89,7 +89,7 @@ end
 # runs AFTER this cookbook in roles/foundation, so a host's very first-ever
 # bootstrap sees "no key yet" here and only gets this preference from its
 # SECOND apply onward -- acceptable, matches this codebase's existing
-# accepted compile-order tradeoffs elsewhere (see ~/.claude/rules/ruby.md
+# accepted compile-order tradeoffs elsewhere (see ~/ManagedProjects/setup/.claude/rules/ruby.md
 # "Mitamae evaluation model").
 ssh_dir = "#{node[:setup][:home]}/.ssh"
 has_ssh_private_key = Dir.exist?(ssh_dir) && Dir.glob("#{ssh_dir}/*").any? { |f|

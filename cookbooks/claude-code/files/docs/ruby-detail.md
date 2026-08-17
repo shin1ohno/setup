@@ -1,6 +1,6 @@
 # Ruby / mitamae Code Guidelines — Examples & Origin Notes
 
-On-demand detail for `~/.claude/rules/ruby.md`. Read a section when the summary points here.
+On-demand detail for `~/ManagedProjects/setup/.claude/rules/ruby.md`. Read a section when the summary points here.
 
 
 ## grep-existing-resource

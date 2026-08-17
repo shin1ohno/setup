@@ -155,7 +155,7 @@ darwin remediation（`launchctl kickstart`、et wedge 回復）は全て class D
 **自律ループが `sh1admn`（admin プロファイル）+ PVE provider token で `terraform apply` する = 権限拡大**。`CLAUDE.md` の「network-exposed LXC に admin(sh1admn) キーを渡さない」原則の境界事案（pro-dev は dev-workstation で既に sh1admn を持つが、**ヘッドレス bypassPermissions ループ**が admin-scope の apply を叩けるようにするのが新しい露出）。実装前に必須:
 
 1. **adversarial review**（`~/.claude/rules/adversarial-review.md`, privilege boundaries / secret mounts）を sub-agent で実行。
-2. **capability probe**: pro-dev の loop identity（shin1ohno）から `terraform plan`（home-monitor）が通るか、PVE provider の API token をどこから読むか（`~/.claude/rules/aws-iam.md` "Probe preconditions on the real host"）。
+2. **capability probe**: pro-dev の loop identity（shin1ohno）から `terraform plan`（home-monitor）が通るか、PVE provider の API token をどこから読むか（`~/.claude/docs/aws-iam.md` "Probe preconditions on the real host"）。
 3. apply 対象 profile を **最小権限**にできないか検討（sh1admn 全権ではなく resize に必要な PVE API scope + CodeCommit + TF backend のみのサブ profile）。
 
 ### 変更（レビュー通過後）
@@ -165,7 +165,7 @@ darwin remediation（`launchctl kickstart`、et wedge 回復）は全て class D
 2. **plan-gated apply**（`self-heal-resolve/SKILL.md` Phase 3 case + helper `self-heal-infra-apply.sh`）
    - branch → `lxc_specs` の対象 CT の memory/cores を allowlist キャップ内で編集。
    - `terraform plan -out=tfplan` → `terraform show -json tfplan` を parse し **(a) `resource_changes` の action が対象 CT の `["update"]` のみ, (b) `0 to destroy`, (c) 対象 CT 以外の変化ゼロ, (d) 変更フィールドが memory/cores のみ** を assert。1 つでも外れたら **即 needs-human**（apply しない）。
-   - assert 通過時のみ `terraform apply tfplan`。apply は `origin/main` から（`~/.claude/rules/aws-iam.md` Terraform Apply Branch Gate）＝ home-monitor PR を merge→pull→apply の順。
+   - assert 通過時のみ `terraform apply tfplan`。apply は `origin/main` から（`~/.claude/docs/aws-iam.md` Terraform Apply Branch Gate）＝ home-monitor PR を merge→pull→apply の順。
    - IAM/SG/リソース作成削除は対象外（完全人間）。
 3. **境界更新**（SKILL §不変の安全境界 #8）
    - 「home-monitor TF は常に needs-human」→「案 B: infra-resize-allowlist 内の可逆 resize は plan-gate 通過時のみ自律 apply、それ以外の home-monitor TF は needs-human」。

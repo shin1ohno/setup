@@ -264,7 +264,7 @@ directory "#{node[:setup][:home]}/.claude/rules" do
   action :create
 end
 
-%w(ruby.md shell.md infrastructure.md aws-iam.md sub-agents.md git-commit.md mcp-config.md debugging.md editing.md planning.md adversarial-review.md).each do |file_name|
+%w(ask-user-question.md japanese-output.md sub-agents.md git-commit.md mcp-config.md debugging.md editing.md planning.md adversarial-review.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
     source "files/rules/#{file_name}"
     owner node[:setup][:user]
@@ -282,7 +282,7 @@ directory "#{node[:setup][:home]}/.claude/docs" do
   action :create
 end
 
-%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md remote-trigger.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md planning-detail.md aws-iam-detail.md pve-lxc-detail.md docker-compose-detail.md ffi-audit.md claude-code-plugins.md adversarial-review-detail.md negative-search-detail.md todo-management.md rust.md docker-compose.md fractal-nodes.md gpg-key-distribution.md).each do |file_name|
+%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md remote-trigger.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md planning-detail.md aws-iam.md domain-writing.md rule-placement-detail.md pve-lxc-detail.md docker-compose-detail.md ffi-audit.md claude-code-plugins.md adversarial-review-detail.md negative-search-detail.md todo-management.md rust.md docker-compose.md fractal-nodes.md gpg-key-distribution.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
     source "files/docs/#{file_name}"
     owner node[:setup][:user]
@@ -497,18 +497,22 @@ end
 # rules/ copies until they are deleted explicitly.
 %w(
   architecture.md
+  aws-iam.md
   claude-code-plugins.md
   cookbook-prs.md
   data-collection.md
   docker-compose.md
   ffi-audit.md
   frontend-dev.md
+  infrastructure.md
   ios-build.md
   kibana-lens.md
   mise-migration.md
   pve-lxc.md
   remote-trigger.md
+  ruby.md
   rust.md
+  shell.md
   tailscale.md
   weave-protocol.md
   writing.md
@@ -521,8 +525,10 @@ end
 # Clean up docs/ detail files whose content was merged into a sibling doc by
 # the rules-diet round 2: claude-code-plugins-detail.md → merged into its parent
 # (now docs/claude-code-plugins.md); rust-detail.md → merged into
-# docs/release-plz.md#crates-io-token-scopes. Same non-pruning caveat as above.
+# docs/release-plz.md#crates-io-token-scopes; aws-iam-detail.md → merged into
+# docs/aws-iam.md. Same non-pruning caveat as above.
 %w(
+  aws-iam-detail.md
   claude-code-plugins-detail.md
   rust-detail.md
 ).each do |file_name|
@@ -542,4 +548,3 @@ end
 directory "#{node[:setup][:home]}/.claude/skills/knowledge-drain" do
   action :delete
 end
-

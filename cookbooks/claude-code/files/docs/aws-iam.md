@@ -1,9 +1,8 @@
-# AWS IAM / SSM / Terraform Operational Rules — Examples & Origin Notes
+Load when the task touches AWS/IAM/SSM/KMS/Terraform or fleet credential gates
 
-On-demand detail for `~/.claude/rules/aws-iam.md`. Read a section when the summary points here.
+# AWS IAM / SSM / Terraform Operational Rules
 
-
-## stale-state-lock
+<a id="stale-state-lock"></a>
 
 ## Stale Terraform State Lock Recovery
 
@@ -18,7 +17,7 @@ Never `force-unlock` while another apply may legitimately hold the lock — over
 
 Origin: 2026-05-04 inherited a 14-hour-old self-orphan lock (`Who: shin1ohno@pro-dev`).
 
-## sts-token-refresh
+<a id="sts-token-refresh"></a>
 
 ## Short-lived STS Token Refresh Before Multi-Host mitamae Apply
 
@@ -33,7 +32,7 @@ Pre-batch checklist:
 
 Origin: 2026-05-04 burned 4 refresh-and-re-SCP cycles on mid-batch token expiry.
 
-## multi-profile-auth-chain
+<a id="multi-profile-auth-chain"></a>
 
 ## Multi-profile auth chain — enumerate every profile's IAM scope at design time
 
@@ -66,7 +65,7 @@ Origin: 2026-05-11 two-stage `aws login --remote → aws-credentials fetches pve
 - darwin / manual-operator cookbook (TTY) → bare gate + auto-discovery is fine (Pattern B: `mcp`, `local-mcp`).
 - Mixing them is the "works when I test it (TTY), fails on the fleet" bug class. `bin/lint-cookbooks` check #5 flags a fully-bare gate in a non-allowlisted cookbook.
 
-## iam-cannot-self-rotate
+<a id="iam-cannot-self-rotate"></a>
 
 ## IAM principal that cannot self-rotate — design `bootstrap_profile` chain accordingly
 
@@ -101,7 +100,7 @@ auth_probe_cmd = "aws ssm get-parameter --name '#{probe_path}' --output text" \
                  " --profile '#{bootstrap}' --region '#{region}' > /dev/null 2>&1"
 ```
 
-This is the rule generalization of "Auth-check gate must match the cookbook's actual invocation profile" (see `cookbooks/ruby.md`) applied to `bootstrap_profile` probes specifically.
+This is the rule generalization of "Auth-check gate must match the cookbook's actual invocation profile" (see `~/ManagedProjects/setup/.claude/rules/ruby.md`) applied to `bootstrap_profile` probes specifically.
 
 **Detection grep** when reviewing fleet cookbooks:
 
@@ -113,9 +112,19 @@ Any fleet-host cookbook using its OWN runtime IAM identity as `bootstrap_profile
 
 Origin: 2026-05-07 `aws-credentials` with `bootstrap_profile=pve-bootstrap-ssm` passed `sts get-caller-identity` but `aws ssm get-parameter` failed `AccessDeniedException` on `/home-monitor/iam/pve-bootstrap-ssm/access-key-id` (intentional self-rotate denial). Now uses external `bin/bootstrap-lxc-creds`.
 
-## fleet-ssm-gate-path
+<a id="fleet-ssm-gate-path"></a>
 
 ## Fleet Cookbook SSM Gate Path Must Match the Profile's IAM Grant
+
+### Fleet cookbook profile-gate patterns (post-#503)
+
+Do NOT re-propose "every fleet cookbook must pin `--profile`" — that guidance predates #503 and is now stale (stale rules are the vector by which future sessions re-suggest an already-rejected pin-everything design). Three current patterns for how a cookbook resolves its AWS profile:
+
+- **darwin / TTY (manual operator)** — bare gate + `require_external_auth` auto-discovery (Pattern B; e.g. `mcp`, `local-mcp`)
+- **fleet / non-TTY** — bare gate + `mitamae-runner.sh` presets `export AWS_PROFILE=pve-bootstrap-ssm` before apply (lint `BARE_OK` category)
+- **explicit `--profile` pin** — only the residual cookbooks not yet on the runner preset
+
+Full mechanics (auto-discovery TTY-only behavior, lint checks) live in `~/.claude/docs/aws-iam.md#multi-profile-auth-chain`; the pre-#503 "MUST pin" wording there still needs the same correction. Origin: #503 moved fleet gating to the runner preset.
 
 Before writing a `require_external_auth` / `deploy_with_ssm_env` gate that probes an SSM path on a FLEET cookbook pinned to a scoped profile (e.g. `pve-bootstrap-ssm`), live-probe that EXACT path with that profile:
 
@@ -132,7 +141,17 @@ When the IAM grant is the cited fix, verify which RESOURCE holds it: a grep hit 
 
 Origin: 2026-06 AWS-profile review — `lxc-cognee`/`lxc-memory`/`lxc-hydra` pinned `pve-bootstrap-ssm` but gated on `/cognee/llm-endpoint` + `/memory/aurora-endpoint`, outside the grant (`/ssh-keys/* /monitoring/* /hydra/*`). Fix: IAM grant for `/cognee/* /memory/*` (KMS-scoped) + pinning lxc-hydra's bare gate.
 
-## tailscale-oauth-ui-divergence
+## Probe preconditions on the real host with the real credential resolution chain
+
+Before asserting a precondition (SSM grant present, terraform runnable, "auth unavailable"), probe the ACTUAL condition on the ACTUAL execution host — credential fall-through produces false positives.
+
+1. **SSM grant probe must run on the target host, not the admin terminal.** A probe with the correct `--profile <target>` still false-positives when run from a different host: that host's credential resolution chain (`~/.aws` cache, `source_profile`, `credential_process`) can fall through to an admin identity (`sh1admn` etc.) and succeed. Probe success only proves "this identity on this host" can read. Verify a fleet cookbook's gate path from the actual target CT/LXC, and confirm the identity ARN from `aws sts get-caller-identity` matches the intended principal before concluding "IAM grant not needed". Origin: 2026-06 es-memory — a `--profile pve-bootstrap-ssm` probe from `mini` succeeded on the `sh1admn` cache, "grant not needed" was wrongly concluded, CT119 hit a real AccessDenied post-deploy; fixed by path change.
+
+2. **Probe `test -f terraform.tfvars` on the executing host before `terraform plan/apply`.** `*.tfvars` is gitignored and present only on ops hosts; on a host without it, apply falls through to an interactive prompt for every variable (`Enter a value:`), inviting hand-entry of secrets like `break_glass_pubkey` (a mistyped value can propagate via SSM). Origin: 2026-06-27 apply on `mini` dropped into `var.aws_profile` / `var.break_glass_pubkey` prompts, Ctrl-C aborted.
+
+3. **Don't assert sandbox AWS-auth absence as an un-reprobable hard boundary.** `aws login` writes the `~/.aws` file cache, so re-probe after the user logs in. A bare `aws` CLI rc=1 is not proof of "no auth" — the sandbox zsh's compdef bug can kill the CLI itself (see auto-memory `aws-cli-needs-bash-c-wrapper`). Probe via `/bin/bash -c 'aws sts get-caller-identity --profile <P>'` or a read-only `terraform plan`; if the plan passes, the apply can run in-session too. Origin: 2026-06-27 — asserted "hard boundary, only runnable on your machine", then a read-only plan succeeded and apply completed in-sandbox.
+
+<a id="tailscale-oauth-ui-divergence"></a>
 
 ## Tailscale OAuth client scope — UI/API divergence requires API-side verification
 
@@ -239,7 +258,7 @@ Action gate when a fresh client reproduces the failure:
 
 Origin: 2026-05-11 fresh client `koFXKg78P311CNTRL` returned identical 403s on `/device/<id>/routes` as the prior client; misread as tag-scope mismatch, but `POST /device/<id>/tags` → 200 proved `Devices Core: Write` was fine and the missing scope was **Routes** (separate top-level UI category).
 
-## reusable-tailscale-keys
+<a id="reusable-tailscale-keys"></a>
 
 ## Reusable Tailscale auth keys for ephemeral compute
 
@@ -289,7 +308,7 @@ Decrypt with explicit account ID) is documented in
 
 Origin: 2026-05-10 `reusable = false` key was consumed by the prior boot; EC2 auto-recovery booted a new instance, `tailscale up` rejected the SSM key, mcp.ohno.be DOWN ~30 min. Fix: `reusable = true` + rotation timer + Decrypt grants.
 
-## cost-table-labeling
+<a id="cost-table-labeling"></a>
 
 ## Cost Table Labeling Conventions
 
@@ -327,7 +346,7 @@ When discussing a month where RI was purchased, present both views side by side.
 
 Origin: 2026-05-11 presented 「小計 ~$20/月」 while actual 4月 total was $47.64 (Registrar $11 annual + ELB/WAF residue + Tax); the vague 「小計」 hid the discontinuity.
 
-## kms-attribution-query
+<a id="kms-attribution-query"></a>
 
 ## KMS request attribution — query ssm:GetParameter, not kms:Decrypt
 
@@ -357,9 +376,11 @@ KMS cost is $1/CMK/month + $0.03/10k requests beyond the 20k/month free tier.
 
 Origin: 2026-06-10 `kms:Decrypt` events showed only `sourceIPAddress: "AWS Internal"`; `ssm:GetParameter` with `withDecryption=true` surfaced caller ARNs + paths.
 
-## perpetual-drift-decision-framework
+<a id="perpetual-drift-decision-framework"></a>
 
 ## Perpetual Drift Decision Framework
+
+The same `terraform plan` diff surviving a successful apply — especially one marked `forces replacement` — is perpetual drift, not a glitch; every apply then replaces real resources to chase a cosmetic discrepancy. Trigger on the diff persisting after one apply, and pick a fix *before* the next apply in this order of preference: **A.** redesign away the pressure point → **B.** suppress the drift at its source (change the parent setting: `map_public_ip_on_launch`, VPC/launch-template defaults) → **C.** match reality in the config → **D.** `lifecycle.ignore_changes` (last resort — it hides future *real* drift, so always comment *why*).
 
 `terraform plan` showing the same attribute diff on every run — especially one marked `forces replacement` — is not a one-off glitch; it is perpetual drift. Every apply replaces real resources to chase a cosmetic discrepancy.
 
@@ -391,9 +412,11 @@ Check here before declaring a novel case. Each entry names the **parent setting*
 
 Add a row when a new cosmetic-drift case is fixed. Each row must be actionable: name the parent setting and which decision-flow option was chosen.
 
-## terraform-apply-branch-gate
+<a id="terraform-apply-branch-gate"></a>
 
 ## Terraform Apply Branch Gate
+
+Before invoking `terraform apply`, run `git branch --show-current` and confirm the branch is `main` (or the repo's designated deploy branch). On a feature branch, do NOT apply — present it as `! cd /absolute/path/to/repo && terraform apply -target=<scope>` for the user; applying unmerged changes bypasses the review gate (PR merge → pull `main` → apply is the correct sequence). Post-apply, run `terraform validate` to catch a resource-name-duplicated working tree left by a stash/pop or manual revert (surfaces only on the next operation otherwise).
 
 Before invoking `terraform apply`, run `git branch --show-current` and confirm the branch is `main` (or the repo's designated deploy branch). If on a feature branch, stop and present the apply as a user-run command:
 
@@ -416,9 +439,11 @@ If validate reports `Duplicate ... configuration`, the most common cause is a st
 
 Origin: 2026-05-11 RDS RI apply → `Duplicate data "aws_rds_reserved_instance_offering"` from stash-pop merge.
 
-## ssm-parameter-path-constraints
+<a id="ssm-parameter-path-constraints"></a>
 
 ## AWS SSM Parameter Path Constraints
+
+Before writing any `aws_ssm_parameter` Terraform resource or `aws ssm put-parameter` cookbook call, confirm the path is not in a reserved namespace: `/aws`, `/AWS`, and `/ssm` prefixes are blocked at the API level (`AccessDeniedException: No access to reserved parameter name`) — the error fires at *apply* time, not plan, and Terraform shows no diff. Prefer project-scoped prefixes (`/<project>/<purpose>/...`, e.g. `/home-monitor/iam/<user>/<key-name>`).
 
 Before writing any `aws_ssm_parameter` Terraform resource or `aws ssm put-parameter` cookbook call, validate the planned path is not in a reserved namespace. AWS blocks any path starting with `/aws` or `/AWS` at the API level (`AccessDeniedException: No access to reserved parameter name: ...`) — the error fires at apply time, not at plan time, and Terraform does not surface it as a plan diff.
 
@@ -446,9 +471,13 @@ Prefer project-scoped prefixes (`/<project>/<purpose>/...`, e.g. `/home-monitor/
 
 Origin: 2026-05-06 `aws_ssm_parameter` at `/aws-keys/pve-bootstrap-ssm/access-key-id` → `AccessDeniedException: No access to reserved parameter name`; clean plan, apply-time failure. Renamed to `/home-monitor/iam/pve-bootstrap-ssm/...`.
 
-## kms-decrypt-encryptioncontext
+<a id="kms-decrypt-encryptioncontext"></a>
 
 ## kms:Decrypt with EncryptionContext — wildcard `*` denies silently
+
+A `kms:Decrypt` grant for SSM SecureString reads MUST match the `kms:EncryptionContext:PARAMETER_ARN` StringLike condition with an **explicit account ID** (`${data.aws_caller_identity.current.account_id}`) and region — a wildcard `arn:aws:ssm:*:*:parameter/...` is rejected by KMS's evaluator, so every Decrypt fails with the misleading `AccessDeniedException: ciphertext refers to a customer master key that does not exist` (the error never names the unmet condition). Never wildcard the region either; enumerate each region explicitly.
+
+Detection: an IAM role that should have `kms:Decrypt` is denied on every SecureString `GetParameter --with-decryption` — `aws iam get-role-policy ... --query 'PolicyDocument.Statement[?contains(Action, kms:Decrypt)]'` and look for `*:*:parameter/...` ARNs in the EncryptionContext condition.
 
 When granting `kms:Decrypt` to a role that needs to read SSM SecureString
 parameters, AWS encrypts the parameter value with a KMS data key bound

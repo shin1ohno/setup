@@ -23,7 +23,7 @@ include_cookbook "awscli::linux"
 
 # Reuse the AWS profile / region convention from cookbooks/ssh-keys so
 # the require_external_auth check_command matches the actual SSM
-# invocation profile (per ~/.claude/rules/ruby.md "Auth-check gate must
+# invocation profile (per ~/ManagedProjects/setup/.claude/rules/ruby.md "Auth-check gate must
 # match the cookbook's actual invocation profile").
 ssh_keys_config = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh-keys", "files", "aws-config.json")))
 aws_profile = ssh_keys_config["aws_profile"]
@@ -108,7 +108,7 @@ end
 
 # Generate /etc/mcp-probe/probe.env from SSM. Stage in setup_root/generated,
 # then install with `only_if test -f` so the converge-time presence check
-# matches the converge-time creation (~/.claude/rules/ruby.md "Mitamae
+# matches the converge-time creation (~/ManagedProjects/setup/.claude/rules/ruby.md "Mitamae
 # evaluation model — top-level Ruby is compile-time").
 generated_dir = "#{node[:setup][:root]}/generated"
 directory generated_dir do
@@ -131,7 +131,7 @@ require_external_auth(
   # Content-aware: the needles are every KEY= that files/fetch-secrets.sh
   # writes, so adding one there forces a re-fetch on hosts whose probe.env
   # already exists. A bare File.exist? would silently keep the stale file
-  # (~/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence
+  # (~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env generator: file-existence
   # skip_if drops new KEY=VALUE lines silently"). Readable because mcp-probe
   # is only included from lxc-monitoring, where mitamae runs as root.
   skip_if: lambda {

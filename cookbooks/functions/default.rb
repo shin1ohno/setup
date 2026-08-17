@@ -203,7 +203,7 @@ module RecipeHelper
     # re-run completes the auth-gated work. This is distinct from "tool present
     # but auth unconfigured" (e.g. aws installed, profile missing), which still
     # loops so the user can `aws configure` and press Enter. See
-    # ~/.claude/rules/ruby.md "Mitamae evaluation model — top-level Ruby is
+    # ~/ManagedProjects/setup/.claude/rules/ruby.md "Mitamae evaluation model — top-level Ruby is
     # compile-time".
     tool_missing =
       (tool_binary && run_command("command -v #{tool_binary} >/dev/null 2>&1", error: false).exit_status != 0) ||
@@ -359,7 +359,7 @@ module RecipeHelper
     # files, all failed" log — each iteration tests the SAME pinned profile.
     # Skip the loop and tell the operator which profile needs refreshing. The
     # pinned profile is also the one the cookbook's actual SSM calls use
-    # (enforced by the pin-match lint rule in claude-code/files/rules/ruby.md),
+    # (enforced by the pin-match lint rule in ~/ManagedProjects/setup/.claude/rules/ruby.md),
     # so substituting a different profile at discovery time would just defer
     # the failure to fetch_ssm.
     if (pinned = _pinned_profile(check_command))
@@ -789,7 +789,7 @@ end
 # look for the unit under functions/files/. Staging stays in the caller (one
 # line, resolves correctly); this helper owns the error-prone activation.
 #
-# Activation rules (see ~/.claude/rules/infrastructure.md "systemd Timer
+# Activation rules (see ~/ManagedProjects/setup/.claude/rules/infrastructure.md "systemd Timer
 # Verification Gate"):
 #   - .service: daemon-reload + enable + restart. `restart` (not `enable
 #     --now`) is required so a unit-file EDIT actually takes effect on an
@@ -875,7 +875,7 @@ end
 # `require_external_auth + generate + remote_file + temp-delete` quartet that
 # ~9 cookbooks repeat, and bakes in CONTENT-AWARE skip_if.
 #
-# skip_if (see ~/.claude/rules/ruby.md "SSM-sourced .env generator ... drops
+# skip_if (see ~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env generator ... drops
 # new KEY=VALUE lines silently"): the gate is skipped only when the output
 # already contains EVERY key in :expected_keys. A plain `File.exist?` skip
 # would make adding a key to the generator a silent no-op on hosts whose .env
@@ -888,7 +888,7 @@ end
 # Voyage (pa- key) to LiteLLM (sk- key) reusing VOYAGE_API_KEY — the name-only
 # skip kept the stale pa- key and every embedding 401'd until the .env was
 # hand-cleared. Substring-only (no Regexp — mruby's File API subset, see
-# ~/.claude/rules/ruby.md "mruby API constraints").
+# ~/ManagedProjects/setup/.claude/rules/ruby.md "mruby API constraints").
 #
 # Usage:
 #   deploy_with_ssm_env "hydra" do

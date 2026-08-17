@@ -148,7 +148,7 @@ file resolv_staging do
 end
 
 # /etc/resolv.conf is 0644, so the diff guard is readable by the non-root
-# apply user (rules/ruby.md "Guard must be evaluatable under mitamae's actual
+# apply user (~/ManagedProjects/setup/.claude/rules/ruby.md "Guard must be evaluatable under mitamae's actual
 # runtime privilege"). No resolver daemon owns the file on this host —
 # systemd-resolved / networkd / NetworkManager are all inactive and both
 # bridges are `inet static`, so nothing regenerates it behind us.

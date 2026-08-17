@@ -1,6 +1,6 @@
 # Shell Script Guidelines — Examples & Origin Notes
 
-On-demand detail for `~/.claude/rules/shell.md`. Read a section when the summary points here.
+On-demand detail for `~/ManagedProjects/setup/.claude/rules/shell.md`. Read a section when the summary points here.
 
 
 ## awk-bwk-vs-gawk
@@ -211,7 +211,7 @@ Origin: 2026-05-06 / 2026-05-11 / 2026-06-07 — `syntax error near unexpected t
 
 ## `awk $N` vs bash positional parameters inside a quoted `bash -c`
 
-The failing shape: a script is already committed to `bash -c '…'` — most often because it needs `set -euo pipefail`, which dash rejects as a bare mitamae `command` (see the pipefail rule in `~/.claude/rules/ruby.md` / the `bash -c` wraps in `cookbooks/{codex-cli,mcp,herdr,terraform}`). Single quotes are therefore unavailable inside, so an awk program gets written in double quotes:
+The failing shape: a script is already committed to `bash -c '…'` — most often because it needs `set -euo pipefail`, which dash rejects as a bare mitamae `command` (see the pipefail rule in `~/ManagedProjects/setup/.claude/rules/ruby.md` / the `bash -c` wraps in `cookbooks/{codex-cli,mcp,herdr,terraform}`). Single quotes are therefore unavailable inside, so an awk program gets written in double quotes:
 
 ```bash
 bash -c 'ssh-keygen -lf "$TMP" | awk "{print \$2}" | sort'

@@ -42,7 +42,7 @@ Prefer option (a) `XDG_CONFIG_HOME` override + system-standard `/var/lib/<servic
 state_dir = "/var/lib/<service>/state"
 
 directory state_dir do
-  owner "1000"   # MUST be String per ~/.claude/rules/ruby.md
+  owner "1000"   # MUST be String per ~/ManagedProjects/setup/.claude/rules/ruby.md
   group "1000"
   mode "755"
 end
