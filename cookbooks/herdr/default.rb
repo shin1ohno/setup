@@ -94,13 +94,38 @@ end
 # check needs no running server. `only_if` on the manifest keeps hosts without
 # this neovim plugin (or with a different plugin manager) from failing the run —
 # they simply keep herdr's prefix+h/j/k/l defaults.
+#
+# An INSTALLED checkout is not enough: the manifest ships only on upstream's
+# master, and AstroNvim ^6 turns pin_plugins on automatically, so its
+# lazy_snapshot can hold smart-splits.nvim at a revision that predates the herdr
+# integration entirely. In that state the link silently does not happen while
+# config.toml keeps binding ctrl+hjkl to actions nothing registers, and every
+# press reports "plugin action not found" — which is why the miss is announced
+# rather than skipped quietly. ~/.config/nvim pins the revision that carries it.
 smart_splits_root = "#{node[:setup][:home]}/.local/share/nvim/lazy/smart-splits.nvim"
+smart_splits_manifest = "#{smart_splits_root}/herdr-plugin.toml"
 herdr_plugins_json = "#{node[:setup][:home]}/.config/herdr/plugins.json"
+
+# The existence test is read into a local because bin/lint-cookbooks check 1
+# flags `unless ... File.exist?` outside a `def` on principle. Nothing in this
+# cookbook creates the manifest — lazy.nvim does, on an earlier, separate run —
+# so the compile-time answer is the converge-time answer here. The execute below
+# still carries its own shell guard, which is the authoritative one.
+manifest_present = File.exist?(smart_splits_manifest)
+unless manifest_present
+  MItamae.logger.warn(
+    "[herdr] #{smart_splits_manifest} is absent -- skipping `herdr plugin link`. " \
+    "config.toml still binds ctrl+h/j/k/l to smart-splits.nvim.{left,down,up,right}, " \
+    "so those keys will report \"plugin action not found\" (and the shell loses its " \
+    "own ctrl+h/ctrl+l) until smart-splits.nvim is on a revision that ships " \
+    "herdr-plugin.toml. prefix+h/j/k/l keeps working meanwhile."
+  )
+end
 
 execute "link smart-splits.nvim herdr plugin" do
   user node[:setup][:user]
   command "'#{herdr_path}' plugin link '#{smart_splits_root}'"
-  only_if "test -f '#{smart_splits_root}/herdr-plugin.toml'"
+  only_if "test -f '#{smart_splits_manifest}'"
   not_if "grep -q 'smart-splits.nvim' '#{herdr_plugins_json}' 2>/dev/null"
 end
 
