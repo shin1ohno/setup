@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import json
 import os
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -150,9 +151,41 @@ def _index_for(memory_type: str | None) -> str:
     }.get(memory_type, ALL_ALIAS)
 
 
+def _raise_for_status(resp: httpx.Response, method: str, path: str) -> None:
+    """`raise_for_status()`, but log ES's own reason first.
+
+    httpx's error message carries only the status and the URL, so an
+    authorization failure reaches the MCP caller as a bare
+    `403 Forbidden for url .../_update_by_query` with no way to tell WHICH
+    principal ES rejected or WHICH action it wanted. ES puts both in the
+    response body (`action [indices:data/write/update/byquery] is unauthorized
+    for user [...]`) and that body was being discarded.
+
+    This is the auth-boundary rule applied server-side: a reject at an
+    authn/authz boundary logs its variant unconditionally, never behind a
+    debug flag. The body is truncated and carries no credential — ES echoes the
+    denied action, the principal and the index, not the password.
+
+    Observed 2026-08-17: `revise`/`forget` on memory-knowledge returned 403
+    through the server while the SAME endpoint, as the SAME configured
+    ES_USER, returned 200 from curl (privileges verified with
+    `_has_privileges`, live role checked, no index write-block, credential not
+    stale). With the body dropped there was nothing left to diagnose from.
+    """
+    if resp.is_error:
+        detail = resp.text[:800].replace("\n", " ")
+        print(
+            f"ES-ERROR status={resp.status_code} {method} {path} "
+            f"es_user={ES_USER} body={detail}",
+            file=sys.stderr,
+            flush=True,
+        )
+    resp.raise_for_status()
+
+
 async def _es_json(method: str, path: str, body: dict | None = None) -> dict:
     resp = await _es.request(method, path, json=body)
-    resp.raise_for_status()
+    _raise_for_status(resp, method, path)
     return resp.json()
 
 
@@ -172,7 +205,7 @@ async def _bulk_index(index: str, docs: list[dict]) -> int:
         content=payload,
         headers={"Content-Type": "application/x-ndjson"},
     )
-    resp.raise_for_status()
+    _raise_for_status(resp, "POST", "/_bulk")
     result = resp.json()
     if result.get("errors"):
         errored = [i for i in result["items"] if i.get("index", {}).get("error")]
@@ -486,7 +519,7 @@ async def remember_fact(content: str, tags: list | None, provenance: dict) -> di
     # ?refresh=wait_for is mandatory (design v3 §6 Phase A): a burst of writes
     # racing the refresh interval would otherwise dedup-miss and duplicate facts.
     resp = await _es.request("POST", f"/{FACT_INDEX}/_doc?refresh=wait_for", json=doc)
-    resp.raise_for_status()
+    _raise_for_status(resp, "POST", f"/{FACT_INDEX}/_doc")
     return {
         "action": "added",
         "id": resp.json()["_id"],
@@ -607,7 +640,7 @@ async def append_episode(content: str, tags: list | None, provenance: dict) -> d
         "expires_at": _iso(now + timedelta(days=EPISODE_TTL_DAYS)),
     }
     resp = await _es.request("POST", f"/{EPISODE_INDEX}/_doc?refresh=wait_for", json=doc)
-    resp.raise_for_status()
+    _raise_for_status(resp, "POST", f"/{EPISODE_INDEX}/_doc")
     return {"action": "added", "id": resp.json()["_id"], "routed_type": "episode"}
 
 
@@ -763,7 +796,7 @@ async def revise(id: str, content: str, provenance: dict, grant: str, agent: str
     if memory_type == "episode" and src.get("expires_at"):
         new_doc["expires_at"] = src["expires_at"]
     resp = await _es.request("POST", f"/{index}/_doc?refresh=wait_for", json=new_doc)
-    resp.raise_for_status()
+    _raise_for_status(resp, "POST", f"/{index}/_doc")
     new_id = resp.json()["_id"]
     await _mark_superseded(index, id, new_id, now)
     audit_supersede(id, agent, grant)
@@ -893,6 +926,6 @@ async def bump_use_counts(ids) -> None:
     try:
         resp = await _es.request(
             "POST", f"/{ALL_ALIAS}/_update_by_query?conflicts=proceed", json=body)
-        resp.raise_for_status()
+        _raise_for_status(resp, "POST", f"/{ALL_ALIAS}/_update_by_query")
     except Exception:  # noqa: BLE001 — fire-and-forget
         pass
