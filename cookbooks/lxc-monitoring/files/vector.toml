@@ -245,7 +245,22 @@ source = '''
       }
     }
 
-    # STA MAC: "STA (xx:..)" / "(xx:..)" or disconnect summary "(xx:..:auth=..)".
+    # STA MAC. Three spellings, tried in order:
+    #   app layer   "STA (xx:..)" / "(xx:..)"
+    #   disconnect  "(xx:..:auth=4/cipher=4)"
+    #   kernel      bare, prefixed by the context that names it — see below
+    # The kernel form matters because the single most frequent disconnect
+    # signal on WLX402, "sending DEAUTH to <mac>, unknown src reason 6", is
+    # written that way and was landing with no sta at all, so the busiest
+    # client never appeared in a per-STA breakdown.
+    #
+    # The prefix alternation is what keeps this safe: a bare MAC also appears
+    # in "do ignbaselmac [xx:..] name=ath5", which is the radio's OWN address,
+    # not a client — matching that would attribute every client's traffic to
+    # the AP. Requiring `vap-N: [` (rather than any `[`) excludes it.
+    # Measured over a 10,560-line sample: coverage 62% -> 85%, zero
+    # ignbaselmac matches.
+    #
     # WLX MACs are already lowercase on the wire, so assign directly (downcase
     # on a string|null capture would be fallible).
     sta_m = parse_regex(msg, r'\((?P<sta>[0-9A-Fa-f:]{17})\)') ?? null
@@ -255,6 +270,11 @@ source = '''
       sta_s = parse_regex(msg, r'\((?P<sta>[0-9A-Fa-f:]{17}):auth=') ?? null
       if !is_null(sta_s) {
         .sta = sta_s.sta
+      } else {
+        sta_k = parse_regex(msg, r'(?:sending DEAUTH to |macaddr |XID leave node |vap-\d+: \[)(?P<sta>[0-9A-Fa-f:]{17})') ?? null
+        if !is_null(sta_k) {
+          .sta = sta_k.sta
+        }
       }
     }
 
