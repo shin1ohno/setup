@@ -92,9 +92,7 @@ content の in-place 書き換えは引き続き禁止です。例外は「加�
 
 ## 未決（この ADR の範囲外）
 
-- **keeper の merge 規則**: `reconcile.py` の UPDATE merge は target 側の tags のみを引き継ぎ、
-  `consolidate.py` の near-dup supersede は何も引き継がずに older doc を殺します。判定に必要な
-  「どちら側から何を継承するか」「`user-stated` は一方向 ratchet か」は別 ADR で決めます
-  （keeper は自宅ラボ CT 119 のみに deploy されており、memory-work には存在しません）。
+- ~~**keeper の merge 規則**~~ → **ADR 0008 で決定**（tags/entities は union、provenance は
+  `user-stated` の一方向 ratchet のみ、near-dup は pointer ではなく merged doc）。
 - **NOOP の穴**: reconcile の NOOP は incoming の重複 doc を supersede せず live に残します。
   dedup セマンティクスそのものの変更なので別判断。
