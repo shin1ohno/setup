@@ -205,6 +205,19 @@ Hook-dismissal anti-pattern (origin of the rules-side sentence): 2026-07-08 — 
 
 Origin: 2026-04-22 commit on wrong branch after background `terraform apply`; strengthened 2026-05-06 after two misplaced commits where `git checkout -b` ran in a separate Bash call from `git commit` (recovery: cherry-pick + `git branch -f <branch> origin/main`); 2026-06-19 a bare `cd <dir>` used to "enter" the repo within one Bash call still drifted at the next CWD reset AND triggered a shell tree-hook that masked the reset line — using `git -C /absolute/path` on every git call (never a leading `cd`) eliminates the ambiguity.
 
+## worktree-isolated-serialization
+
+## Worktree-isolated session refuses compound git commands — serialize
+
+When the session is inside an EnterWorktree worktree, a harness-level check (not one of the repo hooks) enforces that git operations stay inside the worktree. Two rejection shapes, both observed:
+
+- **`git -C <shared-checkout> …` is refused** ("a worktree-isolated session's git operations must target its own worktree").
+- **Any compound command containing git is refused as "too complex to verify"** — `&&`-chains (including the Required-pattern `test … && git add … && git commit`), and even a single git call with an output redirect (`git show HEAD:<path> > "$TMPDIR/x"`).
+
+Remedy: run plain single-purpose git calls from the worktree cwd — `git add <files>`, then `git commit -m …`, as separate Bash invocations, and replace redirect-based verification with exit-code evidence or a plain `git status --porcelain`. The Required-pattern chain and this refusal are both correct in their own contexts: the chain guards against CWD-reset branch drift on a multi-branch shared checkout; a worktree session has exactly one branch checked out and no drift risk, so serialization loses nothing.
+
+Origin: 2026-08-17 zp-SHIN PR #151 — four refusals in one session (one `git -C <shared>` chain, two "too complex" compound chains, one bare `git show` with an output redirect), each re-issued as serialized plain commands.
+
 ## branch-overlap-preflight
 
 ## Branch overlap pre-flight: open PR file scope
