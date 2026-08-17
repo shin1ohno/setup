@@ -17,12 +17,18 @@ The caller (retro skill) provides structured session metrics in the prompt:
 - Tool permission denials (count)
 - Plan revisions (count)
 - Key session events (bullet list)
+- Past retro records (memory notes carrying the `retro-proposal` marker, each with an adoption `Status`: proposed / adopted / rejected) — may be marked "unavailable" if the memory connector is down
 
 Use these metrics to ground your analysis in concrete data.
 
 ## Deduplication Guard
 
 Before proposing changes, read recent commits (`git log --oneline -20`) and check which patterns have already been codified in this session. Any proposal that maps to an existing commit should be excluded with a note: "Already codified in [commit hash]". This prevents the user from reviewing the same proposals across multiple retro runs in a single session.
+
+Also cross-check the caller-provided past retro records:
+
+- A proposal matching a record with `Status: adopted` is excluded the same way ("Already codified in [commit/PR ref]").
+- A proposal matching a record with `Status: rejected` is NOT re-proposed unless this session produced new evidence for it. When re-proposing, state the prior rejection explicitly: "Previously rejected on [date]: [reason] — re-proposed because [new evidence this session]".
 
 ## Analysis Categories
 
@@ -89,3 +95,5 @@ Return a numbered list of proposals. For each:
 ```
 
 Only propose changes that address real patterns observed in this session. Do not invent hypothetical improvements.
+
+Your full output is persisted verbatim to the memory MCP by the caller (one note per proposal, plus a session hub note). Write each proposal self-contained — readable on its own months later, without the surrounding conversation.
