@@ -24,6 +24,7 @@
         "sta":          { "type": "keyword" },
         "ap":           { "type": "keyword" },
         "reason_code":  { "type": "integer" },
+        "status_code":  { "type": "integer" },
         "client_mac":   { "type": "keyword" },
         "client_ip":    { "type": "ip" },
         "message":      { "type": "match_only_text" }
