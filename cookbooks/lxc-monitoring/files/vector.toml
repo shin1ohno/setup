@@ -99,10 +99,17 @@ source = '''
   .message = m.rest
 
   # Map sender IP → device label + device_type. RTX routers: hnd .253 /
-  # itm .254. WLX WiFi APs: wlx402 .5 / wlx323 .41. Drop everything else
+  # itm .254. WLX WiFi APs: wlx402 .5 / wlx323 .6. Drop everything else
   # defensively (random LAN devices mis-pointing syslog at this listener
   # should not produce labelled streams). device_type splits the two ES
   # sinks downstream (logs-rtx vs logs-wlx) and is del()'d before each sink.
+  #
+  # wlx323 was declared .41 until 2026-08-17. That address never belonged to
+  # the AP — a tcpdump on the PVE bridge showed the AP sending from .27, and
+  # .41 was a Wi-Fi client that appears as a STA in the AP's own
+  # ROAMING_ASSIST log. Every wlx323 packet therefore hit the abort below
+  # (~200k events/day). Both the AP and this map now use .6, outside the RTX
+  # DHCP pool .20-.99, matching how wlx402 sits at .5.
   src_ip = .host
   if src_ip == "192.168.1.253" {
     .router = "hnd"
@@ -113,7 +120,7 @@ source = '''
   } else if src_ip == "192.168.1.5" {
     .device = "wlx402"
     .device_type = "ap"
-  } else if src_ip == "192.168.1.41" {
+  } else if src_ip == "192.168.1.6" {
     .device = "wlx323"
     .device_type = "ap"
   } else {
