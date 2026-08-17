@@ -11,7 +11,7 @@
 # Parameterised via node attributes (with defaults that match the
 # canonical CT 108 deployment):
 #
-#   node[:roon_mcp_server][:version]      git tag (default "0.5.4")
+#   node[:roon_mcp_server][:version]      git tag (default "0.5.7")
 #   node[:roon_mcp_server][:http_port]    listener port (default 8080)
 #   node[:roon_mcp_server][:core_host]    Roon Core address
 #                                         (default "192.168.1.20" — direct
@@ -27,7 +27,7 @@
 
 include_cookbook "docker-engine"
 
-version     = node.dig(:roon_mcp_server, :version)     || "0.5.6"
+version     = node.dig(:roon_mcp_server, :version)     || "0.5.7"
 http_port   = node.dig(:roon_mcp_server, :http_port)   || 8080
 # core_host default is the direct IP rather than `roon-lxc.home.local`
 # because the container DNS (Docker's embedded resolver, historically
