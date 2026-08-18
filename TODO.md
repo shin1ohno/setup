@@ -465,3 +465,29 @@ disposition を参照して再列挙を省略」と指示しているため、1 
 - 緊急ではない（現在 256 行）。数千行に達する前に着手する。完了条件: 候補キューが open 件数に
   比例するファイルに分離され、reconcile が履歴を読まずに 1 サイクル完走する（このエントリは
   対応コミットで削除）。
+
+## herdr — bump past 0.8.0 once a stable ships the oversized-frame render fix (Low)
+
+herdr 0.8.0 (pinned in `cookbooks/herdr/default.rb`) silently stops rendering an
+attached client when the terminal reports a large size: the SemanticFrame render
+exceeds the server's hardcoded 2MB frame cap and the server drops every frame
+(`WARN herdr::server::headless: skipping oversized frame … claimed=3494423
+max=2097152`), so `hr` looks dead while the handshake, input events, and sound
+notifications all still flow. Observed on sh1-cloud 2026-08-18T01:31Z when a
+mosh client reported 1300×383 cells; rendering resumed by itself once the size
+dropped back to 185×63. Upstream: herdrdev/herdr#2670 (closed), fixed by #2675
+"compact large terminal redraws" (plus #2829, which makes the headless terminal
+size configurable) — both in preview-2026-08-17, neither in any stable (latest
+stable = v0.8.0, the pinned version).
+
+- Reason deferred: the fix exists only in a preview build. The cookbook pins
+  stable releases by sha256, and swapping the server binary kills every running
+  pane (agents included), so waiting for the next stable is the right trade.
+  Workaround when it recurs: resize the terminal / reset font zoom back to
+  normal — frames resume immediately; do NOT restart the server.
+- First step: when a stable newer than 0.8.0 appears
+  (`gh api repos/ogulcancelik/herdr/releases/latest --jq .tag_name`), confirm
+  its notes include #2675, recompute the per-target sha256s per the comment in
+  `cookbooks/herdr/default.rb`, bump `herdr_version`, and restart the server at
+  a moment when no agent panes are active. Delete this entry in the resolving
+  commit.
