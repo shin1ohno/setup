@@ -9,6 +9,17 @@ mise_tool "@googleworkspace/cli" do
   backend "npm"
 end
 
+# gws stores its OAuth token via a keyring backend. On SSH sessions the macOS
+# Keychain backend fails ("User interaction is not allowed" — non-Aqua session),
+# so pin the `file` backend (age/rops-encrypted token on disk under ~/.config/gws).
+# Must live in .zshenv (not .zshrc) so non-interactive shells that run the
+# generated gws-* skills also read it back.
+execute "persist gws file keyring backend in .zshenv" do
+  command "echo 'export GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file' >> #{node[:setup][:home]}/.zshenv"
+  user node[:setup][:user]
+  not_if "fgrep -q 'GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND' #{node[:setup][:home]}/.zshenv"
+end
+
 # Agent Skills: generate from the installed gws binary and sync into Claude
 # Code's skills dir (~/.claude/skills). Generated rather than vendored so the
 # 95-skill set always matches the installed gws version — a mise bump
