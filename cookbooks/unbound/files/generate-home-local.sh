@@ -75,5 +75,28 @@ awk -v gen_file="${gen_file}" -v marker="${MARKER}" '
     { print }
 ' "${TEMPLATE}" >"${out_tmp}"
 
+# Never publish a render that unbound cannot parse. Without this the bad file
+# reaches OUTPUT, the recipe's staged-validate catches it and aborts the apply,
+# and the stale-but-valid OUTPUT from the previous run is gone — so the next
+# apply has nothing good to fall back to. Failing here leaves OUTPUT untouched.
+#
+# checkconf accepts the fragment on its own (self-contained `server:` section).
+# If the binary is missing — a bootstrap ordering the recipe should prevent,
+# since it installs unbound before rendering — warn and continue rather than
+# hard-failing: the recipe validates the staged file again before install, so
+# there is still a gate in front of /etc.
+CHECKCONF="${CHECKCONF:-/usr/sbin/unbound-checkconf}"
+if [[ -x "${CHECKCONF}" ]]; then
+    if ! "${CHECKCONF}" "${out_tmp}" >/dev/null 2>&1; then
+        echo "ERROR generate-home-local: rendered config failed unbound-checkconf;" \
+             "leaving ${OUTPUT} unchanged. Diagnose with: ${CHECKCONF} ${out_tmp}" >&2
+        "${CHECKCONF}" "${out_tmp}" >&2 || true
+        exit 1
+    fi
+else
+    echo "WARN generate-home-local: ${CHECKCONF} not executable — skipping the" \
+         "pre-publish config check (the recipe still validates before install)." >&2
+fi
+
 mv "${out_tmp}" "${OUTPUT}"
 trap 'rm -f "${gen_file}"' EXIT
