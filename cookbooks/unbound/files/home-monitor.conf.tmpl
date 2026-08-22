@@ -125,13 +125,22 @@ server:
     # the 2026-05-31 root cause). Either restarts unbound. TTL 0 so nothing caches
     # a stale positive; 192.0.2.1 is an RFC 5737 TEST-NET sentinel, never routed.
     #
-    # The AAAA companion lets the watchdog prove the v6 listener separately —
-    # unbound can be answering on v4 while its v6 socket is wedged, and an
-    # A-only canary cannot tell those apart. 2001:db8::1 is the RFC 3849
-    # documentation-range counterpart to the v4 sentinel, equally unroutable.
-    # Adding it does not disturb the existing A probe: an A query still returns
-    # exactly one record, so the watchdog's `dig +short ... A` comparison is
-    # unchanged.
+    # The AAAA companion exists so the watchdog CAN prove the v6 listener
+    # separately once it grows a v6 probe — unbound can answer on v4 while its
+    # v6 socket is wedged, and an A-only canary cannot tell those apart.
+    # Nothing queries it yet: cookbooks/unbound-watchdog is unchanged, so this
+    # record is placed ahead of the probe rather than alongside it.
+    #
+    # When that probe is written it MUST use v6 transport to the resolver's
+    # STATIC ULA (`dig -6 @fd97:b085:767d:0:be24:11ff:fe00:76 ...`). Fetching
+    # the AAAA over v4 proves nothing about the v6 socket, and aiming it at the
+    # GUA would make it restart a healthy unbound every 900s after each PD
+    # rotation.
+    #
+    # 2001:db8::1 is the RFC 3849 documentation-range counterpart to the v4
+    # sentinel, equally unroutable. Adding it does not disturb the existing A
+    # probe: an A query still returns exactly one record, so the watchdog's
+    # `dig +short ... A` comparison is unchanged.
     local-zone: "unbound-watchdog.health." static
     local-data: "unbound-watchdog.health. 0 IN A 192.0.2.1"
     local-data: "unbound-watchdog.health. 0 IN AAAA 2001:db8::1"

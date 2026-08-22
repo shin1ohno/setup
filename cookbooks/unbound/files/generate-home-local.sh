@@ -78,23 +78,51 @@ if [[ -z "${records_v6}" ]]; then
          "— home.local will be served without AAAA records." >&2
 fi
 
+# A v6-only name is dropped rather than published. Warn so the drop is visible
+# instead of silent — with today's data this never fires, because every name
+# with a ULA also has an A.
+orphans="$(jq -n -r --argjson v4 "${records_v4}" --argjson v6 "${records_v6}" \
+    '(($v6 | keys) - ($v4 | keys)) | join(" ")' 2>/dev/null)"
+[[ -n "${orphans}" ]] && echo "WARN generate-home-local: v6-only names dropped (no A record):" \
+    "${orphans}" >&2
+
 # One local-zone (static, terminal) per hostname, then every A and AAAA that
-# name has. The zone line must appear exactly ONCE even for a name present in
-# both maps, hence the union of keys rather than two independent passes — a
-# duplicate local-zone for the same name is a config error.
+# name has. The zone line appears exactly once even for a name in both maps.
 #
-# `static` makes the zone terminal: a name with an A but no AAAA answers NODATA
-# for AAAA rather than falling through to the forward-zone. That is the correct
-# answer and it keeps Apple clients (no derivable stable v6 address, so no AAAA
-# published) from generating a Route53 round-trip per lookup.
-jq -n -r --argjson v4 "${records_v4}" --argjson v6 "${records_v6}" --arg ttl "${TTL}" '
-    (($v4 | keys) + ($v6 | keys) | unique)[] as $h
+# The key set comes from the v4 map ALONE, deliberately — not the union.
+# `static` makes a zone terminal, so a name that got a zone line answers NODATA
+# for anything it has no local-data for INSTEAD of falling through to the
+# forward-zone. Keying off the union means that when the v4 fetch fails while
+# the v6 fetch succeeds, every name gets an AAAA-only terminal zone and A
+# queries start returning NODATA — home.local v4 resolution dies outright, and
+# the config is valid so both checkconf gates pass it. That is strictly worse
+# than the documented degradation at the top of this file (empty marker ->
+# everything forwards to Route53), which is what keying off v4 preserves.
+#
+# AAAA is an enrichment of names that already resolve over v4, which also
+# matches the data: v6 ⊆ v4 by construction, since a name only gets a ULA if
+# its address can be derived, and Apple clients (RFC 7217, not EUI-64) are
+# excluded from the v6 map but present in the v4 one.
+#
+# The terminal behaviour is still what we want for a name that HAS an A but no
+# AAAA: NODATA for AAAA is the correct answer and saves a Route53 round-trip.
+if ! jq -n -r --argjson v4 "${records_v4}" --argjson v6 "${records_v6}" --arg ttl "${TTL}" '
+    ($v4 | keys)[] as $h
     | ((($v4[$h] // []) | map({t: "A", v: .}))
        + (($v6[$h] // []) | map({t: "AAAA", v: .}))) as $rrs
     | select($rrs | length > 0)
     | ("    local-zone: \"" + $h + ".home.local.\" static"),
       ($rrs[] | "    local-data: \"" + $h + ".home.local. " + $ttl + " IN " + .t + " " + .v + "\"")
-' >"${gen_file}"
+' >"${gen_file}"; then
+    # jq exits non-zero on a malformed map — e.g. a value that is a string
+    # rather than an array (exit 5). Without this the script would carry on
+    # with an empty gen_file and publish a config with no local-data at all,
+    # reporting "rendered 0 names" as though the registry were simply empty.
+    echo "ERROR generate-home-local: could not render local-data from the SSM maps." \
+         "Check that both parameters hold {\"<name>\": [\"<addr>\", ...]} — a bare string" \
+         "value is the usual cause. Leaving ${OUTPUT} unchanged." >&2
+    exit 1
+fi
 
 # `grep -c` already prints 0 and exits 1 when there is no match, so the
 # `|| echo 0` idiom appends a SECOND zero and the count becomes "0\n0". Let the
