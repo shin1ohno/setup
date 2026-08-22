@@ -111,21 +111,38 @@ end
 # timeout into a permanent NXDOMAIN. unbound leads (it serves home.local
 # locally plus TCP/53, and forwards everything else to Cloudflare DoT), which
 # is the order the RTX already hands DHCP clients — home-monitor/rtx-hnd.tf
-# `dns_servers = [dns-resolver, vpc_resolver, 1.1.1.1]`. The RTX stays as the
-# secondary, so a CT 118 outage is no worse than today's behaviour (and
-# unbound-watchdog, included from pve-host.rb, restarts a wedged unbound).
+# `dns_servers = [dns-resolver, vpc_resolver, 1.1.1.1]`.
+#
+# The RTX secondary is dropped here too, and for a stronger reason than the
+# public resolver was: it does not answer DNS AT ALL any more. Probed
+# 2026-08-21 from this host and from CT 104, both on the LAN — A and AAAA
+# both time out and TCP/53 is refused outright, while ICMP and TCP/22 to the
+# same address are healthy, so the box is up and only the resolver is gone:
+#
+#   dig @192.168.1.253 example.com A      -> timed out (6s)
+#   </dev/tcp/192.168.1.253/53            -> Connection refused
+#   ping 192.168.1.253                    -> 0% loss, 0.147ms
+#
+# A black-holed secondary is worse than no secondary: it cannot answer, and
+# glibc still pays the full per-query timeout walking to it before failing.
+# unbound is therefore the sole entry until it can be paired with its own
+# IPv6 address (a stable ULA is being introduced separately) — that gives a
+# real second path to the same daemon over a different transport, whereas
+# 1.1.1.1 could only ever turn a retryable home.local timeout into a
+# permanent NXDOMAIN. unbound-watchdog (included from pve-host.rb) remains
+# the recovery mechanism for a wedged unbound.
 #
 # The file is written whole rather than appended so the nameserver list stays
-# converged. `options no-aaaa` is carried here for that reason; the later
-# dns-prefer-ipv4 cookbook (via lxc_entry -> lxc-core) finds it already
-# present and no-ops on its `grep -qE '^options[[:space:]].*no-aaaa'` guard.
+# converged. It carried `options no-aaaa` for the same reason until
+# 2026-08-21; that option is now removed fleet-wide by
+# cookbooks/resolv-options, which explains the history in full.
 #
 # Override per host via node[:pve_host][:nameservers] / [:dns_search] when
 # adding a 2nd PVE node on a different LAN.
 
 resolv_staging = "#{node[:setup][:root]}/pve-host/resolv.conf"
 resolv_system  = "/etc/resolv.conf"
-nameservers    = node.dig(:pve_host, :nameservers) || ["192.168.1.61", "192.168.1.253"]
+nameservers    = node.dig(:pve_host, :nameservers) || ["192.168.1.61"]
 dns_search     = node.dig(:pve_host, :dns_search) || "home.local"
 
 # Built by joining lines rather than a squiggly heredoc: the nameserver list is
@@ -138,7 +155,6 @@ resolv_content = [
   "search #{dns_search}",
 ]
 nameservers.each { |ns| resolv_content << "nameserver #{ns}" }
-resolv_content << "options no-aaaa"
 
 file resolv_staging do
   owner node[:setup][:user]
