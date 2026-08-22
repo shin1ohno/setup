@@ -3,22 +3,44 @@
 # Rendered from this template by cookbooks/unbound/files/generate-home-local.sh
 # (the dedicated marker line further below is replaced with home.local local-data).
 #
-# LAN DNS resolver for 192.168.1.0/24, replacing the RTX1210 forwarder which
-# does not serve TCP/53 (RFC 7766 TCP-fallback on truncated responses fails
-# there, breaking Linux name resolution on large/DNSSEC/long-TXT answers).
-#   home.local              -> served LOCALLY from local-data (see marker below);
-#                              unknown names fall through to VPC Route53 (10.33.128.2)
+# LAN DNS resolver for 192.168.1.0/24 and fd97:b085:767d::/64, replacing the
+# RTX1210 forwarder which does not serve TCP/53 (RFC 7766 TCP-fallback on
+# truncated responses fails there, breaking Linux name resolution on
+# large/DNSSEC/long-TXT answers).
+#   home.local              -> served LOCALLY from local-data (see marker below),
+#                              A and AAAA; unknown names fall through to VPC
+#                              Route53 (10.33.128.2)
 #   1.168.192.in-addr.arpa  -> VPC Route53 resolver (10.33.128.2)
-#   everything else         -> Cloudflare DoT (1.1.1.1@853 / 1.0.0.1@853)
+#   everything else         -> Cloudflare + Quad9 DoT, over v4 and v6
+#
+# Dual-stack on both sides: it listens on v4 and v6, and it can reach upstreams
+# over either. Internal AAAA answers are ULA only — see the access-control and
+# local-data blocks for why the delegated global prefix is deliberately absent
+# from both.
 
 server:
     interface: 0.0.0.0@53
+    # Dual-stack since the LAN gained IPv6. The premise of the old `do-ip6: no`
+    # ("the LAN has no IPv6 RA") stopped being true when the RTX started
+    # advertising the DHCPv6-PD delegated prefix.
+    #
+    # `::0` binds every v6 address, but that does NOT make this an open
+    # resolver: unbound's access-control default is REFUSE for anything with no
+    # matching netblock (man unbound.conf: "if none match refuse is used"), and
+    # the implicit allows it inserts are localhost only. The `0.0.0.0/0 refuse`
+    # line below is IPv4-shaped but no `::/0 refuse` is needed — the default
+    # covers v6.
+    #
+    # The two families get SEPARATE sockets (unbound sets IPV6_V6ONLY on its
+    # v6 listeners), so the v4 listener above keeps serving v4 clients from
+    # real v4 source addresses rather than v4-mapped ones. Post-deploy assert:
+    # `ss -lnu sport = :53` must show `[::]:53` and `0.0.0.0:53` as SEPARATE
+    # lines — a single `*:53` would mean a shared dual-stack socket, and v4
+    # ACL matching would already be broken at that point.
+    interface: ::0@53
     port: 53
     do-ip4: yes
-    # IPv4-only resolver: the LAN has no IPv6 RA. AAAA records are still
-    # resolved and returned over IPv4 transport, so client IPv6 connectivity is
-    # unaffected — only this resolver's own listen/transport is IPv4.
-    do-ip6: no
+    do-ip6: yes
     do-udp: yes
     do-tcp: yes
 
@@ -31,11 +53,35 @@ server:
     # unbound when the wedge occurs — that is the actual fix.
 
     # Access control: LAN + loopback only. Never an open resolver.
-    # ::1/128 is listed for forward-compat if do-ip6 is ever flipped to yes.
+    #
+    # Matching is longest-prefix and order-independent, and the default for an
+    # unmatched source is refuse — so the v6 side needs no `::/0 refuse`
+    # counterpart to the v4 line. (`::1/128` is now also inserted implicitly by
+    # do-ip6; kept explicit because it costs nothing and documents intent.)
+    #
+    # The v6 allow is the ULA prefix ONLY. The LAN's globally-routable prefix
+    # is DHCPv6-PD delegated and rotates, so allowing it would mean either a
+    # literal that goes stale or a value derived at converge time — and a
+    # derivation that ever degenerated to a shorter prefix would turn this box
+    # into an open resolver on the public internet. The ULA is ours
+    # permanently, so one static line covers every internal v6 client.
+    #
+    # Clients reach this resolver over v6 by its ULA address, and RFC 6724
+    # source selection picks a ULA source for a ULA destination, so those
+    # queries match the line below. LAN clients that learn the resolver over
+    # DHCPv4 keep querying from a v4 source and match 192.168.1.0/24. Nothing
+    # needs the GUA allowed.
+    #
+    # Note this is a reachability boundary, not a trust boundary: any on-link
+    # device can self-assign an address inside a /64 it can hear RAs for. It
+    # grants exactly what 192.168.1.0/24 grants — "you are on this LAN". The
+    # real boundaries are the L2 segment and the RTX WAN filter
+    # (home-monitor/rtx-hnd.tf, lan2 `in`, default reject).
     access-control: 0.0.0.0/0 refuse
     access-control: 127.0.0.0/8 allow
     access-control: ::1/128 allow
     access-control: 192.168.1.0/24 allow
+    access-control: fd97:b085:767d::/64 allow
 
     # home.local / reverse are UNSIGNED internal zones reached via a forwarder;
     # tell the validator not to require a DNSSEC chain of trust for them.
@@ -55,6 +101,14 @@ server:
     # cookbooks/unbound/files/generate-home-local.sh from the SSM map; names NOT
     # in the registry still fall through to the forward-zone (Route53). If the SSM
     # fetch fails, the marker renders empty and home.local degrades to forward-only.
+    #
+    # AAAA comes from a SECOND parameter (/host-registry/home-local-records-v6)
+    # and carries ULA addresses only, for the same reason the ACL above allows
+    # only the ULA: the delegated global prefix rotates, so a published GUA
+    # AAAA would point at an address the host no longer holds. Not every name
+    # has one — Apple clients form RFC 7217 stable-privacy addresses rather
+    # than EUI-64, so no stable value can be derived for them. A name with an A
+    # but no AAAA answers NODATA for AAAA, which is the correct answer.
     # @@HOME_LOCAL_LOCAL_DATA@@
 
     # Search-domain doubling guard. Clients with a high ndots query the doubled
@@ -70,8 +124,26 @@ server:
     # running a stale config that predates this canary (deployed-but-not-reloaded,
     # the 2026-05-31 root cause). Either restarts unbound. TTL 0 so nothing caches
     # a stale positive; 192.0.2.1 is an RFC 5737 TEST-NET sentinel, never routed.
+    #
+    # The AAAA companion exists so the watchdog CAN prove the v6 listener
+    # separately once it grows a v6 probe — unbound can answer on v4 while its
+    # v6 socket is wedged, and an A-only canary cannot tell those apart.
+    # Nothing queries it yet: cookbooks/unbound-watchdog is unchanged, so this
+    # record is placed ahead of the probe rather than alongside it.
+    #
+    # When that probe is written it MUST use v6 transport to the resolver's
+    # STATIC ULA (`dig -6 @fd97:b085:767d:0:be24:11ff:fe00:76 ...`). Fetching
+    # the AAAA over v4 proves nothing about the v6 socket, and aiming it at the
+    # GUA would make it restart a healthy unbound every 900s after each PD
+    # rotation.
+    #
+    # 2001:db8::1 is the RFC 3849 documentation-range counterpart to the v4
+    # sentinel, equally unroutable. Adding it does not disturb the existing A
+    # probe: an A query still returns exactly one record, so the watchdog's
+    # `dig +short ... A` comparison is unchanged.
     local-zone: "unbound-watchdog.health." static
     local-data: "unbound-watchdog.health. 0 IN A 192.0.2.1"
+    local-data: "unbound-watchdog.health. 0 IN AAAA 2001:db8::1"
 
     # DoT upstream certificate validation
     tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
@@ -113,10 +185,25 @@ forward-zone:
 # privacy-defeating plaintext retry with no plaintext target. Last-resort manual
 # fallback if ALL DoT is unreachable: the RTX1210 stays up — temporarily repoint
 # LAN DHCP DNS (or /etc/resolv.conf) to 1.1.1.1 until DoT recovers.
+#
+# The v6 addresses live in THIS zone block, not a second `forward-zone: "."`.
+# forward-tls-upstream is per-zone, so a separate v6 zone would inherit nothing
+# and silently forward in plaintext — the exact outcome the paragraph above
+# forbids.
+#
+# Every entry carries `#<authname>`. Without it unbound accepts ANY name on the
+# certificate as long as some CA in the bundle signed it (man unbound.conf:
+# "If you leave out the '#' and auth name from the forward-addr, any name is
+# accepted"), which reduces DoT to "encrypted to whoever holds any WebPKI cert"
+# and hands an on-path attacker the whole public-DNS stream.
 forward-zone:
     name: "."
     forward-tls-upstream: yes
     forward-addr: 1.1.1.1@853#cloudflare-dns.com
     forward-addr: 1.0.0.1@853#cloudflare-dns.com
+    forward-addr: 2606:4700:4700::1111@853#cloudflare-dns.com
+    forward-addr: 2606:4700:4700::1001@853#cloudflare-dns.com
+    forward-addr: 2620:fe::fe@853#dns.quad9.net
+    forward-addr: 2620:fe::9@853#dns.quad9.net
     forward-addr: 9.9.9.9@853#dns.quad9.net
     forward-addr: 149.112.112.112@853#dns.quad9.net
