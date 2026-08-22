@@ -474,3 +474,74 @@ stable = v0.8.0, the pinned version).
   `cookbooks/herdr/default.rb`, bump `herdr_version`, and restart the server at
   a moment when no agent panes are active. Delete this entry in the resolving
   commit.
+
+## roon-mcp (CT 108) has been failing every auto-mitamae apply (High)
+
+CT 108 is the only fleet host whose apply never succeeds, so it has been
+drifting from `main` indefinitely while every other host converges. Found while
+verifying the `options no-aaaa` removal (#909): 15 of 18 CTs picked the change
+up, and CT 108 was the only *running, registered* host that did not.
+
+- **Evidence it is long-standing, not new**: the orchestrator log carries
+  `orchestrator: warn — bootstrap-lxc-creds failed for roon-mcp (CT 108),
+  continuing` **1109 times before** the #909 merge commit and 0 times after
+  (`grep -c` split at the first line mentioning the new SHA). The host's
+  `auto_mitamae_last_apply_status{host="roon-mcp"}` is `mitamae_fail`.
+- **Not a recipe-compile problem**: `./bin/mitamae local pve/lxc-roon-mcp.rb
+  --dry-run` inside CT 108 completes with no error and reaches the last
+  cookbook, so the failure is at converge time, on a resource a dry-run does
+  not execute.
+- **Why it matters beyond this one host**: `continuing` in that warning means
+  the orchestrator does not treat the credential failure as fatal, so the run
+  proceeds and fails later with a less specific status. One host silently
+  pinned to an old SHA is exactly the class of drift auto-mitamae exists to
+  prevent.
+- **First step**: run the apply non-dry inside CT 108 and capture the first
+  failing resource (`pct exec 108 -- sh -c 'cd /root/setup && ./bin/mitamae
+  local pve/lxc-roon-mcp.rb 2>&1 | tail -40'`). Then decide whether
+  `bootstrap-lxc-creds` failing should abort that host's cycle instead of
+  warning, so the metric names the real cause. Delete this entry in the
+  resolving commit.
+
+## es-memory (CT 119) is not in the auto-mitamae host list (Medium)
+
+`pve/lxc-es-memory.rb` has no entry in
+`cookbooks/auto-mitamae-orchestrator/files/hosts.json`, so CT 119 is never
+converged automatically and only picks up cookbook changes on a manual apply.
+`bin/lint-cookbooks` already emits a WARN for this, but the WARN has been
+standing long enough to be treated as background noise.
+
+Confirmed live: after #909 merged and the fleet converged, CT 119 was one of
+only two running hosts still carrying `options no-aaaa` — the other being
+CT 108 above.
+
+- **First step**: decide the intent. Either add the `.83` entry to
+  `hosts.json` so it converges like every other service LXC, or add
+  `pve/lxc-es-memory.rb` to `bin/lint-cookbooks` `PVE_HOSTS_EXEMPT` with the
+  reason, so the WARN stops being ambient. Do not leave it as a permanent
+  warning. Delete this entry in the resolving commit.
+
+## LXC resolv.conf falls back to 1.1.1.1, which cannot answer home.local (Medium)
+
+Every PVE LXC gets `nameserver 192.168.1.61` followed by `nameserver 1.1.1.1`
+(set by home-monitor `pve-lxcs.tf`, the `dns.servers` block — NOT by a cookbook
+in this repo). If unbound stops answering, the whole fleet silently degrades to
+plaintext Cloudflare: `home.local` names start returning authoritative NXDOMAIN
+instead of a retryable timeout, and every other query leaves the network in
+cleartext, defeating the DoT-only design in `cookbooks/unbound`.
+
+This is the exact failure that took fleet telemetry down on 2026-08-12
+(self-heal #855/#856/#857) via the PVE host's resolv.conf. That host was fixed
+then — its comment now reads "no public fallback" — but the LXC side was never
+made symmetric.
+
+- **Why it is worse now**: as IPv6 lands, the fleet gains a second path to the
+  same resolver (its ULA address). A silent fallback sitting underneath two
+  paths hides the failure of either.
+- **First step**: choose between removing `1.1.1.1` from the `dns.servers`
+  list in home-monitor's `pve-lxcs.tf` (symmetric with pve-host; makes an
+  unbound outage loud, and `cookbooks/unbound-watchdog` already restarts a
+  wedged unbound), or keeping it and adding an alert that fires when a fleet
+  host resolves an external name without unbound in the path. Removing it is
+  the smaller change and matches the decision already made for pve-host.
+  Delete this entry in the resolving commit.
