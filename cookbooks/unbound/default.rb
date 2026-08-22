@@ -23,6 +23,11 @@ aws_config   = JSON.parse(File.read(File.join(File.dirname(__FILE__), "..", "ssh
 aws_profile  = aws_config["aws_profile"]
 aws_region   = aws_config["aws_region"]
 ssm_param    = "/host-registry/home-local-records"
+# AAAA lives in its own parameter rather than a reshaped v4 value: the two are
+# published by the same Terraform run but this cookbook and that repo deploy
+# independently, so a single merged value would break whichever side landed
+# first. The /host-registry/* IAM grant already covers this path.
+ssm_param_v6 = "/host-registry/home-local-records-v6"
 template_src = "#{staging_dir}/home-monitor.conf.tmpl"
 rendered_cfg = "#{staging_dir}/home-monitor.conf"
 gen_script   = "#{staging_dir}/generate-home-local.sh"
@@ -84,7 +89,7 @@ end
 # leave no rendered output).
 execute "render unbound home-monitor.conf from SSM home.local records" do
   command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
-          "SSM_PARAM=#{ssm_param} " \
+          "SSM_PARAM=#{ssm_param} SSM_PARAM_V6=#{ssm_param_v6} " \
           "TEMPLATE=#{template_src} OUTPUT=#{rendered_cfg} " \
           "bash #{gen_script}"
   user node[:setup][:user]
