@@ -90,6 +90,29 @@ execute "render unbound home-monitor.conf from SSM home.local records" do
   user node[:setup][:user]
 end
 
+# Validate the STAGED render before it is allowed anywhere near /etc.
+#
+# The order here is load-bearing. Validating after the install (which is what
+# this cookbook used to do) leaves a broken config sitting in
+# /etc/unbound/unbound.conf.d/ when checkconf fails: the apply aborts, but the
+# running daemon keeps serving from the config it already has in memory, so
+# nothing looks wrong. The breakage surfaces at the NEXT restart — and the
+# thing most likely to restart unbound is cookbooks/unbound-watchdog, which
+# restarts it precisely when it has wedged. So the failure mode is that the
+# recovery mechanism fires, unbound fails to come back, and LAN DNS stays down
+# with the watchdog now unable to fix it.
+#
+# That was survivable while this config was a static template that could only
+# break via a hand edit. It stops being survivable as soon as any part of the
+# render is generated, so the check moves in front of the install.
+#
+# checkconf accepts the fragment on its own (verified on CT 118: exit 0 against
+# the installed fragment path) because the block is a self-contained `server:`
+# section. Absolute path: /sbin is not on every PATH this may run under.
+execute "validate staged home-monitor.conf before install" do
+  command "/usr/sbin/unbound-checkconf #{rendered_cfg}"
+end
+
 execute "install /etc/unbound/unbound.conf.d/home-monitor.conf" do
   command "sudo install -m 644 -o root -g root " \
           "#{rendered_cfg} " \
@@ -98,7 +121,11 @@ execute "install /etc/unbound/unbound.conf.d/home-monitor.conf" do
   notifies :run, "execute[validate + restart unbound]"
 end
 
-# Validate config BEFORE (re)starting — never restart on a broken config.
+# Second gate, kept deliberately: the staged check above validates the fragment
+# in isolation, this one validates the WHOLE assembled config (base file plus
+# every fragment) as unbound will actually load it. Failing here still aborts
+# before the restart, so a running daemon is never replaced by one that cannot
+# start.
 execute "validate + restart unbound" do
   command "sudo unbound-checkconf && sudo systemctl restart unbound"
   action :nothing
