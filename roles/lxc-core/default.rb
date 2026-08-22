@@ -30,7 +30,7 @@ unless node[:platform] == "darwin"
   include_cookbook "node-exporter"
   include_cookbook "auto-mitamae-target"
   include_cookbook "lxc-mask-unsupported-units"
-  include_cookbook "dns-prefer-ipv4"
+  include_cookbook "resolv-options"
   include_cookbook "lan-vpc-route"
 end
 

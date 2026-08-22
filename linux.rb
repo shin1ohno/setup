@@ -65,10 +65,10 @@ include_role "server" # Server-specific setup
 # entry recipe's cloud hosts do not have, and each one is a HARD abort there
 # (mitamae has no ignore_failure, so the first failure silently skips the rest
 # of the run):
-#   arp-flux / dns-prefer-ipv4 — multi-NIC ARP behaviour and a LAN DNS proxy;
-#     dns-prefer-ipv4 also appends to a systemd-resolved-generated stub that is
-#     regenerated on any DNS change, so the option is churn that silently
-#     disappears
+#   arp-flux / resolv-options — multi-NIC ARP behaviour and the LAN resolver's
+#     /etc/resolv.conf option set; resolv-options also edits a
+#     systemd-resolved-generated stub that is regenerated on any DNS change,
+#     so the edit is churn that silently disappears
 #   bluez / zeroconf — Bluetooth and mDNS have no meaning on a NAT'd VPC, and
 #     standing up avahi there is an unwanted service exposure
 #   broadcom-wifi — installs the bcmwl DKMS package, which cannot build against
@@ -86,7 +86,7 @@ include_role "server" # Server-specific setup
 # get their own entry recipe rather than a hole in this guard.
 unless node[:profile][:label] == "sh1-cloud"
   include_cookbook "arp-flux"
-  include_cookbook "dns-prefer-ipv4" unless node[:platform] == "darwin"
+  include_cookbook "resolv-options" unless node[:platform] == "darwin"
   include_cookbook "bluez"
   include_cookbook "zeroconf"
   include_cookbook "broadcom-wifi"
