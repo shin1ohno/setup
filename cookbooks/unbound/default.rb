@@ -131,6 +131,16 @@ end
 # every fragment) as unbound will actually load it. Failing here still aborts
 # before the restart, so a running daemon is never replaced by one that cannot
 # start.
+#
+# One gap remains and is accepted for now: this runs AFTER the install, so a
+# fragment that is valid alone but conflicts with a sibling in conf.d lands in
+# /etc before anyone notices. That needs two fragments to collide, and conf.d
+# currently holds exactly one managed file plus two static Debian ones — so the
+# trigger is not a random event, it is someone adding a second managed
+# fragment. IF YOU ARE THAT PERSON: move this validation in front of the
+# install by stashing the existing /etc copy first and restoring it when the
+# check fails. Adding the machinery before there is a second fragment costs
+# more than the risk it removes.
 execute "validate + restart unbound" do
   command "sudo unbound-checkconf && sudo systemctl restart unbound"
   action :nothing

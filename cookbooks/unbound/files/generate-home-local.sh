@@ -81,10 +81,18 @@ fi
 # A v6-only name is dropped rather than published. Warn so the drop is visible
 # instead of silent — with today's data this never fires, because every name
 # with a ULA also has an A.
+#
+# `if`, not `[[ ... ]] && echo ...`: the `&&` form returns 1 whenever there are
+# no orphans, which is the normal case. Harmless today because this script runs
+# without `set -e`, but if anyone ever adds `-e` to harden it, the script would
+# exit silently here on almost every run — before rendering, so OUTPUT keeps its
+# old content and the apply looks successful with a stale config. Anyone adding
+# `set -e` should not have to notice this line.
 orphans="$(jq -n -r --argjson v4 "${records_v4}" --argjson v6 "${records_v6}" \
     '(($v6 | keys) - ($v4 | keys)) | join(" ")' 2>/dev/null)"
-[[ -n "${orphans}" ]] && echo "WARN generate-home-local: v6-only names dropped (no A record):" \
-    "${orphans}" >&2
+if [[ -n "${orphans}" ]]; then
+    echo "WARN generate-home-local: v6-only names dropped (no A record): ${orphans}" >&2
+fi
 
 # One local-zone (static, terminal) per hostname, then every A and AAAA that
 # name has. The zone line appears exactly once even for a name in both maps.
