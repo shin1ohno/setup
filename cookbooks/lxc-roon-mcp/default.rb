@@ -143,6 +143,17 @@ group node[:setup][:group]
         image: roon-mcp:#{version}
         container_name: roon-mcp
         restart: unless-stopped
+        # Blast-radius containment, not leak prevention — 0.5.7 fixes the SSE
+        # session leak itself (#900). Without a limit of its own this service
+        # can consume the CT's whole 6 GB: on 2026-08-04 it did, and CT 108
+        # stalled for 17 minutes with sshd and elastic-agent taken down
+        # alongside it, so the outage was invisible from inside. With the
+        # limit, a future leak OOM-kills just this container and
+        # `restart: unless-stopped` brings it back, while the CT stays
+        # reachable and keeps shipping metrics. 1 GB is ~2x the peak the
+        # leaking 0.5.6 reached over 6 days (594 MB), so a healthy 0.5.7 —
+        # whose per-session cost drops 38.6 kB -> 1.0 kB — has wide headroom.
+        mem_limit: 1g
         # Container netns has its own resolver; LXC /etc/hosts is invisible.
         # OTLP exporter targets apm-server.home.local — without this, LAN
         # DNS outage (RTX SERVFAIL on home.local, see PR #390) breaks the

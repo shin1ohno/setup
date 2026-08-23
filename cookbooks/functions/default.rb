@@ -694,10 +694,35 @@ end
 # compose-using cookbook needs:
 #
 #   1. `execute "ensure <project> running"` — idempotency probe (docker
-#      compose config --services + docker ps with compose-project label)
-#      followed by `docker compose up -d`. Skip-or-run is decided by
-#      whether the running services match the expected services. When
-#      env_path is provided the probe gates on `test -f` first.
+#      compose config --services/--images + docker ps with compose-project
+#      label) followed by `docker compose up -d`. Skip-or-run is decided by
+#      whether the running services AND the images they run match what the
+#      compose file declares. When env_path is provided the probe gates on
+#      `test -f` first.
+#
+#      The image half is load-bearing, not belt-and-braces. `restart` below
+#      fires only when the compose-file `file` resource CHANGES, i.e. exactly
+#      once per version bump; if that one build fails, the compose file on
+#      disk already carries the new tag, so it never notifies again and the
+#      service-name probe still matches (the OLD container is running under
+#      the right service name). The host then stays pinned to the old image
+#      forever while every apply reports success. Observed on CT 108: PR #900
+#      bumped roon-mcp 0.5.6 → 0.5.7 to fix an SSE session leak, the build
+#      died because the LXC disk was full, and the fix sat undeployed for
+#      5 days with a green-looking converge. Comparing images makes the drift
+#      a converge trigger, so the build retries (at most once per
+#      mitamae-runner RECONCILE_INTERVAL_SEC, which is flock'd and hourly).
+#
+#      Safe against flapping: `docker compose config --images` and
+#      `docker ps --format '{{.Image}}'` agree token-for-token on every
+#      current adopter, including a service with no `image:` key, where both
+#      report the derived `<project>-<service>` name (verified live on
+#      CT 109/110/108), and a moving tag like weave's `:main` compares equal
+#      to itself rather than rebuilding every cycle. If `config --images`
+#      answers nothing at all — an older compose without the flag — the
+#      empty result is discarded rather than read as "everything drifted",
+#      so the probe degrades to the service-name check instead of rebuilding
+#      from source on every converge.
 #
 #   2. `execute "restart <project>"` — action :nothing, fires only via
 #      notifies. Always passes `--force-recreate` because bare `up -d` is
@@ -706,6 +731,17 @@ end
 #      When env_path is provided, gated on `test -f` so the resource
 #      doesn't restart against an empty env (e.g. SSM auth absent on a
 #      fresh host before bootstrap).
+#
+#   3. When build_flag is on, both commands chain a prune of build garbage
+#      (dangling images + stopped non-compose containers) with the compose
+#      exit status preserved. A source build leaves ~1.8 GB of untagged
+#      builder stages per version, so on an 8 GB LXC four version bumps fill
+#      the disk — which is what actually broke CT 108: `apt-get update` hit
+#      "Disk quota exceeded" and aborted the whole apply long before it
+#      reached any compose resource. The prune runs AFTER `up -d`, so even
+#      if the `label!=` negation were ignored by a future docker, every
+#      compose service is already running by then and cannot be a prune
+#      target.
 #
 # Retro knowledge baked in (see ~/.claude/docs/docker-compose.md):
 #   --force-recreate mandatory; not_if "test -f env" mandatory when env
@@ -754,14 +790,41 @@ define :compose_service,
   probe_sh = <<~SH.tr("\n", " ").strip
     #{env_gate}expected=$(docker compose -f #{cp} config --services 2>/dev/null | sort | tr '\\n' ' ');
     [ -n "$expected" ] || exit 1;
+    expected_img=$(docker compose -f #{cp} config --images 2>/dev/null | sort | tr '\\n' ' ');
     running=$(docker ps --filter "label=com.docker.compose.project=#{pn}"
                         --filter status=running --format '{{.Label "com.docker.compose.service"}}'
               | sort | tr '\\n' ' ');
-    test "$running" = "$expected" && exit 1 || exit 0
+    running_img=$(docker ps --filter "label=com.docker.compose.project=#{pn}"
+                            --filter status=running --format '{{.Image}}'
+                  | sort | tr '\\n' ' ');
+    [ -n "$expected_img" ] || expected_img="$running_img";
+    test "$running" = "$expected" && test "$running_img" = "$expected_img" && exit 1 || exit 0
   SH
 
-  ensure_command = "#{buildkit_prefix}docker compose -f #{cp} up -d#{build_arg}#{wait_args}"
-  restart_command = "#{buildkit_prefix}docker compose -f #{cp} up -d#{build_arg} --force-recreate#{wait_args}"
+  # Reclaim what a `--build` leaves behind. Runs after the compose command,
+  # success or failure, with the compose exit status preserved — a FAILED
+  # build is precisely when the garbage exists, so pruning only on success
+  # would never fire in the case that matters.
+  #
+  # Yes, this drops the previous build's untagged stages, which are the
+  # classic builder's layer cache. That costs nothing here: every adopter
+  # builds from a git context pinned to a tag/ref, so a version bump
+  # invalidates the source COPY layer and recompiles from scratch either
+  # way. Keeping dead stages buys no build time and costs ~1.8 GB each.
+  prune_sh =
+    if params[:build_flag]
+      " ; _rc=$?;" \
+      " docker container prune -f --filter \"label!=com.docker.compose.project\" >/dev/null 2>&1 || true;" \
+      " docker image prune -f >/dev/null 2>&1 || true;" \
+      " exit $_rc"
+    else
+      ""
+    end
+
+  ensure_command =
+    "#{buildkit_prefix}docker compose -f #{cp} up -d#{build_arg}#{wait_args}#{prune_sh}"
+  restart_command =
+    "#{buildkit_prefix}docker compose -f #{cp} up -d#{build_arg} --force-recreate#{wait_args}#{prune_sh}"
 
   execute "ensure #{pn} running" do
     command ensure_command
