@@ -475,42 +475,6 @@ stable = v0.8.0, the pinned version).
   a moment when no agent panes are active. Delete this entry in the resolving
   commit.
 
-## apt archives are never cleaned — 0.9-3.1 GB of dead .debs per LXC (Medium)
-
-Nothing in this repo ever runs `apt-get clean` / `autoclean`, and Debian does
-not do it on its own, so `/var/cache/apt` grows monotonically on every host
-for the life of the CT. Measured across the running fleet 2026-08-23:
-
-| CT | apt cache | disk used |
-|---|---|---|
-| 112 / 113 / 114 (es-*) | 3.1 G each | 46% |
-| 115 (kibana) | 2.2 G | 14% |
-| 104 (pro-dev) | 1.7 G | 34% |
-| 100, 109, 110, 111, 120 | 1.1 G | 33-72% |
-| 101, 102, 106, 118 | 0.9 G | 30-67% |
-
-~22 GB fleet-wide. It is worst where it hurts most: CTs 101 / 102 / 118 have
-4 GB disks, so ~23% of the whole filesystem is .debs that were already
-installed and will never be read again.
-
-- **Why it is not urgent**: no host is failing on this today. It became
-  visible while fixing CT 108, where 1.1 G of apt cache sat alongside the
-  docker build garbage that actually filled the disk; `apt-get clean` was
-  part of the manual reclaim there (CT 108 now reads 54 M).
-- **Why it should not be left**: it is the same failure class the CT 108
-  incident just demonstrated end to end — a full root filesystem makes
-  `apt-get update` exit 100, which aborts the mitamae apply at
-  `execute[update_package_index]`, i.e. before ANY cookbook's own resources
-  run. A disk that fills for an unrelated reason takes the whole convergence
-  pipeline down with it, silently.
-- **First step**: decide the layer. Either chain `apt-get clean` into the
-  existing `update_package_index` / `install_package` plumbing in
-  `cookbooks/functions/default.rb` (fires on every host, smallest change), or
-  ship `/etc/apt/apt.conf.d/` with `APT::Keep-Downloaded-Packages "false";`
-  from a shared cookbook (declarative, survives manual apt use too). Prefer
-  the second if it holds on both Debian 12 and 13. Delete this entry in the
-  resolving commit.
-
 ## es-memory (CT 119) is not in the auto-mitamae host list (Medium)
 
 `pve/lxc-es-memory.rb` has no entry in

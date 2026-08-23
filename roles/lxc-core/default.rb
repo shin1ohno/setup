@@ -17,6 +17,12 @@
 #   sysctl, tmpfiles, udev). The cookbook self-guards via
 #   `systemd-detect-virt --container` so it no-ops on the bare-metal
 #   PVE host.
+# - apt-no-keep-downloads: stops /var/cache/apt/archives growing without
+#   bound (0.9-3.1 GB per LXC when measured, ~23% of the disk on the 4 GB
+#   CTs) and reclaims what is already there. Belongs to ALL hosts, not one:
+#   a full root filesystem aborts the whole mitamae run at
+#   `execute[update_package_index]`, before any cookbook's own resources
+#   are reached — which is how CT 108 sat undeployed for five days (#913).
 #
 # Add a primitive here only if it applies to ALL hosts in this role pool.
 # Host-specific primitives (docker-engine, awscli, tailscale, ssh-keys)
@@ -32,6 +38,7 @@ unless node[:platform] == "darwin"
   include_cookbook "lxc-mask-unsupported-units"
   include_cookbook "resolv-options"
   include_cookbook "lan-vpc-route"
+  include_cookbook "apt-no-keep-downloads"
 end
 
 include_cookbook "timezone"
