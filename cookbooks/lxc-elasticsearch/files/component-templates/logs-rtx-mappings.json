@@ -1,4 +1,9 @@
 {
+  "_meta": {
+    "description": "Mappings for the RTX router syslog data stream (logs-rtx-*), written by cookbooks/lxc-monitoring/files/vector.toml.",
+    "strict_mapping_note": "dynamic is strict: a document carrying a field absent from this list is rejected whole with strict_dynamic_mapping_exception. When adding a parser stage to vector.toml that emits new fields, apply this component template FIRST and also PUT logs-rtx-default/_mapping (the component template only reaches indices created after the change, not the current write index).",
+    "last_field_addition": "2026-08-23 - ip_version / icmp_type / event_kind / dyn_seq / session_time / sw_path / sw_mac / sw_event, added with the IPv6, [INSPECT] and [SWCTL] parser stages."
+  },
   "template": {
     "mappings": {
       "dynamic": "strict",
@@ -51,7 +56,15 @@
         "mac":                { "type": "keyword" },
         "repeat_count":       { "type": "integer" },
         "port":               { "type": "integer" },
-        "source_type":        { "type": "keyword" }
+        "source_type":        { "type": "keyword" },
+        "ip_version":         { "type": "byte" },
+        "icmp_type":          { "type": "keyword" },
+        "event_kind":         { "type": "keyword" },
+        "dyn_seq":            { "type": "keyword" },
+        "session_time":       { "type": "date" },
+        "sw_path":            { "type": "keyword" },
+        "sw_mac":             { "type": "keyword" },
+        "sw_event":           { "type": "keyword" }
       }
     }
   }
