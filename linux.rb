@@ -51,6 +51,12 @@ include_cookbook "zed-remote-server"
 # restriction is absent.
 include_cookbook "bwrap-userns"
 
+# Keep /var/cache/apt/archives from growing without bound. Unconditional and
+# outside the sh1-cloud guard below, for the same reason as bwrap-userns: apt
+# keeps every .deb it downloads on the cloud box too, and nothing here is
+# hardware-coupled. The LXC fleet reaches this cookbook via roles/lxc-core.
+include_cookbook "apt-no-keep-downloads"
+
 # Legacy roles for backwards compatibility
 include_role "manage" # Managed projects setup
 include_role "network" # Network configuration
