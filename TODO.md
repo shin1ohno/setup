@@ -517,3 +517,27 @@ made symmetric.
   host resolves an external name without unbound in the path. Removing it is
   the smaller change and matches the decision already made for pve-host.
   Delete this entry in the resolving commit.
+
+## Vector drops 94% of RTX DHCP lease events on the floor (Low)
+
+`transforms.parse` Stage 3 in `cookbooks/lxc-monitoring/files/vector.toml` matches
+`\[DHCPD\] (?P<dhcp_event>Extends|Assigns|Releases) (?P<lease_ip>[\d.]+): (?P<mac>[0-9a-f:]+)`
+— the event word has to follow `[DHCPD] ` immediately. HND's RTX1210 puts the
+serving interface in between and ITM's RTX830 does not:
+
+```
+[DHCPD] LAN1(port4) Extends 192.168.1.69: 9c:58:84:16:a5:b2   <- hnd, unparsed
+[DHCPD] Extends 192.168.1.156: 12:e6:07:0f:e1:ec              <- itm, parsed
+```
+
+- **Measured 2026-08-23**: 474 `[DHCPD]` events in 24h, of which only 30 carry
+  `dhcp_event` — every one of those 30 is from itm. All 444 hnd lease events land
+  with no `dhcp_event` / `lease_ip` / `mac`, so "which MAC held which lease when"
+  is unanswerable for the site that actually has the device churn. Found while
+  verifying the IPv6 parser work in PR #915; unrelated to it and older than it.
+- **First step**: allow an optional interface token —
+  `\[DHCPD\] (?:(?P<dhcp_interface>\S+) )?(?P<dhcp_event>Extends|Assigns|Releases) ...`
+  — and add `dhcp_interface` to `logs-rtx-mappings.json` if it is captured, since
+  that mapping is `dynamic: strict` and a new field is otherwise a whole-document
+  rejection. Cover both spellings with a `[[tests]]` case each; the harness and
+  its `vector test` invocation are already in the file.
