@@ -137,6 +137,8 @@ source = '''
   filter_re = r'^(?P<interface>\S+) (?P<action_word>Passed|Rejected) at (?P<direction>IN|OUT)\((?P<filter_no>\d+)\) filter: (?P<protocol>\w+) (?P<src>[\d.]+)(?::(?P<src_port>\d+))? > (?P<dst>[\d.]+)(?::(?P<dst_port>\d+))?'
   fr = parse_regex(.message, filter_re) ?? null
   if !is_null(fr) {
+    .event_kind = "filter"
+    .ip_version = 4
     .interface = fr.interface
     .direction = fr.direction
     .filter_no = fr.filter_no
@@ -146,6 +148,147 @@ source = '''
     if exists(fr.src_port) { .src_port = fr.src_port }
     .dst = fr.dst
     if exists(fr.dst_port) { .dst_port = fr.dst_port }
+  }
+
+  # Shared by the IPv6 stages below. RTX prints well-known ports by SERVICE
+  # NAME, but src_port / dst_port are `integer` in the logs-rtx mapping, so a
+  # bare name must never reach the sink. Names seen on the wire so far are
+  # only `www` and `https`; the rest of this table is the RTX service-name
+  # vocabulary used by the filter definitions themselves (see rtx-hnd.tf
+  # `dest_port = "www,21,nntp"` and the netbios_ns-netbios_ssn ranges), so a
+  # firmware that starts printing them resolves rather than drops.
+  rtx_ports = { "ftp": 21, "ssh": 22, "telnet": 23, "smtp": 25, "domain": 53,
+                "dhcps": 67, "dhcpc": 68, "tftp": 69, "gopher": 70,
+                "finger": 79, "www": 80, "pop3": 110, "ident": 113,
+                "nntp": 119, "ntp": 123, "netbios_ns": 137,
+                "netbios_dgm": 138, "netbios_ssn": 139, "imap2": 143,
+                "snmp": 161, "ldap": 389, "https": 443, "syslog": 514,
+                "submission": 587, "imaps": 993, "pop3s": 995 }
+  msg_rtx = to_string(.message)
+
+  # Stage 1b: IPv6 filter log structure.
+  # The Stage 1 regex is IPv4-only — `[\d.]+` for the address and `:` as the
+  # port separator — so every IPv6 filter line fell through unparsed until
+  # 2026-08-23. That was 382,526 of HND's 384,377 events/day (99.5%) with no
+  # action / src / dst / geoip, i.e. invisible to every Kibana aggregation,
+  # which is why a steady stream of rejected IPv6 return traffic went
+  # unnoticed for weeks. Four shapes occur on the wire:
+  #   "LAN2 Rejected at IN(11) filter: TCP 2606:4700:7::1fd.www > 240f:146:70c8:2:3c15:2f95:8ea7:c175.57680"
+  #   "LAN2 Rejected at IN(11) filter: UDP 2404:6800:400b:c015::54.https > 240f:146:70c8:2:1cce:c905:53d1:3b6c.61923"
+  #   "TUNNEL[1] Rejected at IN(300) filter: ICMP fe80::8617:15ff:fe15:5a5f > ff02::fb : MLDv1 report"
+  #   "TUNNEL[1] Rejected at IN(300) filter: Hop-by-hop ext. fe80::8617:15ff:fe15:5a5f > ff02::fb"
+  # IPv6 separates address and port with "." rather than ":", and the ICMP /
+  # extension-header forms carry no ports at all. `protocol` keeps the token
+  # verbatim (ICMP here is really ICMPv6) so existing dashboard filter values
+  # keep working; `ip_version` is the field that disambiguates.
+  if is_null(fr) {
+    f6 = parse_regex(msg_rtx, r'^(?P<interface>\S+) (?P<action_word>Passed|Rejected) at (?P<direction>IN|OUT)\((?P<filter_no>\d+)\) filter: (?P<rest>.+)$') ?? null
+    if !is_null(f6) {
+      rest6 = to_string(f6.rest)
+      # A v6 address token is hex digits and colons only, so it can never
+      # swallow the "." that introduces the port nor the " > " separator.
+      b6 = parse_regex(rest6, r'^(?P<protocol>TCP|UDP) (?P<src>[0-9A-Fa-f:]+)\.(?P<src_port>[0-9A-Za-z_\-]+) > (?P<dst>[0-9A-Fa-f:]+)\.(?P<dst_port>[0-9A-Za-z_\-]+)$') ?? null
+      if is_null(b6) {
+        b6 = parse_regex(rest6, r'^(?P<protocol>ICMP) (?P<src>[0-9A-Fa-f:]+) > (?P<dst>[0-9A-Fa-f:]+) : (?P<icmp_type>.+)$') ?? null
+      }
+      if is_null(b6) {
+        # Extension-header and portless forms: "Hop-by-hop ext.", "Fragment
+        # ext.", bare "ICMP". The protocol token is lazy so it stops at the
+        # first token that parses as a v6 address.
+        b6 = parse_regex(rest6, r'^(?P<protocol>[A-Za-z][\w\- ]*?\.?) (?P<src>[0-9A-Fa-f:]+) > (?P<dst>[0-9A-Fa-f:]+)$') ?? null
+      }
+      if !is_null(b6) {
+        src6 = to_string(b6.src)
+        dst6 = to_string(b6.dst)
+        # Require a colon before writing `src` / `dst`: they are ES `ip`
+        # fields and the hex character class also accepts a bare decimal run,
+        # which would be a whole-document rejection rather than a lost field.
+        if contains(src6, ":") && contains(dst6, ":") {
+          .event_kind = "filter"
+          .ip_version = 6
+          .interface = f6.interface
+          .direction = f6.direction
+          .filter_no = f6.filter_no
+          .action = if f6.action_word == "Passed" { "PASS" } else { "REJECT" }
+          .protocol = b6.protocol
+          .src = src6
+          .dst = dst6
+          if exists(b6.icmp_type) { .icmp_type = b6.icmp_type }
+          if exists(b6.src_port) {
+            sp_tok = to_string(b6.src_port)
+            sp = to_int(sp_tok) ?? get(rtx_ports, [sp_tok]) ?? null
+            if !is_null(sp) { .src_port = sp }
+          }
+          if exists(b6.dst_port) {
+            dp_tok = to_string(b6.dst_port)
+            dp = to_int(dp_tok) ?? get(rtx_ports, [dp_tok]) ?? null
+            if !is_null(dp) { .dst_port = dp }
+          }
+        }
+      }
+    }
+  }
+
+  # Stage 1c: dynamic-filter session log ("[INSPECT]").
+  # RTX emits one line per session for every `ip/ipv6 filter dynamic` entry
+  # with syslog on, which is the default for HND's v6 entries — 163,311
+  # events/day, 43% of that router's volume. It is the only per-session
+  # record of WHICH dynamic entry admitted a flow (`dyn_seq`), which is what
+  # any stateful-return-path investigation has to join against the
+  # terminal-reject lines. v4 prints "addr:port", v6 prints "addr.port":
+  #   "[INSPECT] LAN2[out][11] TCP 240f:146:70c8:2:be24:11ff:fe00:67.34944 > 2606:b740:1:20::102.443 (2026/08/23 14:25:32)"
+  #   "[INSPECT] LAN2[in][105] UDP 1.1.1.1:53 > 192.168.1.253:10295 (2026/08/22 17:52:13)"
+  # The trailing timestamp is the ROUTER's own clock. HND has no ntpdate
+  # schedule and measured 296s fast on 2026-08-23, so it is kept in
+  # `session_time` and never used for `@timestamp` (which stays receive-time).
+  # `direction` is upper-cased to match the IN/OUT of the filter stages.
+  if starts_with(msg_rtx, "[INSPECT] ") {
+    ins = parse_regex(msg_rtx, r'^\[INSPECT\] (?P<interface>[A-Za-z0-9]+)\[(?P<direction>in|out)\]\[(?P<dyn_seq>\d+)\] (?P<protocol>\w+) (?P<src>[0-9A-Fa-f:]+)\.(?P<src_port>[0-9A-Za-z_\-]+) > (?P<dst>[0-9A-Fa-f:]+)\.(?P<dst_port>[0-9A-Za-z_\-]+) \((?P<session_time>[\d/]+ [\d:]+)\)$') ?? null
+    ins_v = 6
+    if is_null(ins) {
+      ins = parse_regex(msg_rtx, r'^\[INSPECT\] (?P<interface>[A-Za-z0-9]+)\[(?P<direction>in|out)\]\[(?P<dyn_seq>\d+)\] (?P<protocol>\w+) (?P<src>[\d.]+):(?P<src_port>\d+) > (?P<dst>[\d.]+):(?P<dst_port>\d+) \((?P<session_time>[\d/]+ [\d:]+)\)$') ?? null
+      ins_v = 4
+    }
+    if !is_null(ins) {
+      .event_kind = "inspect"
+      .ip_version = ins_v
+      .interface = ins.interface
+      .direction = upcase(to_string(ins.direction))
+      .dyn_seq = ins.dyn_seq
+      .protocol = ins.protocol
+      .src = ins.src
+      .dst = ins.dst
+      isp_tok = to_string(ins.src_port)
+      isp = to_int(isp_tok) ?? get(rtx_ports, [isp_tok]) ?? null
+      if !is_null(isp) { .src_port = isp }
+      idp_tok = to_string(ins.dst_port)
+      idp = to_int(idp_tok) ?? get(rtx_ports, [idp_tok]) ?? null
+      if !is_null(idp) { .dst_port = idp }
+      # RTX renders local time with no offset; the routers are fixed to
+      # +09:00 (`rtx_system.timezone` in home-monitor/rtx-hnd.tf), so append
+      # it rather than letting parse_timestamp default the value to UTC.
+      st = parse_timestamp(to_string(ins.session_time) + "+0900", "%Y/%m/%d %H:%M:%S%z") ?? null
+      if !is_null(st) { .session_time = st }
+    }
+  }
+
+  # Stage 1d: L2MS switch-control log ("[SWCTL]").
+  # 5,064 events/day on HND, and `detect up` has never appeared opposite the
+  # 11,795 `detect down` in a 7-day window — the same switch MAC shows up
+  # under two topology paths (`tn1` and `tn1-lan1:1`) because `switch control
+  # use` is on for both lan1 and bridge1, and bridge1 carries the L2TPv3
+  # tunnel to the Ibaraki site. Splitting path / MAC / event out is what makes
+  # that duplication countable instead of a wall of identical strings.
+  #   "[SWCTL] tn1-lan1:1(ac:44:f2:09:f7:3d): detect down"
+  #   "[SWCTL] lan1:4(ac:44:f2:39:07:13): PORT2 link down"
+  if starts_with(msg_rtx, "[SWCTL] ") {
+    sw = parse_regex(msg_rtx, r'^\[SWCTL\] (?P<sw_path>[^()]+)\((?P<sw_mac>[0-9A-Fa-f:]{17})\): (?P<sw_event>.+)$') ?? null
+    if !is_null(sw) {
+      .event_kind = "swctl"
+      .sw_path = sw.sw_path
+      .sw_mac = downcase(to_string(sw.sw_mac))
+      .sw_event = sw.sw_event
+    }
   }
 
   # Stage 2: IKE / IPsec session events.
@@ -459,3 +602,283 @@ buffer = { type = "disk", max_size = 1073741824, when_full = "drop_newest" }
 type = "prometheus_exporter"
 inputs = ["vector_metrics"]
 address = "0.0.0.0:9598"
+
+# -----------------------------------------------------------------------------
+# Unit tests (`vector test /etc/vector/vector.toml`)
+# -----------------------------------------------------------------------------
+#
+# These exist because `vector validate --no-environment` does NOT build the
+# topology and therefore accepts VRL that the running Vector rejects — the
+# trap already documented on the AP branch above. `vector test` compiles the
+# remap programs and runs them, so it is the only local gate that actually
+# proves a parser change works.
+#
+# Running them needs the two files the sinks reference (the GeoIP mmdb is
+# loaded by the enrichment table at topology build time), so from a checkout:
+#
+#   docker run --rm
+#     -v <repo>/cookbooks/lxc-monitoring/files/vector.toml:/etc/vector/vector.toml:ro
+#     -v <geoip dir>:/etc/vector/geoip:ro
+#     -v <any pem>:/etc/vector/elastic-ca.crt:ro
+#     -e ELASTIC_VECTOR_PASSWORD=test
+#     timberio/vector:0.45.0-alpine test /etc/vector/vector.toml
+#
+# Write the paths out in full rather than using a shell variable: Vector
+# substitutes environment references across the WHOLE config file, comments
+# included, so a dollar-sign PWD in this block fails config load with
+# "Missing environment variable in config".
+#
+# The mmdb is ~130 MB and not in the repo; copy it off the running host at
+# /root/deploy/monitoring/geoip/dbip-city-lite.mmdb.
+
+[[tests]]
+name = "rtx v4 filter line still parses (regression)"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<133>PP[01] Passed at IN(200099) filter: UDP 157.240.209.16:443 > 192.168.1.152:61373"
+host = "192.168.1.254"
+[[tests.outputs]]
+extract_from = "parse"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.router, "itm")
+assert_eq!(.event_kind, "filter")
+assert_eq!(.ip_version, 4)
+assert_eq!(.action, "PASS")
+assert_eq!(.direction, "IN")
+assert_eq!(.filter_no, "200099")
+assert_eq!(.protocol, "UDP")
+assert_eq!(.src, "157.240.209.16")
+assert_eq!(.src_port, "443")
+assert_eq!(.dst, "192.168.1.152")
+assert_eq!(.dst_port, "61373")
+# Value not asserted: dbip-city-lite is re-downloaded monthly and an
+# anycast address can change country between releases. What this pins is
+# that Stage 5 still enriches off the Stage 1 `src`.
+assert!(exists(.geoip_country_code))
+'''
+
+[[tests]]
+name = "rtx v6 tcp reject resolves a service-name port"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<133>LAN2 Rejected at IN(11) filter: TCP 2606:4700:7::1fd.www > 240f:146:70c8:2:3c15:2f95:8ea7:c175.57680"
+host = "192.168.1.253"
+[[tests.outputs]]
+extract_from = "parse"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.router, "hnd")
+assert_eq!(.event_kind, "filter")
+assert_eq!(.ip_version, 6)
+assert_eq!(.action, "REJECT")
+assert_eq!(.direction, "IN")
+assert_eq!(.filter_no, "11")
+assert_eq!(.interface, "LAN2")
+assert_eq!(.protocol, "TCP")
+assert_eq!(.src, "2606:4700:7::1fd")
+assert_eq!(.src_port, 80)
+assert_eq!(.dst, "240f:146:70c8:2:3c15:2f95:8ea7:c175")
+assert_eq!(.dst_port, 57680)
+'''
+
+[[tests]]
+name = "rtx v6 udp reject keeps a numeric port and resolves https"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<133>LAN2 Rejected at IN(11) filter: UDP 2404:6800:400b:c015::54.https > 240f:146:70c8:2:1cce:c905:53d1:3b6c.61923"
+host = "192.168.1.253"
+[[tests.outputs]]
+extract_from = "parse"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.ip_version, 6)
+assert_eq!(.protocol, "UDP")
+assert_eq!(.src_port, 443)
+assert_eq!(.dst_port, 61923)
+'''
+
+[[tests]]
+name = "rtx v6 icmp keeps the type text and sets no ports"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<133>TUNNEL[1] Rejected at IN(300) filter: ICMP fe80::8617:15ff:fe15:5a5f > ff02::fb : MLDv1 report"
+host = "192.168.1.253"
+[[tests.outputs]]
+extract_from = "parse"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.ip_version, 6)
+assert_eq!(.interface, "TUNNEL[1]")
+assert_eq!(.protocol, "ICMP")
+assert_eq!(.icmp_type, "MLDv1 report")
+assert_eq!(.src, "fe80::8617:15ff:fe15:5a5f")
+assert_eq!(.dst, "ff02::fb")
+assert!(!exists(.src_port))
+assert!(!exists(.dst_port))
+'''
+
+[[tests]]
+name = "rtx v6 extension-header form parses without ports"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<133>TUNNEL[1] Rejected at OUT(300) filter: Hop-by-hop ext. fe80::8617:15ff:fe15:5a5f > ff02::fb"
+host = "192.168.1.253"
+[[tests.outputs]]
+extract_from = "parse"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.ip_version, 6)
+assert_eq!(.direction, "OUT")
+assert_eq!(.protocol, "Hop-by-hop ext.")
+assert_eq!(.src, "fe80::8617:15ff:fe15:5a5f")
+assert_eq!(.dst, "ff02::fb")
+assert!(!exists(.src_port))
+'''
+
+[[tests]]
+name = "rtx v6 INSPECT session line carries dyn_seq and router-clock session_time"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<133>[INSPECT] LAN2[out][11] TCP 240f:146:70c8:2:be24:11ff:fe00:67.34944 > 2606:b740:1:20::102.443 (2026/08/23 14:25:32)"
+host = "192.168.1.253"
+[[tests.outputs]]
+extract_from = "parse"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.event_kind, "inspect")
+assert_eq!(.ip_version, 6)
+assert_eq!(.interface, "LAN2")
+assert_eq!(.direction, "OUT")
+assert_eq!(.dyn_seq, "11")
+assert_eq!(.protocol, "TCP")
+assert_eq!(.src, "240f:146:70c8:2:be24:11ff:fe00:67")
+assert_eq!(.src_port, 34944)
+assert_eq!(.dst, "2606:b740:1:20::102")
+assert_eq!(.dst_port, 443)
+assert_eq!(.session_time, t'2026-08-23T05:25:32Z')
+'''
+
+[[tests]]
+name = "rtx v4 INSPECT session line uses the colon port form"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<133>[INSPECT] LAN2[in][105] UDP 1.1.1.1:53 > 192.168.1.253:10295 (2026/08/22 17:52:13)"
+host = "192.168.1.253"
+[[tests.outputs]]
+extract_from = "parse"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.event_kind, "inspect")
+assert_eq!(.ip_version, 4)
+assert_eq!(.direction, "IN")
+assert_eq!(.dyn_seq, "105")
+assert_eq!(.src, "1.1.1.1")
+assert_eq!(.src_port, 53)
+assert_eq!(.dst_port, 10295)
+assert_eq!(.session_time, t'2026-08-22T08:52:13Z')
+'''
+
+[[tests]]
+name = "rtx SWCTL line splits topology path, mac and event"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<134>[SWCTL] tn1-lan1:1(ac:44:f2:09:f7:3d): detect down"
+host = "192.168.1.253"
+[[tests.outputs]]
+extract_from = "parse"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.event_kind, "swctl")
+assert_eq!(.sw_path, "tn1-lan1:1")
+assert_eq!(.sw_mac, "ac:44:f2:09:f7:3d")
+assert_eq!(.sw_event, "detect down")
+assert!(!exists(.action))
+'''
+
+[[tests]]
+name = "wlx AP line is untouched by the RTX stages"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<134> [ROAMING_ASSIST] <0203> STA (aa:bb:cc:dd:ee:ff) RSSI -72 below threshold"
+host = "192.168.1.6"
+[[tests.outputs]]
+extract_from = "parse"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.device, "wlx323")
+assert_eq!(.device_type, "ap")
+assert_eq!(.module, "ROAMING_ASSIST")
+assert!(!exists(.event_kind))
+assert!(!exists(.ip_version))
+assert!(!exists(.action))
+'''
+
+[[tests]]
+name = "v6 reject reaches the es sink shaped for the strict mapping"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<133>LAN2 Rejected at IN(11) filter: TCP 2606:4700:7::1fd.www > 240f:146:70c8:2:3c15:2f95:8ea7:c175.57680"
+host = "192.168.1.253"
+[[tests.outputs]]
+extract_from = "parsed_rtx_for_es"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+# device_type is a routing helper and is absent from logs-rtx-mappings.json;
+# leaving it on the event is a whole-document rejection under dynamic:strict.
+assert!(!exists(.device_type))
+assert_eq!(.src_port, 80)
+assert_eq!(.dst_port, 57680)
+assert_eq!(.ip_version, 6)
+assert_eq!(.event_kind, "filter")
+'''
+
+[[tests]]
+name = "swctl event reaches the es sink without router-only filter fields"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+message = "<134>[SWCTL] lan1:4(ac:44:f2:39:07:13): PORT2 link down"
+host = "192.168.1.253"
+[[tests.outputs]]
+extract_from = "parsed_rtx_for_es"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert!(!exists(.device_type))
+assert_eq!(.sw_path, "lan1:4")
+assert_eq!(.sw_mac, "ac:44:f2:39:07:13")
+assert_eq!(.sw_event, "PORT2 link down")
+assert!(!exists(.src))
+'''
