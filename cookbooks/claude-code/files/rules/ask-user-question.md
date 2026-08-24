@@ -10,6 +10,7 @@
 4. Technical choices with no known preference
 5. Uncertain assumptions ("this is probably right")
 6. User's stated direction conflicts with an existing `rules/*.md` rule — don't silently follow the rule; surface the conflict ("rule X requires A but your direction is B — revise the rule or make an exception?"), and when a design change lands, sync the rule file in the same turn
+7. **回答確定直後に届いた新情報が回答の前提と矛盾する場合**（mid-turn の spec paste・訂正メッセージ・遅れて届いた添付）— 黙って blend しない。どちらを正としたかを 1 行で明示して進める（後から届いた・より具体的な信号が通常は正。例:「選択肢回答 X は貼付 spec で置き換えと解釈します」）。両立し得て判断がつかない場合のみ再度 AskUserQuestion。Origin: 2026-08-23 — 選択肢 tap「MCP認証巡回」の直後に本物の Notion worker spec が貼られた; spec 優先を 1 行宣言して進めたのが正解だった
 
 **例（違反 / 改善後）:**
 

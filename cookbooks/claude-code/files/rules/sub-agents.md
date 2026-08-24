@@ -79,6 +79,8 @@ Fan-out prompts to teammates MUST state the delivery contract: 「完了＝findi
 - **Worker**: on receiving an identical prompt for an already-completed task, resend the finished report — do not re-execute.
 - **Lead**: after collecting a teammate's deliverable with no further work planned for it, shut the teammate down in the same turn — do not wait for the user to ask.
 
+Mechanical backstop: `hooks/warn-background-launch-no-progress.rb` (Stop, non-blocking) also fires when a teammate's idle notification arrived with no delivered findings and no resend request by turn end — added 2026-08-23 after two teammates in one session idled silently, two months after this prose landed.
+
 Detail (session origins): see `~/.claude/docs/sub-agents-detail.md#agent-team-messaging-contract`.
 
 ## Auto-Launched Review Agent — Dedupe + Completion by Findings Return
