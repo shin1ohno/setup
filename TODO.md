@@ -541,3 +541,37 @@ serving interface in between and ITM's RTX830 does not:
   that mapping is `dynamic: strict` and a new field is otherwise a whole-document
   rejection. Cover both spellings with a `[[tests]]` case each; the harness and
   its `vector test` invocation are already in the file.
+
+## pve-host holds the ULA /64 on both bridges, so v6 source selection is asymmetric (Low)
+
+`cookbooks/pve-host` now pins `fd97:b085:767d::10/64` on vmbr0 so that
+`pve.home.local`'s AAAA resolves to an address this host actually answers. But
+vmbr1 already autoconfigures an address from that same /64 (it has
+`forwarding=0`, so it honours the RTX lan1 RA), which leaves two connected
+routes to `fd97:b085:767d::/64`:
+
+```
+fd97:b085:767d::/64 dev vmbr0  proto kernel   <- added by this cookbook
+fd97:b085:767d::/64 dev vmbr1  proto ra       <- pre-existing SLAAC
+```
+
+- **Why it is not broken today**: both NICs sit on the same L2 (192.168.1.0/24 —
+  vmbr0 = enp25s0, vmbr1 = enp12s0, and the CTs are on vmbr0), so frames reach
+  their destination either way. Inbound to `::10` always lands on vmbr0, which
+  is all the AAAA needs.
+- **What is actually wrong**: pve's SOURCE address selection for ULA
+  destinations can pick vmbr1's SLAAC address, so a flow this host originates to
+  a CT's ULA leaves with a source on the other bridge. That is invisible until
+  something filters or logs on source address, and it makes `::10` a
+  receive-only identity rather than this host's v6 identity on that LAN.
+- **Why the obvious fix was not taken**: dropping vmbr1 to `accept_ra=0` would
+  also drop this host's only v6 default route (it is learned on vmbr1,
+  `proto ra`), taking away hypervisor v6 egress. The dual-homing itself predates
+  this change — `cookbooks/arp-flux` exists because the same two bridges already
+  collide on IPv4.
+- **First step**: decide whether vmbr1 should be on this LAN's ULA /64 at all.
+  Probe what actually depends on vmbr1's v6 (`ss -6 -tunap` on the PVE host, and
+  which source the default route picks with
+  `ip -6 route get <a CT ULA>`); if nothing needs it, add `token`/`accept_ra`
+  handling so only vmbr0 carries the /64 while vmbr1 keeps just the default
+  route. Verify with `ip -6 route get` returning `src fd97:b085:767d::10`.
