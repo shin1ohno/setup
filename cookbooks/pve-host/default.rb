@@ -88,6 +88,89 @@ execute "bring up vmbr1" do
 end
 
 # ------------------------------------------------------------------------
+# vmbr0 IPv6: static ULA (the address pve.home.local's AAAA publishes)
+# ------------------------------------------------------------------------
+# home-monitor publishes `pve.home.local AAAA -> fd97:b085:767d::10` (the v6
+# counterpart of the `.10` on vmbr0). Every other host in that zone gets its
+# ULA from SLAAC, so the AAAA becomes true on its own; this host is the one
+# exception, and without this stanza it holds no global v6 at all:
+#
+#   ip -6 addr show vmbr0   -> fe80::.../64 scope link ONLY
+#
+# vmbr0 cannot autoconfigure it. Linux ignores RA on an interface with
+# `forwarding=1` unless `accept_ra=2`, and vmbr0 has forwarding on. (vmbr1
+# has forwarding off, which is why that bridge does hold SLAAC addresses,
+# including one from this same /64 — see the route note below.)
+#
+# Publishing an AAAA nobody answers is not free. Measured 2026-08-24 from
+# CT 111, curl to `pve.home.local` vs the same host by literal:
+#
+#   pve.home.local   connect=0.201s   <- Happy Eyeballs waits, then falls to v4
+#   192.168.1.10     connect=0.0002s
+#
+# 200ms on EVERY connection from EVERY fleet host, because glibc does NOT
+# ship RFC 6724's policy table: ULAs fall through to the ::/0 row and
+# outrank IPv4, so `getent ahosts pve.home.local` returns the ULA FIRST.
+# (An earlier design note here claimed the opposite — that ULA precedence 3
+# loses to IPv4's 35 and internal traffic would stay on v4. That is what the
+# RFC says and not what glibc does.)
+#
+# Static, not SLAAC-via-accept_ra=2: the address has to match what DNS
+# already publishes, and a derived one would move if the NIC were replaced.
+# Leaving forwarding/accept_ra alone also keeps this host's v6 egress on
+# vmbr1, where its default route already lives (`proto ra`), so nothing about
+# the hypervisor's own outbound path changes.
+#
+# Known and accepted: vmbr1 carries a SLAAC address from this same /64, so
+# after this stanza two interfaces have a connected route to
+# fd97:b085:767d::/64. Both NICs sit on the same L2 (192.168.1.0/24), so
+# traffic still lands; the cost is that pve's SOURCE selection for ULA
+# destinations may pick vmbr1's address, making those flows asymmetric.
+# Inbound to ::10 always arrives on vmbr0, which is what the AAAA needs.
+
+vmbr0_bridge  = node.dig(:pve_host, :mgmt_bridge) || "vmbr0"
+vmbr0_ula     = node.dig(:pve_host, :ula) || "fd97:b085:767d::10"
+vmbr0_ula_len = node.dig(:pve_host, :ula_prefix_len) || 64
+vmbr0_staging = "#{node[:setup][:root]}/pve-host/vmbr0-v6"
+vmbr0_system  = "/etc/network/interfaces.d/vmbr0-v6"
+
+file vmbr0_staging do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  content <<~CFG
+    # #{vmbr0_bridge} IPv6: static ULA matching pve.home.local's AAAA.
+    # Managed by setup/cookbooks/pve-host. Do not edit
+    # /etc/network/interfaces.d/vmbr0-v6 by hand — the next mitamae run will
+    # overwrite it. The prefix is defined in home-monitor contracts
+    # (devices.tf `ula_prefix_64`); change it there, not here.
+    #
+    # `auto #{vmbr0_bridge}` already comes from /etc/network/interfaces (the
+    # PVE installer wrote it); this file only adds the inet6 family, which
+    # ifupdown brings up alongside the inet stanza at boot.
+    iface #{vmbr0_bridge} inet6 static
+        address #{vmbr0_ula}/#{vmbr0_ula_len}
+  CFG
+end
+
+execute "install vmbr0 IPv6 ifupdown drop-in" do
+  command "sudo install -m 644 -o root -g root #{vmbr0_staging} #{vmbr0_system}"
+  not_if "diff -q #{vmbr0_staging} #{vmbr0_system} 2>/dev/null"
+  notifies :run, "execute[add vmbr0 ULA]"
+end
+
+# Applied live rather than via `ifup`: vmbr0 is already up (it carries this
+# host's management IPv4), and `ifup vmbr0` on an up interface fails instead
+# of adding the new family. The drop-in above is what makes it survive a
+# reboot; this is what makes it true now. Guarded on the address itself, so
+# it is a no-op once present.
+execute "add vmbr0 ULA" do
+  command "sudo ip -6 addr add #{vmbr0_ula}/#{vmbr0_ula_len} dev #{vmbr0_bridge}"
+  action :nothing
+  not_if "ip -6 addr show #{vmbr0_bridge} 2>/dev/null | grep -q '#{vmbr0_ula}/'"
+end
+
+# ------------------------------------------------------------------------
 # Resolver order (/etc/resolv.conf)
 # ------------------------------------------------------------------------
 # The host's resolv.conf predates the unbound LAN resolver (CT 118 / .61,
