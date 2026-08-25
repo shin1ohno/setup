@@ -7,8 +7,16 @@
 # Why: the LAN default gateway (RTX1210, .253) won't hairpin-forward to a
 # same-segment next-hop, so LAN hosts can't reach the VPC via the default
 # route despite the RTX's static route. Each host must hold the route itself.
-# Static-IP PVE LXCs get it here; DHCP clients get it via DHCP option 121
-# (home-monitor rtx_dhcp_scope.ebisu_main classless_static_routes).
+# Static-IP PVE LXCs get both CIDRs here; DHCP clients get 10.33.128.0/18 via
+# DHCP option 121 (home-monitor rtx_dhcp_scope.ebisu_main classless_static_routes).
+#
+# CGNAT is no longer in option 121 (home-monitor, 2026-08-25): option 121 is
+# scope-wide, so distributing 100.64.0.0/10 overrode the utun route of a DHCP
+# client that was itself a node on a DIFFERENT tailnet (a work Mac lost its whole
+# tailnet to .60 and `ssh` to its own peers returned "No route to host"). This
+# unit is therefore the only remaining supplier of the CGNAT route — which is
+# consistent, because the tailnet_guard below means it only ever runs on hosts
+# that are NOT tailnet nodes, and a tailnet node needs no LAN route to CGNAT.
 #
 # Skipped on tailnet nodes (pro-router): they reach the VPC via tailscale0
 # directly, and routing 10.33/18 via .60 from .60 would loop. The
