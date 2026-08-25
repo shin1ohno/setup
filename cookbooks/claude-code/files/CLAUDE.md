@@ -93,7 +93,7 @@ These are `docs/` files (not auto-loaded). `Read` the file when the task matches
 | iOS build (XcodeGen + Rust UniFFI): fresh-Mac prereqs, keychain, deploy probe | `~/.claude/docs/ios-build.md` |
 | Kibana Lens visualization / saved-object NDJSON gotchas | `~/.claude/docs/kibana-lens.md` |
 | RemoteTrigger API field reference + scheduled-trigger design | `~/.claude/docs/remote-trigger.md` |
-| Tailscale `accept-routes` vs LAN-supernet routing conflict | `~/.claude/docs/tailscale.md` |
+| Tailscale routing conflicts — `accept-routes` vs LAN supernet, and LAN DHCP option 121 hijacking another tailnet's CGNAT | `~/.claude/docs/tailscale.md` |
 | Frontend (Next.js / Vite) dev-server / HMR gotchas | `~/.claude/docs/frontend-dev.md` |
 | Data-collection failure-escalation + transient-retry ladder | `~/.claude/docs/data-collection.md` |
 | Weave protocol publish → feedback shape contract | `~/.claude/docs/weave-protocol.md` |
