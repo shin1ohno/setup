@@ -7,8 +7,14 @@
 # / .tailscale), but the RTX does NOT hairpin-forward to a next-hop that sits on
 # the same LAN segment as the source, so traffic sent via the default gateway is
 # silently dropped. Hosts must therefore hold the route directly. DHCP clients
-# learn it via DHCP option 121 (home-monitor rtx_dhcp_scope); static-IP hosts
-# (PVE LXCs) get it from this unit.
+# learn 10.33.128.0/18 via DHCP option 121 (home-monitor rtx_dhcp_scope);
+# static-IP hosts (PVE LXCs) get both CIDRs from this unit.
+#
+# 100.64.0.0/10 is NO LONGER distributed by DHCP (dropped 2026-08-25): option 121
+# is scope-wide, and handing a tailnet's own address space to every DHCP client
+# overrides the utun/tailscale0 route of any client that is itself a node on a
+# DIFFERENT tailnet. So for CGNAT this unit is now the only supplier, and by
+# design it only ever runs where there is no tailscale0 (see default.rb's guard).
 #
 # CIDRs/next-hop are fleet constants (see home-monitor contracts/devices.json
 # pro-router = .60, var.vpc_cidr = 10.33.128.0/18, var.tailscale_cgnat_cidr =
