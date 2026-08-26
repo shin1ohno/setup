@@ -475,24 +475,6 @@ stable = v0.8.0, the pinned version).
   a moment when no agent panes are active. Delete this entry in the resolving
   commit.
 
-## es-memory (CT 119) is not in the auto-mitamae host list (Medium)
-
-`pve/lxc-es-memory.rb` has no entry in
-`cookbooks/auto-mitamae-orchestrator/files/hosts.json`, so CT 119 is never
-converged automatically and only picks up cookbook changes on a manual apply.
-`bin/lint-cookbooks` already emits a WARN for this, but the WARN has been
-standing long enough to be treated as background noise.
-
-Confirmed live: after #909 merged and the fleet converged, CT 119 was one of
-only two running hosts still carrying `options no-aaaa` — the other being
-CT 108 above.
-
-- **First step**: decide the intent. Either add the `.83` entry to
-  `hosts.json` so it converges like every other service LXC, or add
-  `pve/lxc-es-memory.rb` to `bin/lint-cookbooks` `PVE_HOSTS_EXEMPT` with the
-  reason, so the WARN stops being ambient. Do not leave it as a permanent
-  warning. Delete this entry in the resolving commit.
-
 ## LXC resolv.conf falls back to 1.1.1.1, which cannot answer home.local (Medium)
 
 Every PVE LXC gets `nameserver 192.168.1.61` followed by `nameserver 1.1.1.1`
