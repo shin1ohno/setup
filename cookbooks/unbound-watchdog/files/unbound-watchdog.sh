@@ -1,7 +1,8 @@
 #!/bin/bash
 # unbound-watchdog.sh — off-box self-heal for the LAN DNS resolver (CT 118 / .61).
 #
-# Runs on the PVE host via unbound-watchdog.timer (~60s). Two independent probes:
+# Runs on the PVE host via unbound-watchdog.timer (~60s). Three independent
+# probes; the first two self-heal, the third only reports:
 #
 #   1. LOCAL canary (unbound-watchdog.health, local-data) over the LAN (NOT
 #      loopback) — detects the "active + bound but zero replies on eth0" wedge
@@ -17,12 +18,26 @@
 #      The canary answer is FLUSHED from unbound's cache before each probe —
 #      see forward_probe() for why a cached canary is blind to the wedge.
 #
+#   3. IPv6 canary (the same local-data name, forced over IPv6 transport to the
+#      resolver's ULA) — detects a v6-listener regression that probe 1 cannot
+#      see, because unbound binds v4 and v6 as separate sockets. NO recovery
+#      action: the causes a restart could fix are already covered by probe 1,
+#      and restarting a healthy resolver on a v6-only fault would wipe the LAN
+#      cache repeatedly. See the v6_up block below for the full reasoning.
+#
 # On failure it acts inside the CT and records node_exporter textfile metrics
 # (the PVE host's node-exporter is already scraped by Prometheus on monitoring).
 set -uo pipefail
 
 CT_ID="${CT_ID:-118}"
 RESOLVER_IP="${RESOLVER_IP:-192.168.1.61}"
+# IPv6 transport probe target. This is the resolver's ULA, NOT its GUA: the GUA
+# is built from the DHCPv6-PD delegated prefix, which has already rotated twice,
+# so a GUA literal here would go stale and then report a healthy resolver as
+# down on every cycle. The ULA prefix is ours (RFC 4193, fixed in home-monitor
+# devices.tf) and the host part is EUI-64 from CT 118's pinned MAC, so it only
+# changes if that MAC changes. Set RESOLVER_V6="" to disable the probe.
+RESOLVER_V6="${RESOLVER_V6-fd97:b085:767d:0:be24:11ff:fe00:76}"
 CANARY="${CANARY:-unbound-watchdog.health}"
 EXPECT="${EXPECT:-192.0.2.1}"
 # Forward-path canary: a public name that REQUIRES the `.` DoT forwarders (it is
@@ -63,6 +78,21 @@ probe() {
   # config (different/empty answer) also counts as failure, not just a timeout.
   local ans
   ans=$(dig +short +time=2 +tries=2 @"${RESOLVER_IP}" "${CANARY}" A 2>/dev/null)
+  [[ "${ans}" == "${EXPECT}" ]]
+}
+
+v6_probe() {
+  # Same canary as probe(), but forced over IPv6 transport to the resolver's ULA.
+  # This is the ONLY probe that sees an IPv6-listener regression: unbound binds
+  # v4 and v6 as separate sockets (verified on CT 118 — `0.0.0.0:53` and
+  # `[::]:53` appear as distinct rows, V6ONLY is set even with
+  # net.ipv6.bindv6only=0), so the v4 canary stays green while the v6 socket is
+  # missing, refused by access-control, or unreachable.
+  #
+  # -6 is explicit rather than inferred from the address so a mistyped literal
+  # fails as "no v6 answer" instead of silently falling back to v4.
+  local ans
+  ans=$(dig -6 +short +time=2 +tries=2 @"${RESOLVER_V6}" "${CANARY}" A 2>/dev/null)
   [[ "${ans}" == "${EXPECT}" ]]
 }
 
@@ -152,6 +182,26 @@ else
   fi
 fi
 
+# IPv6 transport check — OBSERVE ONLY, deliberately no recovery action.
+#
+# Everything above can be fixed by acting on unbound (restart / flush_infra),
+# which is why those probes trigger. A v6-only failure usually cannot: the
+# common causes are the resolver losing its ULA (RA stopped, addr_gen_mode
+# changed), a route disappearing on this host, or the `fd97:b085:767d::/64`
+# access-control line being dropped from unbound.conf. Restarting unbound fixes
+# none of those, and doing it anyway would mean restarting a HEALTHY resolver
+# every RESTART_MIN_INTERVAL for as long as the condition lasts, dropping the
+# whole LAN cache each time -- v4 clients would be harmed by a v6 fault. So this
+# reports and lets UnboundResolverIPv6Down page a human instead.
+v6_up=1
+if [[ -n "${RESOLVER_V6}" ]]; then
+  if ! v6_probe; then
+    v6_up=0
+    logger -t unbound-watchdog \
+      "resolver ${RESOLVER_V6} (IPv6) canary '${CANARY}' failed — reporting only, no restart (see UnboundResolverIPv6Down)"
+  fi
+fi
+
 now=$(date +%s)
 tmp=$(mktemp "${OUT}.XXXXXX")
 trap 'rm -f "${tmp}"' EXIT
@@ -159,6 +209,16 @@ trap 'rm -f "${tmp}"' EXIT
   echo "# HELP unbound_watchdog_up Resolver answered the local canary over the LAN (1) or not (0)"
   echo "# TYPE unbound_watchdog_up gauge"
   echo "unbound_watchdog_up{target=\"${RESOLVER_IP}\"} ${up}"
+  # Deliberately a SEPARATE metric name rather than another target= label on
+  # unbound_watchdog_up: that metric drives UnboundResolverDown at severity
+  # critical ("the whole LAN lost name resolution"), which is true for the v4
+  # path every client uses and false for a v6-only fault. Re-keying the existing
+  # series with an extra label would also break its history mid-flight.
+  if [[ -n "${RESOLVER_V6}" ]]; then
+    echo "# HELP unbound_watchdog_v6_up Resolver answered the local canary over IPv6 transport (1) or not (0)"
+    echo "# TYPE unbound_watchdog_v6_up gauge"
+    echo "unbound_watchdog_v6_up{target=\"${RESOLVER_V6}\"} ${v6_up}"
+  fi
   echo "# HELP unbound_watchdog_forward_path_up Resolver answered a forwarded (public) query (1) or not (0)"
   echo "# TYPE unbound_watchdog_forward_path_up gauge"
   echo "unbound_watchdog_forward_path_up{target=\"${RESOLVER_IP}\"} ${fwd_up}"
