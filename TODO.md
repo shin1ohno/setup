@@ -576,51 +576,50 @@ fd97:b085:767d::/64 dev vmbr1  proto ra       <- pre-existing SLAAC
   handling so only vmbr0 carries the /64 while vmbr1 keeps just the default
   route. Verify with `ip -6 route get` returning `src fd97:b085:767d::10`.
 
-## CT 103 (housekeeping) has never run either of its two jobs (Medium)
+## CT 103 (housekeeping) runs, but still has no working job (Medium)
 
-The container has been stopped since 2026-08-16 and `terraform plan` carries a
-permanent `proxmox_virtual_environment_container.lxc["housekeeping"]` diff that
-fails with `HTTP 500 - Reason: no options specified`. The 500 is the symptom of
-"PVE cannot start this container", not the cause.
+**Started 2026-08-26.** The blocker was `mp0` binding `/mnt/data/obsidian-vault`
+from the host while that directory did not exist, so `lxc.hook.pre-start`
+failed. Creating it (`install -d -m 0755 -o 100000 -g 100000` -- 100000 because
+the CT is `unprivileged: 1`) and `pct start 103` fixed it. The container is
+`running`, `systemctl is-system-running` reports `running` with no failed units,
+the bind-mount appears inside as `root:root` and is writable, and the permanent
+`HTTP 500 - Reason: no options specified` diff on
+`proxmox_virtual_environment_container.lxc["housekeeping"]` is gone
+(`terraform plan` -> no differences).
 
-**Why it will not start**: `mp0` binds `/mnt/data/obsidian-vault` from the host,
-and that directory does not exist. `/mnt/data` itself is mounted (ext4 on
-/dev/sdc1) and holds cognee / memory / monitoring / weave / workspace — nothing
-resembling a vault. So `lxc.hook.pre-start` fails:
+**Neither of its two services does anything yet.** That was true while it was
+stopped and it is still true now:
 
-```
-run_buffer: 569 Script exited with status 2
-lxc_init: 1037 Failed to run lxc.hook.pre-start for container "103"
-TASK ERROR: startup for container '103' failed
-```
+- `obsidian_file_sync` — observed live at 2026-08-26 18:24:53: the timer fires
+  and exits at the `rclone listremotes` guard, because `~/.config/rclone/` is
+  empty (no `rclone.conf`, no remotes at all). No `~/.cache/rclone/bisync/`
+  state exists, so `rclone bisync` has still never run. Its source is
+  `${HOME}/obsidian` (`/root/obsidian`, empty) -- NOT the `mp0` path, so the
+  mount and the sync source point at different directories.
+- `s3-backup` — two independent reasons, not one. There is no
+  `~/.config/s3-backup/config` (only `config.sample`), so the script would die
+  at "S3_BUCKET is not configured". AND `s3-backup.timer` is `disabled` /
+  `inactive` and absent from `timers.target.wants/`, so it would not fire even
+  with a config. `cookbooks/s3-backup/default.rb:443` says
+  "systemctl --user requires D-Bus session, cannot run in mitamae context" and
+  leaves enabling to a manual step that has not happened in ~4 months.
+  **That comment is wrong**: the sibling `cookbooks/obsidian_file_sync`
+  (`default.rb:136-142`) arms its timer from mitamae with exactly that command
+  and it works -- `obsidian-sync.timer` is armed and firing.
 
-`pve/lxc-housekeeping.rb` documents the mount as "optional — vault 実体が sdc に
-あるため", which is no longer true and may never have been.
-
-**The part that matters more**: neither service in this CT has ever done
-anything, so the 8 days of downtime cost nothing.
-
-- `obsidian_file_sync` — the timer fired every ~16 min and exited at the
-  `rclone listremotes` guard every single time: the `icloud:` remote was never
-  configured. There is no `~/.cache/rclone/bisync/` state, so `rclone bisync`
-  has never completed a run. Its source is `${HOME}/obsidian` (i.e.
-  `/root/obsidian`, which exists but is EMPTY) — note this is NOT the `mp0`
-  bind-mount path, so the mount and the sync source disagree.
-- `s3-backup` — `~/.config/s3-backup/` holds only `config.sample`; there is no
-  `config`, so the script dies at "S3_BUCKET is not configured". `.local/log/`
-  exists (created 2026-05-04) and is empty, which rules out "it ran and the log
-  was rotated".
-
-**Do NOT "fix" this by creating the missing directory and starting the CT.**
-`obsidian_file_sync` runs `rclone bisync` (bidirectional) and `mkdir -p`s its
-source if absent. Starting it with an empty local side against a populated
-iCloud remote is a deletion-propagation hazard. It is only safe today because
-the remote was never configured — do not remove that accident without replacing
-it with a deliberate guard (`--resync` on first run, `--max-delete`).
+**Before configuring the `icloud:` remote, add a guard.** `obsidian_file_sync`
+runs `rclone bisync` (bidirectional) and `mkdir -p`s its source if absent. The
+local side is empty, so pointing it at a populated remote is a
+deletion-propagation hazard. It is harmless today only because no remote is
+configured -- that accident is the only thing standing in for a guard. Replace
+it with a deliberate one (`--resync` on first run, `--max-delete`) rather than
+just filling in `rclone config`.
 
 **First step**: decide whether this CT still has a job. If the vault now lives
-elsewhere (a Mac, iCloud direct, another host), the honest fix is to delete the
-CT and both cookbooks rather than repair a mount for a sync that was never
-wired up. If it should work, the missing pieces are: the `icloud:` rclone
-remote, a real `s3-backup` config (S3_BUCKET + GPG_RECIPIENT), and agreement
-between `mp0` and `SOURCE_DIR` — they currently point at different paths.
+elsewhere, deleting the CT and both cookbooks is more honest than repairing a
+sync that was never wired up. If it should work, three things are missing and
+all three are needed: the `icloud:` remote (with the bisync guard above), a real
+`s3-backup` config (S3_BUCKET + GPG_RECIPIENT), and an `execute` in
+`cookbooks/s3-backup` that enables its timer the way the obsidian cookbook does.
+Also reconcile `mp0` with `SOURCE_DIR` -- they currently disagree.
