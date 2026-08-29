@@ -580,3 +580,35 @@ all three are needed: the `icloud:` remote (with the bisync guard above), a real
 `s3-backup` config (S3_BUCKET + GPG_RECIPIENT), and an `execute` in
 `cookbooks/s3-backup` that enables its timer the way the obsidian cookbook does.
 Also reconcile `mp0` with `SOURCE_DIR` -- they currently disagree.
+
+## Nothing catches a keeper file that is imported but never deployed (Medium)
+
+`memory-keeper-reconcile.service` on CT 119 crashed on every tick from
+2026-08-26 19:26 to 2026-08-29 16:00 with `ModuleNotFoundError: No module named
+'merge_rules'`. PR #895 added `merge_rules.py` and an `import merge_rules` to
+both `reconcile.py` and `consolidate.py`, but not the corresponding entry in the
+explicit deploy map in `cookbooks/lxc-es-memory/default.rb`. The PR that adds
+this entry restores the missing line; two mechanisms that should have caught it
+did not.
+
+- **`bin/lint-cookbooks` check 6 is deploy-list drift, but only for
+  `claude-code`** (`files/{rules,docs,workflows,agents}/`). Every other cookbook
+  that ships a hand-maintained `{src => dest}` map — `lxc-es-memory`'s keeper
+  python being the one that broke — has no equivalent check. The generic form is
+  cheap: for a cookbook whose `files/<dir>/` holds python, parse the top-level
+  `import`/`from` statements of each deployed module and FAIL when a sibling
+  module they name is absent from the map.
+- **`memory-keeper-health.sh` reports `memory_keeper_raw_backlog` and
+  `memory_keeper_stats_age_seconds`, neither of which moves when the unit dies.**
+  Backlog was 0 throughout (nothing was arriving), so the fleet looked healthy
+  while reconcile had never once completed — `stats_age` sat at its `-1`
+  never-written sentinel for three days and nothing treats that as an error.
+  A permanently-failing oneshot with an empty queue is indistinguishable from a
+  healthy idle one in the current metric set.
+
+**First step**: add the import-vs-deploy-map check to `bin/lint-cookbooks` as a
+FAIL-tier check (it is mechanical and has no false positives — a named sibling
+module either is in the map or is not), and emit
+`memory_keeper_reconcile_last_exit_code` from `memory-keeper-health.sh` via
+`systemctl show -p ExecMainStatus memory-keeper-reconcile.service` so a dead
+tick is visible with an empty queue. Delete this entry in the resolving commit.

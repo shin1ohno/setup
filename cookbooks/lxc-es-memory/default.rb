@@ -469,6 +469,7 @@ end
   "reconcile.py"         => "reconcile.py",
   "consolidate.py"       => "consolidate.py",
   "claude_judge.py"      => "claude_judge.py",
+  "merge_rules.py"       => "merge_rules.py",
   "es_client.py"         => "es_client.py",
   "voyage_client.py"     => "voyage_client.py",
   "prompts/reconcile.md" => "prompts/reconcile.md",
