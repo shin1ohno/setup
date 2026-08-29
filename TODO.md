@@ -599,12 +599,15 @@ did not.
   `import`/`from` statements of each deployed module and FAIL when a sibling
   module they name is absent from the map.
 - **`memory-keeper-health.sh` reports `memory_keeper_raw_backlog` and
-  `memory_keeper_stats_age_seconds`, neither of which moves when the unit dies.**
+  `memory_keeper_stats_age_seconds`, neither of which moved when the unit died.**
   Backlog was 0 throughout (nothing was arriving), so the fleet looked healthy
-  while reconcile had never once completed — `stats_age` sat at its `-1`
-  never-written sentinel for three days and nothing treats that as an error.
-  A permanently-failing oneshot with an empty queue is indistinguishable from a
-  healthy idle one in the current metric set.
+  while reconcile had never once completed. `stats_age` was worse than blind: its
+  extraction grep could never match, because `docvalue_fields` with
+  `format: epoch_millis` returns a QUOTED string, so the metric had been pinned
+  to its `-1` sentinel since the day it was written. That grep is fixed
+  separately; what remains is that a permanently-failing oneshot with an empty
+  queue still looks identical to a healthy idle one, because no metric carries
+  the unit's exit status.
 
 **First step**: add the import-vs-deploy-map check to `bin/lint-cookbooks` as a
 FAIL-tier check (it is mechanical and has no false positives — a named sibling

@@ -51,13 +51,17 @@ if [[ -n "${ES_PASSWORD:-}" ]]; then
   [[ -n "${parsed}" ]] && raw_backlog="${parsed}"
 
   # Latest memory-stats self-report age. docvalue_fields with epoch_millis
-  # returns written_at as a number regardless of stored format, so bash can do
-  # the arithmetic without ISO-8601 parsing.
+  # gives bash an integer to subtract without ISO-8601 parsing — but ES returns
+  # it as a QUOTED string ("fields":{"written_at":["1787988186553"]}), not a
+  # bare number, so the extraction below must tolerate the quote. Without the
+  # optional `"` this grep never matches and stats_age is pinned to its -1
+  # never-written sentinel forever, which reads as "keeper idle" rather than
+  # "metric dead" — see the 2026-08-29 reconcile outage that it failed to show.
   stats=$(curl -sS -k --max-time 10 -u "${ES_USER}:${ES_PASSWORD}" \
     -H 'Content-Type: application/json' \
     "${ES_URL}/${STATS_INDEX}/_search" \
     -d '{"size":1,"_source":false,"sort":[{"written_at":"desc"}],"docvalue_fields":[{"field":"written_at","format":"epoch_millis"}]}' 2>/dev/null || true)
-  ts=$(grep -oE '"written_at":\[[0-9]+' <<<"${stats}" | grep -oE '[0-9]+' | head -1)
+  ts=$(grep -oE '"written_at":\["?[0-9]+' <<<"${stats}" | grep -oE '[0-9]+' | head -1)
   [[ -n "${ts}" ]] && stats_age=$(( now - ts / 1000 ))
 fi
 
