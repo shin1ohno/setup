@@ -51,15 +51,21 @@ execute "install vpc-route.service" do
 end
 
 execute "reload + enable vpc-route" do
-  command "sudo systemctl daemon-reload && sudo systemctl enable --now vpc-route.service"
+  # `restart`, not `enable --now`: on a host whose unit is currently `failed`
+  # (the pre-fix boot race), `start` is what re-runs a RemainAfterExit oneshot,
+  # and `restart` is the form that does so unconditionally after daemon-reload.
+  command "sudo systemctl daemon-reload && sudo systemctl enable vpc-route.service " \
+          "&& sudo systemctl restart vpc-route.service"
   action :nothing
 end
 
 # Self-heal: ensure the routes are applied even when the unit file was
-# unchanged (e.g. routes flushed by a network restart, or first run after the
-# unit already existed). `enable --now` is a no-op if already active+enabled.
+# unchanged (e.g. routes flushed by a network restart, or the unit left
+# `failed` by an early-boot attempt). The guard means this only fires when the
+# unit is NOT already active, so the restart cannot flap routes on a healthy
+# host.
 execute "ensure vpc-route active" do
-  command "sudo systemctl enable --now vpc-route.service"
+  command "sudo systemctl enable vpc-route.service && sudo systemctl restart vpc-route.service"
   only_if tailnet_guard
   not_if "systemctl is-active --quiet vpc-route.service"
 end

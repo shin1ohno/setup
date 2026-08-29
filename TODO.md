@@ -411,6 +411,31 @@ this host and predates the Zed work.
   touch resources placed into system paths via `execute "sudo install ..."` —
   those legitimately name an owner.
 
+## CT103 (housekeeping) fails to start: `/mnt/data/obsidian-vault` is missing
+
+- **Observed**: 2026-08-16, after the PVE host `pro` rebooted into kernel
+  `7.0.14-12-pve`. `pct list` shows CT103 `stopped` despite `onboot: 1`;
+  `pve-container@103.service` is `failed` with
+  `lxc.hook.pre-start ... Script exited with status 2`.
+- **Cause**: CT103's config has `mp0: /mnt/data/obsidian-vault,mp=/data/obsidian-vault`,
+  but that directory does not exist on `/mnt/data` (`/dev/sdc1`). The sibling
+  CT109 failure the same boot WAS a race (fsck delayed `mnt-data.mount` past the
+  CT start) and recovered on a plain `pct start`; CT103 is NOT that — the mount
+  is healthy and the bind source is genuinely absent, so `pct start 103` will
+  keep failing until the directory question is settled.
+- **Not data loss from the forced fsck**: that boot's fsck on `/dev/sdc1`
+  completed and `/mnt/data/lost+found` is empty.
+- **Why deferred / needs a human**: it is unknown whether the vault directory
+  was intentionally removed, lives on another disk, or should be restored from
+  backup. Creating an empty `/mnt/data/obsidian-vault` would start the CT but
+  could silently present an empty vault to a sync process — a data-shaped
+  decision, not a config fix. No self-heal alert covers CT103, so nothing else
+  will surface this.
+- **First step**: decide the intended source of truth for the Obsidian vault
+  (`ls /mnt/Media` and any backup target, plus `git log -- pve/lxc-housekeeping.rb`
+  for when the mount was introduced); then either restore the directory from
+  backup or drop/repoint `mp0` in the CT config and in `home-monitor`.
+
 ## `/todo-collect` の Slack saved sweep が End of results に到達しない (Medium)
 
 2026-08-17 の初回無人 run（sh1-cloud、`todo-collect-run.sh`）で `is:saved` を 6 ページ

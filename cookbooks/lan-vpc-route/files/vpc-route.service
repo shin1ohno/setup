@@ -22,16 +22,42 @@
 Description=Static routes to AWS VPC + tailnet via pro-router (192.168.1.60)
 After=network-online.target
 Wants=network-online.target
+# ExecStart retries internally for up to 60s and Restart=on-failure retries the
+# unit on top of that; widen the start-limit window so a slow boot cannot trip
+# the rate limiter and leave the unit permanently failed.
+StartLimitIntervalSec=600
+StartLimitBurst=10
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# `ip route replace` is idempotent — safe to (re)run on every start.
-ExecStart=/usr/sbin/ip route replace 10.33.128.0/18 via 192.168.1.60
-ExecStart=/usr/sbin/ip route replace 100.64.0.0/10 via 192.168.1.60
+# network-online.target is NOT sufficient inside an LXC: it can be reached while
+# eth0 still has no address, and `ip route replace ... via 192.168.1.60` then
+# fails with exit 2 ("Nexthop has invalid gateway" / "Network is unreachable").
+# Because this is a oneshot, that single early failure left the unit `failed`
+# for the whole uptime with no route installed -- observed fleet-wide after the
+# 2026-08-16 PVE host reboot (7 of 17 CTs failed; hydra could not reach its RDS
+# DSN in 10.33.128.0/18 and never bound 4444/4445).
+#
+# Retry the real `ip route replace` rather than polling a proxy condition:
+# `ip route get <next-hop>` is NOT a valid readiness test, because it is
+# satisfied by the default route (it returns "via 192.168.1.253") long before
+# the next hop is on-link. Retrying the actual operation tests exactly what has
+# to succeed. `ip route replace` is idempotent, so re-running is always safe.
+# The final attempt runs unquieted so a genuine failure is captured in the
+# journal and the unit fails loudly instead of silently giving up.
+ExecStart=/bin/sh -c 'i=0; while [ $i -lt 60 ]; do \
+    if /usr/sbin/ip route replace 10.33.128.0/18 via 192.168.1.60 2>/dev/null \
+       && /usr/sbin/ip route replace 100.64.0.0/10 via 192.168.1.60 2>/dev/null; then exit 0; fi; \
+    i=$((i+1)); sleep 1; \
+  done; \
+  /usr/sbin/ip route replace 10.33.128.0/18 via 192.168.1.60 \
+    && /usr/sbin/ip route replace 100.64.0.0/10 via 192.168.1.60'
 # `-` prefix: tolerate the route already being absent on teardown.
 ExecStop=-/usr/sbin/ip route del 10.33.128.0/18 via 192.168.1.60
 ExecStop=-/usr/sbin/ip route del 100.64.0.0/10 via 192.168.1.60
+Restart=on-failure
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
