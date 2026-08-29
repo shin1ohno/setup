@@ -475,31 +475,6 @@ stable = v0.8.0, the pinned version).
   a moment when no agent panes are active. Delete this entry in the resolving
   commit.
 
-## LXC resolv.conf falls back to 1.1.1.1, which cannot answer home.local (Medium)
-
-Every PVE LXC gets `nameserver 192.168.1.61` followed by `nameserver 1.1.1.1`
-(set by home-monitor `pve-lxcs.tf`, the `dns.servers` block — NOT by a cookbook
-in this repo). If unbound stops answering, the whole fleet silently degrades to
-plaintext Cloudflare: `home.local` names start returning authoritative NXDOMAIN
-instead of a retryable timeout, and every other query leaves the network in
-cleartext, defeating the DoT-only design in `cookbooks/unbound`.
-
-This is the exact failure that took fleet telemetry down on 2026-08-12
-(self-heal #855/#856/#857) via the PVE host's resolv.conf. That host was fixed
-then — its comment now reads "no public fallback" — but the LXC side was never
-made symmetric.
-
-- **Why it is worse now**: as IPv6 lands, the fleet gains a second path to the
-  same resolver (its ULA address). A silent fallback sitting underneath two
-  paths hides the failure of either.
-- **First step**: choose between removing `1.1.1.1` from the `dns.servers`
-  list in home-monitor's `pve-lxcs.tf` (symmetric with pve-host; makes an
-  unbound outage loud, and `cookbooks/unbound-watchdog` already restarts a
-  wedged unbound), or keeping it and adding an alert that fires when a fleet
-  host resolves an external name without unbound in the path. Removing it is
-  the smaller change and matches the decision already made for pve-host.
-  Delete this entry in the resolving commit.
-
 ## Vector drops 94% of RTX DHCP lease events on the floor (Low)
 
 `transforms.parse` Stage 3 in `cookbooks/lxc-monitoring/files/vector.toml` matches
