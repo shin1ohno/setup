@@ -218,6 +218,7 @@ pipelines and the old local MCP ports.
   reversal), but a proactive sweep shortens the stale window.
 - First step: `grep -rliE 'cognee|cognify|8001|8002' ~/.claude/projects/*/memory/`
   and update or delete each hit, syncing MEMORY.md index lines in the same pass.
+- **Status 2026-08-23** (todo-reconcile probe): still live on `sh1-cloud` — `grep -rliE 'cognee|cognify|:8001|:8002' ~/.claude/projects/*/memory/` returns 8 files: setup's `mcp-ohno-be-oauth-troubleshooting.md` / `memory-work-store.md` and zp-SHIN's `docker-desktop-portforward-wedge.md` / `mercari-setup-overlay.md` / `claude-md-audit-2026-07.md` / `loop-engineering-adoption.md` / `mcp-health-monitor-loop.md` / `MEMORY.md`. Note the sweep is per-host: this count is sh1-cloud's, not air's.
 
 ## remindd daemon — connection/idle-timeout hardening (Low)
 
@@ -373,6 +374,7 @@ NOT defects.
   (same substitution the `ssh-keys` entry above records). Verify by touching a
   template input so the notify fires, and by applying to a fresh CT for the
   `ensure … exists` pair.
+- **Status 2026-08-23** (todo-reconcile probe): all nine are still bare `command <<~SH` with `set -e?uo pipefail` as line 1 — unwrapped. Line numbers have drifted, so locate by resource name, not by the table above: lxc-elasticsearch `266` / `292`, lxc-kibana `337` / `353` / `374`, lxc-monitoring `441` (the `set -uo` variant) / `580` / `614` / `632`. The two sibling entries are unfixed too: `cookbooks/elastic-agent/linux.rb:314` (and its apt block still carries neither `user` nor `sudo`) and `cookbooks/ssh-keys/default.rb:378`.
 
 ## sh1-cloud — every owner/group resource re-chowns on every apply (Low)
 
@@ -429,6 +431,7 @@ truncated として残数不明のまま明記されている（silent cap は�
   truncated 残数つきで明記する」を SKILL.md に明文化する。完了条件: sweep が End of results に
   到達する、または打ち切り規則が SKILL.md に明記され ledger に残数が出る（このエントリは対応
   コミットで削除）。
+- **Status 2026-08-23**（todo-reconcile probe）: 未着手。加えて、上の「最初の一歩」が現行 SKILL.md と衝突することが判明した — `~/.claude/skills/todo-collect/SKILL.md:41` は「`after:` / `before:` を saved / reaction に付けない」を明示的に禁じている（Slack の日付フィルタは**元メッセージの投稿日**で効くため、古い投稿を後から saved した分が全部落ちる）。したがって時間窓分割ページングを採る場合はこの禁止条項の改訂が同じ PR に含まれる。禁止を維持するなら打ち切り規則の明文化（第 2 案）が唯一の道。
 
 ## ledger.md が全時代を 1 ファイルに抱え、承認待ちキューが履歴に埋もれる (Medium)
 
@@ -448,6 +451,7 @@ disposition を参照して再列挙を省略」と指示しているため、1 
 - 緊急ではない（現在 256 行）。数千行に達する前に着手する。完了条件: 候補キューが open 件数に
   比例するファイルに分離され、reconcile が履歴を読まずに 1 サイクル完走する（このエントリは
   対応コミットで削除）。
+- **Status 2026-08-23**（todo-reconcile probe）: **256 行 → 1154 行**（4.5 倍、105 KB）。`~/.claude/todo/runs/` と `~/.claude/todo/candidates.md` はどちらも未作成。日次 collect が 1 run あたり約 100 行を追記しており（08-17〜08-23 の 7 run で 7 セクション）、線形に伸び続けている。
 
 ## herdr — bump past 0.8.0 once a stable ships the oversized-frame render fix (Low)
 
@@ -474,6 +478,7 @@ stable = v0.8.0, the pinned version).
   `cookbooks/herdr/default.rb`, bump `herdr_version`, and restart the server at
   a moment when no agent panes are active. Delete this entry in the resolving
   commit.
+- **Status 2026-08-23** (todo-reconcile probe): **the trigger condition is now met** — `gh api repos/ogulcancelik/herdr/releases/latest --jq .tag_name` returns `v0.8.2`, while `cookbooks/herdr/default.rb:20` still pins `0.8.0`. Next: confirm v0.8.1/v0.8.2 release notes actually carry #2675, recompute the per-target sha256s, bump `herdr_version`, and restart the server when no agent panes are active.
 
 ## Vector drops 94% of RTX DHCP lease events on the floor (Low)
 
