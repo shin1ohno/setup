@@ -432,6 +432,7 @@ truncated として残数不明のまま明記されている（silent cap は�
   到達する、または打ち切り規則が SKILL.md に明記され ledger に残数が出る（このエントリは対応
   コミットで削除）。
 - **Status 2026-08-23**（todo-reconcile probe）: 未着手。加えて、上の「最初の一歩」が現行 SKILL.md と衝突することが判明した — `~/.claude/skills/todo-collect/SKILL.md:41` は「`after:` / `before:` を saved / reaction に付けない」を明示的に禁じている（Slack の日付フィルタは**元メッセージの投稿日**で効くため、古い投稿を後から saved した分が全部落ちる）。したがって時間窓分割ページングを採る場合はこの禁止条項の改訂が同じ PR に含まれる。禁止を維持するなら打ち切り規則の明文化（第 2 案）が唯一の道。
+- **Status 2026-08-30**（todo-reconcile probe）: 未解決のまま稼働継続 — 08-30 の日次 collect run も `is:saved` を「truncated 残数は不明のまま持ち越し」で終えている（ledger の `work-slack-saved` 節）。同 run で `hasmy::pushpin:`（0 件）と self-DM（2 ページ 27 件）は `End of results` に到達しており、打ち切りは saved sweep 固有と確定した。
 
 ## ledger.md が全時代を 1 ファイルに抱え、承認待ちキューが履歴に埋もれる (Medium)
 
@@ -452,6 +453,7 @@ disposition を参照して再列挙を省略」と指示しているため、1 
   比例するファイルに分離され、reconcile が履歴を読まずに 1 サイクル完走する（このエントリは
   対応コミットで削除）。
 - **Status 2026-08-23**（todo-reconcile probe）: **256 行 → 1154 行**（4.5 倍、105 KB）。`~/.claude/todo/runs/` と `~/.claude/todo/candidates.md` はどちらも未作成。日次 collect が 1 run あたり約 100 行を追記しており（08-17〜08-23 の 7 run で 7 セクション）、線形に伸び続けている。
+- **Status 2026-08-30**（todo-reconcile probe）: さらに悪化 — **1154 行 → 1963 行**（105 KB → 174 KB）。`~/.claude/todo/runs/` と `~/.claude/todo/candidates.md` はどちらも未作成（`ls ~/.claude/todo/` は `ledger.md` と `sources*.yaml` だけ）。08-23〜08-30 の日次 collect 7 run で +809 行（週 +70%）で、週次 reconcile 側も候補セクションを読み飛ばすために毎回 grep が必要になっている。
 
 ## herdr — bump past 0.8.0 once a stable ships the oversized-frame render fix (Low)
 
@@ -479,49 +481,6 @@ stable = v0.8.0, the pinned version).
   a moment when no agent panes are active. Delete this entry in the resolving
   commit.
 - **Status 2026-08-23** (todo-reconcile probe): **the trigger condition is now met** — `gh api repos/ogulcancelik/herdr/releases/latest --jq .tag_name` returns `v0.8.2`, while `cookbooks/herdr/default.rb:20` still pins `0.8.0`. Next: confirm v0.8.1/v0.8.2 release notes actually carry #2675, recompute the per-target sha256s, bump `herdr_version`, and restart the server when no agent panes are active.
-
-## es-memory (CT 119) is not in the auto-mitamae host list (Medium)
-
-`pve/lxc-es-memory.rb` has no entry in
-`cookbooks/auto-mitamae-orchestrator/files/hosts.json`, so CT 119 is never
-converged automatically and only picks up cookbook changes on a manual apply.
-`bin/lint-cookbooks` already emits a WARN for this, but the WARN has been
-standing long enough to be treated as background noise.
-
-Confirmed live: after #909 merged and the fleet converged, CT 119 was one of
-only two running hosts still carrying `options no-aaaa` — the other being
-CT 108 above.
-
-- **First step**: decide the intent. Either add the `.83` entry to
-  `hosts.json` so it converges like every other service LXC, or add
-  `pve/lxc-es-memory.rb` to `bin/lint-cookbooks` `PVE_HOSTS_EXEMPT` with the
-  reason, so the WARN stops being ambient. Do not leave it as a permanent
-  warning. Delete this entry in the resolving commit.
-
-## LXC resolv.conf falls back to 1.1.1.1, which cannot answer home.local (Medium)
-
-Every PVE LXC gets `nameserver 192.168.1.61` followed by `nameserver 1.1.1.1`
-(set by home-monitor `pve-lxcs.tf`, the `dns.servers` block — NOT by a cookbook
-in this repo). If unbound stops answering, the whole fleet silently degrades to
-plaintext Cloudflare: `home.local` names start returning authoritative NXDOMAIN
-instead of a retryable timeout, and every other query leaves the network in
-cleartext, defeating the DoT-only design in `cookbooks/unbound`.
-
-This is the exact failure that took fleet telemetry down on 2026-08-12
-(self-heal #855/#856/#857) via the PVE host's resolv.conf. That host was fixed
-then — its comment now reads "no public fallback" — but the LXC side was never
-made symmetric.
-
-- **Why it is worse now**: as IPv6 lands, the fleet gains a second path to the
-  same resolver (its ULA address). A silent fallback sitting underneath two
-  paths hides the failure of either.
-- **First step**: choose between removing `1.1.1.1` from the `dns.servers`
-  list in home-monitor's `pve-lxcs.tf` (symmetric with pve-host; makes an
-  unbound outage loud, and `cookbooks/unbound-watchdog` already restarts a
-  wedged unbound), or keeping it and adding an alert that fires when a fleet
-  host resolves an external name without unbound in the path. Removing it is
-  the smaller change and matches the decision already made for pve-host.
-  Delete this entry in the resolving commit.
 
 ## Vector drops 94% of RTX DHCP lease events on the floor (Low)
 
