@@ -32,3 +32,40 @@ groups:
             for `connection refused`, then reconcile with
             `terraform apply -target=rtx_snmp_server.{{ $labels.router }}`
             in home-monitor (provider writes the ACL to running config AND saves).
+
+      # lan2 (WAN) RX-overflow discards. The RTX drops inbound (server->client)
+      # packets when its receive ring overflows on a bursty inbound stream —
+      # ifInDiscards == the "受信オーバーフロー" counter in `show status lan2`.
+      # The 2026-09 home-LAN slowness investigation measured a recent ~4x uptick
+      # (09-02: 0.50% of inbound pkts, 829,886/166M, driven by a sustained
+      # ~17 Mbps / ~2 kpps inbound stream 00:00-19:59 JST; normal baseline
+      # <0.2%). ~0.5% inbound loss bounds a single TCP flow to ~24 Mbps and costs
+      # the many short HTTP/QUIC flows of a Notion page or YouTube player an
+      # RTO/PTO each — i.e. "images/videos/embeds stall for seconds" on every LAN
+      # client, wired and wireless. The episode was invisible until the
+      # investigation, so this alert timestamps the next one against the report.
+      # clamp_min avoids 0/0 when the link is idle. for:30m rides out brief
+      # spikes; the real episodes are sustained (09-02 ran ~20h).
+      - alert: RTXWanInboundDiscardsHigh
+        expr: >
+          rate(ifInDiscards{job="snmp-rtx",router="hnd",ifDescr="LAN2"}[10m])
+          / clamp_min(rate(ifInUcastPkts{job="snmp-rtx",router="hnd",ifDescr="LAN2"}[10m]), 1)
+          > 0.002
+        for: 30m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "RTX hnd WAN (lan2) inbound discards >0.2% for 30m — LAN-wide packet loss"
+          description: |
+            The RTX hnd WAN port (lan2) is dropping >0.2% of inbound packets for
+            30m+ (receive-ring overflow). Every LAN client sees random inbound
+            loss, so short HTTP/QUIC flows stall on retransmit timers — pages open
+            but images/videos/embeds hang for seconds. NOT a raw-bandwidth issue
+            (a well-paced 100 Mbps CDN download does not overflow); look for a
+            specific bursty inbound stream. Identify it:
+            `ssh root@192.168.1.10 'pct exec 111 -- curl -s "http://localhost:9090/api/v1/query?query=rate(ifInDiscards{router=\"hnd\",ifDescr=\"LAN2\"}[5m])"'`
+            then correlate the window with per-host traffic
+            (`show ip connection` / `show ipv6 connection` on the RTX, or PVE/LXC
+            `ip -s link` deltas). If it is a bulk transfer from an LXC/PVE job,
+            rate-limit or reschedule it.
