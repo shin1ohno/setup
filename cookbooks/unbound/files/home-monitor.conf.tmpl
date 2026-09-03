@@ -155,6 +155,18 @@ server:
     harden-dnssec-stripped: yes
     qname-minimisation: yes
     prefetch: yes
+    # serve-expired: hand back a slightly-stale cached answer immediately
+    # (within serve-expired-client-timeout ms) while refreshing in the
+    # background, so an upstream DoT handshake stall — unbound opens a fresh
+    # TCP+TLS to the forwarder roughly every 1.25s, and a lost SYN costs the
+    # whole page-open burst a ~1s kernel RTO — does not surface as a
+    # multi-second stall for repeat names (YouTube/Notion CDN hosts). Pairs
+    # with prefetch above. Added in the 2026-09 home-LAN slowness fix.
+    serve-expired: yes
+    serve-expired-client-timeout: 1800
+    # extended-statistics exposes per-type + response-time histograms via
+    # `unbound-control stats`, so the burst-stall rate can be quantified.
+    extended-statistics: yes
     edns-buffer-size: 1232
     # CT118 has 2 cores. A single thread serialises the ~90ms home.local forwards
     # (10.33.128.2 over the Tailscale subnet route); under fleet query bursts the
@@ -199,11 +211,14 @@ forward-zone:
 forward-zone:
     name: "."
     forward-tls-upstream: yes
-    forward-addr: 1.1.1.1@853#cloudflare-dns.com
-    forward-addr: 1.0.0.1@853#cloudflare-dns.com
-    forward-addr: 2606:4700:4700::1111@853#cloudflare-dns.com
-    forward-addr: 2606:4700:4700::1001@853#cloudflare-dns.com
+    # Quad9 listed first: DoT probe from CT118 measured Quad9 ~17ms vs
+    # Cloudflare ~58ms. unbound also RTT-orders forward-addr, so this is
+    # primarily intent + a tiebreaker; Cloudflare is kept for availability.
     forward-addr: 2620:fe::fe@853#dns.quad9.net
     forward-addr: 2620:fe::9@853#dns.quad9.net
     forward-addr: 9.9.9.9@853#dns.quad9.net
     forward-addr: 149.112.112.112@853#dns.quad9.net
+    forward-addr: 2606:4700:4700::1111@853#cloudflare-dns.com
+    forward-addr: 2606:4700:4700::1001@853#cloudflare-dns.com
+    forward-addr: 1.1.1.1@853#cloudflare-dns.com
+    forward-addr: 1.0.0.1@853#cloudflare-dns.com
