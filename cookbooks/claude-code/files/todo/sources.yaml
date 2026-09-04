@@ -30,13 +30,19 @@
 #                    revived from /todo-approve)                  default 21
 #   dm_per_run_max:  cap on new per-candidate DMs per collect run  default 10
 #                    (only used when queue_surface is slack-self-dm)
+#   snooze_days:     how long a snooze reaction defers a candidate   default 7
 #
 # surfaces: (top-level, optional) where the approval queue is surfaced
 #   queue_surface: none | slack-self-dm     default none = file surface only
 #                  (candidates.jsonl + /todo-approve). slack-self-dm adds a
-#                  per-candidate self-DM with reaction-based approval; the
-#                  channel id and the emoji names live next to it — they are
-#                  workspace-specific values and belong in sources.local.yaml.
+#                  per-candidate self-DM with reaction-based approval
+#                  (docs/todo-management.md "Approval surfaces").
+#   channel:       the self-DM channel id to post to and read back from
+#   reactions:     { approve, reject, snooze, never } -> the emoji NAMES the
+#                  connector returns in its `Reactions:` line
+#                  (defaults white_check_mark / x / zzz / mute — measure them)
+#   channel and reactions are workspace-specific values and belong in
+#   sources.local.yaml, never here.
 #
 # apple-reminders adapter: sweeps the named Reminders list via `remind --dump`.
 # A reminder is a capture candidate when it is NOT completed, carries no
