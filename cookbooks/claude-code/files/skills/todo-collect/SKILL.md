@@ -83,7 +83,7 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
 
 ### Step 3b — sweep.json を書く
 
-`~/.claude/todo/tmp/<RUN_TS>-sweep.json` に `{"run", "sources": [{name, class, status, count, remaining, reason}], "todos": <envelope>, "dispositions": <envelope>, "items": [...]}` を書く。`items[]` は inferred の**全件**（actionable かどうかを自分で判断して落とさない — aging と disposition は helper が構造で判断する）: `{source, class, title, permalink または key, thread_key?, origin_ts, due, draft_close_condition, confidence, idx?}`。`origin_ts` は元メッセージ・会議の日時（aging の基準）。envelope は Step 2 の `{"enum": {state,total,returned,remaining,reason}, "records": [...]}`。`python3 … validate --sweep <path> --run <RUN_TS>` が exit 0 になるまで直す。
+`~/.claude/todo/tmp/<RUN_TS>-sweep.json` に `{"run", "sources": [{name, class, status, count, remaining, reason}], "todos": <envelope>, "dispositions": <envelope>, "items": [...]}` を書く。`items[]` は inferred のうち **cutoff（今日 − そのソースの `max_age_days`）以内の全件**（actionable かどうかを自分で判断して落とさない — dedup と disposition は helper が構造で判断する）。cutoff 超のメッセージは items に入れず、そのソースの `sources[].reason` に「cutoff 超 N 件（最古 YYYY-MM-DD）」と件数と最古日付を申告する（silent drop ではなく件数申告。毎日 100 件超の aged-out を 1 行ずつ run log に残すのはノイズ — 2026-09-04 決定。helper の aging は items 側の取りこぼしに対する backstop として残る）。ページ自体は総数確定のため `End of results` まで走査する: `{source, class, title, permalink または key, thread_key?, origin_ts, due, draft_close_condition, confidence, idx?}`。`origin_ts` は元メッセージ・会議の日時（aging の基準）。envelope は Step 2 の `{"enum": {state,total,returned,remaining,reason}, "records": [...]}`。`python3 … validate --sweep <path> --run <RUN_TS>` が exit 0 になるまで直す。
 
 ### Step 4 — 書込 / filter
 
