@@ -117,6 +117,16 @@ tagged `['todo-disposition', '<kind>', '<source>']`, written to the SAME sink as
 
 A run writes exactly one file, `runs/<RUN_TS>-<loop>.md`, whose first heading carries the run id the runner injected; the runner greps that id (and, for collect, the `remind` / `ai-memory` unswept tokens) as its proof the session did the work. The runner — never the model — appends the `ledger.md` index line after classifying the cycle, so an index line is evidence, not a claim. Interactive runs have no runner and leave no index line; `summary` derives history from `runs/` filenames.
 
+## Approval surfaces — one DM per candidate, one reaction per decision
+
+`surfaces.queue_surface` in the merged config selects where the queue is surfaced. `none` (public default) means the file surface only: `candidates.jsonl` + `/todo-approve`. `slack-self-dm` adds the surface that closes P1 for a phone-first user: every new open candidate is posted **once** to the user's own self-DM (first line `[todo-loop] 候補 key=<key>`, so the self-DM sweep never re-captures it), and the next collect run reads the reactions back off those messages.
+
+Why this is safe under the source-immutability rule: the loop reads reactions only on **its own** messages, never on the saved item or the 📌 that produced the candidate. The connector renders reactions as `Reactions: <name> (<count>)` — emoji name and count, no reactor identity — which is enough only because a self-DM has exactly one possible reactor. The emoji names are workspace values (`surfaces.reactions`, measured before deploy) and live in the overlay config, not here.
+
+Mechanics (`todo_queue.py`): `filter` picks `to_announce` (oldest origin first, capped by `queue.dm_per_run_max`; the rest is marked `announce_pending` and goes out the next day); the skill renders each with `render-dm`, sends it, and calls `set-announce` **per message** so the send and its record are one unit — a run that dies between them re-sends at most one DM. On the next run, before the sweep, the skill reads the channel with `oldest` = the oldest open announce and pages until the cursor is exhausted (the read limit is 100 per page), writes `{messages:[{ts, channel, reactions}]}`, and `ingest-reactions` turns that into `actions` (approve / reject / snooze with a computed `until` / never with `thread_key`), `needs_review` marks (✅ and ❌ together; a DM older than `ttl_days` — a stale reaction is never executed silently), `revert_candidates` (a record whose `announce=` line points at a DM that now carries a contradicting reaction — the box may act only on its own `tool-output` records, a `user-stated` one becomes a `needs_review` note pointing at `/todo-approve --undo`), and `announce_missing` (the DM is gone). The side effects — `remember`, `forget` + `done`, thread replies as receipts — stay with the skill; keys disposed in the run are handed to `filter --applied` so the same-day queue already hides them.
+
+Every write made through this surface carries `announce=<channel>/<ts>` in its content, because that line is what makes the reversal (「承認したが、やっぱり違う」 — 4 of the 5 approvals of 2026-08-18 were reversed the next day) detectable at all.
+
 ## Apple Reminders integration (remind CLI)
 
 真実源は変わらず memory store（ai-memory=個人 / memory-work=work）。Apple Reminders は 2 役を担う連携ストア:

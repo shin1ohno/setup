@@ -383,5 +383,179 @@ class FilesAndCli(unittest.TestCase):
         self.assertIn("loops", json.loads(out))
 
 
+SLACK_CONFIG = {
+    "queue": {"ttl_days": 21, "dm_per_run_max": 2, "snooze_days": 7},
+    "sources": [{"name": "work-slack-saved", "class": "inferred", "max_age_days": 30}],
+    "surfaces": {"queue_surface": "slack-self-dm", "channel": "D1", "reactions": {"approve": "white_check_mark", "reject": "x", "snooze": "zzz", "never": "mute"}},
+}
+
+
+def row(key=KEY_A, **kw):
+    base = {"type": "candidate", "key": key, "thread_key": key, "source": "work-slack-saved", "class": "inferred",
+            "title": "t", "permalink": HOST_A, "origin_ts": "2026-08-28T09:55:10+09:00", "due": None,
+            "draft_close_condition": "reply", "confidence": "high", "first_seen": "2026-09-01",
+            "announce": {"channel": "D1", "ts": "1788000000.000100", "at": "2026-09-03T22:24:00Z"},
+            "announce_pending": False, "review_reason": None, "snooze_wake": None, "state": "open"}
+    base.update(kw)
+    return base
+
+
+def msg(ts="1788000000.000100", *names):
+    return {"ts": ts, "channel": "D1", "reactions": [{"name": n, "count": 1} for n in names]}
+
+
+def run_ingest(rows, messages, records=None, today=TODAY):
+    return tq.ingest_reactions(rows, messages, SLACK_CONFIG, dt.date.fromisoformat(today), NOW, records)
+
+
+class ApprovalSurface(unittest.TestCase):
+    def test_filter_picks_to_announce_up_to_cap_and_marks_the_rest(self):
+        items = [item(origin_ts=f"2026-08-2{d}T00:00:00Z", permalink=other_permalink(d)) for d in range(5, 9)]
+        meta, rows, _ = tq.filter_queue([], sweep(items=items), SLACK_CONFIG, RUN, dt.date.fromisoformat(TODAY), NOW)
+        self.assertEqual(meta["surface"], "slack-self-dm")
+        self.assertEqual(len(meta["to_announce"]), 2)
+        self.assertEqual(meta["to_announce"], [rows[0]["key"], rows[1]["key"]])
+        self.assertEqual(meta["announce_pending"], 2)
+        self.assertTrue(rows[2]["announce_pending"] and rows[3]["announce_pending"])
+
+    def test_filter_surface_none_announces_nothing(self):
+        meta, rows, _ = run_filter([], sweep())
+        self.assertEqual(meta["to_announce"], [])
+        self.assertEqual(meta["surface"], "none")
+
+    def test_filter_applied_keys_are_hidden_this_run(self):
+        meta, rows, report = tq.filter_queue([], sweep(), CONFIG, RUN, dt.date.fromisoformat(TODAY), NOW, applied_keys=[KEY_A])
+        self.assertEqual(rows, [])
+        self.assertEqual(meta["applied_hidden"], 1)
+        self.assertEqual(report["hidden"][0]["kind"], "applied")
+
+    def test_announce_carried_and_already_announced_not_reannounced(self):
+        prev = [row()]
+        meta, rows, _ = tq.filter_queue(prev, sweep(), SLACK_CONFIG, RUN, dt.date.fromisoformat(TODAY), NOW)
+        self.assertEqual(rows[0]["announce"]["ts"], "1788000000.000100")
+        self.assertEqual(meta["to_announce"], [])
+        self.assertEqual(meta["announced"], 1)
+
+    def test_render_dm_has_prefix_key_and_legend(self):
+        text = tq.render_dm(row(), dt.date.fromisoformat(TODAY))
+        lines = text.splitlines()
+        self.assertEqual(lines[0], f"[todo-loop] 候補 key={KEY_A}")
+        self.assertIn("完了条件案: reply", text)
+        self.assertIn(HOST_A, text)
+        self.assertIn("✅ 承認", lines[-1])
+        self.assertIn("7 日保留", lines[-1])
+
+    def test_ingest_single_reactions_become_actions(self):
+        rows = [row(), row(key="slack:C0A4XE8GF0F/1787227341.426700", announce={"channel": "D1", "ts": "2.0", "at": "2026-09-03T00:00:00Z"})]
+        actions, nr, reverts, missing, _ = run_ingest(rows, [msg("1788000000.000100", "white_check_mark"), msg("2.0", "zzz")])
+        self.assertEqual([a["kind"] for a in actions], ["approve", "snooze"])
+        self.assertEqual(actions[1]["until"], "2026-09-11")
+        self.assertEqual(actions[0]["announce"], "D1/1788000000.000100")
+        self.assertEqual(nr, [])
+
+    def test_ingest_never_carries_thread_key_and_reject_plain(self):
+        rows = [row(thread_key="slack:C0A4XE8GF0F/1787227341.000000")]
+        actions, _, _, _, _ = run_ingest(rows, [msg("1788000000.000100", "mute")])
+        self.assertEqual(actions[0]["kind"], "never")
+        self.assertEqual(actions[0]["thread_key"], "slack:C0A4XE8GF0F/1787227341.000000")
+        actions, _, _, _, _ = run_ingest([row()], [msg("1788000000.000100", "x")])
+        self.assertEqual(actions[0]["kind"], "reject")
+
+    def test_ingest_conflict_marks_needs_review(self):
+        rows = [row()]
+        actions, nr, _, _, rows = run_ingest(rows, [msg("1788000000.000100", "white_check_mark", "x")])
+        self.assertEqual(actions, [])
+        self.assertEqual(rows[0]["state"], "needs_review")
+        self.assertIn("conflicting", nr[0]["reason"])
+
+    def test_ingest_stale_announce_marks_needs_review(self):
+        rows = [row(announce={"channel": "D1", "ts": "1788000000.000100", "at": "2026-08-01T00:00:00Z"})]
+        actions, nr, _, _, rows = run_ingest(rows, [msg("1788000000.000100", "white_check_mark")])
+        self.assertEqual(actions, [])
+        self.assertEqual(rows[0]["state"], "needs_review")
+        self.assertIn("stale", nr[0]["reason"])
+
+    def test_ingest_ignores_unknown_emoji_and_reports_missing_message(self):
+        rows = [row(), row(key="slack:C0A4XE8GF0F/1787227341.426700", announce={"channel": "D1", "ts": "9.9", "at": "2026-09-03T00:00:00Z"})]
+        actions, nr, _, missing, _ = run_ingest(rows, [msg("1788000000.000100", "eyes")])
+        self.assertEqual(actions, [])
+        self.assertEqual(nr, [])
+        self.assertEqual(missing[0]["key"], "slack:C0A4XE8GF0F/1787227341.426700")
+
+    def test_ingest_reversal_on_approved_todo_record(self):
+        rec = {"id": "T1", "content": f"key={KEY_A}\nannounce=D1/1788000000.000100\n完了条件: x", "tags": ["todo"],
+               "provenance": {"source_class": "tool-output"}}
+        actions, _, reverts, _, _ = run_ingest([], [msg("1788000000.000100", "x")], records=[rec])
+        self.assertEqual(actions, [])
+        self.assertEqual(reverts[0]["current"], "approve")
+        self.assertEqual(reverts[0]["reactions"], ["reject"])
+        self.assertEqual(reverts[0]["source_class"], "tool-output")
+        self.assertEqual(reverts[0]["key"], KEY_A)
+
+    def test_ingest_reversal_on_reject_disposition_with_approve_reaction(self):
+        rec = {"id": "D9", "content": f"todo-disposition reject key={KEY_A} written_at=2026-09-02T00:00:00Z\nannounce=D1/1788000000.000100\n理由"}
+        _, _, reverts, _, _ = run_ingest([], [msg("1788000000.000100", "white_check_mark")], records=[rec])
+        self.assertEqual(reverts[0]["current"], "reject")
+        self.assertEqual(reverts[0]["reactions"], ["approve"])
+        _, _, none, _, _ = run_ingest([], [msg("1788000000.000100", "x")], records=[rec])
+        self.assertEqual(none, [])
+
+
+class ApprovalSurfaceCli(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name) / "todo"
+        self.dir.mkdir()
+        self.cfg = self.dir / "config.json"
+        self.cfg.write_text(json.dumps(SLACK_CONFIG), encoding="utf-8")
+        sw = self.dir / "sweep.json"
+        sw.write_text(json.dumps(sweep()), encoding="utf-8")
+        self.run_cli("filter", "--sweep", str(sw), "--run", RUN, "--config", str(self.cfg))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = tq.main(["--todo-dir", str(self.dir), "--now", NOW, "--today", TODAY, *argv])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_set_announce_persists_and_drops_from_to_announce(self):
+        meta, _ = tq.read_queue(self.dir / "candidates.jsonl")
+        self.assertEqual(meta["to_announce"], [KEY_A])
+        rc, out, err = self.run_cli("set-announce", "--key", KEY_A, "--channel", "D1", "--ts", "1788000000.000100")
+        self.assertEqual(rc, 0, err)
+        meta, rows = tq.read_queue(self.dir / "candidates.jsonl")
+        self.assertEqual(rows[0]["announce"]["ts"], "1788000000.000100")
+        self.assertEqual(meta["announced"], 1)
+        self.assertEqual(meta["to_announce"], [])
+        rc, _, err = self.run_cli("set-announce", "--key", "slack:C0/0.0", "--channel", "D1", "--ts", "1.0")
+        self.assertEqual(rc, 3)
+
+    def test_render_dm_cli(self):
+        rc, out, _ = self.run_cli("render-dm", "--key", KEY_A, "--config", str(self.cfg))
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith(f"[todo-loop] 候補 key={KEY_A}"))
+
+    def test_ingest_reactions_cli_writes_needs_review_and_lists_applied_keys(self):
+        self.run_cli("set-announce", "--key", KEY_A, "--channel", "D1", "--ts", "1788000000.000100")
+        r = self.dir / "reactions.json"
+        r.write_text(json.dumps({"messages": [msg("1788000000.000100", "white_check_mark")]}), encoding="utf-8")
+        rc, out, err = self.run_cli("ingest-reactions", "--reactions", str(r), "--run", RUN, "--config", str(self.cfg))
+        self.assertEqual(rc, 0, err)
+        res = json.loads(out)
+        self.assertEqual(res["applied_keys"], [KEY_A])
+        self.assertEqual(res["actions"][0]["kind"], "approve")
+        r.write_text(json.dumps({"messages": [msg("1788000000.000100", "white_check_mark", "x")]}), encoding="utf-8")
+        rc, out, _ = self.run_cli("ingest-reactions", "--reactions", str(r), "--run", RUN, "--config", str(self.cfg))
+        _, rows = tq.read_queue(self.dir / "candidates.jsonl")
+        self.assertEqual(rows[0]["state"], "needs_review")
+        applied = self.dir / "applied.json"
+        applied.write_text(json.dumps({"keys": [KEY_A]}), encoding="utf-8")
+        rc, out, _ = self.run_cli("filter", "--sweep", str(self.dir / "sweep.json"), "--run", RUN, "--config", str(self.cfg), "--applied", str(applied))
+        self.assertEqual(json.loads(out)["applied_hidden"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

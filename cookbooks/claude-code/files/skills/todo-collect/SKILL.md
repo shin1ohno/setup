@@ -87,6 +87,21 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
 - inferred → `python3 … filter --sweep <sweep> --run <RUN_TS> --config <config.json> --run-log <run log>` で `candidates.jsonl` を全文再生成する。stdout の JSON の `expired_keys[]` それぞれに `remember("todo-disposition expired key=<key> written_at=<ISO> reason=ttl\n<title>", type='fact', tags=['todo-disposition','expired','<source>'])` を書く。無人 run はここまで（承認者不在なので inferred は保存しない）。
 - **対話実行なら**候補を処置してよい: AskUserQuestion を 4 候補ずつ（承認 / 却下 / 1 週間 snooze / このスレッドは今後除外）。承認 → todo `remember`（`via:todo-approve`）、**却下・snooze・除外は捨てるのではなく disposition レコードとして source の sink へ `remember`** する: `todo-disposition <kind> key=<key> written_at=<ISO>[ until=<YYYY-MM-DD>][ thread_key=<tk>]` + 理由 1 行、`tags:['todo-disposition','<kind>','<source>']`。`thread_key=` を持つレコードだけがスレッド全体を隠す（`never` が書く。`reject` は単独 key）。翌 run の `filter` が反映する。**silent drop 禁止**は変わらない — helper が aged-out / expired / hidden を run log に 1 行ずつ残す
 
+### Step 4b — 承認面（config `surfaces.queue_surface: slack-self-dm` のときだけ）
+
+承認面が有効な config では、候補 1 件 = 承認面の DM 1 通、処置 = DM へのリアクション 1 回。チャンネル id と絵文字名は config の `surfaces.channel` / `surfaces.reactions` から取る（SKILL.md には書かない — workspace 固有の値）。順序が重要:
+
+1. **読取（Step 1 の sweep より前、Step 2 の browse の後）**: 承認面のチャンネルを `slack_read_channel(channel_id: <surfaces.channel>, response_format: "detailed", oldest: <queue 内で最古の open な announce.ts>)` で、`cursor` が尽きるまでページングして読む（`limit` 上限は 100。1 回読みでは古い候補のリアクションを取り逃す）。各メッセージを `{ts, channel, reactions: [{name, count}]}` に整形して `tmp/<RUN_TS>-reactions.json`（`{"messages": [...]}`）に書く。同じ store の todo / disposition レコードのうち本文に `announce=<channel>/<ts>` 行を持つものを `tmp/<RUN_TS>-records.json`（`{"records": [...]}`、`id` / `content` / `provenance` を含める）に書く。
+2. **判定は helper**: `python3 … ingest-reactions --reactions <reactions.json> --records <records.json> --run <RUN_TS> --config <config.json>`。stdout の JSON:
+   - `actions[]`（`kind ∈ approve|reject|snooze|never`）を 1 件ずつ適用する。approve → `browse(tags:"todo")` で key 既存なら skip（既存なら領収書のみ）、`todos_enum` が truncated なら**保留**して needs_review 相当として run log に「未適用（dedup 不完全）」を書く。未存なら todo `remember`（`via:slack-reaction`、本文 1 行目 `key=`、**2 行目に `announce=<channel>/<ts>`**）。reject / snooze（`until` は helper が計算）/ never（`thread_key=` 付き）→ disposition `remember`（本文に `announce=<channel>/<ts>` 行を含める — 翻意検知に使う）。
+   - `needs_review[]`（✅ と ❌ が同時 / DM が `ttl_days` より古い）は helper が queue の `state` を `needs_review` に書き換えている。スレッドに 1 行返信して確認を求める。
+   - `revert_candidates[]`（既に approve / reject 済みの key の DM に、それと矛盾するリアクションが付いた）: `source_class` が `tool-output`（この箱が書いた）なら approve の取消 = `forget` + `todo-disposition done … reason=reverted-by-reaction`、reject の取消 = `todo-disposition revive`。`user-stated`（laptop で書かれた）なら箱からは触れないので `needs_review` としてスレッド返信「laptop の `/todo-approve --undo <key>` で取消」。
+   - `announce_missing[]`（announce.ts の DM が履歴に見つからない）は run log に列挙する（削除された DM。翌 run の `to_announce` で再送されるよう `set-announce` は触らない — Phase 3 で再送規則を決める）。
+   - 領収書はその候補 DM への**スレッド返信** `[todo-loop] ✅ 承認 → <store> <id>` / `❌ 却下を記録` / `💤 <until> まで保留` / `🔇 スレッド除外`（`slack_send_message(channel, thread_ts=<announce.ts>, …)`）。
+   - 処置した key の一覧を `tmp/<RUN_TS>-applied.json`（`{"keys": [...]}`）に書き、Step 4 の `filter` に `--applied` で渡す（disposition の browse 結果はこの run の書込より古いので、同日中に隠すため）。
+3. **送信（Step 4 の `filter` の後）**: `filter` の stdout `to_announce[]`（`dm_per_run_max` 以内、origin_ts 昇順）を 1 件ずつ `python3 … render-dm --key <key> --config <config.json>` で本文にして `slack_send_message(channel_id: <surfaces.channel>, message: <本文>)` で送り、**送るごとに** `python3 … set-announce --key <key> --channel <channel> --ts <戻り値の message_ts>` を呼ぶ（送信と永続化の窓を 1 件分に閉じる — まとめて後で書くと途中死で翌日二重送信になる）。継続候補は再投稿しない。`announce_pending` はキャップ超過分（翌 run に持ち越し）。
+4. 承認面は **ループ自身のメッセージ**にしか触らない（DM 送信・スレッド返信・リアクション読取）。ソース（saved / 📌 / 元メッセージ）は不変のまま。
+
 ### Step 5 — run log 作成
 
 `~/.claude/todo/runs/<RUN_TS>-collect.md` を**新規作成**する（1 行目の見出しに RUN_TS）。内容: 実行日時 / ソース別 新規 N 件・候補 M 件・dedup skip 数 / helper の filter 出力の要約（open, needs_review, aged_out, deduped, hidden, expired）/ 未 sweep とその理由 / truncated 残数 / 保存した id / disposition id。helper が同じファイルに `### queue filter` 節（aged-out / expired / hidden を 1 行ずつ）を追記しているので、候補の再叙述はしない。`ledger.md`（index）は書かない。
