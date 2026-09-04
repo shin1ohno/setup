@@ -465,6 +465,23 @@ remote_file "#{node[:setup][:home]}/.claude/skills/todo-collect/todo_queue.py" d
   action :create
 end
 
+# mw_client.py — the one place that speaks MCP streamable-HTTP to a memory store and
+# composes the todo / todo-disposition record grammar. Until now only a model session
+# could write those records, because only a model held an MCP client; every
+# deterministic surface (an approval UI, a sync script, a cron job) needs the same
+# session dance, the same grammar and the same same-decision guard, and
+# re-implementing the grammar per surface is how a record ends up unreadable by
+# todo_queue.py's parser. Importable as a module and usable as a CLI; python3 stdlib
+# only, for the same PATH reason as todo_queue.py above.
+# test_mw_client.py is test-only and intentionally excluded, same as above.
+remote_file "#{node[:setup][:home]}/.claude/skills/todo-collect/mw_client.py" do
+  source "files/skills/todo-collect/mw_client.py"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
 # Deploy TODO pipeline config (docs/todo-management.md). sources.yaml is the
 # managed PERSONAL-source list for /todo-collect; work sources live in the
 # unmanaged ~/.claude/todo/sources.local.yaml, merged at runtime by the skill.
