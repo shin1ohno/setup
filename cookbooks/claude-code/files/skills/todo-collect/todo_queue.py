@@ -5,22 +5,32 @@ Owns the machine-readable half of ~/.claude/todo: the O(open) approval queue
 `candidates.jsonl` (one meta line, then one candidate per line), the write-once
 `runs/` history layout, the 1-line-per-run `ledger.md` index header, and the
 on-demand `summary` view. Design of record: docs/todo-management.md ("Queue",
-"Dispositions", "Run logs and index", "Aging").
+"Dispositions", "Run logs and index", "Aging", "Approval surfaces").
 
 Why Python and not a sibling of remind_sync.rb: the headless runner on the
 always-on work box executes this from a systemd user unit whose PATH resolves
 /usr/bin/python3 but no ruby (rbenv shims are an interactive-shell thing).
 Everything here is stdlib, so /usr/bin/python3 3.x is enough.
 
-Subcommands (Phase 1):
+Subcommands:
   init                    idempotent: runs/ + tmp/, legacy ledger -> runs/0000-legacy-*,
                           3-line index, meta-only candidates.jsonl
   validate --sweep P      3-valued enum contract of a sweep.json
   validate --queue P      same for a candidates.jsonl
   filter   --sweep P --run RUN_TS [--prev Q] [--config C] [--out Q] [--run-log L]
-                          deterministic queue regeneration (dedup -> disposition ->
-                          snooze -> aging -> ttl); prints the meta + per-key report
+           [--applied A]  deterministic queue regeneration (dedup -> disposition ->
+                          snooze -> aging -> ttl); prints the meta + per-key report.
+                          With surfaces.queue_surface = slack-self-dm it also picks
+                          the next candidates to announce (dm_per_run_max)
   summary  [--json]       20-line state view; never fails on a missing file
+  set-announce --key K --channel C --ts T
+                          record where a candidate's DM landed (call once per send)
+  render-dm --key K       the DM body for one candidate
+  ingest-reactions --reactions R --run RUN_TS [--records D] [--no-write]
+                          turn the reactions read off the self-DM into actions
+                          (approve / reject / snooze / never), needs_review marks
+                          (conflict, stale) and revert candidates; the SIDE EFFECTS
+                          (memory writes, thread replies) stay with the skill
 
 Exit codes: 0 ok · 1 unexpected error · 2 usage / unreadable path · 3 validation
 failure (one `<file>: <path>: <message>` line per violation on stderr) · 4 input
@@ -30,7 +40,7 @@ The queue is a derived VIEW, not a store of truth: a candidate row is a raw
 capture that has not been approved yet, and every disposition (approve, reject,
 snooze, never, done, expired, revive) lives in the memory store as an
 append-only record. This helper only reads those records (handed over in
-sweep.json) and never talks to the store itself.
+sweep.json / --records) and never talks to the store itself.
 """
 
 from __future__ import annotations
@@ -48,8 +58,11 @@ SCHEMA_VERSION = 1
 SOURCE_STATUSES = ("swept", "unswept", "truncated")
 ENUM_STATES = ("complete", "truncated", "unreached")
 HIDE_KINDS = ("reject", "never", "done")
+ACTION_KINDS = ("approve", "reject", "snooze", "never")
 CANON_PREFIXES = ("slack:", "notion:", "transcript:", "reminders:", "gtasks:")
-DEFAULT_QUEUE_CONFIG = {"ttl_days": 21, "dm_per_run_max": 10}
+DEFAULT_QUEUE_CONFIG = {"ttl_days": 21, "dm_per_run_max": 10, "snooze_days": 7}
+DEFAULT_REACTIONS = {"approve": "white_check_mark", "reject": "x", "snooze": "zzz", "never": "mute"}
+DEFAULT_SURFACES = {"queue_surface": "none", "channel": None, "reactions": dict(DEFAULT_REACTIONS)}
 INDEX_HEADER = (
     "# TODO loop index — 1 line per run, written by the runner (the model never writes here)",
     "# <utc> | <loop> | <run id> | ok|fail(<class>) | <summary> | <run log path>",
@@ -68,6 +81,7 @@ UUID_DASHED_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a
 HEX32_RE = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
 DISPOSITION_RE = re.compile(r"^todo-disposition\s+(\S+)\s+key=(\S+)(.*)$")
 KEY_LINE_RE = re.compile(r"(?m)^key=(\S+)")
+ANNOUNCE_RE = re.compile(r"(?m)^announce=([A-Za-z0-9]+)/(\d+\.\d+)")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
@@ -115,6 +129,14 @@ def parse_date(value):
     try:
         return dt.date.fromisoformat(s[:10])
     except ValueError:
+        return None
+
+
+def slack_ts_to_date(ts):
+    """A Slack ts ("1788448581.084969") -> UTC date, or None."""
+    try:
+        return dt.datetime.fromtimestamp(float(ts), dt.timezone.utc).date()
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -366,8 +388,12 @@ def empty_meta(run, now, today, reason):
         "deduped": 0,
         "rejected_hidden": 0,
         "snoozed_hidden": 0,
+        "applied_hidden": 0,
         "expired": 0,
         "announced": 0,
+        "announce_pending": 0,
+        "to_announce": [],
+        "surface": "none",
         "filters_skipped": [],
         "dispositions_enum": dict(env),
         "todos_enum": dict(env),
@@ -379,8 +405,9 @@ def empty_meta(run, now, today, reason):
 
 
 def load_config(path):
+    base = {"queue": dict(DEFAULT_QUEUE_CONFIG), "sources": [], "surfaces": json.loads(json.dumps(DEFAULT_SURFACES))}
     if path is None:
-        return {"queue": dict(DEFAULT_QUEUE_CONFIG), "sources": []}
+        return base
     p = Path(path)
     if p.suffix in (".yaml", ".yml"):
         try:
@@ -393,16 +420,24 @@ def load_config(path):
         cfg = load_json(p)
     if not isinstance(cfg, dict):
         raise JsonError(f"{p}: config must be an object")
-    queue = dict(DEFAULT_QUEUE_CONFIG)
-    queue.update(cfg.get("queue") or {})
-    return {"queue": queue, "sources": cfg.get("sources") or []}
+    base["queue"].update(cfg.get("queue") or {})
+    base["sources"] = cfg.get("sources") or []
+    surfaces = cfg.get("surfaces") or {}
+    reactions = dict(DEFAULT_REACTIONS)
+    reactions.update(surfaces.get("reactions") or {})
+    base["surfaces"].update({k: v for k, v in surfaces.items() if k != "reactions"})
+    base["surfaces"]["reactions"] = reactions
+    return base
 
 
-def filter_queue(prev_rows, sweep, config, run, today, now):
+def filter_queue(prev_rows, sweep, config, run, today, now, applied_keys=()):
     """Pure function. Returns (meta, rows, report)."""
     ttl_days = int(config["queue"].get("ttl_days", DEFAULT_QUEUE_CONFIG["ttl_days"]))
+    dm_max = int(config["queue"].get("dm_per_run_max", DEFAULT_QUEUE_CONFIG["dm_per_run_max"]))
+    surface = (config.get("surfaces") or {}).get("queue_surface") or "none"
     sources_cfg = {s.get("name"): s for s in config.get("sources", []) if isinstance(s, dict)}
     prev_by_key = {r.get("key"): r for r in prev_rows if isinstance(r, dict) and r.get("type") == "candidate"}
+    applied = set(applied_keys or ())
 
     todos_env = envelope_or_default(sweep, "todos")
     disp_env = envelope_or_default(sweep, "dispositions")
@@ -419,7 +454,7 @@ def filter_queue(prev_rows, sweep, config, run, today, now):
     }
     rows = []
     seen = set()
-    counts = {"deduped": 0, "rejected_hidden": 0, "snoozed_hidden": 0, "aged_out": 0, "expired": 0}
+    counts = {"deduped": 0, "rejected_hidden": 0, "snoozed_hidden": 0, "applied_hidden": 0, "aged_out": 0, "expired": 0}
 
     for item in sweep.get("items", []):
         key, thread_key = canonical_key(item)
@@ -435,6 +470,14 @@ def filter_queue(prev_rows, sweep, config, run, today, now):
         if key in existing:
             counts["deduped"] += 1
             report["deduped_keys"].append(key)
+            continue
+
+        # Disposed earlier in THIS run (a reaction or /todo-approve decision applied a
+        # minute ago): the store already has the record but the dispositions snapshot
+        # in sweep.json predates it, so the caller passes the keys explicitly.
+        if key in applied:
+            counts["applied_hidden"] += 1
+            report["hidden"].append({"key": key, "kind": "applied", "written_at": now})
             continue
 
         snooze_wake = None
@@ -494,12 +537,27 @@ def filter_queue(prev_rows, sweep, config, run, today, now):
                 "confidence": item.get("confidence"),
                 "first_seen": first_seen,
                 "announce": prev.get("announce"),
+                "announce_pending": False,
+                "review_reason": prev.get("review_reason") if state == "needs_review" else None,
                 "snooze_wake": snooze_wake,
                 "state": state,
             }
         )
 
     rows.sort(key=lambda r: ((r.get("origin_ts") or ""), r["key"]))
+
+    # Which candidates get a self-DM this run. Only open rows without an announce,
+    # oldest origin first, capped — the cap is what keeps a bulk-saved day from
+    # turning the self-DM into spam; the remainder is marked and goes out tomorrow.
+    to_announce = []
+    if surface == "slack-self-dm":
+        waiting = [r for r in rows if r["state"] == "open" and not r.get("announce")]
+        for i, r in enumerate(waiting):
+            if i < dm_max:
+                to_announce.append(r["key"])
+            else:
+                r["announce_pending"] = True
+
     meta = empty_meta(run, now, today, reason="")
     meta.update(
         {
@@ -509,8 +567,12 @@ def filter_queue(prev_rows, sweep, config, run, today, now):
             "deduped": counts["deduped"],
             "rejected_hidden": counts["rejected_hidden"],
             "snoozed_hidden": counts["snoozed_hidden"],
+            "applied_hidden": counts["applied_hidden"],
             "expired": counts["expired"],
             "announced": sum(1 for r in rows if r.get("announce")),
+            "announce_pending": sum(1 for r in rows if r.get("announce_pending")),
+            "to_announce": to_announce,
+            "surface": surface,
             "filters_skipped": [] if disp_active else ["disposition", "snooze"],
             "dispositions_enum": dict(disp_env["enum"]),
             "todos_enum": dict(todos_env["enum"]),
@@ -521,6 +583,133 @@ def filter_queue(prev_rows, sweep, config, run, today, now):
         }
     )
     return meta, rows, report
+
+
+# --- approval surface: DM rendering + reaction ingest ---------------------------------
+
+
+def render_dm(row, today, snooze_days=DEFAULT_QUEUE_CONFIG["snooze_days"]):
+    """The self-DM body for one candidate. Line 1 carries the canonical key and the
+    `[todo-loop]` prefix that keeps the self-DM sweep from re-capturing it."""
+    origin = parse_date(row.get("origin_ts"))
+    age = f"{(today - origin).days} 日前" if origin else "日付不明"
+    due = row.get("due") or "なし"
+    draft = row.get("draft_close_condition") or "（未起草 — 承認時に補う）"
+    lines = [
+        f"[todo-loop] 候補 key={row['key']}",
+        f"*{row.get('title') or '(無題)'}*（{row.get('source')}、{origin.isoformat() if origin else '?'} = {age}、期日 {due}）",
+        f"完了条件案: {draft}",
+    ]
+    if row.get("permalink"):
+        lines.append(f"元: {row['permalink']}")
+    lines.append(
+        f"✅ 承認 / ❌ 却下 / 💤 {snooze_days} 日保留 / 🔇 このスレッドは今後除外（反映は翌 07:23 JST の collect）"
+    )
+    return "\n".join(lines)
+
+
+def _reaction_kinds(message, name_to_kind):
+    kinds = set()
+    for r in message.get("reactions") or []:
+        name = (r.get("name") or "").strip(":")
+        if name in name_to_kind and int(r.get("count") or 0) > 0:
+            kinds.add(name_to_kind[name])
+    return kinds
+
+
+def _record_announces(records):
+    """[(channel, ts, record)] for every record whose content carries an announce= line."""
+    out = []
+    for rec in records or []:
+        content = rec.get("content") if isinstance(rec, dict) else None
+        if not isinstance(content, str):
+            continue
+        for m in ANNOUNCE_RE.finditer(content):
+            out.append((m.group(1), m.group(2), rec))
+    return out
+
+
+def ingest_reactions(rows, messages, config, today, now, records=None):
+    """Pure function. rows: queue candidate rows; messages: [{ts, channel?, reactions:[{name,count}]}]
+    read off the self-DM; records: memory records (todos + dispositions) whose content may
+    carry `announce=<channel>/<ts>` for reversal detection.
+
+    Returns (actions, needs_review, revert_candidates, announce_missing, rows) where rows
+    is the input list with needs_review / review_reason updated in place."""
+    reactions_cfg = (config.get("surfaces") or {}).get("reactions") or DEFAULT_REACTIONS
+    name_to_kind = {str(v).strip(":"): k for k, v in reactions_cfg.items() if k in ACTION_KINDS}
+    ttl_days = int(config["queue"].get("ttl_days", DEFAULT_QUEUE_CONFIG["ttl_days"]))
+    snooze_days = int(config["queue"].get("snooze_days", DEFAULT_QUEUE_CONFIG["snooze_days"]))
+    by_ts = {str(m.get("ts")): m for m in messages or [] if m.get("ts")}
+
+    actions, needs_review, announce_missing = [], [], []
+    for row in rows:
+        ann = row.get("announce") or {}
+        ts = str(ann.get("ts") or "")
+        if not ts:
+            continue
+        msg = by_ts.get(ts)
+        if msg is None:
+            announce_missing.append({"key": row["key"], "announce": ann})
+            continue
+        kinds = _reaction_kinds(msg, name_to_kind)
+        if not kinds:
+            continue
+        announced_on = parse_date(ann.get("at")) or slack_ts_to_date(ts) or parse_date(row.get("first_seen")) or today
+        if (today - announced_on).days > ttl_days:
+            row["state"] = "needs_review"
+            row["review_reason"] = f"stale reaction: DM announced {announced_on.isoformat()}, over {ttl_days} days ago"
+            needs_review.append({"key": row["key"], "reason": row["review_reason"], "kinds": sorted(kinds)})
+            continue
+        if len(kinds) > 1:
+            row["state"] = "needs_review"
+            row["review_reason"] = f"conflicting reactions: {', '.join(sorted(kinds))}"
+            needs_review.append({"key": row["key"], "reason": row["review_reason"], "kinds": sorted(kinds)})
+            continue
+        kind = next(iter(kinds))
+        action = {
+            "key": row["key"],
+            "kind": kind,
+            "source": row.get("source"),
+            "thread_key": row.get("thread_key"),
+            "title": row.get("title"),
+            "permalink": row.get("permalink"),
+            "draft_close_condition": row.get("draft_close_condition"),
+            "announce": f"{ann.get('channel')}/{ts}",
+        }
+        if kind == "snooze":
+            action["until"] = (today + dt.timedelta(days=snooze_days)).isoformat()
+        actions.append(action)
+
+    # Reversal: a record already written for a candidate (the approved todo, or a
+    # reject / snooze / never disposition) whose DM now carries a reaction that
+    # contradicts it. The skill decides what to do (forget + done, revive, or just
+    # ask) — provenance decides whether the box may touch the record at all.
+    revert_candidates = []
+    for channel, ts, rec in _record_announces(records):
+        msg = by_ts.get(ts)
+        if msg is None:
+            continue
+        kinds = _reaction_kinds(msg, name_to_kind)
+        if not kinds:
+            continue
+        d = parse_disposition(rec)
+        current = d["kind"] if d else "approve"
+        contradicting = sorted(k for k in kinds if k != current)
+        if not contradicting:
+            continue
+        keys = KEY_LINE_RE.findall(rec.get("content", "")) or ([d["key"]] if d else [])
+        revert_candidates.append(
+            {
+                "key": keys[0] if keys else None,
+                "id": rec.get("id"),
+                "current": current,
+                "reactions": contradicting,
+                "announce": f"{channel}/{ts}",
+                "source_class": ((rec.get("provenance") or {}).get("source_class")),
+            }
+        )
+    return actions, needs_review, revert_candidates, announce_missing, rows
 
 
 # --- file I/O -----------------------------------------------------------------------
@@ -579,12 +768,22 @@ def write_queue(path, meta, rows):
     write_atomic(path, "".join(dumps(x) + "\n" for x in [meta] + rows))
 
 
+def refresh_meta_counts(meta, rows):
+    meta["open"] = sum(1 for r in rows if r.get("state") == "open")
+    meta["needs_review"] = sum(1 for r in rows if r.get("state") == "needs_review")
+    meta["announced"] = sum(1 for r in rows if r.get("announce"))
+    meta["announce_pending"] = sum(1 for r in rows if r.get("announce_pending"))
+    return meta
+
+
 def append_run_log(path, run, meta, report):
     lines = [f"### queue filter ({run})", ""]
     lines.append(
         f"- open {meta['open']} / needs_review {meta['needs_review']} / aged_out {meta['aged_out']} / "
-        f"deduped {meta['deduped']} / hidden {meta['rejected_hidden'] + meta['snoozed_hidden']} / expired {meta['expired']}"
+        f"deduped {meta['deduped']} / hidden {meta['rejected_hidden'] + meta['snoozed_hidden'] + meta.get('applied_hidden', 0)} / expired {meta['expired']}"
     )
+    if meta.get("surface") == "slack-self-dm":
+        lines.append(f"- to announce this run: {len(meta.get('to_announce') or [])} / pending beyond cap: {meta.get('announce_pending', 0)}")
     if meta["filters_skipped"]:
         lines.append(
             f"- disposition filters NOT applied ({', '.join(meta['filters_skipped'])}): "
@@ -671,6 +870,14 @@ def cmd_validate(args):
     return EXIT_OK
 
 
+def _config_for(args, todo_dir, run=None):
+    config_path = getattr(args, "config", None)
+    if config_path is None and run:
+        candidate = Path(todo_dir) / "tmp" / f"{run}-config.json"
+        config_path = str(candidate) if candidate.exists() else None
+    return load_config(config_path)
+
+
 def cmd_filter(args, todo_dir, now, today):
     todo_dir = Path(todo_dir)
     sweep = load_json(args.sweep)
@@ -683,12 +890,12 @@ def cmd_filter(args, todo_dir, now, today):
     except JsonError as exc:
         print(f"WARN: previous queue unreadable, treating as empty: {exc}", file=sys.stderr)
         prev_rows = []
-    config_path = args.config
-    if config_path is None:
-        candidate = todo_dir / "tmp" / f"{args.run}-config.json"
-        config_path = str(candidate) if candidate.exists() else None
-    config = load_config(config_path)
-    meta, rows, report = filter_queue(prev_rows, sweep, config, args.run, today, now)
+    applied_keys = []
+    if args.applied:
+        doc = load_json(args.applied)
+        applied_keys = doc.get("keys", []) if isinstance(doc, dict) else list(doc)
+    config = _config_for(args, todo_dir, args.run)
+    meta, rows, report = filter_queue(prev_rows, sweep, config, args.run, today, now, applied_keys=applied_keys)
     out = Path(args.out) if args.out else todo_dir / "candidates.jsonl"
     write_queue(out, meta, rows)
     if args.run_log:
@@ -697,6 +904,70 @@ def cmd_filter(args, todo_dir, now, today):
     result.update(report)
     result["out"] = str(out)
     print(dumps(result))
+    return EXIT_OK
+
+
+def cmd_set_announce(args, todo_dir, now):
+    queue = Path(args.queue) if args.queue else Path(todo_dir) / "candidates.jsonl"
+    meta, rows = read_queue(queue)
+    if meta is None:
+        raise ValidationError([f"{queue}: missing or without a meta line"])
+    hit = None
+    for r in rows:
+        if r.get("key") == args.key:
+            hit = r
+            break
+    if hit is None:
+        raise ValidationError([f"{queue}: key {args.key} is not in the queue"])
+    hit["announce"] = {"channel": args.channel, "ts": str(args.ts), "at": now}
+    hit["announce_pending"] = False
+    refresh_meta_counts(meta, rows)
+    meta["to_announce"] = [k for k in (meta.get("to_announce") or []) if k != args.key]
+    write_queue(queue, meta, rows)
+    print(dumps({"key": args.key, "announce": hit["announce"], "announced": meta["announced"]}))
+    return EXIT_OK
+
+
+def cmd_render_dm(args, todo_dir, today):
+    queue = Path(args.queue) if args.queue else Path(todo_dir) / "candidates.jsonl"
+    _, rows = read_queue(queue)
+    for r in rows:
+        if r.get("key") == args.key:
+            config = _config_for(args, todo_dir)
+            print(render_dm(r, today, int(config["queue"].get("snooze_days", DEFAULT_QUEUE_CONFIG["snooze_days"]))))
+            return EXIT_OK
+    raise ValidationError([f"{queue}: key {args.key} is not in the queue"])
+
+
+def cmd_ingest_reactions(args, todo_dir, now, today):
+    queue = Path(args.queue) if args.queue else Path(todo_dir) / "candidates.jsonl"
+    meta, rows = read_queue(queue)
+    if meta is None:
+        raise ValidationError([f"{queue}: missing or without a meta line"])
+    doc = load_json(args.reactions)
+    messages = doc.get("messages", []) if isinstance(doc, dict) else list(doc)
+    records = []
+    if args.records:
+        rdoc = load_json(args.records)
+        records = rdoc.get("records", []) if isinstance(rdoc, dict) else list(rdoc)
+    config = _config_for(args, todo_dir, args.run)
+    actions, needs_review, reverts, missing, rows = ingest_reactions(rows, messages, config, today, now, records)
+    if not args.no_write:
+        refresh_meta_counts(meta, rows)
+        write_queue(queue, meta, rows)
+    print(
+        dumps(
+            {
+                "run": args.run,
+                "actions": actions,
+                "needs_review": needs_review,
+                "revert_candidates": reverts,
+                "announce_missing": missing,
+                "messages_read": len(messages),
+                "applied_keys": [a["key"] for a in actions],
+            }
+        )
+    )
     return EXIT_OK
 
 
@@ -732,14 +1003,21 @@ def build_summary(todo_dir, logs_dir, today, now_dt):
             "needs_review": meta.get("needs_review"),
             "oldest_days": oldest,
             "aged_out": meta.get("aged_out"),
-            "hidden": (meta.get("rejected_hidden") or 0) + (meta.get("snoozed_hidden") or 0),
+            "hidden": (meta.get("rejected_hidden") or 0) + (meta.get("snoozed_hidden") or 0) + (meta.get("applied_hidden") or 0),
             "expired": meta.get("expired"),
+            "announced": meta.get("announced"),
+            "announce_pending": meta.get("announce_pending"),
+            "surface": meta.get("surface"),
             "generated_at": meta.get("generated_at"),
         }
         lines.append(
             f"queue: open {meta.get('open')} (needs_review {meta.get('needs_review')}) oldest {oldest}d "
             f"run {meta.get('run')} aged_out {meta.get('aged_out')} hidden {out['queue']['hidden']} expired {meta.get('expired')}"
         )
+        if meta.get("surface") and meta.get("surface") != "none":
+            lines.append(
+                f"surface {meta.get('surface')}: announced {meta.get('announced', 0)} / pending {meta.get('announce_pending', 0)}"
+            )
         de = meta.get("dispositions_enum") or {}
         te = meta.get("todos_enum") or {}
         lines.append(
@@ -852,10 +1130,30 @@ def build_parser():
     f.add_argument("--config")
     f.add_argument("--out")
     f.add_argument("--run-log")
+    f.add_argument("--applied", help="JSON {keys:[...]} disposed earlier in this run (hidden without waiting for the store)")
 
     s = sub.add_parser("summary", help="20-line state view")
     s.add_argument("--json", action="store_true")
     s.add_argument("--logs")
+
+    a = sub.add_parser("set-announce", help="record the self-DM a candidate was announced in")
+    a.add_argument("--key", required=True)
+    a.add_argument("--channel", required=True)
+    a.add_argument("--ts", required=True)
+    a.add_argument("--queue")
+
+    d = sub.add_parser("render-dm", help="print the self-DM body for one candidate")
+    d.add_argument("--key", required=True)
+    d.add_argument("--queue")
+    d.add_argument("--config")
+
+    i = sub.add_parser("ingest-reactions", help="turn self-DM reactions into actions / needs_review / reverts")
+    i.add_argument("--reactions", required=True, help="JSON {messages:[{ts, channel, reactions:[{name,count}]}]}")
+    i.add_argument("--run", required=True)
+    i.add_argument("--queue")
+    i.add_argument("--config")
+    i.add_argument("--records", help="JSON {records:[...]} — todos + dispositions with announce= lines, for reversal detection")
+    i.add_argument("--no-write", action="store_true", help="do not persist needs_review marks into the queue")
     return p
 
 
@@ -882,6 +1180,12 @@ def main(argv=None):
             return cmd_filter(args, args.todo_dir, now, today)
         if args.cmd == "summary":
             return cmd_summary(args, args.todo_dir, today, now_dt)
+        if args.cmd == "set-announce":
+            return cmd_set_announce(args, args.todo_dir, now)
+        if args.cmd == "render-dm":
+            return cmd_render_dm(args, args.todo_dir, today)
+        if args.cmd == "ingest-reactions":
+            return cmd_ingest_reactions(args, args.todo_dir, now, today)
         parser.error(f"unknown subcommand {args.cmd}")
     except ValidationError as exc:
         for e in exc.errors:
