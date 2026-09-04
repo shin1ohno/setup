@@ -430,25 +430,6 @@ truncated として残数不明のまま明記されている（silent cap は�
   到達する、または打ち切り規則が SKILL.md に明記され ledger に残数が出る（このエントリは対応
   コミットで削除）。
 
-## ledger.md が全時代を 1 ファイルに抱え、承認待ちキューが履歴に埋もれる (Medium)
-
-`~/.claude/todo/ledger.md` は日次 collect と週次 reconcile が追記する単一ファイルで、
-2026-08-17 の 2 run だけで 256 行のうち約 120 行を占めた。両 SKILL.md は「前回 run の
-disposition を参照して再列挙を省略」と指示しているため、1 run あたりのコンテキスト費用が
-**open backlog ではなく全時代のファイルサイズ**に比例して増える。
-
-- **なぜ prose の規律では閉じないか**: 承認待ちキュー（無人 collect が書く inferred 候補）が
-  履歴と同じファイルに同居している。「reconcile は candidate セクションを消さない」という
-  不変条件を #899 と kouzoh/zp-SHIN#163 で明文化したが、これはモデルが守るべき規則であって
-  構造的な保証ではない。ファイルが 1 本である限り、全文再生成の誘惑は残る。
-- **最初の一歩**: `~/.claude/todo/runs/<date>-<loop>.md`（write-once の実行ログ、自動 run は
-  読み返さない）と `~/.claude/todo/candidates.md`（open な候補のみ。承認・却下で行が消えるので
-  サイズは O(open)）に分割する。影響範囲は SKILL.md 2 本 + overlay の prompt 2 本 + runner の
-  `LEDGER` 定数（+ 既存 ledger.md を 1 回だけ分割する移行スクリプト）。
-- 緊急ではない（現在 256 行）。数千行に達する前に着手する。完了条件: 候補キューが open 件数に
-  比例するファイルに分離され、reconcile が履歴を読まずに 1 サイクル完走する（このエントリは
-  対応コミットで削除）。
-
 ## herdr — bump past 0.8.0 once a stable ships the oversized-frame render fix (Low)
 
 herdr 0.8.0 (pinned in `cookbooks/herdr/default.rb`) silently stops rendering an
