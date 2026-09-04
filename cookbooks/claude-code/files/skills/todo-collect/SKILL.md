@@ -10,7 +10,9 @@ description: |
   explicit ソース（明示マーク）は自動保存 + 領収書 1 行、inferred ソース（推論抽出）は
   候補として ~/.claude/todo/candidates.jsonl（O(open) の承認待ちキュー、python3 helper
   todo_queue.py が再生成）に残す。dedup は正規 provenance key。run 記録は
-  ~/.claude/todo/runs/<RUN_TS>-collect.md（1 run 1 file）。設計の真実源は
+  ~/.claude/todo/runs/<RUN_TS>-collect.md（1 run 1 file）。config の surfaces で
+  承認面（候補 1 件 = self-DM 1 通、リアクション 1 回 = 処置）と常設 Canvas
+  （5 節、run ごとに全文置換）を有効化できる。設計の真実源は
   ~/.claude/docs/todo-management.md。
   「todo collect」「TODO 集めて」「capture 集めて」「TODO 収集」でトリガー。
   注: ソース側の状態は絶対に変更しない（Task の完了化・saved 解除等をしない）。
@@ -31,7 +33,9 @@ user-invocable: true
 
 ## ファイルと helper
 
-- helper: `python3 ~/.claude/skills/todo-collect/todo_queue.py`（`init` / `validate` / `filter` / `summary`。ruby ではなく python3 — headless runner の PATH で解決するのが python3 だけ）
+- helper: `python3 ~/.claude/skills/todo-collect/todo_queue.py`（`init` / `validate` / `filter` / `summary`、承認面の `set-announce` / `render-dm` / `ingest-reactions`、Canvas の `render-canvas` / `set-canvas` / `set-store`。ruby ではなく python3 — headless runner の PATH で解決するのが python3 だけ）
+- `~/.claude/todo/surfaces.json`: 常設 Canvas の id / URL / `last_run`（Step 5.5）。`set-canvas` だけが書く
+- `~/.claude/todo/stores.json`: store 別 open の 3 値。reconcile が週次で全 store を、collect が `set-store` で自 store の行だけ日次で書く
 - `~/.claude/todo/candidates.jsonl`: 承認待ちキュー（1 行目 meta、以降 1 候補 1 行、O(open)）。**Write / Edit ツールで直接書かない** — 書くのは helper の `filter` だけ
 - `~/.claude/todo/runs/<RUN_TS>-collect.md`: この run の記録（write-once、1 run 1 file）。他 run のファイルは読まない
 - `~/.claude/todo/ledger.md`: 1 行/run の index。runner（無人 run）が書く。対話 run では書かれない（`summary` は `runs/` から履歴を導く）
@@ -105,6 +109,18 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
 ### Step 5 — run log 作成
 
 `~/.claude/todo/runs/<RUN_TS>-collect.md` を**新規作成**する（1 行目の見出しに RUN_TS）。内容: 実行日時 / ソース別 新規 N 件・候補 M 件・dedup skip 数 / helper の filter 出力の要約（open, needs_review, aged_out, deduped, hidden, expired）/ 未 sweep とその理由 / truncated 残数 / 保存した id / disposition id。helper が同じファイルに `### queue filter` 節（aged-out / expired / hidden を 1 行ずつ）を追記しているので、候補の再叙述はしない。`ledger.md`（index）は書かない。
+
+### Step 5.5 — Canvas 更新（config `surfaces.canvas: auto` のときだけ）
+
+Canvas は 1 operator に 1 つの立ち見板で、collect run ごとに**全文置換**する（設計: `~/.claude/docs/todo-management.md` の Canvas 節）。中身は helper が作る — `python3 … render-canvas --json --config <config.json>` の stdout `{title, canvas, markdown, sections[], open, needs_review}`。この skill がするのは Slack 呼び出しと記録だけ:
+
+1. **store 別 open を先に更新**: Step 2 の todos envelope から `python3 … set-store --name <sink store> --state <enum.state> --open <total> [--remaining <remaining>] [--reason <reason>] --run <RUN_TS>`（`stores.json` のその store の行だけ上書き。他 store と `air_pending_forget` は reconcile が書いた値を保持する。`stores.json` を直接 Write しない）。
+2. `canvas` が null（初回）→ `slack_create_canvas(title: <title>, content: <markdown>)`。戻り値の canvas id と URL を `python3 … set-canvas --id <id> --url <url> --run <RUN_TS>` で `surfaces.json` に記録する（Write しない）。
+3. `canvas` あり → `slack_read_canvas(canvas_id)` で section_id_mapping を取り、**先頭（title）以外の最初の section を `replace`（content = markdown 全文）、残りの body section を全部 `delete`** する 1 回の `slack_update_canvas(canvas_id, sections: [...])`。見出しと本文は別 section で id は更新ごとに変わるので、§2 だけを狙った部分更新はしない。body section が無ければ title section に `append`。成功したら `set-canvas --id <id> --url <url> --run <RUN_TS>`（`updated_at` / `last_run` が進む）。
+4. read が失敗（Canvas が削除済み）→ この run で 1 回だけ 2. をやり直し、新しい id を `set-canvas`。update が失敗 → run log に WARN 1 行を書いて続行する（Canvas は view。queue と store が正）。
+5. 受領 DM（無人 run の最終行）に `— Canvas <url>` を付ける。headless runner は config が `auto` なのに `surfaces.json` の `canvas.last_run` が RUN_TS でなければ WARN を出す。
+
+対話 run（`/todo-collect` を手で呼んだとき）も同じ手順で更新してよい。手編集は次回消える — 常設の注記を Canvas に置きたければ `render-canvas`（§5）側を直す。別 Canvas を新規作成しない（`surfaces.json` に id があるものを置換する）。
 
 ### Step 6 — Reminders mirror 同期（remind_sync.rb）
 

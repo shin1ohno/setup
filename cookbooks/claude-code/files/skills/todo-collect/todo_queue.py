@@ -31,6 +31,15 @@ Subcommands:
                           (approve / reject / snooze / never), needs_review marks
                           (conflict, stale) and revert candidates; the SIDE EFFECTS
                           (memory writes, thread replies) stay with the skill
+  render-canvas [--exclude K,K] [--section N] [--json]
+                          the 5-section standing view (状態 / 承認待ち / store 別 open /
+                          待ち PR / 使い方) as Canvas-flavored Markdown; the skill
+                          creates/rewrites the Slack Canvas from it
+  set-canvas --id F --url U [--run RUN_TS] | --clear
+                          record the canvas in surfaces.json (the runner checks last_run)
+  set-store --name S --state complete|truncated|unreached [--open N] [--remaining R]
+            [--reason X] [--air-pending N] [--run RUN_TS]
+                          upsert one store's 3-valued open count in stores.json
 
 Exit codes: 0 ok · 1 unexpected error · 2 usage / unreadable path · 3 validation
 failure (one `<file>: <path>: <message>` line per violation on stderr) · 4 input
@@ -983,7 +992,7 @@ def _read_text(path):
         return None
 
 
-def build_summary(todo_dir, logs_dir, today, now_dt):
+def build_summary(todo_dir, logs_dir, today, now_dt, stores_path=None, prs_path=None):
     todo_dir = Path(todo_dir)
     logs_dir = Path(logs_dir)
     out = {"queue": None, "sources": [], "stores": None, "prs": None, "loops": {}, "stale": []}
@@ -1036,7 +1045,7 @@ def build_summary(todo_dir, logs_dir, today, now_dt):
     elif not lines:
         lines.append("queue: no data (candidates.jsonl absent — run init)")
 
-    stores_text = _read_text(todo_dir / "stores.json")
+    stores_text = _read_text(Path(stores_path) if stores_path else todo_dir / "stores.json")
     if stores_text:
         try:
             stores = json.loads(stores_text)
@@ -1051,7 +1060,7 @@ def build_summary(todo_dir, logs_dir, today, now_dt):
     else:
         lines.append("stores: no data")
 
-    prs_text = _read_text(todo_dir / "prs.json")
+    prs_text = _read_text(Path(prs_path) if prs_path else todo_dir / "prs.json")
     if prs_text:
         try:
             prs = json.loads(prs_text)
@@ -1106,6 +1115,369 @@ def cmd_summary(args, todo_dir, today, now_dt):
     return EXIT_OK
 
 
+# --- canvas / stores / surfaces ---------------------------------------------------------
+#
+# The standing view is a Slack Canvas the collect run rewrites wholesale (heading and
+# body are separate canvas sections, so a targeted "replace section 2" is fragile; a
+# full replace in one atomic update is not). Everything below is pure rendering over
+# the files this helper already owns plus stores.json / prs.json; the Slack calls stay
+# with the skill.
+
+CANVAS_TITLE = "TODO queue"
+CANVAS_HEADINGS = ("1. 状態", "2. 承認待ち", "3. store 別 open", "4. 待ち PR", "5. 使い方")
+STALE_HOURS = 30
+JST = dt.timezone(dt.timedelta(hours=9), name="JST")
+SLACK_HOST_RE = re.compile(r"https?://([^/\s]+)/archives/")
+
+
+def surfaces_path(todo_dir):
+    return Path(todo_dir) / "surfaces.json"
+
+
+def load_surfaces(todo_dir):
+    """surfaces.json — where the standing Canvas lives. Absent is a normal state."""
+    path = surfaces_path(todo_dir)
+    text = _read_text(path)
+    if not text:
+        return {"schema": SCHEMA_VERSION, "canvas": None}
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise JsonError(f"{path}: invalid JSON: {exc}") from None
+    if not isinstance(doc, dict):
+        raise JsonError(f"{path}: expected a JSON object")
+    doc.setdefault("schema", SCHEMA_VERSION)
+    doc.setdefault("canvas", None)
+    return doc
+
+
+def slack_message_url(host, channel, ts):
+    sec, _, frac = str(ts).partition(".")
+    return f"https://{host}/archives/{channel}/p{sec}{frac.ljust(6, '0')[:6]}"
+
+
+def slack_host_for(rows, config):
+    """Workspace host for DM links: config surfaces.slack_host, else the host of any
+    candidate permalink (the workspace the loop reads from), else bare slack.com."""
+    host = (config.get("surfaces") or {}).get("slack_host")
+    if host:
+        return str(host)
+    for r in rows:
+        m = SLACK_HOST_RE.match(str(r.get("permalink") or ""))
+        if m:
+            return m.group(1)
+    return "slack.com"
+
+
+def _jst(iso):
+    if not iso:
+        return "—"
+    try:
+        d = dt.datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return str(iso)
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.timezone.utc)
+    return d.astimezone(JST).strftime("%Y-%m-%d %H:%M JST")
+
+
+def _cell(text, limit=70):
+    """One table cell: single line, no pipe, bounded length."""
+    s = " ".join(str(text if text is not None else "").split()).replace("|", "／")
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def _table(headers, rows):
+    out = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
+    out += ["| " + " | ".join(str(c) for c in r) + " |" for r in rows]
+    return out
+
+
+def _section(n, body_lines, heading_extra=""):
+    heading = f"{CANVAS_HEADINGS[n - 1]}{heading_extra}"
+    return {"n": n, "heading": heading, "markdown": f"# {heading}\n" + "\n".join(body_lines) + "\n"}
+
+
+def canvas_markdown(sections):
+    return "\n".join(s["markdown"] for s in sections)
+
+
+def live_rows(rows, exclude=()):
+    excluded = set(exclude or ())
+    return [r for r in rows if r.get("key") not in excluded and r.get("state") in ("open", "needs_review")]
+
+
+def render_canvas(meta, rows, summary, config, today, exclude=()):
+    """The 5-section standing view as Canvas-flavored Markdown (ATX `#` headings only,
+    tables, bullet lists with inline formatting). `summary` is build_summary()'s dict
+    (stores / prs / loops / stale); `exclude` hides keys disposed in the current
+    interactive session without touching the queue file. Returns [{n, heading, markdown}]."""
+    meta = meta or {}
+    q = config.get("queue") or {}
+    sf = config.get("surfaces") or {}
+    reactions = dict(DEFAULT_REACTIONS)
+    reactions.update({k: v for k, v in (sf.get("reactions") or {}).items() if v})
+    live = live_rows(rows, exclude)
+    host = slack_host_for(rows, config)
+    sections = []
+
+    # 1. 状態
+    lines = []
+    collect = (summary.get("loops") or {}).get("todo-collect") or {}
+    hours = collect.get("hours_ago")
+    if meta:
+        ago = f"、{hours}h 前" if hours is not None else ""
+        lines.append(f"- 最終 collect run: {_jst(meta.get('generated_at'))}（run `{meta.get('run')}`{ago}）")
+    else:
+        lines.append("- 最終 collect run: データなし（`candidates.jsonl` 不在 — `todo_queue.py init` 未実行）")
+    if sf.get("schedule_label"):
+        lines.append(f"- 次回: {sf['schedule_label']}")
+    if "todo-collect" in (summary.get("stale") or []):
+        lines.append(
+            f"- :red_circle: **停止中** — 最終 ok run から {hours}h（{STALE_HOURS}h 超）。"
+            "`~/.claude/logs/todo-collect.log` と `~/.claude/todo-collect.DISABLED` を確認"
+        )
+    else:
+        lines.append(f"- 最終更新から {STALE_HOURS} 時間超 = 停止中（超えるとこの行が赤丸の警告に変わる）")
+    unswept = [s for s in (meta.get("sources") or []) if s.get("status") in ("unswept", "truncated")]
+    if unswept:
+        parts = []
+        for s in unswept:
+            if s.get("status") == "truncated":
+                parts.append(f"{s.get('name')}（truncated 残 {s.get('remaining')}）")
+            else:
+                parts.append(f"{s.get('name')}（{s.get('reason') or '理由未記載'}）")
+        lines.append("- 未 sweep: " + " / ".join(parts))
+    else:
+        lines.append("- 未 sweep: なし")
+    if meta:
+        de = meta.get("dispositions_enum") or {}
+        te = meta.get("todos_enum") or {}
+        dn = de.get("total") if de.get("total") is not None else "-"
+        tn = te.get("total") if te.get("total") is not None else "-"
+        lines.append(f"- 列挙: dispositions {de.get('state')} {dn} 件 / todos {te.get('state')} {tn} 件")
+        if meta.get("filters_skipped"):
+            lines.append(
+                f"- :warning: disposition フィルタ未適用（{', '.join(meta['filters_skipped'])}）— 却下済みが再表示されている可能性"
+            )
+    sections.append(_section(1, lines))
+
+    # 2. 承認待ち
+    nr = sum(1 for r in live if r.get("state") == "needs_review")
+    extra = f"（{len(live)} 件" + (f"、要確認 {nr} 件" if nr else "") + "）"
+    lines = []
+    if not live:
+        lines.append("承認待ちはありません。")
+    else:
+        trows = []
+        for i, r in enumerate(live, 1):
+            title = _cell(r.get("title") or r.get("key"))
+            if r.get("state") == "needs_review":
+                title = f":warning: {title}（要確認）"
+            age = _age_days(r.get("origin_ts"), today)
+            if age is None:
+                age = _age_days(r.get("first_seen"), today)
+            ann = r.get("announce") or {}
+            if ann.get("ts"):
+                dm = f"[DM]({slack_message_url(host, ann.get('channel') or sf.get('channel') or '', ann['ts'])})"
+            elif r.get("announce_pending"):
+                dm = "未送信（翌 run）"
+            else:
+                dm = "—"
+            src = f"[元]({r['permalink']})" if r.get("permalink") else f"`{_cell(r.get('key'), 40)}`"
+            trows.append((i, title, _cell(r.get("source"), 30), _cell(r.get("due") or "—", 12), age if age is not None else "—", dm, src))
+        lines += _table(("#", "候補", "源", "期日", "経過日", "DM", "元"), trows)
+    if exclude:
+        lines.append("")
+        lines.append(f"処置済み {len(set(exclude))} 件を除いた表です（queue 本体は翌 collect run で更新）。")
+    sections.append(_section(2, lines, extra))
+
+    # 3. store 別 open — one row per store, exactly one of the four 3-valued columns filled
+    lines = []
+    stores = summary.get("stores")
+    if not stores:
+        lines.append("データなし（`stores.json` 未作成 — reconcile と collect の `set-store` が書く）")
+    else:
+        trows = []
+        for name, st in (stores.get("stores") or {}).items():
+            if not isinstance(st, dict):
+                continue
+            cols = ["", "", "", ""]
+            state = st.get("state")
+            if state == "complete":
+                n = st.get("open")
+                if n in (0, "0"):
+                    cols[1] = "0"
+                else:
+                    cols[0] = str(n if n is not None else "-")
+            elif state == "unreached":
+                cols[2] = _cell(st.get("reason") or "理由未記載", 40)
+            elif state == "truncated":
+                cols[3] = str(st.get("remaining") if st.get("remaining") is not None else "unknown")
+            else:
+                cols[2] = f"state 不明（{state}）"
+            trows.append((_cell(name, 30), *cols))
+        lines += _table(("store", "列挙完了 N", "0 件", "未列挙（理由）", "truncated 残数"), trows) if trows else ["（store 行なし）"]
+        lines.append("")
+        apf = stores.get("air_pending_forget")
+        lines.append(
+            f"air 待ち forget: {apf if apf is not None else '—'} 件"
+            "（user-stated の todo は箱から forget できない。laptop で `/todo-approve --apply-air-pending`）"
+        )
+        lines.append(f"as of {_jst(stores.get('written_at'))}（run `{stores.get('run')}`）")
+    sections.append(_section(3, lines))
+
+    # 4. 待ち PR
+    lines = []
+    prs = summary.get("prs")
+    flag = sf.get("pr_merge_flag", "--merge")
+    if not prs:
+        lines.append("データなし（`prs.json` 未作成 — reconcile runner が書く）")
+    elif prs.get("prs") is None:
+        lines.append(f":warning: 取得失敗（{prs.get('error') or 'error unknown'}）— as of {_jst(prs.get('written_at'))}")
+    elif not prs["prs"]:
+        lines.append(f"待ち PR なし — as of {_jst(prs.get('written_at'))}")
+    else:
+        trows = []
+        for pr in prs["prs"]:
+            repo, num = pr.get("repo"), pr.get("number")
+            label = f"{repo}#{num}"
+            link = f"[{label}]({pr['url']})" if pr.get("url") else label
+            age = _age_days(pr.get("createdAt"), today)
+            trows.append(
+                (link, pr.get("mergeStateStatus") or "-", age if age is not None else "—", f"`gh -R {repo} pr merge {num} {flag} --delete-branch`")
+            )
+        lines += _table(("PR", "mergeStateStatus", "経過日", "実行"), trows)
+        lines.append("")
+        lines.append(f"as of {_jst(prs.get('written_at'))}")
+    sections.append(_section(4, lines))
+
+    # 5. 使い方
+    snooze = q.get("snooze_days", DEFAULT_QUEUE_CONFIG["snooze_days"])
+    lines = [
+        f"- 候補 DM へのリアクション 1 回で処置: :{reactions['approve']}: 承認 / :{reactions['reject']}: 却下 / "
+        f":{reactions['snooze']}: {snooze} 日 snooze / :{reactions['never']}: このスレッドを今後除外。"
+        f"反映は翌 collect run（{sf.get('schedule_label') or '毎日'}）。",
+        "- 対話で処置: `/todo-approve`（4 件ずつ）。`--list` 状態表示 / `--revive <key>` 却下の取消 / "
+        "`--undo <key>` 承認の取消 / `--apply-air-pending` は laptop で air 待ち forget を一括処置。",
+        "- この Canvas は collect run ごとに全文置換されます（手編集は次回消えます）。"
+        "生成元: `todo_queue.py render-canvas`、真実源: memory store の todo / todo-disposition レコード。",
+    ]
+    sections.append(_section(5, lines))
+    return sections
+
+
+def cmd_render_canvas(args, todo_dir, today, now_dt):
+    todo_dir = Path(todo_dir)
+    queue = Path(args.queue) if args.queue else todo_dir / "candidates.jsonl"
+    try:
+        meta, rows = read_queue(queue)
+    except FileNotFoundError:
+        meta, rows = None, []
+    logs_dir = args.logs or str(todo_dir.parent / "logs")
+    summary, _ = build_summary(todo_dir, logs_dir, today, now_dt, stores_path=args.stores, prs_path=args.prs)
+    config = _config_for(args, todo_dir)
+    surfaces = load_surfaces(todo_dir)
+    exclude = [k for k in (args.exclude or "").split(",") if k]
+    sections = render_canvas(meta, rows, summary, config, today, exclude=exclude)
+    if args.section:
+        sections = [s for s in sections if s["n"] == args.section]
+    if args.json:
+        live = live_rows(rows, exclude)
+        print(
+            dumps(
+                {
+                    "title": (surfaces.get("canvas") or {}).get("title") or CANVAS_TITLE,
+                    "canvas": surfaces.get("canvas"),
+                    "sections": sections,
+                    "markdown": canvas_markdown(sections),
+                    "open": sum(1 for r in live if r.get("state") == "open"),
+                    "needs_review": sum(1 for r in live if r.get("state") == "needs_review"),
+                    "excluded": len(set(exclude)),
+                }
+            )
+        )
+    else:
+        sys.stdout.write(canvas_markdown(sections))
+    return EXIT_OK
+
+
+def cmd_set_canvas(args, todo_dir, now):
+    doc = load_surfaces(todo_dir)
+    prev = doc.get("canvas") or {}
+    if args.clear:
+        doc["canvas"] = None
+    else:
+        if not args.id or not args.url:
+            raise ValidationError(["set-canvas needs --id and --url (or --clear)"])
+        same = prev.get("id") == args.id
+        doc["canvas"] = {
+            "id": args.id,
+            "url": args.url,
+            "title": args.title or prev.get("title") or CANVAS_TITLE,
+            "created_at": prev.get("created_at") if same and prev.get("created_at") else now,
+            "updated_at": now,
+            "last_run": args.run or (prev.get("last_run") if same else None),
+            "updates": (prev.get("updates") or 0) + 1 if same else 1,
+        }
+    doc["written_at"] = now
+    write_atomic(surfaces_path(todo_dir), dumps(doc) + "\n")
+    print(dumps(doc))
+    return EXIT_OK
+
+
+def cmd_set_store(args, todo_dir, now):
+    """Upsert one store's 3-valued open count in stores.json (reconcile weekly, collect
+    daily for the store it enumerated). Other stores' entries are preserved."""
+    path = Path(args.stores) if args.stores else Path(todo_dir) / "stores.json"
+    doc = {"written_at": now, "run": None, "stores": {}, "air_pending_forget": None}
+    text = _read_text(path)
+    if text:
+        try:
+            loaded = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise JsonError(f"{path}: invalid JSON: {exc}") from None
+        if isinstance(loaded, dict):
+            doc.update(loaded)
+    if not isinstance(doc.get("stores"), dict):
+        doc["stores"] = {}
+    if not args.name and args.air_pending is None:
+        raise ValidationError(["set-store needs --name (with --state) and/or --air-pending"])
+    if args.name:
+        errors = []
+        if args.state not in ENUM_STATES:
+            errors.append(f"--state must be one of {'|'.join(ENUM_STATES)}, got {args.state!r}")
+        if args.state == "complete" and args.open is None:
+            errors.append("--state complete needs --open N")
+        if args.state == "truncated" and args.remaining is None:
+            errors.append("--state truncated needs --remaining N|unknown")
+        if args.state == "unreached" and not args.reason:
+            errors.append("--state unreached needs --reason")
+        if errors:
+            raise ValidationError([f"set-store: {e}" for e in errors])
+        remaining = args.remaining
+        if remaining is not None and remaining != "unknown":
+            try:
+                remaining = int(remaining)
+            except ValueError:
+                raise ValidationError(["set-store: --remaining must be an int or 'unknown'"]) from None
+        doc["stores"][args.name] = {
+            "state": args.state,
+            "open": args.open,
+            "remaining": remaining,
+            "reason": args.reason or "",
+            "written_at": now,
+        }
+    if args.air_pending is not None:
+        doc["air_pending_forget"] = args.air_pending
+    if args.run:
+        doc["run"] = args.run
+    doc["written_at"] = now
+    write_atomic(path, json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+    print(dumps(doc))
+    return EXIT_OK
+
+
 # --- CLI --------------------------------------------------------------------------------
 
 
@@ -1154,6 +1526,33 @@ def build_parser():
     i.add_argument("--config")
     i.add_argument("--records", help="JSON {records:[...]} — todos + dispositions with announce= lines, for reversal detection")
     i.add_argument("--no-write", action="store_true", help="do not persist needs_review marks into the queue")
+
+    c = sub.add_parser("render-canvas", help="Canvas-flavored Markdown of the 5-section standing view")
+    c.add_argument("--queue")
+    c.add_argument("--stores")
+    c.add_argument("--prs")
+    c.add_argument("--logs")
+    c.add_argument("--config")
+    c.add_argument("--exclude", help="comma-separated keys disposed in this session (hidden without touching the queue)")
+    c.add_argument("--section", type=int, choices=range(1, len(CANVAS_HEADINGS) + 1), help="print one section only")
+    c.add_argument("--json", action="store_true", help="{title, canvas, sections[], markdown, open, needs_review}")
+
+    sc = sub.add_parser("set-canvas", help="record the standing canvas (surfaces.json) after create/update")
+    sc.add_argument("--id")
+    sc.add_argument("--url")
+    sc.add_argument("--title")
+    sc.add_argument("--run", help="run id that rewrote the canvas (the headless runner checks it)")
+    sc.add_argument("--clear", action="store_true", help="forget the canvas (deleted in Slack; the next run recreates it)")
+
+    st = sub.add_parser("set-store", help="upsert one store's 3-valued open count in stores.json")
+    st.add_argument("--name")
+    st.add_argument("--state", choices=ENUM_STATES)
+    st.add_argument("--open", type=int)
+    st.add_argument("--remaining", help="int or 'unknown' (truncated)")
+    st.add_argument("--reason", help="why (unreached)")
+    st.add_argument("--air-pending", type=int, help="air_pending_forget count (top-level)")
+    st.add_argument("--run")
+    st.add_argument("--stores", help="path override (default <todo-dir>/stores.json)")
     return p
 
 
@@ -1186,6 +1585,12 @@ def main(argv=None):
             return cmd_render_dm(args, args.todo_dir, today)
         if args.cmd == "ingest-reactions":
             return cmd_ingest_reactions(args, args.todo_dir, now, today)
+        if args.cmd == "render-canvas":
+            return cmd_render_canvas(args, args.todo_dir, today, now_dt)
+        if args.cmd == "set-canvas":
+            return cmd_set_canvas(args, args.todo_dir, now)
+        if args.cmd == "set-store":
+            return cmd_set_store(args, args.todo_dir, now)
         parser.error(f"unknown subcommand {args.cmd}")
     except ValidationError as exc:
         for e in exc.errors:
