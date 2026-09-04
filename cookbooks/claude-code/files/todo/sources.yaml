@@ -16,6 +16,27 @@
 #            capture from)
 #   sink:    ai-memory | memory-work   (work sources MUST sink to memory-work)
 #   enabled: true | false
+#   max_age_days: N   (inferred only, optional) — candidates whose ORIGIN date
+#            (the message / meeting date, not the day the loop saw them) is older
+#            than N days are aged out by todo_queue.py before they reach the
+#            approval queue; each one is listed in the run log, never silently
+#            dropped. Explicit sources are never aged (a deliberate mark is a
+#            deliberate mark).
+#
+# queue: (top-level, optional; replaced WHOLESALE by sources.local.yaml like
+#         mirror:) knobs of the approval queue candidates.jsonl
+#   ttl_days:        a candidate that sat in the queue this long since first_seen
+#                    is expired (an `expired` disposition is written; it can be
+#                    revived from /todo-approve)                  default 21
+#   dm_per_run_max:  cap on new per-candidate DMs per collect run  default 10
+#                    (only used when queue_surface is slack-self-dm)
+#
+# surfaces: (top-level, optional) where the approval queue is surfaced
+#   queue_surface: none | slack-self-dm     default none = file surface only
+#                  (candidates.jsonl + /todo-approve). slack-self-dm adds a
+#                  per-candidate self-DM with reaction-based approval; the
+#                  channel id and the emoji names live next to it — they are
+#                  workspace-specific values and belong in sources.local.yaml.
 #
 # apple-reminders adapter: sweeps the named Reminders list via `remind --dump`.
 # A reminder is a capture candidate when it is NOT completed, carries no
@@ -90,3 +111,8 @@ mirror:
   stores:
     - { name: ai-memory, policy: full }
   complete_captured: true # apply rule 5 (close propagation → complete) to capture-origin reminders too
+
+# Approval queue (todo_queue.py). Public defaults — an overlay that defines its
+# own `queue:` / `surfaces:` replaces each block wholesale.
+queue: { ttl_days: 21, dm_per_run_max: 10 }
+surfaces: { queue_surface: none }

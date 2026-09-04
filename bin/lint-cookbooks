@@ -506,6 +506,8 @@ if File.file?(cc_default)
   skills_exempt = [
     %r{\Awriting/references/fixtures/}, # Japanese AI-slop corpus, test data
     %r{(\A|/)test_[^/]+\.rb\z},         # unit tests live beside their source
+    %r{(\A|/)test_[^/]+\.py\z},         # same, for the python3 helper (todo_queue.py)
+    %r{(\A|/)__pycache__/},             # bytecode a local unittest run leaves behind
   ]
   skills_root = "cookbooks/claude-code/files/skills"
   if File.directory?(skills_root)

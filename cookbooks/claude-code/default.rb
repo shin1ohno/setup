@@ -329,7 +329,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve mcp-auth web-crawl setup-release-plz todo-reconcile todo-collect).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve mcp-auth web-crawl setup-release-plz todo-reconcile todo-collect todo-approve).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -450,14 +450,34 @@ remote_file "#{node[:setup][:home]}/.claude/skills/todo-collect/remind_sync.rb" 
   action :create
 end
 
-# Deploy TODO pipeline config (docs/todo-management.md). sources.yaml is the
-# managed PERSONAL-source list for /todo-collect; work sources live in the
-# unmanaged ~/.claude/todo/sources.local.yaml, merged at runtime by the skill.
-directory "#{node[:setup][:home]}/.claude/todo" do
+# Deploy the todo-collect queue helper (docs/todo-management.md "Queue").
+# /todo-collect Step 0a/4/5, /todo-reconcile and /todo-approve all shell out to
+# it, and the headless runner on the work box regenerates summary.txt with it on
+# every path — so SKILL.md alone leaves the approval queue unbuildable. It is
+# python3 (stdlib only), not Ruby like remind_sync.rb: the systemd user PATH the
+# runner inherits resolves /usr/bin/python3 and no rbenv shim. test_todo_queue.py
+# is test-only and intentionally excluded, same as test_remind_sync.rb above.
+remote_file "#{node[:setup][:home]}/.claude/skills/todo-collect/todo_queue.py" do
+  source "files/skills/todo-collect/todo_queue.py"
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
   action :create
+end
+
+# Deploy TODO pipeline config (docs/todo-management.md). sources.yaml is the
+# managed PERSONAL-source list for /todo-collect; work sources live in the
+# unmanaged ~/.claude/todo/sources.local.yaml, merged at runtime by the skill.
+# runs/ holds the write-once per-run logs and tmp/ the per-run sweep / config
+# hand-off files; `todo_queue.py init` creates them too, but a path the loops
+# write into is declared defensively (rules/ruby.md).
+%w(todo todo/runs todo/tmp).each do |dir_name|
+  directory "#{node[:setup][:home]}/.claude/#{dir_name}" do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
 end
 
 remote_file "#{node[:setup][:home]}/.claude/todo/sources.yaml" do
