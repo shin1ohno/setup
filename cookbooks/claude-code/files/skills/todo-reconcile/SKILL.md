@@ -51,6 +51,8 @@ TODO 管理パイプライン（`~/.claude/docs/todo-management.md`）の「完�
 
 `air_pending_forget` = 箱（service account）からは forget できず、operator identity での処置待ちになっている user-stated todo の件数（追跡 todo `tags:['todo','work','air']` に列挙された id の数）。
 
+全面書き換えは helper でもできる: store ごとに `python3 ~/.claude/skills/todo-collect/todo_queue.py set-store --name <store> --state <state> [--open N] [--remaining R] [--reason …] --run <RUN_TS>`、最後に `--air-pending N`（同じ形を書く。tmp + `mv` の手書きと等価）。collect も日次で自分が列挙した store の行だけを `set-store` で上書きする（Canvas §3 の鮮度のため）ので、この run で列挙しなかった store の行を消さない — 全 store を列挙したときだけ全面書き換えになる。
+
 list モードはここで整形出力（store 別 → テーマ別、期日つきは期日順）して終了。
 
 ### Step 1 — probe（dry-run / LIVE）

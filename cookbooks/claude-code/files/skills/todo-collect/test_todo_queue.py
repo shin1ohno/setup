@@ -557,5 +557,263 @@ class ApprovalSurfaceCli(unittest.TestCase):
         self.assertEqual(json.loads(out)["applied_hidden"], 1)
 
 
+CANVAS_CONFIG = {
+    "queue": {"ttl_days": 21, "snooze_days": 7},
+    "surfaces": {
+        "queue_surface": "slack-self-dm",
+        "channel": "D1",
+        "canvas": "auto",
+        "schedule_label": "毎日 07:23 JST",
+        "reactions": {"approve": "white_check_mark", "reject": "x", "snooze": "zzz", "never": "mute"},
+    },
+    "sources": [{"name": "work-slack-saved", "class": "inferred", "max_age_days": 30}],
+}
+
+
+def canvas_row(key=KEY_A, **kw):
+    r = {
+        "type": "candidate",
+        "key": key,
+        "source": "work-slack-saved",
+        "class": "inferred",
+        "state": "open",
+        "title": "返信する | 件",
+        "permalink": HOST_A,
+        "origin_ts": "2026-08-28T09:55:10+09:00",
+        "due": "2026-09-10",
+        "first_seen": "2026-09-01",
+        "announce": {"channel": "D1", "ts": "1788000000.000100", "at": NOW},
+    }
+    r.update(kw)
+    return r
+
+
+def canvas_meta(**kw):
+    m = {
+        "type": "meta",
+        "schema": 1,
+        "run": RUN,
+        "generated_at": NOW,
+        "today": TODAY,
+        "open": 1,
+        "needs_review": 0,
+        "filters_skipped": [],
+        "sources": [
+            {"name": "work-slack-saved", "status": "swept", "count": 3},
+            {"name": "work-google-tasks", "status": "unswept", "reason": "gws 401"},
+        ],
+        "dispositions_enum": {"state": "complete", "total": 38, "returned": 38, "remaining": 0, "reason": ""},
+        "todos_enum": {"state": "complete", "total": 40, "returned": 40, "remaining": 0, "reason": ""},
+    }
+    m.update(kw)
+    return m
+
+
+class CanvasView(unittest.TestCase):
+    def summary(self, **kw):
+        s = {"queue": None, "sources": [], "stores": None, "prs": None, "loops": {"todo-collect": {"last": NOW, "hours_ago": 1.2}}, "stale": []}
+        s.update(kw)
+        return s
+
+    def render(self, rows=None, meta=None, summary=None, exclude=(), config=CANVAS_CONFIG):
+        return tq.render_canvas(
+            canvas_meta() if meta is None else meta,
+            [canvas_row()] if rows is None else rows,
+            summary or self.summary(),
+            config,
+            dt.date.fromisoformat(TODAY),
+            exclude=exclude,
+        )
+
+    def test_five_sections_with_fixed_heading_prefixes_and_no_deep_headings(self):
+        secs = self.render()
+        self.assertEqual([s["n"] for s in secs], [1, 2, 3, 4, 5])
+        for s, h in zip(secs, tq.CANVAS_HEADINGS):
+            self.assertTrue(s["heading"].startswith(h))
+            self.assertTrue(s["markdown"].startswith(f"# {h}"))
+        self.assertNotRegex(tq.canvas_markdown(secs), r"(?m)^#{4,} ")
+
+    def test_status_section_shows_last_run_schedule_unswept_and_enums(self):
+        md = self.render()[0]["markdown"]
+        self.assertIn("2026-09-05 07:24 JST", md)
+        self.assertIn("次回: 毎日 07:23 JST", md)
+        self.assertIn("work-google-tasks（gws 401）", md)
+        self.assertIn("dispositions complete 38 件 / todos complete 40 件", md)
+        self.assertIn("30 時間超 = 停止中", md)
+        self.assertNotIn(":red_circle:", md)
+
+    def test_status_section_flags_a_stale_loop_and_skipped_filters(self):
+        stale = self.summary(loops={"todo-collect": {"last": "2026-09-02T22:00:00Z", "hours_ago": 48.4}}, stale=["todo-collect"])
+        md = self.render(summary=stale, meta=canvas_meta(filters_skipped=["disposition", "snooze"]))[0]["markdown"]
+        self.assertIn(":red_circle: **停止中**", md)
+        self.assertIn("48.4h", md)
+        self.assertIn("disposition フィルタ未適用（disposition, snooze）", md)
+
+    def test_pending_table_links_dm_and_source_and_escapes_pipes(self):
+        sec = self.render()[1]
+        self.assertIn("（1 件）", sec["heading"])
+        self.assertIn("[DM](https://mercari.slack.com/archives/D1/p1788000000000100)", sec["markdown"])
+        self.assertIn(f"[元]({HOST_A})", sec["markdown"])
+        self.assertIn("返信する ／ 件", sec["markdown"])
+        self.assertIn("| 2026-09-10 | 7 |", sec["markdown"])
+
+    def test_pending_table_marks_needs_review_and_pending_announce(self):
+        rows = [
+            canvas_row(),
+            canvas_row(key="slack:C0A4XE8GF0F/1.000002", state="needs_review", title="b"),
+            canvas_row(key="slack:C0A4XE8GF0F/1.000003", announce=None, announce_pending=True, title="c"),
+        ]
+        sec = self.render(rows=rows)[1]
+        self.assertIn("（3 件、要確認 1 件）", sec["heading"])
+        self.assertIn(":warning: b（要確認）", sec["markdown"])
+        self.assertIn("未送信（翌 run）", sec["markdown"])
+
+    def test_exclude_hides_keys_and_empty_queue_says_so(self):
+        sec = self.render(exclude=[KEY_A])[1]
+        self.assertIn("（0 件）", sec["heading"])
+        self.assertIn("承認待ちはありません", sec["markdown"])
+        self.assertIn("処置済み 1 件を除いた", sec["markdown"])
+        sec = self.render(rows=[])[1]
+        self.assertIn("承認待ちはありません", sec["markdown"])
+        self.assertNotIn("処置済み", sec["markdown"])
+
+    def test_slack_host_comes_from_config_then_permalink_then_default(self):
+        cfg = json.loads(json.dumps(CANVAS_CONFIG))
+        cfg["surfaces"]["slack_host"] = "x.slack.com"
+        self.assertIn("https://x.slack.com/archives/D1/", self.render(config=cfg)[1]["markdown"])
+        self.assertEqual(tq.slack_host_for([{"permalink": HOST_B}], CANVAS_CONFIG), "mercari.enterprise.slack.com")
+        self.assertEqual(tq.slack_host_for([{"permalink": None}], CANVAS_CONFIG), "slack.com")
+
+    def test_stores_table_fills_exactly_one_three_valued_column_per_store(self):
+        stores = {
+            "written_at": NOW,
+            "run": RUN,
+            "air_pending_forget": 8,
+            "stores": {
+                "memory-work": {"state": "complete", "open": 12},
+                "empty": {"state": "complete", "open": 0},
+                "ai-memory": {"state": "unreached", "reason": "MCP 未登録"},
+                "big": {"state": "truncated", "remaining": "unknown"},
+            },
+        }
+        md = self.render(summary=self.summary(stores=stores))[2]["markdown"]
+        self.assertIn("| store | 列挙完了 N | 0 件 | 未列挙（理由） | truncated 残数 |", md)
+        self.assertIn("| memory-work | 12 |  |  |  |", md)
+        self.assertIn("| empty |  | 0 |  |  |", md)
+        self.assertIn("| ai-memory |  |  | MCP 未登録 |  |", md)
+        self.assertIn("| big |  |  |  | unknown |", md)
+        self.assertIn("air 待ち forget: 8 件", md)
+        self.assertIn("データなし", self.render()[2]["markdown"])
+
+    def test_prs_section_renders_fetch_failure_empty_and_rows(self):
+        base = {"written_at": NOW, "run": RUN}
+        md = self.render(summary=self.summary(prs={**base, "prs": None, "error": "gh: 504"}))[3]["markdown"]
+        self.assertIn("取得失敗（gh: 504）", md)
+        md = self.render(summary=self.summary(prs={**base, "prs": []}))[3]["markdown"]
+        self.assertIn("待ち PR なし", md)
+        pr = {
+            "repo": "kouzoh/zp-SHIN",
+            "number": 179,
+            "mergeStateStatus": "CLEAN",
+            "createdAt": "2026-08-30T00:00:00Z",
+            "url": "https://github.com/kouzoh/zp-SHIN/pull/179",
+        }
+        md = self.render(summary=self.summary(prs={**base, "prs": [pr]}))[3]["markdown"]
+        self.assertIn(
+            "| [kouzoh/zp-SHIN#179](https://github.com/kouzoh/zp-SHIN/pull/179) | CLEAN | 5 | `gh -R kouzoh/zp-SHIN pr merge 179 --merge --delete-branch` |",
+            md,
+        )
+        self.assertIn("データなし", self.render()[3]["markdown"])
+
+    def test_usage_section_uses_configured_reaction_names_and_snooze_days(self):
+        md = self.render()[4]["markdown"]
+        self.assertIn(":white_check_mark: 承認 / :x: 却下 / :zzz: 7 日 snooze / :mute:", md)
+        self.assertIn("`/todo-approve`", md)
+
+
+class CanvasCli(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name) / "todo"
+        self.dir.mkdir()
+        self.cfg = self.dir / "config.json"
+        self.cfg.write_text(json.dumps(CANVAS_CONFIG), encoding="utf-8")
+        sw = self.dir / "sweep.json"
+        sw.write_text(json.dumps(sweep()), encoding="utf-8")
+        self.run_cli("filter", "--sweep", str(sw), "--run", RUN, "--config", str(self.cfg))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = tq.main(["--todo-dir", str(self.dir), "--now", NOW, "--today", TODAY, *argv])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_render_canvas_json_and_section_filter_leave_the_queue_alone(self):
+        rc, out, err = self.run_cli("render-canvas", "--json", "--config", str(self.cfg))
+        self.assertEqual(rc, 0, err)
+        doc = json.loads(out)
+        self.assertEqual(doc["title"], tq.CANVAS_TITLE)
+        self.assertIsNone(doc["canvas"])
+        self.assertEqual([s["n"] for s in doc["sections"]], [1, 2, 3, 4, 5])
+        self.assertEqual(doc["open"], 1)
+        rc, out, _ = self.run_cli("render-canvas", "--section", "2", "--config", str(self.cfg), "--exclude", KEY_A)
+        self.assertTrue(out.startswith("# 2. 承認待ち（0 件）"), out)
+        self.assertNotIn("# 1. 状態", out)
+        _, rows = tq.read_queue(self.dir / "candidates.jsonl")
+        self.assertEqual(len(rows), 1)
+
+    def test_render_canvas_without_queue_file_still_renders(self):
+        rc, out, err = self.run_cli("render-canvas", "--queue", str(self.dir / "absent.jsonl"), "--config", str(self.cfg))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("データなし（`candidates.jsonl` 不在", out)
+
+    def test_set_canvas_records_create_then_update_then_clear(self):
+        rc, out, err = self.run_cli("set-canvas", "--id", "F1", "--url", "https://x.slack.com/docs/T1/F1", "--run", RUN)
+        self.assertEqual(rc, 0, err)
+        doc = json.loads((self.dir / "surfaces.json").read_text(encoding="utf-8"))
+        self.assertEqual((doc["canvas"]["id"], doc["canvas"]["created_at"], doc["canvas"]["last_run"], doc["canvas"]["updates"]), ("F1", NOW, RUN, 1))
+        rc, out, _ = self.run_cli("set-canvas", "--id", "F1", "--url", "https://x.slack.com/docs/T1/F1")
+        doc = json.loads(out)
+        self.assertEqual((doc["canvas"]["updates"], doc["canvas"]["last_run"], doc["canvas"]["created_at"]), (2, RUN, NOW))
+        rc, out, _ = self.run_cli("set-canvas", "--id", "F2", "--url", "https://x.slack.com/docs/T1/F2", "--run", "R2")
+        doc = json.loads(out)
+        self.assertEqual((doc["canvas"]["updates"], doc["canvas"]["last_run"]), (1, "R2"))
+        rc, out, _ = self.run_cli("render-canvas", "--json", "--config", str(self.cfg))
+        self.assertEqual(json.loads(out)["canvas"]["id"], "F2")
+        rc, out, _ = self.run_cli("set-canvas", "--clear")
+        self.assertIsNone(json.loads(out)["canvas"])
+        rc, _, err = self.run_cli("set-canvas", "--id", "F3")
+        self.assertEqual(rc, 3)
+
+    def test_set_store_upserts_one_store_and_validates_the_enum(self):
+        seed = {
+            "written_at": "2026-08-30T23:20:00Z",
+            "run": "R0",
+            "air_pending_forget": 8,
+            "stores": {"ai-memory": {"state": "unreached", "reason": "MCP 未登録"}},
+        }
+        (self.dir / "stores.json").write_text(json.dumps(seed), encoding="utf-8")
+        rc, out, err = self.run_cli("set-store", "--name", "memory-work", "--state", "complete", "--open", "12", "--run", RUN)
+        self.assertEqual(rc, 0, err)
+        doc = json.loads((self.dir / "stores.json").read_text(encoding="utf-8"))
+        self.assertEqual(doc["stores"]["memory-work"]["open"], 12)
+        self.assertEqual(doc["stores"]["ai-memory"]["reason"], "MCP 未登録")
+        self.assertEqual((doc["air_pending_forget"], doc["run"], doc["written_at"]), (8, RUN, NOW))
+        rc, _, err = self.run_cli("set-store", "--name", "x", "--state", "truncated")
+        self.assertEqual(rc, 3)
+        self.assertIn("--remaining", err)
+        rc, _, err = self.run_cli("set-store", "--name", "x", "--state", "unreached")
+        self.assertEqual(rc, 3)
+        rc, _, err = self.run_cli("set-store", "--air-pending", "3")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads((self.dir / "stores.json").read_text(encoding="utf-8"))["air_pending_forget"], 3)
+        rc, out, _ = self.run_cli("render-canvas", "--section", "3", "--config", str(self.cfg))
+        self.assertIn("| memory-work | 12 |  |  |  |", out)
+        self.assertIn("air 待ち forget: 3 件", out)
+
+
 if __name__ == "__main__":
     unittest.main()
