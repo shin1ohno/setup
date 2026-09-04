@@ -120,5 +120,15 @@ mirror:
 
 # Approval queue (todo_queue.py). Public defaults — an overlay that defines its
 # own `queue:` / `surfaces:` replaces each block wholesale.
-queue: { ttl_days: 21, dm_per_run_max: 10 }
-surfaces: { queue_surface: none }
+#   queue.ttl_days / dm_per_run_max / snooze_days — docs/todo-management.md "Queue"
+#   surfaces.queue_surface: none | slack-self-dm  (one DM per candidate, one reaction per decision)
+#   surfaces.channel, surfaces.reactions           (workspace values — overlay only)
+#   surfaces.canvas: none | auto                   (auto = every collect run rewrites ONE standing
+#                                                  Slack Canvas from `render-canvas`, recorded in
+#                                                  ~/.claude/todo/surfaces.json via `set-canvas`)
+#   surfaces.slack_host                            (host for the DM links in the canvas; default =
+#                                                  the host of the candidates' own permalinks)
+#   surfaces.schedule_label                        (free text shown as the next-run hint)
+#   surfaces.pr_merge_flag                         (--merge | --squash, the merge command shown in §4)
+queue: { ttl_days: 21, dm_per_run_max: 10, snooze_days: 7 }
+surfaces: { queue_surface: none, canvas: none }
