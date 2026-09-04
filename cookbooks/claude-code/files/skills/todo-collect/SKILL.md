@@ -60,7 +60,7 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
 
 - `slack-saved`: search `is:saved`（Later の In progress + Archived を返す）。full sweep（全ページ）
 - `slack-reaction`: search `hasmy::<emoji>:`（query の emoji、既定 `pushpin`）。full sweep（全ページ）
-- `slack-self-dm`: 自分の self-DM を search（`in:` 自 user、`channel_types=im`、from:自分）。self-DM は自分が今書くので後方 lookback は任意。**`[todo-loop]` で始まるメッセージは除外**（headless ループが自分の実行結果や候補 DM を self-DM に投げるので、capture ではなくこのパイプライン自身の通知）
+- `slack-self-dm`: 自分の self-DM を search（`in:` 自 user、`channel_types=im`、from:自分）。self-DM は自分が今書くので後方 lookback は任意。**`[todo-loop]` で始まるメッセージは除外**（headless ループが自分の実行結果や候補 DM を self-DM に投げるので、capture ではなくこのパイプライン自身の通知）。**connector 経由で送られた印（本文末尾の `Sent using <Slack MCP app>` 行）が付くメッセージも除外** — Claude session が送ったものは接頭辞の有無にかかわらず capture ではない（2026-09-04: 送信デバッグの断片 5 通が接頭辞なしで残った）
 - `google-tasks`（explicit）: `gws tasks tasks list --params '{"tasklist":"<id>"}'` の needsAction のみ（query = tasklist 名）。gws はサブコマンド固有フラグを持たず**引数は全て `--params` JSON 渡し**（`--tasklist` 等は unexpected argument で落ちる）
 - `apple-reminders`（explicit）: capture lists（= config の apple-reminders ソースの query リスト群 + `mirror.list`）ごとに `remind --dump --list <名前>` を実行。未完了・notes に `[ai-todo:…]` トークン無し・どの open memory todo からも `reminders:<externalId>` で未参照・due が capture horizon 内（既定 14 日、`capture.due_horizon_days` で変更・負値で無効 — 先の予定 reminder は Reminders 自身が通知を担うので取り込まない）、の 4 条件を満たすものが candidate（Step 6 の remind_sync.rb が返す `capture_candidates` と同一規則）。explicit class なので自動 remember + provenance `reminders:<externalId>`。**sink は既定値** — Inbox は個人/work 混在ソースなので候補ごとに内容で routing する（work 形 → memory-work。todo-management.md の capture routing と同一）
 - `transcript-deferral`（inferred）: `~/.claude/projects/*/*.jsonl` の直近 query 期間（既定 7d）から deferral 発話（「あとでやる」「後回し」「TODO にして」等）のうち領収書行（「→ … に保存」）が続かないものを抽出
@@ -105,6 +105,8 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
    - 処置した key の一覧を `tmp/<RUN_TS>-applied.json`（`{"keys": [...]}`）に書き、Step 4 の `filter` に `--applied` で渡す（disposition の browse 結果はこの run の書込より古いので、同日中に隠すため）。
 3. **送信（Step 4 の `filter` の後）**: `filter` の stdout `to_announce[]`（`dm_per_run_max` 以内、origin_ts 昇順）を 1 件ずつ `python3 … render-dm --key <key> --config <config.json>` で本文にして `slack_send_message(channel_id: <surfaces.channel>, message: <本文>)` で送り、**送るごとに** `python3 … set-announce --key <key> --channel <channel> --ts <戻り値の message_ts>` を呼ぶ（送信と永続化の窓を 1 件分に閉じる — まとめて後で書くと途中死で翌日二重送信になる）。継続候補は再投稿しない。`announce_pending` はキャップ超過分（翌 run に持ち越し）。
 4. 承認面は **ループ自身のメッセージ**にしか触らない（DM 送信・スレッド返信・リアクション読取）。ソース（saved / 📌 / 元メッセージ）は不変のまま。
+5. **送信規律**: 承認面チャンネルへ送るのは `render-dm` の本文・領収書のスレッド返信・受領行の 3 種だけで、すべて `[todo-loop]` 接頭辞付き。送信テストや診断メッセージを送らない。送信が失敗したら本文を変えずに 1 回だけリトライし、なお失敗なら run log に WARN（エラー文言つき）を書いて `set-announce` せず次の候補へ進む（翌 run の `to_announce` で再送される）。本文の整形は helper の仕事で、skill 側で改行や URL を手直ししない（2026-09-04: 裸 URL 行の直後に別行が続くと connector が `invalid_blocks` を返す問題を、run が送信テスト 5 通で切り分けて残した — 修正は `render-dm` 側に入れた）。
+6. **`remember` の種類**: この skill が書くのは todo（`tags:['todo', …]`）と `todo-disposition` の 2 種だけ。知見・バグメモは run log に書く — headless runner が transcript の `remember` 回数を「新規 + disposition」と突合するので、それ以外の `remember` は WARN と通知になる。
 
 ### Step 5 — run log 作成
 
