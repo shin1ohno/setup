@@ -815,5 +815,43 @@ class CanvasCli(unittest.TestCase):
         self.assertIn("air 待ち forget: 3 件", out)
 
 
+class LiveFixes(unittest.TestCase):
+    """Regressions from the first live run of all three phases (2026-09-04)."""
+
+    def test_dedup_matches_legacy_todo_by_permalink_without_key_line(self):
+        legacy = {"id": "L1", "content": f"NASA レビュー\nprovenance: {HOST_B}", "tags": ["todo"]}
+        self.assertEqual(tq.existing_todo_keys([legacy]), {KEY_A})
+        meta, rows, report = run_filter([], sweep(todos=env(records=[legacy])))
+        self.assertEqual(rows, [])
+        self.assertEqual(report["deduped_keys"], [KEY_A])
+
+    def test_render_dm_separates_url_line_from_legend_with_a_blank_line(self):
+        lines = tq.render_dm(row(), dt.date.fromisoformat(TODAY)).splitlines()
+        i = next(n for n, l in enumerate(lines) if l.startswith("元: "))
+        self.assertEqual(lines[i + 1], "")
+        self.assertIn("✅ 承認", lines[i + 2])
+
+    def test_canvas_status_age_comes_from_generated_at_not_last_ok_run(self):
+        now_dt = dt.datetime.fromisoformat("2026-09-04T22:30:00+00:00")
+        today = dt.date.fromisoformat(TODAY)
+        summary = {
+            "queue": None,
+            "sources": [],
+            "stores": None,
+            "prs": None,
+            "loops": {"todo-collect": {"last": "2026-09-03T22:33:04Z", "hours_ago": 24.0}},
+            "stale": [],
+        }
+        md = tq.render_canvas(canvas_meta(), [canvas_row()], summary, CANVAS_CONFIG, today, now_dt=now_dt)[0]["markdown"]
+        self.assertIn("0.1h 前", md)
+        self.assertNotIn("24.0h", md)
+        summary["stale"] = ["todo-collect"]
+        md = tq.render_canvas(canvas_meta(), [canvas_row()], summary, CANVAS_CONFIG, today, now_dt=now_dt)[0]["markdown"]
+        self.assertNotIn(":red_circle:", md)
+        old = canvas_meta(generated_at="2026-09-02T00:00:00Z")
+        md = tq.render_canvas(old, [canvas_row()], summary, CANVAS_CONFIG, today, now_dt=now_dt)[0]["markdown"]
+        self.assertIn(":red_circle:", md)
+
+
 if __name__ == "__main__":
     unittest.main()

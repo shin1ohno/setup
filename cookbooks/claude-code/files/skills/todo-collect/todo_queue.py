@@ -361,11 +361,19 @@ def latest_dispositions(records):
 
 
 def existing_todo_keys(records):
+    """Keys a todo record already claims: its `key=` lines, plus any Slack permalink in
+    its body. Records written before the 2026-09 normalisation carry only the permalink
+    (2026-09-04: such a todo, approved 08-17, was re-proposed as a candidate)."""
     keys = set()
     for rec in records or []:
         content = rec.get("content") if isinstance(rec, dict) else None
         if isinstance(content, str):
             keys.update(KEY_LINE_RE.findall(content))
+            for m in SLACK_PERMALINK_RE.finditer(content):
+                k = slack_key_from_permalink(m.group(0))
+                k = k[0] if isinstance(k, tuple) else k
+                if k:
+                    keys.add(k)
     return keys
 
 
@@ -610,7 +618,11 @@ def render_dm(row, today, snooze_days=DEFAULT_QUEUE_CONFIG["snooze_days"]):
         f"完了条件案: {draft}",
     ]
     if row.get("permalink"):
+        # A bare URL line directly followed by another line makes the Slack connector's
+        # slack_send_message fail with invalid_blocks (measured 2026-09-04, ASCII-only
+        # bodies included); a blank line after the URL is what makes it accept the body.
         lines.append(f"元: {row['permalink']}")
+        lines.append("")
     lines.append(
         f"✅ 承認 / ❌ 却下 / 💤 {snooze_days} 日保留 / 🔇 このスレッドは今後除外（反映は翌 07:23 JST の collect）"
     )
@@ -1207,7 +1219,19 @@ def live_rows(rows, exclude=()):
     return [r for r in rows if r.get("key") not in excluded and r.get("state") in ("open", "needs_review")]
 
 
-def render_canvas(meta, rows, summary, config, today, exclude=()):
+def _hours_since(iso, now_dt):
+    if not iso or now_dt is None:
+        return None
+    try:
+        d = dt.datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.timezone.utc)
+    return round((now_dt - d).total_seconds() / 3600, 1)
+
+
+def render_canvas(meta, rows, summary, config, today, exclude=(), now_dt=None):
     """The 5-section standing view as Canvas-flavored Markdown (ATX `#` headings only,
     tables, bullet lists with inline formatting). `summary` is build_summary()'s dict
     (stores / prs / loops / stale); `exclude` hides keys disposed in the current
@@ -1221,10 +1245,15 @@ def render_canvas(meta, rows, summary, config, today, exclude=()):
     host = slack_host_for(rows, config)
     sections = []
 
-    # 1. 状態
+    # 1. 状態 — the age is measured from the queue's own generated_at, not from the
+    # runner's .last: the canvas is rendered MID-run, when .last still points at the
+    # previous ok run (first live canvas, 2026-09-04: "21:52 JST … 14.4h 前"). The stale
+    # flag from .last is likewise overridden by a queue regenerated within STALE_HOURS —
+    # the run that wrote it is evidently alive.
     lines = []
     collect = (summary.get("loops") or {}).get("todo-collect") or {}
-    hours = collect.get("hours_ago")
+    gen_hours = _hours_since(meta.get("generated_at"), now_dt)
+    hours = gen_hours if gen_hours is not None else collect.get("hours_ago")
     if meta:
         ago = f"、{hours}h 前" if hours is not None else ""
         lines.append(f"- 最終 collect run: {_jst(meta.get('generated_at'))}（run `{meta.get('run')}`{ago}）")
@@ -1232,9 +1261,10 @@ def render_canvas(meta, rows, summary, config, today, exclude=()):
         lines.append("- 最終 collect run: データなし（`candidates.jsonl` 不在 — `todo_queue.py init` 未実行）")
     if sf.get("schedule_label"):
         lines.append(f"- 次回: {sf['schedule_label']}")
-    if "todo-collect" in (summary.get("stale") or []):
+    stale = "todo-collect" in (summary.get("stale") or []) and (gen_hours is None or gen_hours > STALE_HOURS)
+    if stale:
         lines.append(
-            f"- :red_circle: **停止中** — 最終 ok run から {hours}h（{STALE_HOURS}h 超）。"
+            f"- :red_circle: **停止中** — 最終 run から {hours}h（{STALE_HOURS}h 超）。"
             "`~/.claude/logs/todo-collect.log` と `~/.claude/todo-collect.DISABLED` を確認"
         )
     else:
@@ -1379,7 +1409,7 @@ def cmd_render_canvas(args, todo_dir, today, now_dt):
     config = _config_for(args, todo_dir)
     surfaces = load_surfaces(todo_dir)
     exclude = [k for k in (args.exclude or "").split(",") if k]
-    sections = render_canvas(meta, rows, summary, config, today, exclude=exclude)
+    sections = render_canvas(meta, rows, summary, config, today, exclude=exclude, now_dt=now_dt)
     if args.section:
         sections = [s for s in sections if s["n"] == args.section]
     if args.json:
