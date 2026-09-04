@@ -853,5 +853,52 @@ class LiveFixes(unittest.TestCase):
         self.assertIn(":red_circle:", md)
 
 
+class DispositionParseShapes(unittest.TestCase):
+    """The shape the first live run (2026-09-04) actually wrote: key= first, the
+    todo-disposition line fourth, until= / thread_key= as standalone lines."""
+
+    LIVE_SNOOZE = {
+        "id": "S1",
+        "content": (
+            "key=slack:GGX3VLZ7E/1787900164.182469\nannounce=D06EA7KEM5E/1788526481.113429\nuntil=2026-09-11\n"
+            "todo-disposition snooze key=slack:GGX3VLZ7E/1787900164.182469 written_at=2026-09-04T13:23:25Z reason=reaction(zzz)\n"
+            "業務委託 — 2026-09-11 まで保留"
+        ),
+    }
+    LIVE_NEVER = {
+        "id": "N1",
+        "content": (
+            "key=slack:GN1AZLYPP/1786002615.684859\nannounce=D06EA7KEM5E/1788526428.850359\nthread_key=slack:GN1AZLYPP/1786002615.684859\n"
+            "todo-disposition never key=slack:GN1AZLYPP/1786002615.684859 written_at=2026-09-04T13:23:25Z reason=reaction(mute)\n派遣社員"
+        ),
+    }
+
+    def test_disposition_line_is_found_anywhere_and_fields_from_standalone_lines(self):
+        d = tq.parse_disposition(self.LIVE_SNOOZE)
+        self.assertEqual(
+            (d["kind"], d["key"], d["until"], d["announce"]),
+            ("snooze", "slack:GGX3VLZ7E/1787900164.182469", "2026-09-11", "D06EA7KEM5E/1788526481.113429"),
+        )
+        d = tq.parse_disposition(self.LIVE_NEVER)
+        self.assertEqual((d["kind"], d["thread_key"], d["written_at"]), ("never", "slack:GN1AZLYPP/1786002615.684859", "2026-09-04T13:23:25Z"))
+
+    def test_canonical_first_line_shape_still_parses_and_the_disposition_line_wins(self):
+        d = tq.parse_disposition(disp("snooze", KEY_A, until="2026-09-20"))
+        self.assertEqual((d["kind"], d["until"]), ("snooze", "2026-09-20"))
+        both = {"id": "B", "content": f"until=2026-09-01\ntodo-disposition snooze key={KEY_A} written_at=2026-09-04T00:00:00Z until=2026-09-20"}
+        self.assertEqual(tq.parse_disposition(both)["until"], "2026-09-20")
+        self.assertIsNone(tq.parse_disposition({"id": "T", "content": f"key={KEY_A}\n完了条件: x"}))
+
+    def test_live_shaped_records_hide_their_candidates_in_filter(self):
+        items = [
+            item(title="業務委託", permalink="https://mercari.enterprise.slack.com/archives/GGX3VLZ7E/p1787900164182469", origin_ts="2026-08-28T09:00:00+09:00"),
+            item(title="派遣社員", permalink="https://mercari.enterprise.slack.com/archives/GN1AZLYPP/p1786002615684859", origin_ts="2026-08-06T09:00:00+09:00"),
+        ]
+        doc = sweep(items=items, dispositions=env(records=[self.LIVE_SNOOZE, self.LIVE_NEVER]))
+        meta, rows, report = tq.filter_queue([], doc, CONFIG, RUN, dt.date(2026, 9, 5), NOW)
+        self.assertEqual(rows, [])
+        self.assertEqual(sorted(h["kind"] for h in report["hidden"]), ["never", "snooze"])
+
+
 if __name__ == "__main__":
     unittest.main()

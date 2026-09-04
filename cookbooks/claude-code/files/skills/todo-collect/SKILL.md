@@ -79,7 +79,7 @@ enabled な各ソースの依存を確認: Slack 系 → Slack MCP ツール到�
 
 ### Step 3 — 正規化
 
-各項目に 3 点セット（完了条件 / 対象 / 想定 class、個人タスクは完了条件 + 期日 or トリガー）を起草。provenance は**正規 key** に正規化する: Slack `slack:<channel_id>/<ts>`（permalink の `p<digits>` から。ホスト名は使わない — `mercari.slack.com` / `mercari.enterprise.slack.com` は同一 key）、Notion `notion:<page_id>#<idx|block>`、transcript `transcript:<session_id>:<line>`、Reminders `reminders:<externalId>`、Google Tasks `gtasks:<list>/<task>`。todo レコードも disposition レコードも**本文 1 行目に `key=<key>`** を書く。完了条件が起草できない項目は explicit でも inferred 扱いに降格（候補へ）。
+各項目に 3 点セット（完了条件 / 対象 / 想定 class、個人タスクは完了条件 + 期日 or トリガー）を起草。provenance は**正規 key** に正規化する: Slack `slack:<channel_id>/<ts>`（permalink の `p<digits>` から。ホスト名は使わない — `mercari.slack.com` / `mercari.enterprise.slack.com` は同一 key）、Notion `notion:<page_id>#<idx|block>`、transcript `transcript:<session_id>:<line>`、Reminders `reminders:<externalId>`、Google Tasks `gtasks:<list>/<task>`。todo レコードは**本文 1 行目に `key=<key>`** を書く。disposition レコードは `todo-disposition <kind> key=<key> written_at=<ISO>` の行を含める（1 行目が基本形。helper は本文中どこにあっても読み、`until=` / `thread_key=` / `announce=` は同じ行でも独立行でもよい — 2026-09-04 の live run は `key=` を先頭に書いて disposition 行を 4 行目に置いた）。完了条件が起草できない項目は explicit でも inferred 扱いに降格（候補へ）。
 
 ### Step 3b — sweep.json を書く
 

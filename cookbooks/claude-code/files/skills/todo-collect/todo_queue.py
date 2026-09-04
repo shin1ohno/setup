@@ -88,7 +88,6 @@ THREAD_TS_RE = re.compile(r"thread_ts=(\d+\.\d+)")
 # is gone, and the dashed form is normalised first so both spellings agree.
 UUID_DASHED_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 HEX32_RE = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
-DISPOSITION_RE = re.compile(r"^todo-disposition\s+(\S+)\s+key=(\S+)(.*)$")
 KEY_LINE_RE = re.compile(r"(?m)^key=(\S+)")
 ANNOUNCE_RE = re.compile(r"(?m)^announce=([A-Za-z0-9]+)/(\d+\.\d+)")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -319,19 +318,29 @@ def validate_queue_lines(meta, rows, where="candidates.jsonl"):
 # --- dispositions -------------------------------------------------------------------
 
 
+DISPOSITION_LINE_RE = re.compile(r"(?m)^\s*todo-disposition\s+(\S+)\s+key=(\S+)(.*)$")
+FIELD_LINE_RE = re.compile(r"(?m)^\s*(until|thread_key|announce|written_at)=(\S+)\s*$")
+
+
 def parse_disposition(record):
-    """Records are memory-store facts whose first line is
+    """A disposition is a memory-store fact carrying a line
     `todo-disposition <kind> key=<key> written_at=<ISO>[ until=<date>][ thread_key=<tk>][ announce=<c>/<ts>]`.
-    Anything else is ignored (None)."""
+    The line is read wherever it sits in the body: the first live run (2026-09-04)
+    wrote `key=` / `announce=` / `until=` as leading lines and the disposition line
+    fourth, which a first-line-only parser read as "no disposition" — both the 💤 and
+    the 🔇 would have been re-proposed the next morning. `until=` / `thread_key=` /
+    `announce=` are accepted on the disposition line or as standalone `token=value`
+    lines (the disposition line wins on conflict). A body without a disposition line
+    is ignored (None)."""
     content = record.get("content") if isinstance(record, dict) else None
     if not isinstance(content, str):
         return None
-    first = content.strip().splitlines()[0] if content.strip() else ""
-    m = DISPOSITION_RE.match(first.strip())
+    m = DISPOSITION_LINE_RE.search(content)
     if not m:
         return None
     kind, key, rest = m.group(1), m.group(2), m.group(3)
-    fields = dict(re.findall(r"(\w+)=(\S+)", rest))
+    fields = dict(FIELD_LINE_RE.findall(content))
+    fields.update(dict(re.findall(r"(\w+)=(\S+)", rest)))
     return {
         "kind": kind,
         "key": key,
