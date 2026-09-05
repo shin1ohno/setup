@@ -123,6 +123,17 @@ class DedupGuard(unittest.TestCase):
         self.assertEqual(again, 10.0)
         self.assertIsNone(mw.check_and_record(self.dir, "reject", KEY, window=30, now="2026-09-05T07:00:40Z"))
 
+    def test_a_future_timestamp_is_stale_not_a_permanent_block(self):
+        # The state file sits where other local processes can write. A stamp in the
+        # future would otherwise keep `age < window` true for as long as it says and
+        # refuse the operator's decisions — a denial of service dressed as dedup.
+        (Path(self.dir) / "mw-client-recent.json").write_text(
+            json.dumps({f"reject\t{KEY}": "2027-01-01T00:00:00Z"}), encoding="utf-8"
+        )
+        self.assertIsNone(mw.check_and_record(self.dir, "reject", KEY, window=30, now="2026-09-05T07:00:00Z"))
+        kept = json.loads((Path(self.dir) / "mw-client-recent.json").read_text(encoding="utf-8"))
+        self.assertEqual(kept[f"reject\t{KEY}"], "2026-09-05T07:00:00Z")
+
     def test_a_different_kind_or_key_is_not_a_duplicate(self):
         mw.check_and_record(self.dir, "reject", KEY, window=30, now="2026-09-05T07:00:00Z")
         self.assertIsNone(mw.check_and_record(self.dir, "approve", KEY, window=30, now="2026-09-05T07:00:05Z"))
