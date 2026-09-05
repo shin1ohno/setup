@@ -385,11 +385,16 @@ def check_and_record(state_dir, kind, key, window=DEFAULT_DEDUP_WINDOW, now=None
             age = (now_dt - dt.datetime.fromisoformat(str(v).replace("Z", "+00:00"))).total_seconds()
         except (ValueError, TypeError):
             continue
-        if age < max(window * 20, 600):
+        # age < 0 means a timestamp in the future. This file lives in a directory other
+        # local processes can write, and a future stamp would keep `age < window` true
+        # for as long as it says — a denial of service dressed as deduplication, with
+        # the operator's decisions silently refused. Drop those entries as stale rather
+        # than honouring them.
+        if 0 <= age < max(window * 20, 600):
             fresh[k] = v
     if not force and slot in fresh:
         age = (now_dt - dt.datetime.fromisoformat(str(fresh[slot]).replace("Z", "+00:00"))).total_seconds()
-        if age < window:
+        if 0 <= age < window:
             return round(age, 1)
     fresh[slot] = utc_now_iso(now)
     try:
