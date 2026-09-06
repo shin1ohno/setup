@@ -172,6 +172,69 @@ class BodyParsing(unittest.TestCase):
         self.assertIsNone(mw.result_json({"content": [{"type": "text", "text": "plain words"}]}))
 
 
+class CallOutcome(unittest.TestCase):
+    """A tool-level refusal arrives as a 200 with isError, so nothing raises and
+    every caller that trusts a returned result reports its own code path instead of
+    the store's answer. Measured 2026-09-06: 34 of 46 forgets were refused this way
+    and the operator was told 完了 ✔ for all 46."""
+
+    def test_an_iserror_result_is_refused_and_carries_the_store_reason(self):
+        reason = ("Error executing tool forget: grant=client_credentials "
+                  "agent=sh1-dev-instance-sa not permitted to forget id=hb85QJ8Bl7jyPzkIgBbn")
+        out = mw.call_outcome({"content": [{"type": "text", "text": reason}], "isError": True})
+        self.assertEqual(out["state"], "refused")
+        self.assertIn("not permitted to forget", out["reason"])
+
+    def test_an_iserror_result_with_no_message_still_refuses(self):
+        out = mw.call_outcome({"content": [], "isError": True})
+        self.assertEqual(out["state"], "refused")
+        self.assertTrue(out["reason"], "a refusal must always carry something to show the operator")
+
+    def test_an_ordinary_result_is_confirmed(self):
+        out = mw.call_outcome({"content": [{"type": "text", "text": '{"forgot": "X"}'}]})
+        self.assertEqual((out["state"], out["reason"]), ("confirmed", ""))
+        self.assertEqual(mw.call_outcome({"content": []})["state"], "confirmed")
+
+    def test_a_non_dict_result_is_refused_rather_than_assumed_good(self):
+        # Answering confirmed for None would reinstate the same silence one layer up.
+        for value in (None, "", [], 0):
+            out = mw.call_outcome(value)
+            self.assertEqual(out["state"], "refused", repr(value))
+            self.assertIn("no result to read", out["reason"])
+
+    def test_isError_false_is_not_read_as_a_refusal(self):
+        self.assertEqual(mw.call_outcome({"isError": False, "content": []})["state"], "confirmed")
+
+
+class ForgetDoc(unittest.TestCase):
+    def test_a_refused_forget_returns_refused_with_the_id_echoed(self):
+        class Client:
+            def call(self, name, args):
+                assert (name, args) == ("forget", {"id": "AAA1"})
+                return {"content": [{"type": "text", "text": "not permitted to forget id=AAA1"}], "isError": True}
+
+        out = mw.forget_doc(Client(), "AAA1")
+        self.assertEqual((out["state"], out["id"]), ("refused", "AAA1"))
+        self.assertIn("not permitted", out["reason"])
+
+    def test_a_successful_forget_is_confirmed(self):
+        class Client:
+            def call(self, name, args):
+                return {"content": [{"type": "text", "text": '{"forgot": "AAA1"}'}]}
+
+        self.assertEqual(mw.forget_doc(Client(), "AAA1")["state"], "confirmed")
+
+    def test_no_verdict_propagates_as_an_exception_and_is_not_a_refusal(self):
+        # The caller must be able to tell "the store said no" from "we never found
+        # out": the first is final, the second must be re-checked, never retried.
+        class Client:
+            def call(self, name, args):
+                raise mw.TransportError("connection reset")
+
+        with self.assertRaises(mw.TransportError):
+            mw.forget_doc(Client(), "AAA1")
+
+
 class _FakeMemoryHandler(BaseHTTPRequestHandler):
     """Speaks the dialect the proxy speaks: SSE bodies, a session id header, and a
     JSON document inside one text content block."""
