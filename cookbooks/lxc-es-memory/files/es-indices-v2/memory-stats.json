@@ -12,6 +12,7 @@
       "superseded_total":    {"type": "integer"},
       "promoted_total":      {"type": "integer"},
       "expired_deleted":     {"type": "integer"},
+      "stats_pruned":        {"type": "integer"},
       "guard_violations":    {"type": "integer"},
       "errors":              {"type": "integer"},
       "loop_lag_ms":         {"type": "float"},
