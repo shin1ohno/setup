@@ -1,10 +1,8 @@
 # frozen_string_literal: true
 
-# es-memory-mcp — Mem0-compatible MCP server backed by the ElasticSearch
-# cluster (es-0/1/2). Replaces the prior knowledge-graph (RDS pgvector / kuzu)
-# and Mem0 (Qdrant / Aurora pgvector) storage stacks with BM25 + dense_vector
-# kNN hybrid search on the existing 3-node ES cluster (basic license, no ML —
-# embeddings computed externally via OpenAI text-embedding-3-small).
+# es-memory — unified memory MCP (v2) backed by the ElasticSearch cluster
+# (es-0/1/2). BM25 + dense_vector kNN hybrid search on the existing 3-node
+# cluster (basic license, no ML — embeddings computed externally via Voyage).
 #
 # Runs as native systemd units + a Python venv (NOT docker). Per the PVE LXC
 # design gate (~/.claude/docs/pve-lxc-detail.md): a single-purpose service LXC
@@ -12,11 +10,15 @@
 # class (bind-mount UID mapping, .env shell-interpretation, BuildKit failures,
 # image pulls). Two units share one venv:
 #
-#   es-memory-mcp.service          uvicorn server:app  (127.0.0.1:8000)
-#   es-memory-memory-proxy.service proxy.py PATH_PREFIX=/memory  (:8766)
+#   memory-mcp-v2.service    uvicorn server:app  (127.0.0.1:8010)
+#   memory-v2-proxy.service  proxy.py PATH_PREFIX=/memory  (:8767)
 #
-# Tool names are preserved 1:1 so the existing claude.ai connector
-# (mcp__claude_ai_ai_memory__*) keeps working.
+# The v1 Mem0-compatible stack (es-memory-mcp :8000 + es-memory-memory-proxy
+# :8766, indices `knowledge` + `memory-user`) was RETIRED after two months of
+# rollback standby — see the retire execute below. Its content had already been
+# migrated into the v2 indices, so nothing reads it. What the v1 block owned
+# and v2 still needs (the shared venv, its base wheels, the auth proxy source,
+# the staging dirs) is retained below and relabelled as shared.
 
 include_cookbook "awscli::linux"
 
@@ -28,9 +30,7 @@ aws_profile = ssh_keys_config["aws_profile"]
 aws_region  = ssh_keys_config["aws_region"]
 
 base_dir = "/opt/es-memory"
-app_dir  = "#{base_dir}/app"
 venv_dir = "#{base_dir}/venv"
-env_path = "#{base_dir}/es-memory.env"
 
 # Debian 13 minimal LXC ships without python3-venv/pip — see
 # ~/.claude/docs/ruby-detail.md "Debian 13 Minimal LXC — Mandatory Bootstrap".
@@ -39,22 +39,18 @@ execute "install es-memory python deps" do
   not_if "dpkg -s python3-venv python3-pip >/dev/null 2>&1"
 end
 
-[base_dir, app_dir].each do |d|
-  directory d do
-    owner "root"
-    group "root"
-    mode "755"
-    action :create
-  end
+directory base_dir do
+  owner "root"
+  group "root"
+  mode "755"
+  action :create
 end
 
 # Restart executes (declared early so the file resources below can notify
 # them). only_if guards the first converge, where the unit file is installed
 # later in this same recipe by systemd_unit — restart is skipped until the
-# unit exists, and systemd_unit's own activate starts it. The v2 units
-# (memory-mcp-v2 / memory-v2-proxy) are included so the v2 file resources below
-# can notify them the same way.
-%w[es-memory-mcp es-memory-memory-proxy memory-mcp-v2 memory-v2-proxy].each do |svc|
+# unit exists, and systemd_unit's own activate starts it.
+%w[memory-mcp-v2 memory-v2-proxy].each do |svc|
   execute "restart #{svc}" do
     command "sudo systemctl restart #{svc}.service"
     action :nothing
@@ -62,8 +58,15 @@ end
   end
 end
 
-# requirements + venv -------------------------------------------------------
-remote_file "#{app_dir}/requirements.txt" do
+# Shared venv base requirements ---------------------------------------------
+# LOAD-BEARING for v2, despite the "v1" ancestry: requirements-v2.txt
+# deliberately omits aiohttp / PyJWT / opentelemetry ("those live in the proxy
+# venv"), and there is only ONE venv. These are the wheels memory-v2-proxy runs
+# on, so this install stays and now notifies the v2 units instead of the
+# retired v1 ones. Moved app/ -> base_dir with the v1 app dir; the .reqs.md5
+# sentinel embeds the old path, so the first converge reinstalls once and
+# rewrites it.
+remote_file "#{base_dir}/requirements.txt" do
   source "files/requirements.txt"
   owner "root"
   group "root"
@@ -83,56 +86,16 @@ end
 # The not_if guard makes it idempotent AND self-repairing.
 execute "pip install es-memory deps" do
   command "#{venv_dir}/bin/pip install --upgrade pip && " \
-          "#{venv_dir}/bin/pip install -r #{app_dir}/requirements.txt && " \
-          "md5sum #{app_dir}/requirements.txt > #{venv_dir}/.reqs.md5"
+          "#{venv_dir}/bin/pip install -r #{base_dir}/requirements.txt && " \
+          "md5sum #{base_dir}/requirements.txt > #{venv_dir}/.reqs.md5"
   not_if "test -x #{venv_dir}/bin/uvicorn && test -f #{venv_dir}/.reqs.md5 && " \
          "md5sum -c --status #{venv_dir}/.reqs.md5"
-  notifies :run, "execute[restart es-memory-mcp]"
-  notifies :run, "execute[restart es-memory-memory-proxy]"
+  notifies :run, "execute[restart memory-mcp-v2]"
+  notifies :run, "execute[restart memory-v2-proxy]"
 end
 
-# Application code ----------------------------------------------------------
-{
-  "es-memory-mcp/server.py"     => "server.py",
-  "es-memory-mcp/es_backend.py" => "es_backend.py",
-}.each do |src, dest|
-  remote_file "#{app_dir}/#{dest}" do
-    source "files/#{src}"
-    owner "root"
-    group "root"
-    mode "644"
-    notifies :run, "execute[restart es-memory-mcp]"
-  end
-end
-
-remote_file "#{app_dir}/proxy.py" do
-  source "files/auth-proxy/proxy.py"
-  owner "root"
-  group "root"
-  mode "644"
-  notifies :run, "execute[restart es-memory-memory-proxy]"
-end
-
-# Standalone ES index templates + setup script (the server self-bootstraps
-# indices on startup; kept for manual ops / migration).
-es_indices_dir = "#{base_dir}/es-indices"
-directory es_indices_dir do
-  owner "root"
-  group "root"
-  mode "755"
-  action :create
-end
-
-%w[knowledge.json memory-user.json setup_indices.sh].each do |f|
-  remote_file "#{es_indices_dir}/#{f}" do
-    source "files/es-indices/#{f}"
-    owner "root"
-    group "root"
-    mode(f.end_with?(".sh") ? "755" : "644")
-  end
-end
-
-# .env (EnvironmentFile) from SSM ------------------------------------------
+# Staging dir for SSM-generated .env files (shared: the v2 generator below
+# writes into it).
 generated_dir = "#{node[:setup][:root]}/generated"
 directory node[:setup][:root] do
   mode "755"
@@ -144,55 +107,6 @@ directory generated_dir do
   action :create
 end
 
-generate_env_script = File.join(File.dirname(__FILE__), "files", "generate_env.sh")
-env_temp_path = "#{generated_dir}/es-memory.env"
-
-require_external_auth(
-  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/elastic/* + /memory/openai-api-key SSM params",
-  check_command: "aws ssm get-parameter --name /monitoring/elastic/elastic-password " \
-                 "--profile #{aws_profile} --region #{aws_region} " \
-                 "> /dev/null 2>&1",
-  instructions: "Configure '#{aws_profile}' with ssm:GetParameter on " \
-                "/monitoring/elastic/* and /memory/openai-api-key in #{aws_region}. " \
-                "On a fresh machine: aws configure --profile #{aws_profile}. " \
-                "Then press Enter.",
-  # Content-aware: the needles are every KEY= files/generate_env.sh writes, so
-  # a key added there re-fetches on hosts whose .env predates it instead of
-  # being silently dropped (~/ManagedProjects/setup/.claude/rules/ruby.md "SSM-sourced .env
-  # generator: file-existence skip_if drops new KEY=VALUE lines silently").
-  # The v2 gate below already had this shape. Readable because this cookbook
-  # only runs on the es-memory LXC as root (env is 0600 root:root).
-  skip_if: lambda {
-    file_has_all?(env_path, %w[
-      ES_URL= ES_USER= ES_PASSWORD= ES_VERIFY_CERTS=
-      OPENAI_API_KEY= OPENAI_ENDPOINT=
-      EMBEDDING_MODEL= EMBEDDING_DIMENSIONS= LLM_MODEL= MEM0_USER=
-    ])
-  },
-) do
-  execute "generate es-memory .env" do
-    command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
-            "bash #{generate_env_script} #{env_temp_path}"
-    user node[:setup][:user]
-  end
-end
-
-# Place the env (converge-time only_if, not compile-time File.exist? — see
-# ~/ManagedProjects/setup/.claude/rules/ruby.md mitamae evaluation model).
-remote_file env_path do
-  source env_temp_path
-  owner "root"
-  group "root"
-  mode "600"
-  notifies :run, "execute[restart es-memory-mcp]"
-  only_if "test -f #{env_temp_path}"
-end
-
-file env_temp_path do
-  action :delete
-  only_if "test -f #{env_temp_path}"
-end
-
 # systemd units -------------------------------------------------------------
 units_staging = "#{node[:setup][:root]}/es-memory"
 directory units_staging do
@@ -200,20 +114,6 @@ directory units_staging do
   group node[:setup][:group]
   mode "755"
   action :create
-end
-
-%w[es-memory-mcp es-memory-memory-proxy].each do |svc|
-  staged = "#{units_staging}/#{svc}.service"
-  remote_file staged do
-    source "files/systemd/#{svc}.service"
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "644"
-  end
-
-  systemd_unit "#{svc}.service" do
-    staging_path staged
-  end
 end
 
 # Retire the v1 /cognee proxy: the cognee MCP namespace was removed from
@@ -227,13 +127,42 @@ execute "retire es-memory-cognee-proxy" do
   only_if "systemctl cat es-memory-cognee-proxy.service >/dev/null 2>&1"
 end
 
+# Retire the v1 Mem0 stack (same shape as the cognee proxy above): the units
+# are no longer staged, and removing a cookbook file does NOT stop a running
+# unit. Idempotent — each fires only while its unit still exists on the host.
+# The ES indices these served (`knowledge`, `memory-user`) are dropped by a
+# separate operator step, after a snapshot.
+%w[es-memory-mcp es-memory-memory-proxy].each do |svc|
+  execute "retire #{svc}" do
+    command "systemctl disable --now #{svc}.service && " \
+            "rm -f /etc/systemd/system/#{svc}.service && " \
+            "systemctl daemon-reload"
+    only_if "systemctl cat #{svc}.service >/dev/null 2>&1"
+  end
+end
+
+# v1 on-disk leftovers. The venv, base requirements and generated/ staging dir
+# are deliberately NOT here — v2 runs on them.
+%w[/opt/es-memory/app /opt/es-memory/es-indices].each do |d|
+  execute "remove v1 leftover #{d}" do
+    command "rm -rf #{d}"
+    only_if "test -d #{d}"
+  end
+end
+
+file "/opt/es-memory/es-memory.env" do
+  action :delete
+  only_if "test -f /opt/es-memory/es-memory.env"
+end
+
 # ==========================================================================
-# v2 (Voyage-embedding unified memory) — ADDITIVE alongside the v1 units above.
+# v2 (Voyage-embedding unified memory) — the only serving stack since the v1
+# retirement above.
 #
 # The v2 units (memory-mcp-v2 + memory-v2-proxy) run from /opt/es-memory/app-v2
-# and share the SAME venv (/opt/es-memory/venv) with requirements-v2.txt
-# installed into it. The v1 units (es-memory-mcp / *-proxy) are left completely
-# untouched for the cutover window — nothing below edits a v1 resource.
+# and share the venv (/opt/es-memory/venv) with requirements-v2.txt installed
+# into it ON TOP of the base requirements above — requirements-v2.txt alone is
+# NOT a complete environment for memory-v2-proxy.
 # ==========================================================================
 
 app_dir_v2  = "#{base_dir}/app-v2"
@@ -248,9 +177,9 @@ end
 
 # v2 requirements installed into the SAME venv. A SEPARATE md5 sentinel
 # (.reqs-v2.md5) so a v2-only dependency bump reinstalls without touching the
-# v1 sentinel — the existing "pip install es-memory deps" execute above stays
-# intact. md5-only guard (no binary probe): the v2 wheels land in the shared
-# venv already populated by the v1 install.
+# base sentinel — the "pip install es-memory deps" execute above stays intact.
+# md5-only guard (no binary probe): the v2 wheels land in the shared venv
+# already populated by the base install above.
 remote_file "#{app_dir_v2}/requirements-v2.txt" do
   source "files/requirements-v2.txt"
   owner "root"
@@ -267,8 +196,8 @@ execute "pip install memory v2 deps" do
   notifies :run, "execute[restart memory-v2-proxy]"
 end
 
-# v2 application code: the 5 modules from files/memory-mcp/ + the shared auth
-# proxy. proxy.py is the SAME source as v1 (files/auth-proxy/proxy.py); the v2
+# v2 application code: the 5 modules from files/memory-mcp/ + the auth proxy.
+# proxy.py (files/auth-proxy/proxy.py) was shared with the retired v1 stack; the v2
 # enforcement matrix is env-gated (MEMORY_AUDIENCES) so one file serves both
 # namespaces.
 %w[server.py es_backend.py voyage.py scoring.py identity.py].each do |mod|
@@ -309,7 +238,7 @@ end
 end
 
 # v2 .env (EnvironmentFile) from SSM. SECOND require_external_auth block, gated
-# on the new /memory/voyage-api-key param (same scoped profile as v1). The
+# on the /memory/voyage-api-key param (the scoped fleet profile). The
 # skip_if is CONTENT-AWARE (grep VOYAGE_API_KEY), not File.exist? — per
 # ~/ManagedProjects/setup/.claude/rules/ruby.md the file-existence form makes a generator key change a
 # silent no-op on a host whose .env predates it.
@@ -351,7 +280,7 @@ file env_v2_temp_path do
   only_if "test -f #{env_v2_temp_path}"
 end
 
-# v2 systemd units (staging dir units_staging declared above for the v1 units).
+# v2 systemd units (units_staging is declared above).
 %w[memory-mcp-v2 memory-v2-proxy].each do |svc|
   staged = "#{units_staging}/#{svc}.service"
   remote_file staged do

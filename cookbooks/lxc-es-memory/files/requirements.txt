@@ -1,7 +1,10 @@
-# Combined venv for es-memory-mcp (server) + proxy.py (auth proxies).
+# Base requirements for the SHARED /opt/es-memory venv. requirements-v2.txt
+# deliberately omits aiohttp / PyJWT / opentelemetry, so the auth proxy
+# (memory-v2-proxy) runs on the wheels installed from THIS file — do not trim
+# it to what the retired v1 server needed.
 # All deps ship manylinux wheels — no build toolchain required.
 
-# MCP server
+# MCP server runtime (shared by memory-mcp-v2)
 mcp>=1.2.0
 starlette>=0.37.0
 uvicorn>=0.30.0
