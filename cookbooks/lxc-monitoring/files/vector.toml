@@ -99,10 +99,11 @@ source = '''
   .message = m.rest
 
   # Map sender IP → device label + device_type. RTX routers: hnd .253 /
-  # itm .254. WLX WiFi APs: wlx402 .5 / wlx323 .6. Drop everything else
-  # defensively (random LAN devices mis-pointing syslog at this listener
-  # should not produce labelled streams). device_type splits the two ES
-  # sinks downstream (logs-rtx vs logs-wlx) and is del()'d before each sink.
+  # itm .254. WLX WiFi APs: wlx402 .5 / wlx323 .6 / wlx313 .155. Drop
+  # everything else defensively (random LAN devices mis-pointing syslog at
+  # this listener should not produce labelled streams). device_type splits the
+  # two ES sinks downstream (logs-rtx vs logs-wlx) and is del()'d before each
+  # sink.
   #
   # wlx323 was declared .41 until 2026-08-17. That address never belonged to
   # the AP — a tcpdump on the PVE bridge showed the AP sending from .27, and
@@ -110,6 +111,22 @@ source = '''
   # ROAMING_ASSIST log. Every wlx323 packet therefore hit the abort below
   # (~200k events/day). Both the AP and this map now use .6, outside the RTX
   # DHCP pool .20-.99, matching how wlx402 sits at .5.
+  #
+  # wlx313 (ITM) shipped no syslog at all until 2026-09-06 — the AP had no
+  # `syslog host` configured, so the ITM site had no wireless visibility. Its
+  # .155 is the address the AP actually sends from, observed rather than
+  # assumed: a 300s tcpdump on the PVE bridge caught 17 packets from
+  # 192.168.1.155:52962 → 192.168.1.76:514 (capture proven complete against
+  # the same window's vector `parse` received delta, 2429/2490).
+  #
+  # .155 is NOT durable. The AP runs `ip route default gateway dhcp` with no
+  # static address, and the ITM RTX830 hands out 192.168.1.150-192.168.1.225
+  # (`dhcp scope 1`, expire 12:00) with no `dhcp scope bind` for
+  # ac:44:f2:5a:d7:20 — so this is a plain dynamic lease, the same shape as
+  # the .27 mix-up above. If the AP ever takes a different address this entry
+  # stops matching and wlx313 goes silently back to zero. The durable fix is a
+  # DHCP bind on the ITM router (home-monitor terraform) or a static address on
+  # the AP; both are out of this cookbook's reach and are tracked in TODO.md.
   src_ip = .host
   if src_ip == "192.168.1.253" {
     .router = "hnd"
@@ -122,6 +139,9 @@ source = '''
     .device_type = "ap"
   } else if src_ip == "192.168.1.6" {
     .device = "wlx323"
+    .device_type = "ap"
+  } else if src_ip == "192.168.1.155" {
+    .device = "wlx313"
     .device_type = "ap"
   } else {
     abort
@@ -839,6 +859,33 @@ assert_eq!(.module, "ROAMING_ASSIST")
 assert!(!exists(.event_kind))
 assert!(!exists(.ip_version))
 assert!(!exists(.action))
+'''
+
+[[tests]]
+name = "wlx313 (ITM) is labelled from its own sender IP"
+[[tests.inputs]]
+insert_at = "parse"
+type = "log"
+[tests.inputs.log_fields]
+# Captured off vmbr0 2026-09-06T08:28Z, the first syslog wlx313 ever shipped.
+# Rev.18.00.12 uses the same `<PRI> [MODULE] <CODE> msg` shape as wlx323, so
+# the existing AP branch parses it without a device-specific case.
+message = "<6> [80211] <0112> Sent DEAUTH to STA (ac:49:db:8d:2a:45). | AP <ac:44:f2:5a:d7:2a>"
+host = "192.168.1.155"
+[[tests.outputs]]
+extract_from = "parse"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.device, "wlx313")
+assert_eq!(.device_type, "ap")
+assert_eq!(.module, "80211")
+assert_eq!(.code, "0112")
+assert_eq!(.sta, "ac:49:db:8d:2a:45")
+assert_eq!(.ap, "ac:44:f2:5a:d7:2a")
+# RTX-only fields must stay absent or the strict logs-wlx mapping rejects it.
+assert!(!exists(.router))
+assert!(!exists(.event_kind))
 '''
 
 [[tests]]

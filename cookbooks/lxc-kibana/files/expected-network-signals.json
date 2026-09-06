@@ -45,7 +45,7 @@
       "threshold": 1,
       "exclude_previous_hits": false,
       "query": { "bool": { "filter": [ { "term": { "device": "wlx313" } } ] } },
-      "message": "No syslog from wlx313 (192.168.1.155, ITM). KNOWN GAP as of 2026-09: this AP has never shipped syslog, so the ITM site has no wireless visibility at all — the same class of blind spot that hid the wlx323 fault for weeks. Fix is to point its syslog at 192.168.1.76 and add its IP to the Vector source map; until then this issue stays open with self-heal-needs-human."
+      "message": "No syslog from wlx313 (192.168.1.155, ITM) for {{window}} min. This AP shipped nothing at all until 2026-09-06, when `syslog host 192.168.1.76` was set on the AP and .155 was added to the Vector source map (setup #949); before that the ITM site had no wireless visibility. First check whether the AP still holds .155: it has no static address and the ITM RTX830 leases 192.168.1.150-.225 with no bind for ac:44:f2:5a:d7:20, so a changed lease drops it out of the map and back to zero. Confirm with a tcpdump on the PVE bridge for `udp dst port 514` — if packets arrive from some other address, that address is the fix. Otherwise same triage as wlx323."
     },
     {
       "key": "syslog_silent_rtx_hnd",
