@@ -63,15 +63,26 @@ directory "#{loop_home}/.claude/logs" do
   only_if "test -d #{loop_home}/.claude"
 end
 
-# Ensure the two self-heal skills the cron invokes are present in the LOOP
-# USER's ~/.claude/skills. The claude-code cookbook deploys skills to
+# Ensure every skill the cron loops invoke is present in the LOOP USER's
+# ~/.claude/skills. The claude-code cookbook deploys skills to
 # node[:setup][:home]/.claude/skills — which is /root under an auto-mitamae root
 # apply, NOT the loop user's home the shin1ohno cron reads. Sync them here
 # (single source of truth stays cookbooks/claude-code/files/skills) so the loops
 # work regardless of how claude-code was applied.
+#
+# network-log-audit is here because self-heal-resolve's Step 2 routes
+# source=network issues to it. A skill the resolve SKILL names but that is
+# absent from the loop user's home is a silent dead end: the loop reads the
+# instruction, finds nothing, and falls back to improvising the investigation
+# the skill exists to make repeatable.
+#
+# The copy is recursive, not SKILL.md-only: network-log-audit keeps its ES
+# catalog, retention limits, device probes and known traps under references/,
+# and SKILL.md is a table of contents without them.
 skills_src = File.expand_path("../claude-code/files/skills", File.dirname(__FILE__))
+loop_skills = %w[self-heal-create self-heal-resolve network-log-audit]
 
-%w[self-heal-create self-heal-resolve].each do |skill|
+loop_skills.each do |skill|
   directory "#{loop_home}/.claude/skills/#{skill}" do
     owner loop_user
     group loop_user
@@ -80,18 +91,26 @@ skills_src = File.expand_path("../claude-code/files/skills", File.dirname(__FILE
   end
 end
 
-execute "sync self-heal skills into #{loop_user} ~/.claude/skills" do
+execute "sync loop skills into #{loop_user} ~/.claude/skills" do
   command <<~SH.strip
     set -e
-    for s in self-heal-create self-heal-resolve; do
-      cp #{skills_src}/$s/SKILL.md #{loop_home}/.claude/skills/$s/SKILL.md
-      chown #{loop_user}:#{loop_user} #{loop_home}/.claude/skills/$s/SKILL.md
+    for s in #{loop_skills.join(' ')}; do
+      cp -r #{skills_src}/$s/. #{loop_home}/.claude/skills/$s/
+      chown -R #{loop_user}:#{loop_user} #{loop_home}/.claude/skills/$s
     done
   SH
   user node[:setup][:user]
   only_if "test -d #{loop_home}/.claude"
-  not_if "diff -q #{skills_src}/self-heal-create/SKILL.md #{loop_home}/.claude/skills/self-heal-create/SKILL.md 2>/dev/null && " \
-         "diff -q #{skills_src}/self-heal-resolve/SKILL.md #{loop_home}/.claude/skills/self-heal-resolve/SKILL.md 2>/dev/null"
+  # cp -r, not cp -a: -a preserves ownership, which a non-root run cannot do,
+  # and `set -e` would turn that refusal into an aborted mitamae run. The
+  # chown -R that follows is what actually establishes ownership.
+  #
+  # diff -r so a changed reference file under network-log-audit/references/
+  # re-syncs too; SKILL.md-only comparison would call the skill up to date
+  # while its references were stale.
+  not_if loop_skills.map { |s|
+    "diff -rq #{skills_src}/#{s} #{loop_home}/.claude/skills/#{s} >/dev/null 2>&1"
+  }.join(" && ")
 end
 
 # Stage + install the scripts to /usr/local/bin (root:root 0755): the two cron
