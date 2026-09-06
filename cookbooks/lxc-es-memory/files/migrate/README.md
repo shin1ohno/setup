@@ -36,8 +36,8 @@ ES_URL=$ES_URL ES_USER=elastic ES_PASSWORD=$ES_PASSWORD \
 
 ```bash
 # Mem0 — re-embed ~60-100 memories from the running OpenMemory API
-OPENMEMORY_URL=http://127.0.0.1:8765 python3 migrate_mem0.py --dry-run
-OPENMEMORY_URL=http://127.0.0.1:8765 python3 migrate_mem0.py
+# migrate_mem0.py was removed with the v1 Mem0 stack; see git history if the
+# original OpenMemory import is ever needed again.
 ```
 
 ## 3. Count reconciliation
