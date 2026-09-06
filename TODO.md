@@ -642,3 +642,34 @@ module either is in the map or is not), and emit
 `memory_keeper_reconcile_last_exit_code` from `memory-keeper-health.sh` via
 `systemctl show -p ExecMainStatus memory-keeper-reconcile.service` so a dead
 tick is visible with an empty queue. Delete this entry in the resolving commit.
+
+## wlx313 syslog depends on a DHCP lease that nothing reserves (Medium)
+
+wlx313 (ITM) started shipping syslog on 2026-09-06 (#949): `syslog host
+192.168.1.76` was set on the AP, and `192.168.1.155` — the address a 300s
+tcpdump on the PVE bridge showed it actually sending from — was added to the
+Vector source map in `cookbooks/lxc-monitoring/files/vector.toml`. That entry
+is keyed on an address the AP does not own.
+
+- **Why it matters**: the AP runs `ip route default gateway dhcp` with no
+  static address, and the ITM RTX830 hands out `192.168.1.150-192.168.1.225`
+  (`dhcp scope 1`, expire 12:00) with **no `dhcp scope bind`** for
+  `ac:44:f2:5a:d7:20`. If the AP ever takes a different lease, every packet
+  falls through to the map's `abort` and wlx313 goes silently back to zero
+  events — exactly the failure that hid the wlx323 fault for weeks while `.41`
+  was declared and the AP was sending from `.27`. The `syslog_silent_wlx313`
+  rule does fire on it, so it is detected, but the address is a fresh guess
+  each time.
+- **First step**: add a `dhcp scope bind` for `ac:44:f2:5a:d7:20 -> .155` to
+  `config/rtx-routers/itm/config.txt.tftpl` in home-monitor, the way
+  `rtx-hnd.tf` binds the HND devices. Verify with `show status dhcp` on the ITM
+  RTX830 that the bind is in the running config, since the ITM router is
+  configured by SFTP push to `/system/config0` and the template has drifted
+  from the device before (home-monitor #139).
+- **Alternative**: give the AP a static address outside `.150-.225`, mirroring
+  how wlx402 sits at `.5` and wlx323 was moved to `.6` for this same reason
+  (setup #887 / home-monitor #123). That also needs the Vector map updated in
+  the same change.
+- **Why not done here**: both touch home-monitor terraform / a network device's
+  running config, which is outside the self-heal loop's autonomous envelope
+  (network gear is read-only to it, and home-monitor TF is needs-human).
