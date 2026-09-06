@@ -2,7 +2,10 @@
 #
 # self-heal-observer (Layer 1) — read-only ES alert reader + state writer.
 # Polls the alerts-as-data indices Kibana writes, dedups against the
-# self-heal-state index, and records NEW/RESOLVED transitions there.
+# self-heal-state index, and records NEW/RESOLVED transitions there. With
+# SELF_HEAL_PROM_URL set it also folds Prometheus's firing alerts into the same
+# key space (S8), because those rules have no Alertmanager and therefore no
+# delivery path of their own.
 # Notification + remediation are downstream loops on pro-dev (self-heal-create
 # syncs this state to GitHub issues; self-heal-resolve fixes them) — this
 # observer does NOT notify. Emits Prometheus textfile metrics for its own
@@ -37,6 +40,18 @@ ENV_FILE="/etc/self-heal/observer.env"
 : "${SELF_HEAL_DISABLED_SENTINEL:=/var/lib/self-heal/DISABLED}"
 : "${SELF_HEAL_PW_CACHE:=/run/self-heal/elastic-pw.cache}"
 : "${SELF_HEAL_PW_CACHE_TTL:=1800}"
+# S8 — the Prometheus alert family. DISABLED unless SELF_HEAL_PROM_URL is set;
+# clearing that one variable is the entire revert (existing Prom: issues then
+# resolve on the next cycle, which is the intended retreat, not a bug).
+: "${SELF_HEAL_PROM_URL:=}"
+# Comma-separated severity labels to ingest. Default is critical-only: the
+# fleet has 55 rules of which 17 are critical, and turning all 55 into issues at
+# once floods the very surface this exists to make readable.
+: "${SELF_HEAL_PROM_SEVERITIES:=critical}"
+# Optional extended-regex of TSV lines to drop (matched against the whole line,
+# so "^Prom: NodeExporterDown" works). For known-noise rules that should not
+# become issues while they are being fixed at the source.
+: "${SELF_HEAL_PROM_EXCLUDE:=}"
 
 log() { echo "[self-heal-observer] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 now_iso() { date -u +%Y-%m-%dT%H:%M:%S.000Z; }
@@ -118,6 +133,34 @@ es_req() {
 
 sha1_id() { printf '%s' "$1" | sha1sum | cut -d' ' -f1; }
 
+# --- S8: Prometheus firing alerts -------------------------------------------
+# Emits TSV "dedup_key<TAB>activeAt<TAB>summary<TAB>severity" on stdout and
+# returns 0 when Prometheus ANSWERED — including when it answered with nothing
+# firing, which is a legitimate empty set. Returns non-zero only when the poll
+# could not be trusted, because the caller uses that distinction to decide
+# whether absence means "resolved" or "unknown".
+prom_active_tsv() {
+  local body http
+  body=$(curl -s -m 10 -w $'\n%{http_code}' "${SELF_HEAL_PROM_URL%/}/api/v1/alerts" 2>/dev/null) || return 1
+  http=$(printf '%s' "$body" | tail -n1)
+  [ "$http" = "200" ] || return 1
+  body=$(printf '%s' "$body" | sed '$d')
+  # Prometheus answers HTTP 200 with {"status":"error"} on a query-layer
+  # failure, so the status code alone is not the success signal.
+  [ "$(printf '%s' "$body" | jq -r '.status // "error"' 2>/dev/null)" = "success" ] || return 1
+  printf '%s' "$body" | jq -r --arg sev "$SELF_HEAL_PROM_SEVERITIES" '
+    ($sev | split(",") | map(ascii_downcase | ltrimstr(" ") | rtrimstr(" "))) as $want
+    | .data.alerts[]?
+    | select(.state == "firing")
+    | select(((.labels.severity // "warning") | ascii_downcase) as $s | $want | index($s))
+    | [ ("Prom: " + (.labels.alertname // "?") + " :: "
+         + ((.labels.instance // .labels.component // .labels.job // "global") | split(":")[0])),
+        (.activeAt // ""),
+        ((.annotations.summary // .labels.alertname // "") | gsub("[\t\n]"; " ")),
+        ((.labels.severity // "warning") | ascii_downcase) ]
+    | @tsv' 2>/dev/null
+}
+
 # --- stale-guard: is an active alert doc orphaned? --------------------------
 # An alerts-as-data doc can stay status=active forever after its Kibana rule
 # (a) recovered but the recovery transition was missed (flap edge case), or
@@ -187,6 +230,33 @@ main() {
   done <<< "$active_keys_all"
   active_keys=$(printf '%s' "$active_keys" | grep -v '^$' | sort -u)
 
+  # S8 — fold the Prometheus firing set into the same active key space. This
+  # runs AFTER the stale-guard on purpose: that guard asks Kibana whether a rule
+  # still exists, which is meaningless for a Prometheus rule.
+  #
+  # Why here at all: prometheus.yml carries no `alerting:` block and the fleet
+  # runs no Alertmanager, so 55 rules (17 critical) have reached nobody since
+  # the day they shipped. Folding them into the state index this observer
+  # already owns gives them the issue path — and its notification — instead of
+  # standing up a second delivery stack that would need its own watchdog.
+  local prom_reached=1 prom_count=0 prom_tsv=""
+  if [ -n "$SELF_HEAL_PROM_URL" ]; then
+    if prom_tsv=$(prom_active_tsv); then
+      if [ -n "$SELF_HEAL_PROM_EXCLUDE" ]; then
+        prom_tsv=$(printf '%s\n' "$prom_tsv" | grep -Ev "$SELF_HEAL_PROM_EXCLUDE" || true)
+      fi
+      prom_count=$(printf '%s\n' "$prom_tsv" | grep -c . || true)
+      active_tsv=$(printf '%s\n%s' "$active_tsv" "$prom_tsv")
+      active_keys=$(printf '%s\n%s' "$active_keys" \
+        "$(printf '%s\n' "$prom_tsv" | awk -F'\t' 'NF>0{print $1}')" \
+        | grep -v '^$' | sort -u)
+      log "prometheus: ${prom_count} firing alert(s) in severity set [${SELF_HEAL_PROM_SEVERITIES}]"
+    else
+      prom_reached=0
+      log "WARN: prometheus poll failed (${SELF_HEAL_PROM_URL}) — Prom: keys excluded from resolution this cycle"
+    fi
+  fi
+
   local active_count
   active_count=$(printf '%s\n' "$active_keys" | grep -c . || true)
 
@@ -203,6 +273,15 @@ main() {
   local new_keys resolved_keys
   new_keys=$(comm -23 <(printf '%s\n' "$active_keys" | grep -v '^$') <(printf '%s\n' "$state_keys" | grep -v '^$'))
   resolved_keys=$(comm -13 <(printf '%s\n' "$active_keys" | grep -v '^$') <(printf '%s\n' "$state_keys" | grep -v '^$'))
+
+  # A failed Prometheus poll must never read as "nothing is firing". This diff
+  # marks every state key absent from active_keys as resolved immediately — no
+  # N-cycle threshold — so a single unreachable poll would close every Prom:
+  # issue at once, which is precisely the mass-close the ES path refuses to do.
+  # Excluding them leaves them open until Prometheus answers again.
+  if [ "$prom_reached" = "0" ]; then
+    resolved_keys=$(printf '%s\n' "$resolved_keys" | grep -v '^Prom: ' || true)
+  fi
 
   local ts; ts=$(now_iso)
 
@@ -223,12 +302,19 @@ main() {
     case "$dk" in
       "Process down:"*) source="es-query" ;;
       "Net: "*)         source="network" ;;
+      "Prom: "*)        source="prometheus" ;;
       *) source="uptime" ;;
+    esac
+    # Prometheus lines carry their own severity in field 4. The Kibana lines put
+    # the rule uuid there, so this is read only for Prom: keys.
+    local sev="warning"
+    case "$dk" in
+      "Prom: "*) sev=$(printf '%s' "$line" | cut -f4); sev="${sev:-warning}" ;;
     esac
     idx="$source"
     doc=$(jq -n --arg id "$id" --arg dk "$dk" --arg det "$ts" --arg fs "${start:-$ts}" \
-                --arg ls "$ts" --arg src "$idx" --arg obs "$reason" '{
-      id:$id, schema_version:1, detected_at:$det, source:$src, severity:"warning",
+                --arg ls "$ts" --arg src "$idx" --arg obs "$reason" --arg sev "$sev" '{
+      id:$id, schema_version:1, detected_at:$det, source:$src, severity:$sev,
       signal:"kibana_alert_active", observed_value:$obs, probe_vantage:"ct111",
       first_seen:$fs, last_seen:$ls, occurrences:1, dedup_key:$dk,
       status:"open", auto_remediation_allowed:false }')
@@ -256,8 +342,15 @@ main() {
       "$(jq -n --arg ls "$ts" '{doc:{last_seen:$ls}}')" >/dev/null 2>&1 || true
   done <<< "$(comm -12 <(printf '%s\n' "$active_keys" | grep -v '^$') <(printf '%s\n' "$state_keys" | grep -v '^$'))"
 
-  log "cycle ok: active=${active_count} stale_excluded=${stale_excluded} open_before=${state_open_count} new=$(printf '%s\n' "$new_keys" | grep -c . || true) resolved=$(printf '%s\n' "$resolved_keys" | grep -c . || true)"
-  write_textfile ok "$active_count"
+  log "cycle ok: active=${active_count} prom=${prom_count} prom_reached=${prom_reached} stale_excluded=${stale_excluded} open_before=${state_open_count} new=$(printf '%s\n' "$new_keys" | grep -c . || true) resolved=$(printf '%s\n' "$resolved_keys" | grep -c . || true)"
+  # An unreachable Prometheus is a partial cycle: the ES half completed, but one
+  # detector family produced no state. Reporting ok would make that invisible,
+  # which is the same defect the create loop had when its STOP exited 0.
+  if [ "$prom_reached" = "0" ]; then
+    write_textfile error "$active_count"
+  else
+    write_textfile ok "$active_count"
+  fi
 }
 
 case "${1:-}" in

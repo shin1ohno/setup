@@ -105,6 +105,15 @@ observer_env = <<~ENV
   SELF_HEAL_DISABLED_SENTINEL="/var/lib/self-heal/DISABLED"
   SELF_HEAL_PW_CACHE="/run/self-heal/elastic-pw.cache"
   SELF_HEAL_PW_CACHE_TTL="1800"
+  # S8 — the Prometheus alert family, shipped DISABLED. Set SELF_HEAL_PROM_URL
+  # to http://localhost:9090 on CT 111 to enable; clearing it is the whole
+  # revert. Default severity set is critical-only because the fleet has 55 rules
+  # of which 17 are critical, and issuing all 55 at once floods the surface.
+  # SELF_HEAL_PROM_EXCLUDE is an extended-regex of TSV lines to drop, for
+  # known-noise rules that are being fixed at the source.
+  SELF_HEAL_PROM_URL=""
+  SELF_HEAL_PROM_SEVERITIES="critical"
+  SELF_HEAL_PROM_EXCLUDE=""
 ENV
 
 file ENV_FILE do
