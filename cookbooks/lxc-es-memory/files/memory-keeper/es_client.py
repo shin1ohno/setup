@@ -6,7 +6,7 @@ verbs the keeper needs: search / count / get / index / update / update_by_query
 / delete_by_query / bulk.
 
 content_hash is ported VERBATIM from
-cookbooks/lxc-es-memory/files/es-memory-mcp/es_backend.py so facts written by
+the retired v1 es_backend.py (removed with the v1 stack; in git history) so facts written by
 the keeper dedup against facts written by the server.
 """
 

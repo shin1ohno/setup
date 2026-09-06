@@ -23,7 +23,7 @@ A store's name — `local`, `work`, a loopback port, a box you own — names the
 1. Probe the actual egress — read the embedding config the server process runs with:
 
    ```bash
-   # systemd-managed server (e.g. es-memory-mcp): endpoints live in the unit's EnvironmentFile
+   # systemd-managed server (e.g. memory-mcp-v2): endpoints live in the unit's EnvironmentFile
    systemctl show <unit> -p Environment -p EnvironmentFiles
    sudo grep -iE 'LLM_(PROVIDER|ENDPOINT|MODEL)|EMBEDDING_(PROVIDER|ENDPOINT)|VOYAGE|OPENAI|ANTHROPIC' <env file>
    # container-managed server
