@@ -1,5 +1,51 @@
 # TODO
 
+## Network fault detection covers thresholds only; the baseline-comparison half is unwritten (Medium)
+
+`expected-network-signals.json` (#948) ships ten `.es-query` rules, all of the
+"count crossed a fixed threshold" shape. That catches a device going silent or a
+radio crashing, but not the class of fault the 2026-09 6GHz investigation
+actually turned up, where nothing is absent and nothing crashes — a client
+reconnecting far more than it used to, band steering firing in a burst, a
+config change silently disabling CCE. Those only show against the same clock
+window on preceding days, and no rule computes that today.
+
+- **Why it was split off**: the DSL rules carry no risk of Kibana rejecting the
+  rule body, so #948 could prove the whole path (rule -> observer ->
+  `self-heal-state` -> issue) without betting on `searchType: esqlQuery` being
+  accepted at creation time. That acceptance is the one thing still unverified;
+  the rule type and the Basic license were confirmed.
+- **The comparison itself is proven.** Run against live ES, this returns zero
+  rows when healthy and one row on a real excursion, which is exactly what an
+  `.es-query` rule needs:
+
+  ```esql
+  FROM logs-wlx-default
+  | WHERE device == "wlx323" AND code == "0113"
+  | EVAL d = DATE_TRUNC(1 day, @timestamp), h = DATE_EXTRACT("hour_of_day", @timestamp)
+  | WHERE h >= 13 AND h < 16
+  | STATS c = COUNT(*) BY d
+  | EVAL is_today = d == DATE_TRUNC(1 day, NOW())
+  | STATS today = MAX(CASE(is_today, c, null)), base_max = MAX(CASE(is_today, null, c)),
+          base_days = COUNT_DISTINCT(d)
+  | WHERE today > base_max AND base_days >= 3
+  ```
+
+  `base_days >= 3` is load-bearing: both wlx and rtx data streams are on 7-day
+  ILM, so the baseline is six days at best and shrinks as ILM deletes — during
+  the investigation the oldest index moved forward a full day in three hours. A
+  two-day baseline would fire on noise.
+- **The four signals**: per-client churn (`0113`), band-steering burst (`0127`),
+  CCE accept/reject ratio drift (`0126`/`0101` — this is what caught 6GHz
+  disabling CCE, 37.68% -> 0.00%), and DHCP renew storm per MAC on hnd.
+- **First step**: create ONE ES|QL rule through the Kibana alerting API by hand
+  and confirm the `esqlQuery` params are accepted, before touching the
+  generator. If they are rejected, the fallback is a small producer on CT111
+  writing straight to `self-heal-state` — the issue path downstream is already
+  proven and does not change either way.
+- **Wait for**: about a week of the #948 rules running, so the false-positive
+  rate of the threshold half is known before adding a noisier class on top.
+
 ## Roon process-name toggles re-fire 4 false "Process down" alerts per update (Medium)
 
 `setup-process-alerts.sh` builds one `.es-query` rule per (host, process) pair and
