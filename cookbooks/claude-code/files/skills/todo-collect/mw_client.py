@@ -30,7 +30,7 @@ Subcommands:
   browse --tags T [--limit N]        list records by exact tag match
   get --id ID                        one record
   remember --content-file F --tags a,b,c [--type fact]
-  forget --id ID
+  forget --id ID                     exit 1 when the store REFUSES the forget
   disposition --kind K --key K2 --source S [--until D] [--thread-key T]
               [--reason R] [--body-file F] [--announce A] [--extra k=v ...]
   todo --key K --source S --title T --close-condition C [--permalink P] [--due D]
@@ -329,6 +329,58 @@ def result_json(result):
         return None
 
 
+def call_outcome(result):
+    """Did the tool actually do it? -> {"state": "confirmed"|"refused", "reason": str}
+
+    MCP reports a TOOL-level failure as an ordinary 200 response carrying
+    `isError: true` with the message in a text block — NOT as a JSON-RPC error. So
+    `McpClient.call` returns it without raising, and any caller that treats a
+    returned result as success is reporting its own code path rather than the
+    store's answer.
+
+    Measured 2026-09-06: the approval desk told the operator 完了 ✔ for 46 todos
+    while the store answered 34 of them with
+    `not permitted to forget id=... ` and `isError: true`. Nothing raised, nothing
+    logged, and the operator's three minutes bought nothing.
+
+    Two states, deliberately, because a third one cannot be observed here: a call
+    that never reached a verdict raises TransportError or JsonError instead, and
+    the caller that must distinguish "refused" from "we never found out" catches
+    those. Do not fold an exception into `refused` — a refusal is a decision the
+    store made, an exception is our own ignorance, and the safe response differs
+    (a refusal is final; an unknown must be re-checked, never blindly retried,
+    since retrying a write whose outcome is unknown is how an append-only ledger
+    grows duplicates).
+
+    A result with no isError flag is confirmed — that is the shape of every
+    successful call. A result that is not a dict at all is NOT: answering
+    confirmed for None would reinstate the same silence one layer up.
+    """
+    if not isinstance(result, dict):
+        return {"state": "refused", "reason": f"no result to read ({type(result).__name__})"}
+    if result.get("isError"):
+        return {"state": "refused", "reason": result_text(result).strip() or "the tool reported an error with no message"}
+    return {"state": "confirmed", "reason": ""}
+
+
+def forget_doc(client, doc_id):
+    """Forget one document and say whether the store actually did it.
+
+    -> {"state", "reason", "id"}; raises TransportError / JsonError when no verdict
+    was reached. The id is echoed so a caller about to write an exclusion line has
+    the handle it acted on without re-deriving it — and so that it only writes that
+    line when `state == "confirmed"`.
+
+    The store refuses a forget the caller has no right to make: a `client_credentials`
+    grant may only forget documents whose provenance agent is its own, and a
+    `user-stated` document needs an interactive (`authorization_code`) grant
+    whoever wrote it. That refusal is normal operation on a machine-run surface,
+    not an exception — which is exactly why it has to be returned rather than
+    thrown away.
+    """
+    return dict(call_outcome(client.call("forget", {"id": doc_id})), id=str(doc_id))
+
+
 def record_id(result):
     """The id of a just-written record, wherever the server put it."""
     doc = result_json(result)
@@ -529,9 +581,14 @@ def main(argv=None):
             return EXIT_OK
 
         if args.cmd == "forget":
-            res = client.call("forget", {"id": args.id})
-            print(json.dumps({"forgot": args.id, "text": result_text(res)[:200]}, ensure_ascii=False))
-            return EXIT_OK
+            # `forgot` is kept for shape compatibility but is now the truth: it is
+            # false when the store refused. Nothing calls this subcommand today
+            # (grepped: only this module's own docstring), so tightening the exit
+            # code costs no caller and stops the CLI repeating the desk's mistake.
+            out = forget_doc(client, args.id)
+            print(json.dumps({"forgot": out["state"] == "confirmed", "id": out["id"],
+                              "state": out["state"], "reason": out["reason"][:200]}, ensure_ascii=False))
+            return EXIT_OK if out["state"] == "confirmed" else EXIT_ERROR
 
         if args.cmd in ("disposition", "todo"):
             kind = args.kind if args.cmd == "disposition" else "approve"
