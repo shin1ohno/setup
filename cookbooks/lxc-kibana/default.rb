@@ -309,13 +309,19 @@ end
 #      (setup-alerting.sh)
 #   2. 31 .es-query process-liveness rules per expected-processes.json
 #      (setup-process-alerts.sh)
+#   3. .es-query network-fault rules per expected-network-signals.json
+#      (setup-network-alerts.sh) — RTX/WLX syslog silence and wireless fault
+#      signatures. These ride the same self-heal path as everything else
+#      (CT111 observer -> self-heal-state -> GitHub issue), so detection stays
+#      deterministic and needs no extra daemon.
 #
-# Both scripts are idempotent (probe-then-create). The cookbook fetches
+# All three scripts are idempotent (probe-then-create). The cookbook fetches
 # the elastic superuser password from SSM at run time. Gated by the
 # same SSM-availability check as the kibana-secrets step.
 
 setup_alerting_script = File.join(File.dirname(__FILE__), "files", "setup-alerting.sh")
 setup_process_alerts_script = File.join(File.dirname(__FILE__), "files", "setup-process-alerts.sh")
+setup_network_alerts_script = File.join(File.dirname(__FILE__), "files", "setup-network-alerts.sh")
 monitoring_integrations_script = File.join(File.dirname(__FILE__), "files", "install-monitoring-integrations.sh")
 elastic_password_ssm = "/monitoring/elastic/elastic-password"
 
@@ -359,6 +365,22 @@ require_external_auth(
       export KIBANA_USER=elastic
       export KIBANA_PASSWORD
       bash #{setup_process_alerts_script}
+    SH
+    user user
+    only_if "systemctl is-active kibana.service >/dev/null 2>&1"
+  end
+
+  execute "install network-fault rules (RTX/WLX .es-query rules)" do
+    command <<~SH.strip
+      set -euo pipefail
+      KIBANA_PASSWORD=$(aws ssm get-parameter \
+        --name #{elastic_password_ssm} \
+        --with-decryption \
+        --profile #{aws_profile} --region #{aws_region} \
+        --query 'Parameter.Value' --output text)
+      export KIBANA_USER=elastic
+      export KIBANA_PASSWORD
+      bash #{setup_network_alerts_script}
     SH
     user user
     only_if "systemctl is-active kibana.service >/dev/null 2>&1"
