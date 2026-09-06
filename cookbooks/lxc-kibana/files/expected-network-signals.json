@@ -1,0 +1,136 @@
+{
+  "comment": "Network fault signals for the RTX routers and WLX access points, turned into .es-query Kibana rules by setup-network-alerts.sh. Each signal becomes one rule named `Net: <title>`; the CT111 self-heal-observer turns an active alert into a self-heal-state doc, and self-heal-create opens a GitHub issue titled `[self-heal] Net: <title> :: query matched`. The rule NAME is therefore the issue title — put the diagnosis in it. Rules are tagged `netlog` and PRUNED when a signal is removed from this file, so renaming a signal retires its old rule instead of orphaning it.",
+
+  "_comment_why_these": "Only signals that earned their place in a real investigation are here. `syslog_silent` is the highest-value one: in 2026-08 the wlx323 AP's syslog was silently discarded by Vector for weeks (~200k docs/day) because devices.tf and vector.toml declared the AP at .41 while it lived at .27 — ES showed zero docs and nothing alerted. That failure mode is invisible to every other rule, because every other rule reads the very stream that stopped. See home-monitor memory wlx323-wrong-ip-silent-syslog-drop.",
+
+  "_comment_absence_vs_presence": "`comparator` `<` with `threshold` 1 = ABSENCE (nothing arrived — the stream died). `>` with 0 = PRESENCE (a fault signature appeared). Presence rules set `exclude_previous_hits` true so a one-shot event fires once and then recovers, which closes the GitHub issue on its own; absence rules leave it false because the condition is a standing state, not an event.",
+
+  "_comment_window": "`window_minutes` must exceed the signal's natural quiet period or the rule flaps. syslog_silent uses 30 min because a healthy AP can be quiet for ~20 min at night (measured: wlx323 emitted 3 docs in the 5-min bucket at 02:21Z). Presence rules use 15-30 min so a burst is still inside the window when the rule next runs.",
+
+  "_defaults": {
+    "interval": "1m",
+    "window_minutes": 15,
+    "exclude_previous_hits": true
+  },
+
+  "signals": [
+    {
+      "key": "syslog_silent_wlx323",
+      "title": "syslog silent (wlx323)",
+      "index": ["logs-wlx-default"],
+      "window_minutes": 30,
+      "comparator": "<",
+      "threshold": 1,
+      "exclude_previous_hits": false,
+      "query": { "bool": { "filter": [ { "term": { "device": "wlx323" } } ] } },
+      "message": "No syslog from wlx323 (192.168.1.6) for {{window}} min. Either the AP is down or the Vector pipeline is dropping it (check the source-IP map in cookbooks/lxc-monitoring/files/vector.toml against the AP's real IP, and vector_component_discarded_events_total on 192.168.1.76:9598)."
+    },
+    {
+      "key": "syslog_silent_wlx402",
+      "title": "syslog silent (wlx402)",
+      "index": ["logs-wlx-default"],
+      "window_minutes": 30,
+      "comparator": "<",
+      "threshold": 1,
+      "exclude_previous_hits": false,
+      "query": { "bool": { "filter": [ { "term": { "device": "wlx402" } } ] } },
+      "message": "No syslog from wlx402 (192.168.1.5) for {{window}} min. Same triage as wlx323."
+    },
+    {
+      "key": "syslog_silent_wlx313",
+      "title": "syslog silent (wlx313 ITM)",
+      "index": ["logs-wlx-default"],
+      "window_minutes": 30,
+      "comparator": "<",
+      "threshold": 1,
+      "exclude_previous_hits": false,
+      "query": { "bool": { "filter": [ { "term": { "device": "wlx313" } } ] } },
+      "message": "No syslog from wlx313 (192.168.1.155, ITM). KNOWN GAP as of 2026-09: this AP has never shipped syslog, so the ITM site has no wireless visibility at all — the same class of blind spot that hid the wlx323 fault for weeks. Fix is to point its syslog at 192.168.1.76 and add its IP to the Vector source map; until then this issue stays open with self-heal-needs-human."
+    },
+    {
+      "key": "syslog_silent_rtx_hnd",
+      "title": "syslog silent (RTX hnd)",
+      "index": ["logs-rtx-default"],
+      "window_minutes": 30,
+      "comparator": "<",
+      "threshold": 1,
+      "exclude_previous_hits": false,
+      "query": { "bool": { "filter": [ { "term": { "router": "hnd" } } ] } },
+      "message": "No syslog from RTX1210 hnd (192.168.1.253) for {{window}} min. This router normally emits 150k-290k docs/day, so silence is a hard signal."
+    },
+    {
+      "key": "syslog_silent_rtx_itm",
+      "title": "syslog silent (RTX itm)",
+      "index": ["logs-rtx-default"],
+      "window_minutes": 180,
+      "comparator": "<",
+      "threshold": 1,
+      "exclude_previous_hits": false,
+      "query": { "bool": { "filter": [ { "term": { "router": "itm" } } ] } },
+      "message": "No syslog from RTX830 itm (192.168.1.254) for {{window}} min. Window is 3 h because this router only emits 100-300 docs/day; a shorter window flaps."
+    },
+    {
+      "key": "wireless_module_ssr",
+      "title": "wireless module restart (WLX)",
+      "index": ["logs-wlx-default"],
+      "window_minutes": 15,
+      "comparator": ">",
+      "threshold": 0,
+      "query": { "bool": { "should": [
+        { "match_phrase": { "message": "ol_ath_wifi_ssr" } },
+        { "match_phrase": { "message": "Removing Wi-Fi Module" } },
+        { "match_phrase": { "message": "PD monitor" } },
+        { "match_phrase": { "message": "LowPower" } }
+      ], "minimum_should_match": 1 } },
+      "message": "Wireless firmware subsystem restart (SSR) signature on a WLX AP. Between 2026-08-16 and 08-29 this dropped every SSID for 2-4 min, 30 times in 8 days, gated by an LLDP PD-monitor frame. Runbook: home-monitor docs/runbooks/wlx323-radio-stability.md. First check whether `lldp auto-setting use off` is still in the AP's running config — restoring a pre-2026-08-29 /ap_config backup from the RTX LAN map silently reintroduces the fault."
+    },
+    {
+      "key": "ro_process_crash",
+      "title": "Radio Optimization crash (WLX)",
+      "index": ["logs-wlx-default"],
+      "window_minutes": 15,
+      "comparator": ">",
+      "threshold": 0,
+      "query": { "bool": { "should": [
+        { "term": { "module": "RO" } },
+        { "match_phrase": { "message": "ro_decision_processor" } }
+      ], "minimum_should_match": 1 } },
+      "message": "The Radio Optimization daemon (`airlink optimization`, which auto-adjusts channel, bandwidth and transmit power daily at 03:00 JST) logged an internal error or restarted. First seen 2026-09-05T13:41Z, 11 min after the 5GHz(2)->6GHz(1) band swap; zero occurrences in the 189 h before that and zero on wlx402 ever."
+    },
+    {
+      "key": "radio_interface_down",
+      "title": "radio interface DOWN (WLX)",
+      "index": ["logs-wlx-default"],
+      "window_minutes": 15,
+      "comparator": ">",
+      "threshold": 0,
+      "query": { "bool": { "filter": [ { "term": { "code": "5121" } } ] } },
+      "message": "A WLX radio interface went DOWN (<5121>). Confirm a matching <5120> UP followed for EVERY interface that went down — a DOWN with no UP means that radio never came back. Note the interface-level outage understates the client-visible one: on 2026-09-05 the interfaces were down 43 s but 5GHz clients could not associate for 109 s, because ACS landed on a W56 DFS channel and had to serve a 62 s CAC first."
+    },
+    {
+      "key": "dfs_serving_channel_cac",
+      "title": "5GHz stopped for DFS CAC (WLX)",
+      "index": ["logs-wlx-default"],
+      "window_minutes": 30,
+      "comparator": ">",
+      "threshold": 0,
+      "query": { "bool": { "filter": [ { "term": { "code": "0301" } } ] } },
+      "message": "<0301> Started CAC — the SERVING 5GHz channel stopped transmitting for ~60 s. This is the DFS event that actually costs service. Deliberately NOT alerting on radar detection itself (<0303>/<6410>, 5 occurrences in the last 7 days) because Fast DFS v2 relocates in 0 s while it is active and the runbook concludes those need no action; alerting on them would file ~5 noise issues a week. <6404> is also excluded: that is the rolling CAC on the agile channel, not an outage. This matters more since 2026-09-05, when wlx323 lost its second 5GHz radio to 6GHz and has no other 5GHz to fall back to. Do NOT pin 5GHz(1) to W52 to avoid DFS: that stops Fast DFS v2 and the channel never returns from W52."
+    },
+    {
+      "key": "dhcp_error_hnd",
+      "title": "DHCP error (RTX hnd)",
+      "index": ["logs-rtx-default"],
+      "window_minutes": 30,
+      "comparator": ">",
+      "threshold": 0,
+      "query": { "bool": { "filter": [ { "term": { "router": "hnd" } } ], "should": [
+        { "match_phrase": { "message": "DHCPNAK" } },
+        { "match_phrase": { "message": "DECLINE" } },
+        { "match_phrase": { "message": "no free address" } },
+        { "match_phrase": { "message": "duplicate" } }
+      ], "minimum_should_match": 1 } },
+      "message": "RTX hnd DHCP error. The scope is 192.168.1.20-99 (80 addresses, 12 h lease); the whole retained corpus has only ever contained Allocates/Extends/Released, so any of these tokens is new. Check `show status dhcp` for pool exhaustion."
+    }
+  ]
+}

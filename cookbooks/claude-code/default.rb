@@ -329,7 +329,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve mcp-auth web-crawl setup-release-plz todo-reconcile todo-collect todo-approve).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve network-log-audit mcp-auth web-crawl setup-release-plz todo-reconcile todo-collect todo-approve).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -339,6 +339,27 @@ end
 
   remote_file "#{node[:setup][:home]}/.claude/skills/#{skill_name}/SKILL.md" do
     source "files/skills/#{skill_name}/SKILL.md"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+# Deploy network-log-audit references. The SKILL.md is deliberately thin (entry
+# point + the comparison discipline); the bulk — ES catalog, retention limits,
+# read-only device probes, known traps — lives here so it is loaded only when a
+# network investigation actually needs it.
+directory "#{node[:setup][:home]}/.claude/skills/network-log-audit/references" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w(es-catalog.md retention.md probes.md pitfalls.md).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/skills/network-log-audit/references/#{file_name}" do
+    source "files/skills/network-log-audit/references/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"

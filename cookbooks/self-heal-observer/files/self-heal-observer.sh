@@ -215,9 +215,14 @@ main() {
     start=$(printf '%s' "$line" | cut -f2)
     reason=$(printf '%s' "$line" | cut -f3)
     id=$(sha1_id "$dk")
-    # source: which index family — uptime vs stack — by a cheap rule-name heuristic.
+    # source: which detector family, by a cheap rule-name heuristic. This value
+    # reaches the GitHub issue body and the <!-- self-heal-source --> marker, and
+    # self-heal-resolve branches its Step 2 investigation on it — so a rule family
+    # with its own triage recipe needs its own value here. "Net: " is the prefix
+    # setup-network-alerts.sh gives every RTX/WLX rule.
     case "$dk" in
       "Process down:"*) source="es-query" ;;
+      "Net: "*)         source="network" ;;
       *) source="uptime" ;;
     esac
     idx="$source"
