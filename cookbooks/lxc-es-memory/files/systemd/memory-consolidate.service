@@ -15,6 +15,9 @@ EnvironmentFile=-/opt/es-memory/keeper-claude.env
 Environment=FACT_INDEX=memory-fact
 Environment=EPISODE_INDEX=memory-episode
 Environment=STATS_INDEX=memory-stats
+# Retention for the keeper's own self-report index (phase 4). Only the latest
+# doc is ever read, so 30d is trend history, not a correctness input.
+Environment=STATS_RETAIN_DAYS=30
 Environment=CONSOLIDATE_MODEL=opus
 Environment=KEEPER_HOST=es-memory
 Environment=HOME=/root
