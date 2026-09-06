@@ -1,7 +1,7 @@
 """memory-keeper nightly consolidation (§6, run_kind=consolidate).
 
 Runs once per night (launchd StartCalendarInterval 03:30) under the same
-LaunchDaemon posture. Four phases:
+LaunchDaemon posture. Five phases:
 
   1. episode expiry: delete_by_query memory-episode where expires_at < now AND
      NOT promoted_to exists (promoted episodes are already copied, safe to drop).
@@ -13,7 +13,14 @@ LaunchDaemon posture. Four phases:
      gets promoted_to set.
   3. near-dup: kNN self-scan on memory-fact; cosine >0.95 supersedes the older,
      0.90-0.95 is reported (log only).
-  4. stats self-report doc to memory-stats.
+  4. stats retention: delete_by_query memory-stats older than
+     STATS_RETAIN_DAYS. The self-report below is written every reconcile tick
+     (~700 docs/day) and only the LATEST doc is ever read (memory_stats(),
+     memory-keeper-health.sh), so without this the index grows without bound.
+     Safe against masking a dead keeper: this phase only runs from consolidate,
+     and the same run writes a fresh doc in phase 5 — a keeper that is not
+     running prunes nothing.
+  5. stats self-report doc to memory-stats.
 
 Locking via fcntl.flock; exit 0 on contention. Stdlib only.
 """
@@ -46,6 +53,8 @@ KEEPER_HOST = _env("KEEPER_HOST", "mini")
 CONSOLIDATE_MODEL = _env("CONSOLIDATE_MODEL", "opus")
 PROMOTE_WINDOW = int(_env("PROMOTE_WINDOW", "200"))
 NEAR_DUP_LIMIT = int(_env("NEAR_DUP_LIMIT", "2000"))
+# Retention for the keeper's own self-report index. <=0 disables the phase.
+STATS_RETAIN_DAYS = int(_env("STATS_RETAIN_DAYS", "30"))
 PROMPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts", "promote.md")
 
 DUP_SUPERSEDE = 0.95
@@ -77,6 +86,19 @@ def _expire_episodes(es, now):
         }
     }
     res = es.delete_by_query(EPISODE_INDEX, body, refresh="true")
+    return res.get("deleted", 0)
+
+
+def _prune_stats(es):
+    """Drop memory-stats self-report docs older than STATS_RETAIN_DAYS.
+
+    The cutoff is expressed as ES date math ("now-30d") and evaluated
+    server-side, keeping this module stdlib-only (no datetime arithmetic).
+    """
+    if STATS_RETAIN_DAYS <= 0:
+        return 0
+    body = {"query": {"range": {"written_at": {"lt": f"now-{STATS_RETAIN_DAYS}d"}}}}
+    res = es.delete_by_query(STATS_INDEX, body, refresh="false")
     return res.get("deleted", 0)
 
 
@@ -344,6 +366,13 @@ def main():
         near_dup_superseded = 0
         errors += 1
 
+    try:
+        stats_pruned = _prune_stats(es)
+    except ESError as exc:
+        print(f"consolidate: stats prune failed: {exc}", file=sys.stderr)
+        stats_pruned = 0
+        errors += 1
+
     stats_doc = {
         "written_at": now_iso(),
         "host": KEEPER_HOST,
@@ -351,6 +380,7 @@ def main():
         "expired_deleted": expired,
         "promoted_total": promoted,
         "superseded_total": near_dup_superseded,
+        "stats_pruned": stats_pruned,
         "errors": errors,
         "loop_lag_ms": (time.monotonic() - t0) * 1000.0,
     }
