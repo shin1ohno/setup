@@ -4,10 +4,10 @@
 # create/resolve loop wrappers. Managed by cookbooks/self-heal-loops. Do not edit
 # by hand. SOURCED (not executed) by the two run wrappers.
 #
-# emit_loop_metric <loop: create|resolve> <result: ok|error|auth>
+# emit_loop_metric <loop: create|resolve> <result: ok|error|auth|stop>
 #   Writes, for the given loop:
 #     self_heal_loop_last_run_timestamp_seconds{loop="…"}  <unix-now>
-#     self_heal_loop_status{loop="…",result="ok|error|auth"} 1/0
+#     self_heal_loop_status{loop="…",result="ok|error|auth|stop"} 1/0
 #   to ${SELF_HEAL_TEXTFILE_DIR}/self-heal-<loop>.prom (per-loop file so the two
 #   crons never race on one file).
 #
@@ -22,7 +22,7 @@ SELF_HEAL_TEXTFILE_DIR="${SELF_HEAL_TEXTFILE_DIR:-/var/lib/node_exporter/textfil
 
 emit_loop_metric() {
   local loop="${1:-}" result="${2:-ok}"
-  local now file content ok_v err_v auth_v
+  local now file content ok_v err_v auth_v stop_v
   [ -n "${loop}" ] || return 0
   now=$(date +%s 2>/dev/null) || return 0
   file="${SELF_HEAL_TEXTFILE_DIR}/self-heal-${loop}.prom"
@@ -30,6 +30,10 @@ emit_loop_metric() {
   [ "${result}" = "ok" ]    && ok_v=1   || ok_v=0
   [ "${result}" = "error" ] && err_v=1  || err_v=0
   [ "${result}" = "auth" ]  && auth_v=1 || auth_v=0
+  # "stop": the cycle ran but a dependency was unavailable, so it deliberately
+  # did nothing. Distinct from "error" (the cycle failed) and from "ok" (the
+  # cycle did its work), which it used to be reported as.
+  [ "${result}" = "stop" ]  && stop_v=1 || stop_v=0
 
   printf -v content '%s\n' \
     "# HELP self_heal_loop_last_run_timestamp_seconds Unix time the self-heal loop last completed a cycle." \
@@ -39,7 +43,8 @@ emit_loop_metric() {
     "# TYPE self_heal_loop_status gauge" \
     "self_heal_loop_status{loop=\"${loop}\",result=\"ok\"} ${ok_v}" \
     "self_heal_loop_status{loop=\"${loop}\",result=\"error\"} ${err_v}" \
-    "self_heal_loop_status{loop=\"${loop}\",result=\"auth\"} ${auth_v}"
+    "self_heal_loop_status{loop=\"${loop}\",result=\"auth\"} ${auth_v}" \
+    "self_heal_loop_status{loop=\"${loop}\",result=\"stop\"} ${stop_v}"
 
   # Single write() of the assembled buffer (see header for why not tmp+rename).
   printf '%s' "${content}" > "${file}" 2>/dev/null || true

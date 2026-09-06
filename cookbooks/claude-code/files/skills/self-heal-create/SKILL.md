@@ -51,7 +51,9 @@ SELF_HEAL_DRY_RUN=1 /usr/local/bin/self-heal-create.sh
 `cookbooks/self-heal-loops/files/self-heal-create.sh` を直接実行してよい。
 
 サマリ形式: `created=N reopened=R closed=M continuing=K`（+ `skipped_close`/`skipped_null`/`failures`）。
-差分ゼロなら `in sync — no changes`。STOP した場合はその理由（elastic pw / ES unreachable）を報告する。
+差分ゼロなら `in sync — no changes`。STOP した場合はその理由（elastic pw / ES unreachable /
+gh issue list 失敗）を報告する。STOP の終了コードは **3**（0 = 実行完了、3 = 依存が無く何もしなかった）で、
+runner はこれを `self_heal_loop_status{result="stop"}` として出し、`SelfHealLoopStopped` が 30 分で発火する。
 
 ## 設定（env で上書き可、既定値はスクリプトが所有）
 
