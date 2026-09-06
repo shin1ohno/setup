@@ -255,6 +255,13 @@ body の `dedup_key` / `self-heal-source` を読む:
   `pct exec <ct_id> -- bash -lc "systemctl status <unit>; docker compose ps; journalctl -u <unit> -n 50"`。
   **「本当に down か」「alert が stale か（プロセス名変更・metric path 変更で誤発火）」を切り分ける。**
 - `source=uptime`（monitor/TLS down）→ 対象エンドポイントへ実際に到達確認（curl / tailscale ping）。
+- `source=network`（`Net: <title>`、RTX/WLX のログ由来）→ **`network-log-audit` skill を使う**。
+  ルールの定義と一次トリアージは `cookbooks/lxc-kibana/files/expected-network-signals.json` の
+  該当 signal の `message` にある。**alert の `observed` は汎用文言なので数値は取り直す**こと。
+  比較は必ず**同一クロック窓 × 過去 6 日**のベースラインで行う（週平均レートは時間帯効果と交絡し、
+  2026-09 の調査ではこれで所見を 3 回撤回した）。ネットワーク機器は remediation allowlist が空で
+  `self-heal-remediate.sh` は必ず exit 2 を返すため、**結論は原則 class D**（診断を書いて
+  `self-heal-needs-human`）。実機は読み取りのみ、設定変更・再起動はしない。
 
 **port/listener down 系は `self-heal-probe.sh` で必ず分類する（散文の遵守任せをやめる, setup #603 由来）:**
 
