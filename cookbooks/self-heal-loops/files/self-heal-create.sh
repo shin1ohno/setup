@@ -34,8 +34,12 @@
 # instead of running gh create/reopen/close. Side-effect-free verification.
 #
 # Diagnostics go to stderr (the cron wrapper captures them); the final one-line
-# summary goes to stdout. Exit is ALWAYS 0 except usage errors — a STOP is a
-# clean no-op, not a failure.
+# summary goes to stdout. Exit codes: 0 = cycle completed (including a
+# legitimately empty diff), 3 = STOP (a dependency was unavailable, so the
+# script deliberately did nothing), non-zero otherwise = usage error. A STOP is
+# not a failure, but it is not success either: reporting it as 0 made the runner
+# emit result="ok", which is why SelfHealLoopErroring was structurally unable to
+# fire for the whole class of "the loop ran and accomplished nothing".
 
 set -uo pipefail
 
@@ -100,7 +104,7 @@ ES_PW=$(get_pw)
 if [ -z "$ES_PW" ] || [ "$ES_PW" = "None" ]; then
   log "STOP: elastic pw unavailable (cache miss + SSM $ELASTIC_PW_SSM, profile=$AWS_PROFILE_)"
   echo "self-heal-create: STOP (elastic pw unavailable)"
-  exit 0
+  exit 3
 fi
 
 # --- es_get <path> <body> ----------------------------------------------------
@@ -131,7 +135,7 @@ es_json=$(es_get "/${STATE_INDEX}/_search" \
 if [ $? -ne 0 ]; then
   log "STOP: ES unreachable (all hosts failed) — not closing anything (boundary 6)"
   echo "self-heal-create: STOP (ES unreachable)"
-  exit 0
+  exit 3
 fi
 
 # Total open docs (pre-guard) and the null-dedup_key-guarded valid rows.
@@ -173,7 +177,7 @@ gh_json=$(gh issue list --repo "$REPO" --label "$LABEL" --state open \
 if [ -z "$gh_json" ]; then
   log "STOP: could not list GitHub issues (gh returned empty) — not creating/closing"
   echo "self-heal-create: STOP (gh issue list failed)"
-  exit 0
+  exit 3
 fi
 
 # Per issue: number<US>marker<US>needs_human(0/1), US (0x1F)-delimited — NOT tab.

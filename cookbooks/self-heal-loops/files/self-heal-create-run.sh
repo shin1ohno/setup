@@ -68,6 +68,14 @@ rc=$?
 
 dur=$(( $(date +%s) - start ))
 ts > "${LAST}"
-if [ "${rc}" -eq 0 ]; then emit ok; else emit error; fi
+# rc 3 = the script STOPPED on an unavailable dependency (elastic password, ES,
+# or the GitHub issue list). It did nothing, so it is neither ok nor an error in
+# the "cycle crashed" sense — it gets its own result, because collapsing it into
+# ok is what hid this class from every alert.
+case "${rc}" in
+  0) emit ok ;;
+  3) emit stop ;;
+  *) emit error ;;
+esac
 log "=== create cycle end rc=${rc} dur=${dur}s ==="
 exit 0

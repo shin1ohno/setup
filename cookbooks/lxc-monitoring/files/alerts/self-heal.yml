@@ -114,3 +114,31 @@ groups:
             for 10+ min. The loop is running but its cycle failed
             (self-heal-create.sh error, gh/aws failure, or claude -p non-zero).
             Runbook: ssh pro-dev 'tail -40 ~/.claude/logs/self-heal-create.log ~/.claude/logs/self-heal-resolve.log'
+
+      - alert: SelfHealLoopStopped
+        # The loop ran and deliberately did nothing, because a dependency was
+        # unavailable: the elastic password could not be fetched, no ES host
+        # answered, or the GitHub issue list came back empty. Each of those is a
+        # designed STOP — the alternative would be mass-closing every issue on a
+        # transient outage — but until 2026-09 the STOP exited 0, the runner
+        # emitted result="ok", and this entire class was invisible to every
+        # alert: SelfHealLoopStale sees a fresh timestamp (the loop DID run) and
+        # SelfHealLoopErroring sees no error. A fleet whose create loop has been
+        # stopped for hours registers no new issues at all, which looks exactly
+        # like a healthy quiet fleet. for: 30m because a single ES or SSM blip
+        # self-heals on the next 2-minute tick; a real dependency outage does
+        # not.
+        expr: self_heal_loop_status{result="stop"} == 1
+        for: 30m
+        labels:
+          severity: warning
+          component: self-heal-loops
+        annotations:
+          summary: "self-heal {{ $labels.loop }} loop has been stopping on an unavailable dependency for 30m+"
+          description: |
+            self_heal_loop_status{loop="{{ $labels.loop }}",result="stop"} == 1
+            for 30+ min. The loop is alive and exiting cleanly, but every cycle
+            gives up before doing work — elastic password unavailable (SSM /
+            cache), no ES host reachable, or `gh issue list` returning empty.
+            New fleet issues are NOT being registered while this fires.
+            Runbook: ssh pro-dev 'grep -c STOP ~/.claude/logs/self-heal-create.log; tail -40 ~/.claude/logs/self-heal-create.log; aws ssm get-parameter --name /elastic/password --with-decryption --profile sh1admn >/dev/null && echo SSM_OK; gh issue list --repo shin1ohno/setup --label self-heal --state open --limit 1'
