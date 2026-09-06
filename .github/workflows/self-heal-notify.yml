@@ -1,0 +1,55 @@
+name: self-heal notify
+
+# Why this exists (measured, 2026-09-06): the self-heal loop writes with the
+# operator's OWN personal access token, and GitHub does not notify you about
+# your own actions. Over 77 days the loop opened 170 issues and escalated 37 of
+# them, and the operator's entire notification inbox contains SEVEN entries —
+# none of them from a self-heal issue. The two escalations of the stable period
+# therefore waited 261 h and 305 h for a human who was never told.
+#
+# The fix is an ACTOR, not a tracker. A comment written here is authored by
+# github-actions[bot], so its @mention lands in "Direct mentions" — one of the
+# only four categories the GitHub mobile app can push at all. A label is not one
+# of them, and `label` is not among the 13 email notification reasons either, so
+# labelling alone can never reach a phone. Assigning is the second of the four,
+# and is done here as well: two independent categories, one event.
+#
+# Precondition this workflow depends on: the label must be applied by a USER
+# token. GitHub deliberately does not re-trigger workflows for events created
+# with GITHUB_TOKEN, so if the loop is ever moved into Actions, this stops
+# firing silently — the delivery canary in docs/self-heal-delivery.md is what
+# catches that.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+
+jobs:
+  notify:
+    if: github.event.label.name == 'self-heal-needs-human'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign and mention the owner
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          # Issue titles are fleet-generated text (dedup_key and observed_value
+          # flow into them unmodified). They reach the shell ONLY through the
+          # environment: a `${{ }}` expansion inside `run:` would splice that
+          # text into the script itself.
+          TITLE: ${{ github.event.issue.title }}
+          URL: ${{ github.event.issue.html_url }}
+        run: |
+          set -euo pipefail
+          gh issue edit "$ISSUE" --repo "$REPO" --add-assignee shin1ohno
+          body=$(printf '%s\n\n%s\n\n%s\n%s\n\n%s\n' \
+            "@shin1ohno self-heal が人間の判断を待っています。" \
+            "件名: ${TITLE}" \
+            "GO を出すときはこの issue にコメントしてください。resolve ループが次サイクル（5 分以内）で拾い、needs-human のままでも再着手します。" \
+            "作業させない場合は issue を close するか、判断を書き残してください。" \
+            "<!-- self-heal-bot -->")
+          gh issue comment "$ISSUE" --repo "$REPO" --body "$body"

@@ -169,7 +169,7 @@ OWNER="${SELF_HEAL_OWNER:-shin1ohno}"
 # pipe to real jq so --arg works (gh の組み込み --jq は --arg 非対応)
 # is_bot = marker OR resolve/create を含む OR 旧 create プレフィックス（移行期救済）
 gh issue view <n> --repo shin1ohno/setup --json comments | jq --arg o "$OWNER" '
-  def is_bot: .body | (test("<!-- self-heal-bot -->") or test("self-heal-(resolve|create)") or test("^(🔁 再発|✅ RESOLVED)"));
+  def is_bot: .body | (test("<!-- self-heal-bot -->") or test("^(🔁 再発|✅ RESOLVED)"));
   (.comments | map(select(.author.login==$o and (is_bot|not))) | last | .createdAt) as $u
   | (.comments | map(select(is_bot)) | last | .createdAt) as $b
   | {user_signal:$u, last_bot:$b, actionable: ($u != null and ($b == null or $u > $b))}'

@@ -145,8 +145,18 @@ actionable=$(gh issue list --repo "${REPO}" --label "${LABEL}" --state open \
   --json number,labels,comments --limit 500 2>/dev/null \
   | jq --arg nh "${NEEDS_HUMAN_LABEL}" --arg o "${OWNER}" '
       def is_bot: .body | (test("<!-- self-heal-bot -->")
-                           or test("self-heal-(resolve|create)")
                            or test("^(🔁 再発|✅ RESOLVED)"));
+      # The marker and the two legacy prefixes are ANCHORED forms. An earlier
+      # revision also matched the bare substring "self-heal-resolve|create"
+      # anywhere in the body, which classified an OWNER comment that merely
+      # named the loop ("self-heal-resolve のログを見た。1 で進めて") as a bot
+      # comment — permanently. Such a comment is excluded from the user side AND
+      # becomes the latest bot comment, so user_unblocked can never again be
+      # true for that issue and the loop ignores it for ever. The failure gets
+      # MORE likely the moment notifications start working, because that is when
+      # the owner starts writing GO comments at all. Fail-open is the correct
+      # direction here: an unmarked legacy bot comment now reads as a user
+      # signal, which costs one redundant cycle, not a lost issue.
       def user_unblocked:
         ((.comments | map(select(.author.login==$o and (is_bot|not))) | last | .createdAt) as $u
          | (.comments | map(select(is_bot)) | last | .createdAt) as $b
