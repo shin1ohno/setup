@@ -11,8 +11,14 @@
 #   expected-sha matches ^[a-f0-9]{40}$
 #
 # Single output line on stdout for the orchestrator to parse:
-#   status=<state> sha=<new-head> drift=<count> duration=<sec> old=<old-sha> ts=<utc-iso>
-# (sha/drift/duration/old fields may be omitted on early-exit states.)
+#   status=<state> sha=<new-head> drift=<count> duration=<sec> old=<old-sha> verified_sha=<sha> ts=<utc-iso>
+# (sha/drift/duration/old/verified_sha fields may be omitted on early-exit states.)
+#
+# verified_sha (ADR 0009) is emitted on success and up_to_date ONLY, and is
+# the SHA this host has a recorded successful apply for. On up_to_date it is
+# always == sha == expected_sha: the runner never emits up_to_date unless the
+# persisted state proves expected_sha succeeded here and the most recent
+# attempt did not fail. The orchestrator's canary gate requires it.
 #
 # Exit codes:
 #   0  invalid_command (parse-failed) — but write status= line first
@@ -46,6 +52,15 @@
 #     is unaffected; only the expensive converge is throttled.
 #     Operators forcing a full converge use bin/apply-pve-lxcs, which runs
 #     mitamae directly and bypasses this runner entirely.
+#   - Per-SHA apply state (ADR 0009): the throttle above used to key off a
+#     bare success TIMESTAMP. Because the working tree is re-anchored to
+#     expected_sha BEFORE the throttle decision, a NEW sha whose apply FAILED
+#     left HEAD == expected_sha, so the next cycle saw drift==0, found the
+#     PREVIOUS sha's fresh timestamp, and returned up_to_date — the failed sha
+#     was never retried and the orchestrator read up_to_date as canary
+#     success. The state file now records WHICH sha succeeded and how the
+#     most recent attempt ended; up_to_date requires a recorded success for
+#     expected_sha itself AND a non-failed last attempt.
 set -euo pipefail
 shopt -s inherit_errexit
 
@@ -67,7 +82,14 @@ if [[ ! "$cmd" =~ ^([A-Za-z0-9._/-]+\.rb)\ ([a-f0-9]{40})$ ]]; then
 fi
 role="${BASH_REMATCH[1]}"
 expected_sha="${BASH_REMATCH[2]}"
-setup_dir="/root/setup"
+# Path overrides exist ONLY for the hermetic regression harness
+# (cookbooks/auto-mitamae-target/test/run-state-scenarios.sh). Like the
+# AUTO_MITAMAE_RECONCILE_* knobs below they never reach the forced-command
+# invocation: sshd drops client env and the authorized_keys entry is
+# `restrict`, so production always runs with the defaults.
+setup_dir="${AUTO_MITAMAE_SETUP_DIR:-/root/setup}"
+apply_log="${AUTO_MITAMAE_APPLY_LOG:-/tmp/auto-mitamae.log}"
+lock_file="${AUTO_MITAMAE_LOCK_FILE:-/var/lock/auto-mitamae.lock}"
 
 # Two-tier converge cadence (see header). When the host is already at the
 # target SHA, re-converge at most once per RECONCILE_INTERVAL_SEC plus a
@@ -80,14 +102,28 @@ setup_dir="/root/setup"
 # local-test runs of this script.
 RECONCILE_INTERVAL_SEC="${AUTO_MITAMAE_RECONCILE_INTERVAL_SEC:-3600}"
 RECONCILE_JITTER_SEC="${AUTO_MITAMAE_RECONCILE_JITTER_SEC:-3600}"
-# Stamp lives OUTSIDE setup_dir: the converge path runs `git clean -fdq`
-# inside /root/setup, which would delete an untracked stamp kept in-tree.
-STAMP_DIR="/var/lib/auto-mitamae"
-STAMP_FILE="${STAMP_DIR}/last-converge.epoch"
+# State lives OUTSIDE setup_dir: the converge path runs `git clean -fdq`
+# inside /root/setup, which would delete an untracked file kept in-tree.
+# apply-state is the ADR 0009 per-SHA record; last-converge.epoch is the
+# pre-0009 timestamp-only stamp, no longer read (it cannot say WHICH sha
+# succeeded) and removed on the first post-0009 success.
+STATE_DIR="${AUTO_MITAMAE_STATE_DIR:-/var/lib/auto-mitamae}"
+STATE_FILE="${STATE_DIR}/apply-state"
+LEGACY_STAMP_FILE="${STATE_DIR}/last-converge.epoch"
+
+# Atomic state write: tmp + mv so a reader (the next cycle, or an operator)
+# never sees a partial file. Called with the 5 field values in order.
+write_state() {
+    local s_sha="$1" s_epoch="$2" a_sha="$3" a_status="$4" a_epoch="$5" tmp
+    tmp=$(mktemp "${STATE_FILE}.tmp.XXXXXX")
+    printf 'last_success_sha=%s\nlast_success_epoch=%s\nlast_attempt_sha=%s\nlast_attempt_status=%s\nlast_attempt_epoch=%s\n' \
+        "$s_sha" "$s_epoch" "$a_sha" "$a_status" "$a_epoch" > "$tmp"
+    mv -f "$tmp" "$STATE_FILE"
+}
 
 # flock per host. -n = non-blocking; if held, exit 0 with lock_held so the
 # orchestrator records the skip without treating it as a hard failure.
-exec 9>/var/lock/auto-mitamae.lock
+exec 9>"$lock_file"
 if ! flock -n 9; then
     echo "status=lock_held ts=$(ts)"
     exit 0
@@ -150,42 +186,86 @@ git checkout --quiet "$expected_sha"
 # would abort the runner before the status= line is printed. The clock-skew
 # guard is written as `if/then/fi`, NOT `cond && action`, for the same reason
 # (`[[ false ]] && x` returns 1 → abort).
-mkdir -p "$STAMP_DIR"
+mkdir -p "$STATE_DIR"
 now_epoch=$(date +%s)
-last_converge=$(cat "$STAMP_FILE" 2>/dev/null || echo 0)
-# Sanitize the stamp: a non-numeric body (corrupt/partial write, stray editor
-# save) would make the arithmetic below abort under `set -u` BEFORE the
-# status= line → silent ssh_unreachable every cycle. Empty is fine (treated
-# as 0). A future-dated stamp (clock jumped ahead, e.g. NTP not yet synced on
-# a fresh LXC, then corrected backward) would otherwise throttle the host
-# forever — treat it as unknown and converge now.
-[[ "$last_converge" =~ ^[0-9]+$ ]] || last_converge=0
-if [[ "$last_converge" -gt "$now_epoch" ]]; then last_converge=0; fi
+
+# Read the per-SHA apply state (ADR 0009). Every field is sanitized
+# independently: a missing/corrupt value means "no recorded success" and the
+# host converges — never the other way round. A non-numeric or partial body
+# must not abort under `set -u` BEFORE the status= line (that would surface as
+# silent ssh_unreachable every cycle), hence the defaults on every read.
+last_success_sha=""
+last_success_epoch=0
+last_attempt_sha=""
+last_attempt_status=""
+if [[ -f "$STATE_FILE" ]]; then
+    while IFS='=' read -r k v; do
+        case "$k" in
+            last_success_sha)    last_success_sha="$v" ;;
+            last_success_epoch)  last_success_epoch="$v" ;;
+            last_attempt_sha)    last_attempt_sha="$v" ;;
+            last_attempt_status) last_attempt_status="$v" ;;
+        esac
+    done < "$STATE_FILE"
+fi
+[[ "$last_success_sha" =~ ^[a-f0-9]{40}$ ]] || last_success_sha=""
+[[ "$last_attempt_sha" =~ ^[a-f0-9]{40}$ ]] || last_attempt_sha=""
+[[ "$last_success_epoch" =~ ^[0-9]+$ ]] || last_success_epoch=0
+# A future-dated success (clock jumped ahead, e.g. NTP not yet synced on a
+# fresh LXC, then corrected backward) would otherwise throttle the host until
+# that time — treat it as unknown and converge now.
+if [[ "$last_success_epoch" -gt "$now_epoch" ]]; then last_success_epoch=0; fi
+
+# The 4 conditions that together permit skipping the converge (ADR 0009):
+#   1. drift == 0                          — no new origin/main commit
+#   2. last_success_sha == expected_sha    — THIS sha has succeeded here
+#   3. last_attempt_status == success      — the most recent attempt did not fail
+#   4. now < last_success + INTERVAL + jitter — inside the reconcile window
+# (2) is what the timestamp-only stamp lacked: after "A succeeded, then B
+# failed", HEAD is already B (re-anchored above) so drift==0, and A's fresh
+# timestamp alone would have suppressed B's retry. (3) covers the same sha
+# failing on a periodic reconcile: the success record still names this sha,
+# but the failed attempt must be retried next cycle, not throttled.
+verified=0
+if [[ -n "$last_success_sha" && "$last_success_sha" == "$expected_sha" \
+      && "$last_attempt_status" == "success" ]]; then
+    verified=1
+fi
 # Seed the jitter from the role path (unique per fleet entry) so the offset
 # is deterministic per host but spread across the fleet.
 jitter_span=$((RECONCILE_JITTER_SEC + 1))
 host_jitter=$(($(printf '%s' "$role" | cksum | cut -d' ' -f1) % jitter_span))
-reconcile_due=$((last_converge + RECONCILE_INTERVAL_SEC + host_jitter))
-if [[ "$drift" -eq 0 && "$now_epoch" -lt "$reconcile_due" ]]; then
+reconcile_due=$((last_success_epoch + RECONCILE_INTERVAL_SEC + host_jitter))
+if [[ "$drift" -eq 0 && "$verified" -eq 1 && "$now_epoch" -lt "$reconcile_due" ]]; then
     new_sha=$(git rev-parse HEAD)
-    echo "status=up_to_date sha=$new_sha drift=0 duration=0 old=$old_sha ts=$(ts)"
+    echo "status=up_to_date sha=$new_sha drift=0 duration=0 old=$old_sha verified_sha=$last_success_sha ts=$(ts)"
     exit 0
 fi
 
 start=$(date +%s)
-if ./bin/mitamae local "$role" >/tmp/auto-mitamae.log 2>&1; then
+new_sha=$(git rev-parse HEAD)
+if ./bin/mitamae local "$role" >"$apply_log" 2>&1; then
     status=success
-    # Record the converge time so drift==0 cycles can throttle until the
-    # next reconcile window. Stamp ONLY on success: a failed converge must
-    # keep retrying every cycle (and alert) rather than back off.
-    date +%s > "$STAMP_FILE"
+    end_epoch=$(date +%s)
+    # Success: all 5 fields advance to this sha, so the next drift==0 cycle
+    # can throttle until the reconcile window. The legacy timestamp stamp is
+    # no longer read; drop it once the per-SHA record exists.
+    write_state "$new_sha" "$end_epoch" "$new_sha" success "$end_epoch"
+    rm -f "$LEGACY_STAMP_FILE"
+    verified_field=" verified_sha=$new_sha"
     rc=0
 else
     status=mitamae_fail
+    end_epoch=$(date +%s)
+    # Failure: record ONLY the attempt. last_success_* keeps naming the sha
+    # that last succeeded here (it may differ from new_sha), and the failed
+    # attempt guarantees the next cycle converges again instead of throttling
+    # — the retry-every-cycle contract ADR 0006 intended.
+    write_state "$last_success_sha" "$last_success_epoch" "$new_sha" mitamae_fail "$end_epoch"
+    verified_field=""
     rc=1
 fi
-duration=$(( $(date +%s) - start ))
-new_sha=$(git rev-parse HEAD)
+duration=$(( end_epoch - start ))
 
-echo "status=$status sha=$new_sha drift=$drift duration=$duration old=$old_sha ts=$(ts)"
+echo "status=$status sha=$new_sha drift=$drift duration=$duration old=$old_sha${verified_field} ts=$(ts)"
 exit "$rc"

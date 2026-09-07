@@ -140,6 +140,28 @@ groups:
             canary marker in hosts.json if the canary host itself is broken.
             Runbook: ssh root@192.168.1.10 'pct exec 104 -- tail -80 /tmp/auto-mitamae.log'
 
+      - alert: AutoMitamaeCanaryHeld
+        # ADR 0009: the canary gate has held the fleet phase for 30m+. Not a
+        # cookbook failure (AutoMitamaeCanaryFailing covers those) — the canary
+        # answered ssh_unreachable / lock_held / sha_mismatch, or an up_to_date
+        # without a verified_sha for expected_sha (pre-0009 runner, or a
+        # sha whose success the canary has not recorded). The orchestrator
+        # retries every cycle; if this persists the canary host itself needs
+        # attention (reachability, a stuck manual apply holding the flock, or
+        # drift-checker lagging behind origin/main).
+        expr: auto_mitamae_canary_gate{result="hold"} == 1
+        for: 30m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "Canary gate holding fleet rollout 30m+ — canary unverified"
+          description: |
+            orchestrator.sh has not run the fleet phase for 30+ minutes because the canary
+            host has not proved expected_sha succeeded on it. Check auto_mitamae_canary_last_status
+            for the raw runner status (ssh_unreachable / lock_held / sha_mismatch / up_to_date).
+            Runbook: ssh root@192.168.1.10 'pct exec 104 -- bash -c "cat /var/lib/auto-mitamae/apply-state; tail -40 /tmp/auto-mitamae.log"'
+
       - alert: NodeExporterDown
         # Source-of-truth alert: every other auto-mitamae alert is built on
         # textfile metrics scraped through node-exporter. If node-exporter

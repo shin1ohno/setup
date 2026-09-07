@@ -24,9 +24,22 @@
 # up_to_date is a healthy steady-state verdict: the host is already on the
 # target SHA and the runner throttled its config-drift converge to a calmer
 # cadence (mitamae-runner.sh two-tier cadence) so the shared Proxmox host is
-# not pegged by every LXC converging on every 5-min cycle. It is treated like
-# success here — NOT a canary-blocking failure — and still refreshes the
-# per-host apply timestamp, so AutoMitamaeApplyStale never false-fires.
+# not pegged by every LXC converging on every 5-min cycle. It still refreshes
+# the per-host apply timestamp, so AutoMitamaeApplyStale never false-fires.
+#
+# Canary gate (ADR 0009): the fleet phase runs ONLY when every canary host
+# answered with proof that expected_sha succeeded on it —
+#   success     with sha == expected_sha, or
+#   up_to_date  with verified_sha == expected_sha (the runner's persisted
+#               per-SHA record names expected_sha and its last attempt did
+#               not fail; pre-0009 runners never emit verified_sha).
+# Anything else HOLDS the fleet this cycle (metrics published, cycle exits 0,
+# cron retries in 5 min): ssh_unreachable, lock_held, sha_mismatch, an
+# up_to_date without a matching verified_sha. mitamae_fail / git_fetch_fail /
+# invalid_command are FAILURES and abort the cycle as before. Before 0009 the
+# transient set fell through to the fleet phase and an unverified up_to_date
+# counted as success — both were paths that shipped a sha the canary had not
+# validated (the isolated reproduction is recorded in ADR 0009).
 #
 # 2026-05-17 stability hardening (Phase 3 of stability rollout):
 # canary deploy prevents fleet-wide propagation of cookbook bugs.
@@ -34,13 +47,17 @@
 
 set -uo pipefail
 
-LOCK_FILE="/var/lock/auto-mitamae-orchestrator.lock"
-TEXTFILE_DIR="/var/lib/node_exporter/textfile"
+# AUTO_MITAMAE_ORCH_* overrides exist ONLY for the hermetic regression harness
+# (cookbooks/auto-mitamae-target/test/run-state-scenarios.sh), which also
+# shadows `ssh` on PATH. cron runs this script with a fixed environment, so
+# production always uses the defaults.
+LOCK_FILE="${AUTO_MITAMAE_ORCH_LOCK_FILE:-/var/lock/auto-mitamae-orchestrator.lock}"
+TEXTFILE_DIR="${AUTO_MITAMAE_ORCH_TEXTFILE_DIR:-/var/lib/node_exporter/textfile}"
 DRIFT_TEXTFILE="${TEXTFILE_DIR}/drift-checker.prom"
 OUTPUT_TEXTFILE="${TEXTFILE_DIR}/auto-mitamae.prom"
-HOSTS_JSON="/etc/auto-mitamae/hosts.json"
-SSH_KEY="/root/.ssh/orchestrator"
-SSH_KNOWN_HOSTS="/root/.ssh/known_hosts.orchestrator"
+HOSTS_JSON="${AUTO_MITAMAE_ORCH_HOSTS_JSON:-/etc/auto-mitamae/hosts.json}"
+SSH_KEY="${AUTO_MITAMAE_ORCH_SSH_KEY:-/root/.ssh/orchestrator}"
+SSH_KNOWN_HOSTS="${AUTO_MITAMAE_ORCH_SSH_KNOWN_HOSTS:-/root/.ssh/known_hosts.orchestrator}"
 
 exec 9>"${LOCK_FILE}"
 if ! flock -n 9; then
@@ -93,6 +110,8 @@ now=$(date +%s)
     echo "# TYPE auto_mitamae_canary_last_status gauge"
     echo "# HELP auto_mitamae_canary_last_sha_info SHA the canary host last tried to apply"
     echo "# TYPE auto_mitamae_canary_last_sha_info gauge"
+    echo "# HELP auto_mitamae_canary_gate 1 = canary gate verdict this cycle (pass = fleet phase ran, hold = retry next cycle, fail = cookbook failure)"
+    echo "# TYPE auto_mitamae_canary_gate gauge"
     echo "auto_mitamae_orchestrator_expected_sha_info{commit=\"${expected_sha}\"} 1"
 } > "${tmp_out}"
 
@@ -124,7 +143,7 @@ publish() {
 # bin/bootstrap-lxc-creds remains as a PVE-host one-shot operator tool.
 apply_one_host() {
     local entry="$1"
-    local host user role label cmd_start output rc status sha drift rdur
+    local host user role label cmd_start output rc status sha drift rdur verified_sha
 
     host=$(jq -r '.host'  <<<"${entry}")
     user=$(jq -r '.user'  <<<"${entry}")
@@ -162,7 +181,10 @@ apply_one_host() {
     fi
 
     status=$(grep -oE 'status=[a-z_]+'   <<<"${output}" | head -1 | cut -d= -f2)
-    sha=$(   grep -oE 'sha=[a-f0-9]+'    <<<"${output}" | head -1 | cut -d= -f2)
+    # `sha=` is anchored on a preceding space/line-start so it cannot match
+    # the tail of `verified_sha=`.
+    sha=$(   grep -oE '(^| )sha=[a-f0-9]+' <<<"${output}" | head -1 | tr -d ' ' | cut -d= -f2)
+    verified_sha=$(grep -oE 'verified_sha=[a-f0-9]+' <<<"${output}" | head -1 | cut -d= -f2)
     drift=$( grep -oE 'drift=[0-9]+'     <<<"${output}" | head -1 | cut -d= -f2)
     rdur=$(  grep -oE 'duration=[0-9]+'  <<<"${output}" | head -1 | cut -d= -f2)
 
@@ -183,41 +205,77 @@ apply_one_host() {
     # Export for caller (canary gate).
     LAST_STATUS="${status}"
     LAST_LABEL="${label}"
+    LAST_SHA="${sha}"
+    LAST_VERIFIED_SHA="${verified_sha}"
 }
 
-# Phase A: canary hosts. Apply first; if any canary fails, abort the
-# cycle without touching non-canary hosts. The canary metrics (status +
-# sha + timestamp) are still emitted so Grafana shows the failure.
-# Non-canary host metrics are NOT touched on abort — they retain their
-# prior state from the last successful cycle.
+# Phase A: canary hosts. Apply first; the fleet phase runs only if EVERY
+# canary host proved expected_sha succeeded on it (see header). A hard
+# failure aborts the cycle; anything unproven holds it. The canary metrics
+# (status + sha + timestamp + gate verdict) are still emitted so Grafana
+# shows why the fleet did not move. Non-canary host metrics are NOT touched
+# on abort/hold — they retain their prior state from the last fleet cycle.
 canary_failed=0
+canary_held=0
 canary_failure_label=""
 canary_failure_status=""
+canary_hold_label=""
+canary_hold_status=""
 
 while IFS= read -r entry; do
     apply_one_host "${entry}"
     publish   # keep the prom fresh after each canary host
-    if [[ "${LAST_STATUS}" != "success" ]]; then
-        # lock_held / sha_mismatch / ssh_unreachable are transient (auto-recover
-        # next cycle) — do not abort the rollout on these. Only persistent
-        # cookbook failures block the canary gate.
-        case "${LAST_STATUS}" in
-            mitamae_fail|git_fetch_fail|invalid_command)
-                canary_failed=1
-                canary_failure_label="${LAST_LABEL}"
-                canary_failure_status="${LAST_STATUS}"
-                ;;
-        esac
-    fi
+    verdict=hold
+    case "${LAST_STATUS}" in
+        success)
+            [[ "${LAST_SHA}" == "${expected_sha}" ]] && verdict=pass
+            ;;
+        up_to_date)
+            # Proof of a recorded success for THIS sha. A pre-0009 runner (no
+            # verified_sha) or a verified_sha for another sha is unproven.
+            [[ "${LAST_VERIFIED_SHA}" == "${expected_sha}" ]] && verdict=pass
+            ;;
+        mitamae_fail|git_fetch_fail|invalid_command)
+            verdict=fail
+            ;;
+        *)
+            # ssh_unreachable / lock_held / sha_mismatch: transient, auto-
+            # recover next cycle — but the fleet must not move on a sha the
+            # canary has not validated.
+            verdict=hold
+            ;;
+    esac
+    case "${verdict}" in
+        fail)
+            canary_failed=1
+            canary_failure_label="${LAST_LABEL}"
+            canary_failure_status="${LAST_STATUS}"
+            ;;
+        hold)
+            canary_held=1
+            canary_hold_label="${LAST_LABEL}"
+            canary_hold_status="${LAST_STATUS}"
+            ;;
+    esac
 done < <(jq -c '.[] | select(.canary == true)' "${HOSTS_JSON}")
 
-# Always emit canary status metrics regardless of pass/fail. expected_sha
+# Always emit canary status metrics regardless of pass/hold/fail. expected_sha
 # already in the textfile; canary_last_sha echoes it for Grafana joins.
+# canary_last_status keeps its pre-0009 meaning (the raw runner status the
+# AutoMitamaeCanaryFailing regex matches); canary_gate carries the verdict.
 canary_overall_status="success"
-[[ "${canary_failed}" -eq 1 ]] && canary_overall_status="${canary_failure_status}"
+gate_verdict="pass"
+if [[ "${canary_failed}" -eq 1 ]]; then
+    canary_overall_status="${canary_failure_status}"
+    gate_verdict="fail"
+elif [[ "${canary_held}" -eq 1 ]]; then
+    canary_overall_status="${canary_hold_status}"
+    gate_verdict="hold"
+fi
 {
     echo "auto_mitamae_canary_last_status{result=\"${canary_overall_status}\"} 1"
     echo "auto_mitamae_canary_last_sha_info{commit=\"${expected_sha}\"} 1"
+    echo "auto_mitamae_canary_gate{result=\"${gate_verdict}\"} 1"
 } >> "${tmp_out}"
 publish
 
@@ -225,6 +283,13 @@ if [[ "${canary_failed}" -eq 1 ]]; then
     mv "${tmp_out}" "${OUTPUT_TEXTFILE}"
     trap - EXIT
     echo "orchestrator: canary ${canary_failure_label} FAILED (${canary_failure_status}) at expected_sha=${expected_sha} — aborting fleet rollout"
+    exit 0
+fi
+
+if [[ "${canary_held}" -eq 1 ]]; then
+    mv "${tmp_out}" "${OUTPUT_TEXTFILE}"
+    trap - EXIT
+    echo "orchestrator: canary ${canary_hold_label} unverified (${canary_hold_status}) at expected_sha=${expected_sha} — holding fleet rollout until next cycle"
     exit 0
 fi
 
