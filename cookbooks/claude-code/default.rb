@@ -329,7 +329,7 @@ end
 end
 
 # Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve network-log-audit mcp-auth web-crawl setup-release-plz todo-reconcile todo-collect todo-approve).each do |skill_name|
+%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve network-log-audit mcp-auth web-crawl setup-release-plz todo-reconcile todo-collect todo-approve linear-resolve).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -344,6 +344,40 @@ end
     mode "644"
     action :create
   end
+end
+
+# linear-resolve helpers. The SKILL.md describes the loop; these two files are
+# the parts that must NOT be a model's judgement.
+#
+# linear_queue.py decides which issue the loop may work and whether an operator
+# comment counts as approval. It is pure and testable precisely so that decision
+# is reviewable without reading a transcript — and because the bot writes with
+# the operator's own personal API key, author id cannot separate the loop from
+# the human, so the marker match it implements is the whole of the identity
+# check. test_linear_queue.py is test-only and intentionally excluded, same as
+# the todo-collect helpers above.
+remote_file "#{node[:setup][:home]}/.claude/skills/linear-resolve/linear_queue.py" do
+  source "files/skills/linear-resolve/linear_queue.py"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+# probe.sh is the loop's ONLY route to observing production, and it exists
+# because a tool deny-list is decorative against a `claude -p` worker that has
+# Bash: anything reachable with a credential in the environment is reachable
+# with curl or ssh. The credential lives in this script instead, the worker gets
+# none, and the set of subcommands IS the set of things the loop may observe.
+# It fails closed — the default AWS profile name does not exist until the
+# dedicated read-only principal is provisioned, so an unconfigured deployment
+# errors rather than quietly borrowing an admin profile.
+remote_file "#{node[:setup][:home]}/.claude/skills/linear-resolve/probe.sh" do
+  source "files/skills/linear-resolve/probe.sh"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
 end
 
 # Deploy network-log-audit references. The SKILL.md is deliberately thin (entry
