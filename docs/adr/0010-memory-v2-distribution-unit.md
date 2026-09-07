@@ -1,6 +1,6 @@
 # ADR 0010: memory-v2（MCP server + keeper）の配布単位を一つの MANIFEST に定義し、CI は配布物そのものを検証する
 
-**Status**: Proposed (2026-09-07)
+**Status**: Proposed (2026-09-07、adversarial 設計レビュー反映済み — `0010-review-design.md`)
 
 ## Context
 
@@ -32,13 +32,24 @@ build-essential）残っていた。通常 PR の dry-run はこの分岐を実�
 
 ### 2. CI は配布物を空の環境へ入れて検証する（本 PR で実装、範囲は import と keeper 単体テスト）
 
-同スクリプトが MANIFEST のファイル **だけ** を空ディレクトリへコピーし、`python3 -I`（user site も
-環境も無し、`sys.path` は配布先だけ）で全モジュールを import する。keeper は標準ライブラリのみ依存なので
+同スクリプトが MANIFEST のファイル **だけ** を空ディレクトリへコピーし、`python3 -I`（user site と
+PYTHONPATH を無効化し、cwd を明示挿入）で全モジュールを import する。保証は「ソースツリーの隣接ファイルが
+欠落を偶然補えない」ことであり、interpreter 自身の stdlib / site-packages と環境変数は残る（レビュー F5）。
+import 時に必須の env（`VOYAGE_API_KEY` / `ES_URL` / `ES_PASSWORD`）は placeholder を渡す — これは
+配布物の完全性の検査であり、env generator の正しさの検証ではない。keeper は標準ライブラリのみ依存なので
 system python で走り、`test_merge_rules.py` も配布コピーに対して実行する。memory-mcp は
 `requirements-v2.txt` を入れた使い捨て venv（CI が作る）で 4 モジュールを import する。
 
 `server.py` は import 時に `asyncio.run(be.ensure_indices())` で ES へ接続する（ES ブートストラップが
-モジュール読込に結合している）ため、hermetic な import ができない。本 PR では `py_compile` に留める。
+モジュール読込に結合している）ため、hermetic な import ができない。本 PR では `py_compile` に加え、
+`server.py` の third-party import 行（mcp / starlette / httpx / uvicorn）を実 wheel に対して実行する
+（2026-08 の `mcp.server.fastmcp` 消失による crash-loop はこの経路で検出できる — レビュー F7）。
+
+MANIFEST の許容形は直下 `*.py` と `prompts/*.md` に限定する（cookbook が作るディレクトリはユニット root と
+`prompts/` だけ。任意の相対パスを受けると CI のコピーは通り本番の `remote_file` が親ディレクトリ不在で
+失敗する — レビュー F2）。ディレクトリ内の **全ファイル**（test_*.py と MANIFEST 以外）が MANIFEST に
+あることを要求する（レビュー F3）。更新配布（削除・改名した旧モジュールの残骸、owner/mode）は本 PR の
+保証範囲外で、次の段に記す。
 
 `syntax-check` job（通常 PR）に載せる。既存の stub ベース回帰スイート（tags / ids / tag-preservation）は
 そのまま残す。
@@ -46,11 +57,12 @@ system python で走り、`test_merge_rules.py` も配布コピーに対して�
 ### 3. CI の手動実インストールレシピは本番 role と同じ include 形にし、参照検査を通常 CI に載せる（本 PR で実装）
 
 13 箇所を `include_platform_cookbook "<name>"`（roles/core・foundation・extras・programming が使う形）に
-置換する。`bin/audit-cookbook-reachability` に条件 5 を追加し、`.github/workflows/*.yml` の
-`cat > *.rb << 'EOF'` heredoc 内の `include_cookbook` / `include_platform_cookbook` / `include_role` /
-`include_recipe` を entry root と同じ規則で解決し、存在しない参照を FAIL にする（heredoc レシピは
-reachability には寄与させない — CI レシピからしか届かない cookbook は本番では dead）。修正前の実行で
-13 件 FAIL、修正後 0 件を確認。
+置換する。`bin/audit-cookbook-reachability` に条件 5 を追加し、`.github/workflows/*.{yml,yaml}` の
+`cat > <name>.rb << 'EOF'` heredoc 内の `include_cookbook` / `include_platform_cookbook` / `include_role` /
+`include_recipe` を root 走査と同じ規則（`::` 分割、`.rb` 補完、両 OS recipe）で解決し、存在しない参照を
+FAIL にする。走査器が解析できない heredoc 形（`cat <<'EOF' > x.rb`、`tee`、`"EOF"`）は黙って無視せず
+FAIL にする（レビュー F6）。heredoc レシピは reachability には寄与させない（CI レシピからしか届かない
+cookbook は本番では dead）。修正前の実行で 13 件 FAIL、修正後 0 件を確認。
 
 ### 次の段（本 PR の範囲外、順序付き）
 
@@ -59,10 +71,11 @@ reachability には寄与させない — CI レシピからしか届かない c
 2. その上で CI に「配布物を空 venv へ入れて uvicorn で起動 → remember → browse → revise → get →
    forget を HTTP で往復し、stub ES のドキュメント変化まで assert する」ジョブを追加する。
    8/17 の教訓どおり戻り値ではなくデータ変化を見る。
-3. MANIFEST を `pyproject.toml`（`[tool.setuptools] py-modules` または unit ごとの package 化）へ
-   昇格し、cookbook は wheel を venv に `pip install` する。flat import（`import es_backend`）を
-   相対 import に書き換える範囲は 2 ディレクトリ約 4,000 行。1〜2 が無い状態で先に package 化しても
-   #895 のクラスは MANIFEST で既に閉じているので、優先度は 1〜2 の後。
+3. 更新配布の収束: MANIFEST から消えたモジュールの削除（専用管理領域に限定）または版別ディレクトリ切替、
+   owner/mode の検証（レビュー F4）。
+4. MANIFEST を `pyproject.toml` へ昇格し、cookbook は wheel を venv に `pip install` する。flat module の
+   `py-modules` 配布なら `import es_backend` 形は維持でき、import 書き換えは不要（レビュー F8）。
+   名前空間 package への再編は別の判断。1〜3 の後に独立に評価する。
 
 ## Consequences
 
@@ -76,9 +89,23 @@ reachability には寄与させない — CI レシピからしか届かない c
 
 ## Rejected alternatives
 
-- **いきなり Python package 化**: import 書き換え約 4,000 行 + cookbook の venv 導線変更を伴い、
-  #895 のクラスを閉じるだけなら MANIFEST で足りる。順序を後ろにする（次の段 3）。
+- **いきなり Python package 化**: 配布先（`/opt/es-memory/app-v2` 直置き）と unit の起動方法
+  （`python3 <module>.py`）を変える。#895 のクラス（直下モジュールのリスト漏れ）を閉じるだけなら
+  MANIFEST の方が小さい。wheel 化は unit・env・残骸の検証を代替しないので、順序を後ろにする（次の段 4）。
 - **CI レシピを `include_role` に置き換える**: role は多数の cookbook を含むので real-install の
   実行時間と失敗面が大きく変わる。include の **形** だけを role と揃える方が小さい。
 - **`server.py` の import 時接続を CI で stub する**: 配布物と実 wheel で import できることの証明に
   ならない。結合自体を解く（次の段 1）。
+
+## Review（adversarial, codex — `docs/adr/0010-review-design.md`）
+
+| # | 所見 | 採否 | 反映 |
+|---|---|---|---|
+| F1 | `File.readlines` は mruby に無く mitamae v1.14.0 で compile が停止 | 採用 | `File.read(...).split("\n")` に置換。`bin/lint-cookbooks` の mruby 禁止 API に `readlines` を追加（positive control で FAIL を確認） |
+| F2 | サブディレクトリのエントリは CI を通り本番の `remote_file` が失敗 | 採用 | MANIFEST 許容形を直下 `*.py` と `prompts/*.md` に限定し、他は FAIL |
+| F3 | runtime 全体の完全性・全モジュール import は未検証 | 採用（範囲限定） | ディレクトリ内の全ファイル（test_*.py / MANIFEST 以外）を MANIFEST と照合。保証の記述を実装範囲に合わせて限定 |
+| F4 | 空ディレクトリへのコピーは更新配布を再現しない | 採用（文書） | 初回配布の完全性と更新時の収束を分けて記述、削除・改名・属性は次の段 3 |
+| F5 | env・unit・依存環境を配布契約から外している | 部分採用 | `-I` の保証範囲を訂正、placeholder は完全性検査の手段と明記。env generator ↔ `os.environ[...]` の静的照合、unit ExecStart ↔ MANIFEST 照合、Python 版の一致は次の段（本 PR の範囲外） |
+| F6 | 条件 5 の抽出漏れと root 規則との差 | 採用 | `.rb` 補完・`::` 分割を root と揃え、`.yaml` も対象、解析不能な heredoc 形は FAIL |
+| F7 | server 除外で FastMCP/Starlette import が未検証 | 採用 | `server.py` の third-party import 行を実 wheel で実行 |
+| F8 | package 化の却下理由が変更量を過大に固定 | 採用（文書） | 却下理由を「配布先と起動方法を保つ小変更」に改め、flat `py-modules` なら import 書き換え不要と明記 |

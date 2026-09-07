@@ -204,8 +204,14 @@ end
 # proxy.py (files/auth-proxy/proxy.py) was shared with the retired v1 stack; the v2
 # enforcement matrix is env-gated (MEMORY_AUDIENCES) so one file serves both
 # namespaces.
+# File.read + split, NOT File.readlines: mruby (the mitamae runtime) has no
+# File.readlines and aborts the compile with NoMethodError — caught by the
+# ADR 0010 design review against mitamae v1.14.0 (~/ManagedProjects/setup/.claude/rules/ruby.md
+# "mruby API constraints"). The MANIFEST is a committed source asset, so a
+# compile-time read is the right phase (unlike the `File.exist?`-on-generated-
+# file anti-pattern).
 memory_v2_manifest = ->(unit) {
-  File.readlines(File.join(File.dirname(__FILE__), "files", unit, "MANIFEST"))
+  File.read(File.join(File.dirname(__FILE__), "files", unit, "MANIFEST")).split("\n")
       .map(&:strip).reject { |l| l.empty? || l.start_with?("#") }
 }
 memory_v2_manifest.call("memory-mcp").each do |mod|

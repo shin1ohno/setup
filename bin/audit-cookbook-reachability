@@ -230,12 +230,21 @@ end
 # Condition 5: CI test recipes embedded in workflow YAML heredocs. mitamae runs
 # them from the repo root, so include_recipe paths resolve against REPO_ROOT.
 ci_stale = []
-Dir["#{REPO_ROOT}/.github/workflows/*.yml"].sort.each do |wf|
+Dir["#{REPO_ROOT}/.github/workflows/*.{yml,yaml}"].sort.each do |wf|
   rel = wf.sub("#{REPO_ROOT}/", "")
   delim = nil
   File.foreach(wf).with_index(1) do |raw, ln|
     if delim.nil?
-      delim = Regexp.last_match(1) if raw =~ /cat\s*>\s*\S+\.rb\s*<<-?\s*'?(\w+)'?\s*$/
+      if raw =~ /cat\s*>\s*\S+\.rb\s*<<-?\s*'?(\w+)'?\s*$/
+        delim = Regexp.last_match(1)
+      elsif raw =~ /<<.*\.rb\b|\.rb\b.*<</
+        # A recipe written by a heredoc in a form this scanner does not parse
+        # (`cat <<'EOF' > x.rb`, `tee x.rb <<'EOF'`, quoted "EOF", trailing
+        # comment). Silently skipping it would recreate the blind spot, so it
+        # is a FAIL until the scanner learns the form or the step is rewritten
+        # to the canonical `cat > <name>.rb << 'EOF'`.
+        ci_stale << "#{rel}:#{ln}: unsupported recipe heredoc form for the CI-recipe scan: #{raw.strip[0, 80]}"
+      end
       next
     end
     if raw.strip == delim
@@ -256,11 +265,15 @@ Dir["#{REPO_ROOT}/.github/workflows/*.yml"].sort.each do |wf|
       end
     end
     raw.scan(/\binclude_role\s+"([^"]+)"/) do |m|
-      f = File.join("roles", m[0], "default.rb")
+      parts = m[0].split("::")
+      parts << "default" if parts.length == 1
+      f = File.join("roles", *parts) + ".rb"
       ci_stale << "#{rel}:#{ln}: include_role \"#{m[0]}\" -> #{f} does not exist" unless File.file?(f)
     end
     raw.scan(/\binclude_recipe\s+"([^"]+)"/) do |m|
-      ci_stale << "#{rel}:#{ln}: include_recipe \"#{m[0]}\" -> #{m[0]} does not exist" unless File.file?(m[0])
+      # Same rule as the root walk: mitamae appends .rb when it is absent.
+      f = m[0].end_with?(".rb") ? m[0] : "#{m[0]}.rb"
+      ci_stale << "#{rel}:#{ln}: include_recipe \"#{m[0]}\" -> #{f} does not exist" unless File.file?(f)
     end
   end
 end
