@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# bin/converge — the single entry point for a fresh machine or a normal re-apply
+# (ADR 0012). Replaces "apply the same recipe twice" with an ordered pipeline:
+#
+#   1. bin/setup                     mitamae binary present (idempotent)
+#   2. mitamae local bootstrap.rb    prerequisite tools the gates test for
+#   3. bin/doctor                    external prerequisites (auth, keys, network)
+#                                    FAIL here = incomplete, stop before touching
+#                                    the machine's state
+#   4. mitamae local <entry>.rb      the normal recipe, compiled FRESH in a new
+#                                    process, so every gate sees the tools from 2
+#   5. verdict                       exit 0 = converged; exit 3 = INCOMPLETE — a
+#                                    REQUIRED gate was skipped (gate-report left
+#                                    <setup-root>/.gate-rerun-required, or doctor
+#                                    FAILed). Optional features an operator
+#                                    declined (gate reason user_skip) do NOT make
+#                                    the run incomplete; they are listed as skipped.
+#
+# Usage: bin/converge <entry.rb> [--dry-run] [--skip-doctor]
+#   entry.rb   darwin.rb | linux.rb | pve/lxc-<name>.rb
+#   --dry-run  passed to both mitamae runs; doctor still runs (read-only)
+#   --skip-doctor  for hosts where doctor has no profile yet (CI)
+#
+# Never wraps mitamae in sudo (CLAUDE.md: cookbooks elevate per resource).
+set -uo pipefail
+REPO=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$REPO"
+
+entry=""; dry=""; skip_doctor=0
+for a in "$@"; do
+  case "$a" in
+    --dry-run) dry="--dry-run" ;;
+    --skip-doctor) skip_doctor=1 ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *.rb) entry="$a" ;;
+    *) echo "converge: unknown argument $a" >&2; exit 2 ;;
+  esac
+done
+[[ -n "$entry" && -f "$entry" ]] || { echo "converge: entry recipe required (darwin.rb | linux.rb | pve/lxc-<name>.rb)" >&2; exit 2; }
+
+setup_root="${HOME}/.setup_shin1ohno"
+sentinel="${setup_root}/.gate-rerun-required"
+step() { printf '\n== converge %s\n' "$*"; }
+
+step "1/4 mitamae binary"
+./bin/setup || exit 1
+
+step "2/4 bootstrap (prerequisite tools): bootstrap.rb"
+./bin/mitamae local bootstrap.rb $dry || { echo "converge: INCOMPLETE — bootstrap failed" >&2; exit 3; }
+
+if [[ $skip_doctor -eq 0 ]]; then
+  step "3/4 doctor (external prerequisites, read-only)"
+  if ! ./bin/doctor; then
+    echo "converge: INCOMPLETE — bin/doctor reports FAIL; fix the listed prerequisites, then re-run bin/converge $entry" >&2
+    exit 3
+  fi
+else
+  step "3/4 doctor skipped (--skip-doctor)"
+fi
+
+step "4/4 apply: $entry (fresh compile)"
+rm -f "$sentinel"
+./bin/mitamae local "$entry" $dry
+rc=$?
+
+if [[ $rc -ne 0 ]]; then
+  echo "converge: INCOMPLETE — mitamae exited $rc" >&2; exit 3
+fi
+if [[ -f "$sentinel" ]]; then
+  echo "converge: INCOMPLETE — a REQUIRED gate was skipped because its tool was still missing at compile time (see the gate report above). bootstrap.rb must install that tool; re-run bin/converge $entry after fixing." >&2
+  exit 3
+fi
+echo "converge: converged $entry"
+exit 0
