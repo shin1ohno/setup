@@ -165,6 +165,26 @@ groups:
             orchestrator's 300s ssh timeout does not stop remote processes).
             Runbook: ssh root@192.168.1.10 'pct exec 104 -- bash -c "cat /var/lib/auto-mitamae/apply-state; pgrep -af mitamae; tail -40 /tmp/auto-mitamae.log"'
 
+      - alert: AutoMitamaeCanaryGateStale
+        # ADR 0009 review D6: the orchestrator republishes the PREVIOUS cycle's
+        # gate verdict until the current cycle decides its own. If cycles keep
+        # dying before the gate decides (every canary apply hitting the cron
+        # timeout), a stale `pass` would otherwise sit there forever — this
+        # catches a verdict that has not been re-decided for 15 minutes
+        # (3 orchestrator cycles).
+        expr: (time() - auto_mitamae_canary_gate_timestamp_seconds) > 900
+        for: 10m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "Canary gate verdict not re-decided for 15m+ — cycles are not reaching the gate"
+          description: |
+            auto_mitamae_canary_gate_timestamp_seconds has not advanced for 15+ minutes, so the
+            published gate verdict is a carry-over, not a fresh decision. Check orchestrator cron
+            output on CT 111 and the per-host apply durations of the canary hosts.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "systemctl is-active cron; tail -40 /var/log/auto-mitamae-orchestrator.log 2>/dev/null; cat /var/lib/node_exporter/textfile/auto-mitamae.prom | grep canary"'
+
       - alert: NodeExporterDown
         # Source-of-truth alert: every other auto-mitamae alert is built on
         # textfile metrics scraped through node-exporter. If node-exporter

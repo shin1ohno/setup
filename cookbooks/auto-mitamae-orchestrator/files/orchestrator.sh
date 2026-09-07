@@ -16,7 +16,7 @@
 #
 # Status enum (matches mitamae-runner.sh):
 #   success | up_to_date | mitamae_fail | sha_mismatch | git_fetch_fail
-#   | lock_held | invalid_command | ssh_unreachable
+#   | lock_held | invalid_command | state_write_fail | ssh_unreachable
 #
 # ssh_unreachable is orchestrator-side: ssh exited non-zero AND the runner
 # never produced a `status=` line. Anything else is the runner's verdict.
@@ -96,20 +96,32 @@ fi
 # so a canary-less or malformed file fails the cycle loudly instead of
 # silently completing with nothing applied (jq errors inside a process
 # substitution used to be invisible).
-if ! hosts_snapshot=$(jq -c '
-        if (type != "array") then error("hosts.json: top level is not an array")
-        elif length == 0 then error("hosts.json: no hosts")
-        elif ([.[] | select((.host|type) != "string" or (.user|type) != "string"
-                            or (.role|type) != "string" or (.label|type) != "string")] | length) > 0
-             then error("hosts.json: entry missing host/user/role/label string")
-        elif ([.[] | select(.canary == true)] | length) == 0
-             then error("hosts.json: no canary host — the canary gate cannot validate any sha")
-        else . end' "${HOSTS_JSON}" 2>&1); then
+if ! hosts_snapshot=$(jq -cs '
+        if length != 1 then error("hosts.json: expected exactly one JSON document, got \(length)") else .[0] end
+        | if (type != "array") then error("hosts.json: top level is not an array")
+          elif length == 0 then error("hosts.json: no hosts")
+          elif ([.[] | select((.host|type) != "string" or (.user|type) != "string"
+                              or (.role|type) != "string" or (.label|type) != "string"
+                              or (.host|length) == 0 or (.label|length) == 0)] | length) > 0
+               then error("hosts.json: entry missing non-empty host/user/role/label string")
+          elif ([.[] | select(has("canary") and (.canary|type) != "boolean")] | length) > 0
+               then error("hosts.json: canary must be a JSON boolean when present")
+          elif ([.[].host] | length) != ([.[].host] | unique | length)
+               then error("hosts.json: duplicate host — one entry per host (the runner keeps ONE apply-state per host)")
+          elif ([.[].label] | length) != ([.[].label] | unique | length)
+               then error("hosts.json: duplicate label — metric series would collide")
+          elif ([.[] | select(.canary == true)] | length) == 0
+               then error("hosts.json: no canary host — the canary gate cannot validate any sha")
+          else . end' "${HOSTS_JSON}" 2>&1); then
     echo "orchestrator: refusing cycle — ${hosts_snapshot}" >&2
     exit 1
 fi
+canary_expected=$(jq -r '[.[] | select(.canary == true)] | length' <<<"${hosts_snapshot}")
 
-tmp_out=$(mktemp "${OUTPUT_TEXTFILE}.tmp.XXXXXX")
+if ! tmp_out=$(mktemp "${OUTPUT_TEXTFILE}.tmp.XXXXXX"); then
+    echo "orchestrator: cannot create ${OUTPUT_TEXTFILE}.tmp — refusing cycle" >&2
+    exit 1
+fi
 trap 'rm -f "${tmp_out}" "${OUTPUT_TEXTFILE}.pub"' EXIT
 
 now=$(date +%s)
@@ -133,7 +145,17 @@ now=$(date +%s)
     echo "# TYPE auto_mitamae_canary_last_sha_info gauge"
     echo "# HELP auto_mitamae_canary_gate 1 = canary gate verdict this cycle (pass = fleet phase ran, hold = retry next cycle, fail = cookbook failure)"
     echo "# TYPE auto_mitamae_canary_gate gauge"
+    echo "# HELP auto_mitamae_canary_gate_timestamp_seconds Unix time the canary gate verdict was decided"
+    echo "# TYPE auto_mitamae_canary_gate_timestamp_seconds gauge"
     echo "auto_mitamae_orchestrator_expected_sha_info{commit=\"${expected_sha}\"} 1"
+    # Carry the PREVIOUS cycle's gate verdict (+ its timestamp) until this
+    # cycle decides its own: every per-host publish replaces the whole file,
+    # and without this the auto_mitamae_canary_gate series would vanish
+    # mid-cycle and reset AutoMitamaeCanaryHeld's `for:` clock (ADR 0009
+    # review F6/D7). The timestamp lets AutoMitamaeCanaryGateStale catch a
+    # carried-over verdict that is never replaced (cycles that keep timing
+    # out before the gate decides).
+    grep -E '^auto_mitamae_canary_gate(_timestamp_seconds)?\{?' "${OUTPUT_TEXTFILE}" 2>/dev/null || true
 } > "${tmp_out}"
 
 # Atomically publish the in-progress textfile after every host so node_exporter
@@ -143,22 +165,12 @@ now=$(date +%s)
 # mv, so a cycle that never completed froze ALL metrics — the orchestrator
 # looked dead while it was in fact still applying hosts, and the tail hosts'
 # status went stale. cp-then-rename keeps a scrape from reading a half-written
-# file. The .pub temp is cleaned by the EXIT trap.
-#
-# The canary gate verdict is only known after the LAST canary host, but every
-# per-host publish before that replaces the whole file. Without a carry-over
-# the auto_mitamae_canary_gate series would vanish for the duration of a
-# multi-canary cycle, and a Prometheus evaluation in that gap would reset
-# AutoMitamaeCanaryHeld's `for:` clock (ADR 0009 review F6). So until this
-# cycle's verdict exists, re-publish the previous cycle's gate line verbatim.
-prev_gate_line=$(grep -m1 '^auto_mitamae_canary_gate{' "${OUTPUT_TEXTFILE}" 2>/dev/null || true)
-gate_verdict=""
+# file; the && keeps a failed cp from renaming a truncated file over the
+# previous good one (ADR 0009 review D4). The .pub temp is cleaned by the
+# EXIT trap.
 publish() {
-  cp "${tmp_out}" "${OUTPUT_TEXTFILE}.pub"
-  if [[ -z "${gate_verdict}" && -n "${prev_gate_line}" ]]; then
-      echo "${prev_gate_line}" >> "${OUTPUT_TEXTFILE}.pub"
-  fi
-  mv "${OUTPUT_TEXTFILE}.pub" "${OUTPUT_TEXTFILE}"
+  cp "${tmp_out}" "${OUTPUT_TEXTFILE}.pub" && mv "${OUTPUT_TEXTFILE}.pub" "${OUTPUT_TEXTFILE}" \
+    || echo "orchestrator: publish failed, previous ${OUTPUT_TEXTFILE} kept" >&2
 }
 
 # Helper: apply mitamae-runner on one host. Populates LAST_STATUS for the
@@ -177,7 +189,7 @@ publish() {
 # bin/bootstrap-lxc-creds remains as a PVE-host one-shot operator tool.
 apply_one_host() {
     local entry="$1"
-    local host user role label cmd_start output rc status sha drift rdur verified_sha
+    local host user role label cmd_start output rc status sha drift rdur verified_sha cmd_dur
 
     host=$(jq -r '.host'  <<<"${entry}")
     user=$(jq -r '.user'  <<<"${entry}")
@@ -214,13 +226,32 @@ apply_one_host() {
         fi
     fi
 
-    status=$(grep -oE 'status=[a-z_]+'   <<<"${output}" | head -1 | cut -d= -f2)
-    # `sha=` is anchored on a preceding space/line-start so it cannot match
-    # the tail of `verified_sha=`.
-    sha=$(   grep -oE '(^| )sha=[a-f0-9]+' <<<"${output}" | head -1 | tr -d ' ' | cut -d= -f2)
-    verified_sha=$(grep -oE 'verified_sha=[a-f0-9]+' <<<"${output}" | head -1 | cut -d= -f2)
-    drift=$( grep -oE 'drift=[0-9]+'     <<<"${output}" | head -1 | cut -d= -f2)
-    rdur=$(  grep -oE 'duration=[0-9]+'  <<<"${output}" | head -1 | cut -d= -f2)
+    # Parse exactly ONE status line as whitespace-separated key=value tokens
+    # (ADR 0009 review D1): keys match whole tokens (so `not_verified_sha=`
+    # can never satisfy `verified_sha=`), a sha must be the full 40 hex chars,
+    # and a duplicated key discards the sha fields — the answer is then
+    # treated as unproven (hold), never as success.
+    local status_line tok key val dup=0 seen=" "
+    status_line=$(grep -m1 -E '(^|[[:space:]])status=[a-z_]+' <<<"${output}")
+    status=""; sha=""; verified_sha=""; drift=""; rdur=""
+    for tok in ${status_line}; do
+        key="${tok%%=*}"; val="${tok#*=}"
+        case "${seen}" in *" ${key} "*) dup=1 ;; esac
+        seen="${seen}${key} "
+        case "${key}" in
+            status)       status="${val}" ;;
+            sha)          sha="${val}" ;;
+            verified_sha) verified_sha="${val}" ;;
+            drift)        drift="${val}" ;;
+            duration)     rdur="${val}" ;;
+        esac
+    done
+    [[ "${status}" =~ ^[a-z_]+$ ]]        || status=""
+    [[ "${sha}" =~ ^[a-f0-9]{40}$ ]]       || sha=""
+    [[ "${verified_sha}" =~ ^[a-f0-9]{40}$ ]] || verified_sha=""
+    [[ "${drift}" =~ ^[0-9]+$ ]]           || drift=""
+    [[ "${rdur}" =~ ^[0-9]+$ ]]            || rdur=""
+    if [[ "${dup}" -eq 1 ]]; then sha=""; verified_sha=""; fi
 
     status=${status:-invalid_command}
     drift=${drift:-0}
@@ -247,17 +278,20 @@ apply_one_host() {
 # canary host proved expected_sha succeeded on it (see header). A hard
 # failure aborts the cycle; anything unproven holds it. The canary metrics
 # (status + sha + timestamp + gate verdict) are still emitted so Grafana
-# shows why the fleet did not move. Non-canary host metrics are NOT touched
-# on abort/hold — they retain their prior state from the last fleet cycle.
+# shows why the fleet did not move. Non-canary host series are NOT emitted on
+# abort/hold (the file is rebuilt each cycle) — the canary series and
+# AutoMitamaeCanaryFailing / AutoMitamaeCanaryHeld carry the explanation.
 canary_failed=0
 canary_held=0
 canary_failure_label=""
 canary_failure_status=""
 canary_hold_label=""
 canary_hold_status=""
+canary_processed=0
 
 while IFS= read -r entry; do
     apply_one_host "${entry}"
+    canary_processed=$((canary_processed + 1))
     publish   # keep the prom fresh after each canary host
     verdict=hold
     case "${LAST_STATUS}" in
@@ -302,14 +336,20 @@ gate_verdict="pass"
 if [[ "${canary_failed}" -eq 1 ]]; then
     canary_overall_status="${canary_failure_status}"
     gate_verdict="fail"
-elif [[ "${canary_held}" -eq 1 ]]; then
-    canary_overall_status="${canary_hold_status}"
+elif [[ "${canary_held}" -eq 1 || "${canary_processed}" -ne "${canary_expected}" ]]; then
+    # A canary the loop never reached (jq / read failure) is unproven too.
+    canary_overall_status="${canary_hold_status:-canary_not_processed}"
     gate_verdict="hold"
+    canary_held=1
 fi
+# Replace the carried-over verdict with this cycle's (D7 shape: the previous
+# lines live in tmp_out, so publish stays a plain cp && mv).
+sed -i -E '/^auto_mitamae_canary_gate(_timestamp_seconds)?\{?/d' "${tmp_out}"
 {
     echo "auto_mitamae_canary_last_status{result=\"${canary_overall_status}\"} 1"
     echo "auto_mitamae_canary_last_sha_info{commit=\"${expected_sha}\"} 1"
     echo "auto_mitamae_canary_gate{result=\"${gate_verdict}\"} 1"
+    echo "auto_mitamae_canary_gate_timestamp_seconds $(date +%s)"
 } >> "${tmp_out}"
 publish
 

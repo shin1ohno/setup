@@ -1,6 +1,6 @@
 # ADR 0009: auto-mitamae — 適用成功状態を SHA 単位で管理し、canary gate は検証済み SHA だけ通す
 
-**Status**: Proposed (2026-09-07、adversarial 設計レビュー反映済み — `0009-review-design.md`) — supersedes the time-only stamp of ADR 0006 (ADR 0006 の二段階カデンス自体は維持)
+**Status**: Proposed (2026-09-07、adversarial 設計レビュー + 実装 diff レビュー反映済み — `0009-review-design.md`, `0009-review-diff.md`) — supersedes the time-only stamp of ADR 0006 (ADR 0006 の二段階カデンス自体は維持)
 
 ## Context
 
@@ -44,6 +44,11 @@ last_attempt_status=in_progress|success|mitamae_fail
 last_attempt_epoch=<int>
 ```
 
+読取は行ごとの `key=value`（末尾改行なしの最終行も処理）で、重複キー・未知キーは記録全体を無効化、epoch は
+先頭ゼロなしの十進 12 桁以内だけを数値と読む（bash の 8 進解釈で status 行の前に abort する経路を塞ぐ）。
+状態の保存に失敗した場合は `status=state_write_fail`（exit 1、`verified_sha` なし）で応答し、apply 前の
+保存失敗なら mitamae を呼ばない。orchestrator はこの status を hold として扱う。
+
 抑制（`status=up_to_date` で mitamae を呼ばない）の条件は次の **全て** が成立する場合に限る:
 
 1. `drift == 0`（origin/main に新規コミットがない）
@@ -69,7 +74,9 @@ last_attempt_epoch=<int>
 同じ方針: 欠落・非数値・未来時刻・40hex でない SHA・role 形式外は「成功実績なし」と読み、
 converge に倒す（`source` はしない、行ごとの `key=value` 読取）。
 
-status 行には `verified_sha=<sha>` を **追加**する（既存フィールドの後ろ、`ts=` の前）。
+status 行には `verified_sha=<sha>` を **追加**する（既存フィールドの後ろ、`ts=` の前）。orchestrator は
+status 行 1 本を空白区切りの `key=value` token として解析し、キーは token 全体一致、SHA は 40 hex 全体一致、
+重複キーがあれば SHA 系フィールドを捨てる（`not_verified_sha=` や末尾に非 hex を付けた応答は pass しない）。
 `up_to_date` のとき値は expected_sha と等しい。`success` のときも同じ値を載せ、orchestrator は
 「この応答は expected_sha の成功実績に裏打ちされている」と機械的に読める。旧 orchestrator の
 `grep -oE 'sha=[a-f0-9]+' | head -1` は先に現れる `sha=` を取るので互換。
@@ -118,8 +125,9 @@ host/user/role/label が文字列であること・canary が 1 台以上ある�
 
 `cookbooks/auto-mitamae-target/test/run-state-scenarios.sh` が hermetic な一時ディレクトリに
 ローカル origin・clone・成功/失敗を切り替えられる mitamae 代替・`ssh` 代替を作り、本番スクリプトを
-**そのまま**（パスは `AUTO_MITAMAE_*` env override で差し替え。forced-command 経路には sshd が env
-を落とすので届かない、ADR 0006 と同じ性質）実行して次を PASS させる:
+**そのまま**（パスは `AUTO_MITAMAE_*` env override で差し替え。runner は `SSH_CONNECTION` が設定された
+プロセス = ssh セッションでは override を無視するので、sshd の AcceptEnv 設定に関係なく本番入口は既定値で
+動く — `restrict` は env を制約しないため、この pin が保証の根拠）実行して次を PASS させる:
 
 1. A 成功 → B 失敗 → 同じ B を再試行する（`up_to_date` を返さない）→ B 成功 → 以後 `up_to_date`
 2. 同一 SHA の定期再適用が失敗 → 次周期で再試行する
@@ -181,3 +189,16 @@ CI の `syntax-check` job（ubuntu）でこのスクリプトを実行する。
 | F5 | 「追加 converge なし」は誤り（初回成功は旧 runner が書く） | 採用（文書訂正） | 移行節を書き直し: 1 周期分の再 converge 1 回を仕様として認める。旧 stamp の昇格はしない |
 | F6 | hold 時の fleet metric 保持は事実誤認。gate 系列が途中 publish で消える | 採用（文書訂正 + gate 引継ぎ） | fleet 系列は従来どおり出さない（ApplyStale の重複を避ける）と明記。gate 系列は verdict 確定まで前周期の値を publish に付ける |
 | F7 | 開始前無効化なら成功 2 フィールドで足りる | 部分採用 | 無効化遷移は F3 で採用。フィールド削減は診断・runbook 価値で不採用。却下理由の誤りを訂正 |
+
+## Review 2（実装 diff、adversarial, codex — `docs/adr/0009-review-diff.md`）
+
+| # | 所見 | 採否 | 反映 |
+|---|---|---|---|
+| D1 | `verified_sha` / `sha` の部分一致で未検証応答が pass | 採用 | status 行を token 解析、キー全体一致、40 hex 全体一致、重複キーで SHA 破棄。ハーネスに 3 反例 |
+| D2 | reader が末尾改行なし・重複キー・`09` を扱えず、破損状態で up_to_date または abort | 採用 | `read ... || [[ -n $k ]]`、重複/未知キーで記録無効化、epoch は十進 12 桁以内。ハーネスに 2 反例 |
+| D3 | 状態保存失敗が status 行の前に終了 | 採用 | `write_state` を各段明示検査に変え、失敗は `status=state_write_fail`（exit 1）。orchestrator は hold。ハーネスに mktemp 失敗 |
+| D4 | publish の `cp && mv` 分離でコピー失敗時に公開ファイルを壊す | 採用（D7 の形で） | 前周期 gate 行は tmp_out 先頭に入れ、verdict 確定時に置換。publish は `cp && mv` に復元、失敗は前ファイル保持 |
+| D5 | hosts.json 検証が空ファイル・文字列 canary・重複 host を通す | 採用 | `jq -s` で文書数 1、canary は boolean のみ、host / label 重複を拒否、処理 canary 数と予定数を照合。ハーネスに 3 反例 |
+| D6 | gate 引継ぎテストが実装を消しても PASS、陳腐化した pass が残る | 採用 | 2 台目 canary を 3 秒遅延させ途中 publish を実観測するテスト。`auto_mitamae_canary_gate_timestamp_seconds` を新設し `AutoMitamaeCanaryGateStale`（15 分）で陳腐化を検出 |
+| D7 | gate 引継ぎは tmp_out に持てば小さい | 採用 | 上記 D4 |
+| D8 | 「sshd が env を落とす」は設定上の裏付けなし | 採用 | `SSH_CONNECTION` が設定されていれば override を unset（forced-command を含む全 ssh セッション）。コメントを訂正。ハーネスに ssh セッション模擬 |

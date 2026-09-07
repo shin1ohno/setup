@@ -26,7 +26,7 @@
 #      up_to_date (already at target SHA, converge throttled this cycle)
 #      lock_held (orchestrator should record + retry next cron)
 #   1  any error path (sha_mismatch, git_fetch_fail, mitamae_fail,
-#      invalid_command). status= line still emitted.
+#      invalid_command, state_write_fail). status= line still emitted.
 #
 # Design notes:
 #   - flock per host, NOT per role: prevents two roles or a manual mitamae
@@ -83,10 +83,17 @@ fi
 role="${BASH_REMATCH[1]}"
 expected_sha="${BASH_REMATCH[2]}"
 # Path overrides exist ONLY for the hermetic regression harness
-# (cookbooks/auto-mitamae-target/test/run-state-scenarios.sh). Like the
-# AUTO_MITAMAE_RECONCILE_* knobs below they never reach the forced-command
-# invocation: sshd drops client env and the authorized_keys entry is
-# `restrict`, so production always runs with the defaults.
+# (cookbooks/auto-mitamae-target/test/run-state-scenarios.sh). They are
+# honoured only when this process is NOT an ssh session: sshd sets
+# SSH_CONNECTION for every session including forced commands, so the
+# production entry always runs with the defaults regardless of the target
+# sshd's AcceptEnv / PermitUserEnvironment (which `restrict` does not
+# constrain — ADR 0009 review D8). The RECONCILE_* knobs below follow the
+# same rule.
+if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    unset AUTO_MITAMAE_SETUP_DIR AUTO_MITAMAE_APPLY_LOG AUTO_MITAMAE_LOCK_FILE \
+          AUTO_MITAMAE_STATE_DIR AUTO_MITAMAE_RECONCILE_INTERVAL_SEC AUTO_MITAMAE_RECONCILE_JITTER_SEC
+fi
 setup_dir="${AUTO_MITAMAE_SETUP_DIR:-/root/setup}"
 apply_log="${AUTO_MITAMAE_APPLY_LOG:-/tmp/auto-mitamae.log}"
 lock_file="${AUTO_MITAMAE_LOCK_FILE:-/var/lock/auto-mitamae.lock}"
@@ -120,12 +127,19 @@ LEGACY_STAMP_FILE="${STATE_DIR}/last-converge.epoch"
 #     + the retry guard. status is in_progress (written BEFORE mitamae runs,
 #     so an interrupted apply can never leave the old proof valid), success,
 #     or mitamae_fail.
+# Returns non-zero (and removes its temp file) on ANY failure; every step is
+# checked explicitly because callers invoke this inside `if !`, where errexit
+# is suspended (ADR 0009 review D3). A caller that cannot record state must
+# answer status=state_write_fail rather than die before the status line.
 write_state() {
     local s_sha="$1" s_role="$2" s_epoch="$3" a_sha="$4" a_status="$5" a_epoch="$6" tmp
-    tmp=$(mktemp "${STATE_FILE}.tmp.XXXXXX")
-    printf 'last_success_sha=%s\nlast_success_role=%s\nlast_success_epoch=%s\nlast_attempt_sha=%s\nlast_attempt_status=%s\nlast_attempt_epoch=%s\n' \
-        "$s_sha" "$s_role" "$s_epoch" "$a_sha" "$a_status" "$a_epoch" > "$tmp"
-    mv -f "$tmp" "$STATE_FILE"
+    tmp=$(mktemp "${STATE_FILE}.tmp.XXXXXX") || return 1
+    if ! printf 'last_success_sha=%s\nlast_success_role=%s\nlast_success_epoch=%s\nlast_attempt_sha=%s\nlast_attempt_status=%s\nlast_attempt_epoch=%s\n' \
+            "$s_sha" "$s_role" "$s_epoch" "$a_sha" "$a_status" "$a_epoch" > "$tmp"; then
+        rm -f "$tmp"; return 1
+    fi
+    if ! mv -f "$tmp" "$STATE_FILE"; then rm -f "$tmp"; return 1; fi
+    return 0
 }
 
 # flock per host. -n = non-blocking; if held, exit 0 with lock_held so the
@@ -206,21 +220,33 @@ last_success_role=""
 last_success_epoch=0
 last_attempt_sha=""
 last_attempt_status=""
+state_invalid=0
+seen_keys=" "
 if [[ -f "$STATE_FILE" ]]; then
-    while IFS='=' read -r k v; do
+    # `|| [[ -n "$k" ]]` processes a final line without a trailing newline;
+    # a duplicated key invalidates the whole record (ADR 0009 review D2).
+    while IFS='=' read -r k v || [[ -n "$k" ]]; do
+        case "$seen_keys" in *" $k "*) state_invalid=1 ;; esac
+        seen_keys="$seen_keys$k "
         case "$k" in
             last_success_sha)    last_success_sha="$v" ;;
             last_success_role)   last_success_role="$v" ;;
             last_success_epoch)  last_success_epoch="$v" ;;
             last_attempt_sha)    last_attempt_sha="$v" ;;
             last_attempt_status) last_attempt_status="$v" ;;
+            last_attempt_epoch)  : ;;
+            "") : ;;
+            *) state_invalid=1 ;;
         esac
     done < "$STATE_FILE"
 fi
 [[ "$last_success_sha" =~ ^[a-f0-9]{40}$ ]] || last_success_sha=""
 [[ "$last_success_role" =~ ^[A-Za-z0-9._/-]+\.rb$ ]] || last_success_role=""
 [[ "$last_attempt_sha" =~ ^[a-f0-9]{40}$ ]] || last_attempt_sha=""
-[[ "$last_success_epoch" =~ ^[0-9]+$ ]] || last_success_epoch=0
+# Decimal, no leading zero (bash would read 09 as octal and abort the
+# arithmetic below BEFORE the status line), at most 12 digits (year 33658).
+[[ "$last_success_epoch" =~ ^(0|[1-9][0-9]{0,11})$ ]] || last_success_epoch=0
+if [[ "$state_invalid" -eq 1 ]]; then last_success_sha=""; last_attempt_status=""; fi
 # A future-dated success (clock jumped ahead, e.g. NTP not yet synced on a
 # fresh LXC, then corrected backward) would otherwise throttle the host until
 # that time — treat it as unknown and converge now.
@@ -262,17 +288,28 @@ new_sha=$(git rev-parse HEAD)
 # condition (3) next cycle. in_progress fails (3), so an interrupted apply is
 # always retried. Still inside the flock, so no other runner can observe a
 # half-applied host as verified.
-write_state "$last_success_sha" "$last_success_role" "$last_success_epoch" "$new_sha" in_progress "$start"
+if ! write_state "$last_success_sha" "$last_success_role" "$last_success_epoch" "$new_sha" in_progress "$start"; then
+    echo "status=state_write_fail sha=$new_sha drift=$drift duration=0 old=$old_sha ts=$(ts)"
+    exit 1
+fi
 if ./bin/mitamae local "$role" >"$apply_log" 2>&1; then
     status=success
     end_epoch=$(date +%s)
     # Success: every field advances to this sha+role, so the next drift==0
     # cycle can throttle until the reconcile window. The legacy timestamp
     # stamp is no longer read; drop it once the per-SHA record exists.
-    write_state "$new_sha" "$role" "$end_epoch" "$new_sha" success "$end_epoch"
-    rm -f "$LEGACY_STAMP_FILE"
-    verified_field=" verified_sha=$new_sha"
-    rc=0
+    if write_state "$new_sha" "$role" "$end_epoch" "$new_sha" success "$end_epoch"; then
+        rm -f "$LEGACY_STAMP_FILE"
+        verified_field=" verified_sha=$new_sha"
+        rc=0
+    else
+        # The apply succeeded but the proof could not be recorded: report it
+        # as such, without verified_sha, so the next cycle converges again
+        # rather than trusting an unrecorded success.
+        status=state_write_fail
+        verified_field=""
+        rc=1
+    fi
 else
     status=mitamae_fail
     end_epoch=$(date +%s)
@@ -280,7 +317,7 @@ else
     # sha+role that last succeeded here (it may differ from new_sha), and the
     # failed attempt guarantees the next cycle converges again instead of
     # throttling — the retry-every-cycle contract ADR 0006 intended.
-    write_state "$last_success_sha" "$last_success_role" "$last_success_epoch" "$new_sha" mitamae_fail "$end_epoch"
+    write_state "$last_success_sha" "$last_success_role" "$last_success_epoch" "$new_sha" mitamae_fail "$end_epoch" || status=state_write_fail
     verified_field=""
     rc=1
 fi

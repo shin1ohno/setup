@@ -175,6 +175,28 @@ assert_eq "s4/F3 next cycle converges instead of trusting the old proof" success
 out=$(run_runner "$SHA_B")
 assert_eq "s4/F3 then verified again" up_to_date "$(status_of "$out")"
 
+# review D2: reader robustness — no trailing newline, duplicate key, octal-looking epoch
+printf 'last_success_sha=%s\nlast_success_role=%s\nlast_success_epoch=%s\nlast_attempt_sha=%s\nlast_attempt_status=success\nlast_attempt_epoch=1\nlast_attempt_status=mitamae_fail' "$SHA_B" "$ROLE" "$(date +%s)" "$SHA_B" > "$T/state/apply-state"
+out=$(run_runner "$SHA_B")
+assert_eq "s4/D2 duplicate key + no trailing newline → converge, not up_to_date" success "$(status_of "$out")"
+printf 'last_success_sha=%s\nlast_success_role=%s\nlast_success_epoch=09\nlast_attempt_sha=%s\nlast_attempt_status=success\nlast_attempt_epoch=1\n' "$SHA_B" "$ROLE" "$SHA_B" > "$T/state/apply-state"
+out=$(run_runner "$SHA_B")
+assert_eq "s4/D2 epoch 09 (octal trap) → converges with a status line" success "$(status_of "$out")"
+
+# review D3: state write failure must answer state_write_fail, not die silently
+mkdir -p "$T/badbin"; printf '#!/bin/bash\nexit 1\n' > "$T/badbin/mktemp"; chmod +x "$T/badbin/mktemp"
+before=$(calls)
+out=$(PATH="$T/badbin:$PATH" AUTO_MITAMAE_RECONCILE_INTERVAL_SEC=0 AUTO_MITAMAE_RECONCILE_JITTER_SEC=0 run_runner "$SHA_B")
+assert_eq "s4/D3 mktemp failure → status=state_write_fail" state_write_fail "$(status_of "$out")"
+assert_eq "s4/D3 state write failure before apply → mitamae not called" "$before" "$(calls)"
+assert_eq "s4/D3 state_write_fail exits 1" 1 "$(rc_last)"
+
+# review D8: overrides are ignored inside an ssh session (SSH_CONNECTION set)
+before=$(calls)
+out=$(SSH_CONNECTION="10.0.0.1 1 10.0.0.2 22" run_runner "$SHA_B")
+assert_eq "s4/D8 SSH_CONNECTION set → harness paths ignored (no apply in the fixture)" "$before" "$(calls)"
+[[ "$(status_of "$out")" != up_to_date && "$(status_of "$out")" != success ]] && ok "s4/D8 ssh-session run did not report a fixture verdict (= $(status_of "$out"))" || bad "s4/D8 ssh-session run used the fixture paths"
+
 # ---------------------------------------------------------------- scenario 3
 echo "== scenario 3: orchestrator canary gate — hold on unverified, pass on verified"
 O="$T/orch"; mkdir -p "$O/textfile" "$O/bin"
@@ -189,6 +211,7 @@ host=""
 for a in "$@"; do case "$a" in *@*) host="$a";; esac; done
 echo "$host" >> "$ORCH_CONTACT_LOG"
 f="$ORCH_REPLY_DIR/${host#*@}.reply"
+[[ -f "$ORCH_REPLY_DIR/${host#*@}.sleep" ]] && sleep 3
 if [[ -f "$f" ]]; then cat "$f"; exit "$(cat "$f.rc" 2>/dev/null || echo 0)"; fi
 echo "ssh: connect to host ${host#*@}: No route to host" >&2
 exit 255
@@ -303,6 +326,45 @@ assert_eq "s3 multi-canary pass+fail → gate fail" fail "$(gate)"
 run_orch "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EXP ts=now" 0
 assert_eq "s3 multi-canary pass+pass → fleet contacted" 1 "$(fleet_contacted)"
 assert_eq "s3 multi-canary pass+pass → gate pass" pass "$(gate)"
+
+# review D1: malformed answers must never pass the gate
+run_orch "status=up_to_date not_verified_sha=$EXP ts=now" 0
+assert_eq "s3/D1 not_verified_sha= key → fleet not contacted" 0 "$(fleet_contacted)"
+run_orch "status=success sha=${EXP}z drift=1 duration=1 old=$SHA_A ts=now" 0
+assert_eq "s3/D1 success with non-hex sha suffix → fleet not contacted" 0 "$(fleet_contacted)"
+run_orch "status=success sha=$EXP sha=$SHA_A drift=1 duration=1 old=$SHA_A verified_sha=$EXP ts=now" 0
+assert_eq "s3/D1 duplicated sha key → fleet not contacted" 0 "$(fleet_contacted)"
+run_orch "status=state_write_fail sha=$EXP drift=1 duration=1 old=$SHA_A ts=now" 1
+assert_eq "s3/D3 state_write_fail canary → gate hold" hold "$(gate)"
+
+# review D6: the previous verdict stays published while a later canary is still being applied
+echo "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EXP ts=now" > "$O/canary2.invalid.reply"
+run_orch "status=lock_held ts=now" 0     # leaves gate=hold in the published file
+touch "$O/canary2.invalid.sleep"          # stub sleeps 3s before answering for canary2
+( : > "$CONTACT"; echo "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EXP ts=now" > "$CANARY_REPLY"; echo 0 > "$CANARY_REPLY.rc"
+  PATH="$O/bin:$PATH" AUTO_MITAMAE_ORCH_LOCK_FILE="$O/orch.lock" AUTO_MITAMAE_ORCH_TEXTFILE_DIR="$O/textfile" AUTO_MITAMAE_ORCH_HOSTS_JSON="$O/hosts.json" AUTO_MITAMAE_ORCH_SSH_KEY="$O/nokey" AUTO_MITAMAE_ORCH_SSH_KNOWN_HOSTS="$O/known" bash "$ORCH" >"$O/orch.out" 2>"$O/orch.err" ) &
+opid=$!
+for _ in $(seq 1 40); do grep -q canary2.invalid "$CONTACT" 2>/dev/null && break; sleep 0.1; done
+sleep 0.3   # canary1's publish has happened; canary2 is inside its 3s sleep
+midgate=$(gate); midts=$(grep -c '^auto_mitamae_canary_gate_timestamp_seconds' "$O/textfile/auto-mitamae.prom")
+wait "$opid"
+assert_eq "s3/D6 mid-cycle publish still carries the previous verdict" hold "$midgate"
+assert_eq "s3/D6 mid-cycle publish carries exactly one gate timestamp" 1 "$midts"
+assert_eq "s3/D6 final verdict replaces it" pass "$(gate)"
+assert_eq "s3/D6 final file has one gate line" 1 "$(grep -c '^auto_mitamae_canary_gate{' "$O/textfile/auto-mitamae.prom")"
+rm -f "$O/canary2.invalid.sleep"
+
+# review D5: empty file, string canary, duplicate host are refused
+cp "$O/hosts.json" "$O/hosts.json.bak"
+: > "$O/hosts.json"; run_orch "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EXP ts=now" 0
+assert_eq "s3/D5 empty hosts.json → refused" 1 "$ORC"
+printf '[{"host":"canary.invalid","user":"root","role":"pve/lxc-canary.rb","label":"canary","canary":true},{"host":"fleet.invalid","user":"root","role":"pve/lxc-fleet.rb","label":"fleet","canary":"true"}]\n' > "$O/hosts.json"
+run_orch "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EXP ts=now" 0
+assert_eq "s3/D5 string canary → refused" 1 "$ORC"
+printf '[{"host":"canary.invalid","user":"root","role":"pve/lxc-canary.rb","label":"canary","canary":true},{"host":"canary.invalid","user":"root","role":"pve/lxc-other.rb","label":"canary-b"}]\n' > "$O/hosts.json"
+run_orch "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EXP ts=now" 0
+assert_eq "s3/D5 duplicate host → refused" 1 "$ORC"
+mv "$O/hosts.json.bak" "$O/hosts.json"
 
 # ---------------------------------------------------------------- summary
 echo
