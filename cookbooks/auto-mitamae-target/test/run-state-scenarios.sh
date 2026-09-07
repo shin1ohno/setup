@@ -52,9 +52,12 @@ git init -q -b main "$T/src"
 mkdir -p "$T/src/bin"
 cat > "$T/src/bin/mitamae" <<STUB
 #!/bin/bash
-# stand-in: append the invocation, exit per the control file
+# stand-in: append the invocation, exit per the control file.
+# kill-parent simulates the runner dying mid-apply (reboot / OOM / ^C).
 echo "\$*" >> "$CALLS"
-[[ "\$(cat "$VERDICT")" == success ]]
+v=\$(cat "$VERDICT")
+if [[ "\$v" == kill-parent ]]; then kill -9 \$PPID; exit 1; fi
+[[ "\$v" == success ]]
 STUB
 chmod +x "$T/src/bin/mitamae"
 echo a > "$T/src/a.txt"
@@ -147,6 +150,31 @@ out=$( exec 9>"$T/runner.lock"; flock -n 9; SSH_ORIGINAL_COMMAND="$ROLE $SHA_B" 
 assert_eq "s4 lock_held while flock taken" lock_held "$(status_of "$out")"
 assert_eq "s4 lock_held did not apply" "$before" "$(calls)"
 
+# review F2: same SHA, different role → the old role's proof must not apply
+echo success > "$VERDICT"
+out=$(run_runner "$SHA_B"); assert_eq "s4/F2 baseline verified for role A" up_to_date "$(status_of "$out")"
+before=$(calls)
+out=$(ROLE="pve/lxc-other.rb" run_runner "$SHA_B")
+assert_eq "s4/F2 role change on same SHA converges" success "$(status_of "$out")"
+assert_eq "s4/F2 role change ran mitamae" $((before+1)) "$(calls)"
+assert_eq "s4/F2 state names new role" "last_success_role=pve/lxc-other.rb" "$(grep ^last_success_role= "$T/state/apply-state")"
+out=$(run_runner "$SHA_B")
+assert_eq "s4/F2 switching back also converges (single proof per host)" success "$(status_of "$out")"
+
+# review F3: interrupted apply → in_progress written before mitamae; next cycle converges
+echo kill-parent > "$VERDICT"
+# force a reconcile (host is verified + inside the window) so mitamae actually runs;
+# the stub then kills the runner mid-apply → no final state write
+out=$(AUTO_MITAMAE_RECONCILE_INTERVAL_SEC=0 AUTO_MITAMAE_RECONCILE_JITTER_SEC=0 run_runner "$SHA_B")
+assert_eq "s4/F3 interrupted apply produced no status line" "" "$(status_of "$out")"
+assert_eq "s4/F3 state shows in_progress" "last_attempt_status=in_progress" "$(grep ^last_attempt_status= "$T/state/apply-state")"
+assert_eq "s4/F3 proof of the old success is still on record" "last_success_sha=$SHA_B" "$(grep ^last_success_sha= "$T/state/apply-state")"
+echo success > "$VERDICT"
+out=$(run_runner "$SHA_B")
+assert_eq "s4/F3 next cycle converges instead of trusting the old proof" success "$(status_of "$out")"
+out=$(run_runner "$SHA_B")
+assert_eq "s4/F3 then verified again" up_to_date "$(status_of "$out")"
+
 # ---------------------------------------------------------------- scenario 3
 echo "== scenario 3: orchestrator canary gate — hold on unverified, pass on verified"
 O="$T/orch"; mkdir -p "$O/textfile" "$O/bin"
@@ -231,6 +259,50 @@ run_orch "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EX
 assert_eq "s3 success → fleet contacted" 1 "$(fleet_contacted)"
 assert_eq "s3 success → gate pass" pass "$(gate)"
 assert_eq "s3 success → cycle complete" "orchestrator: cycle complete at expected_sha=$EXP" "$(cat "$O/orch.out")"
+
+run_orch "status=success sha=$SHA_A drift=1 duration=4 old=$SHA_A verified_sha=$SHA_A ts=now" 0
+assert_eq "s3 success for a DIFFERENT sha → fleet not contacted" 0 "$(fleet_contacted)"
+assert_eq "s3 success for a different sha → gate hold" hold "$(gate)"
+
+run_orch "status=bogus_state ts=now" 0
+assert_eq "s3 unknown status → fleet not contacted" 0 "$(fleet_contacted)"
+assert_eq "s3 unknown status → gate hold" hold "$(gate)"
+
+# review F6: gate series survives a hold→(next cycle) mid-cycle publish window
+run_orch "status=lock_held ts=now" 0
+assert_eq "s3/F6 gate line present after hold" 1 "$(grep -c '^auto_mitamae_canary_gate{' "$O/textfile/auto-mitamae.prom")"
+
+# review F1: hosts.json validation — zero canary / malformed → refuse the cycle, contact nobody
+cp "$O/hosts.json" "$O/hosts.json.bak"
+cat > "$O/hosts.json" <<JSON
+[ {"host": "fleet.invalid", "user": "root", "role": "pve/lxc-fleet.rb", "label": "fleet", "ct_id": 2} ]
+JSON
+run_orch "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EXP ts=now" 0
+assert_eq "s3/F1 zero-canary hosts.json → nobody contacted" 0 "$(wc -l < "$CONTACT" | tr -d ' ')"
+assert_eq "s3/F1 zero-canary hosts.json → cycle refused (exit 1)" 1 "$ORC"
+echo '[ {"host": "canary.invalid", "user": "root", "role": "pve/lxc-canary.rb", "label": "canary", "canary": true' > "$O/hosts.json"
+run_orch "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EXP ts=now" 0
+assert_eq "s3/F1 malformed hosts.json → nobody contacted" 0 "$(wc -l < "$CONTACT" | tr -d ' ')"
+assert_eq "s3/F1 malformed hosts.json → cycle refused (exit 1)" 1 "$ORC"
+mv "$O/hosts.json.bak" "$O/hosts.json"
+
+# multi-canary aggregation: fail beats hold beats pass
+cat > "$O/hosts.json" <<JSON
+[
+  {"host": "canary.invalid",  "user": "root", "role": "pve/lxc-canary.rb",  "label": "canary",  "canary": true},
+  {"host": "canary2.invalid", "user": "root", "role": "pve/lxc-canary2.rb", "label": "canary2", "canary": true},
+  {"host": "fleet.invalid",   "user": "root", "role": "pve/lxc-fleet.rb",   "label": "fleet"}
+]
+JSON
+echo "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EXP ts=now" > "$O/canary2.invalid.reply"
+run_orch "status=lock_held ts=now" 0
+assert_eq "s3 multi-canary pass+hold → fleet not contacted" 0 "$(fleet_contacted)"
+assert_eq "s3 multi-canary pass+hold → gate hold" hold "$(gate)"
+run_orch "status=mitamae_fail sha=$EXP drift=1 duration=3 old=$SHA_A ts=now" 1
+assert_eq "s3 multi-canary pass+fail → gate fail" fail "$(gate)"
+run_orch "status=success sha=$EXP drift=1 duration=4 old=$SHA_A verified_sha=$EXP ts=now" 0
+assert_eq "s3 multi-canary pass+pass → fleet contacted" 1 "$(fleet_contacted)"
+assert_eq "s3 multi-canary pass+pass → gate pass" pass "$(gate)"
 
 # ---------------------------------------------------------------- summary
 echo

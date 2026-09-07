@@ -111,13 +111,20 @@ STATE_DIR="${AUTO_MITAMAE_STATE_DIR:-/var/lib/auto-mitamae}"
 STATE_FILE="${STATE_DIR}/apply-state"
 LEGACY_STAMP_FILE="${STATE_DIR}/last-converge.epoch"
 
-# Atomic state write: tmp + mv so a reader (the next cycle, or an operator)
-# never sees a partial file. Called with the 5 field values in order.
+# Atomic state write: tmp + mv (same filesystem) so a reader (the next
+# cycle, or an operator) never sees a partial file. Fields, in order:
+#   last_success_sha / last_success_role / last_success_epoch — the proof
+#     that (sha, role) converged here. role is part of the key: a hosts.json
+#     role change on the same sha must not inherit the old role's success.
+#   last_attempt_sha / last_attempt_status / last_attempt_epoch — diagnostics
+#     + the retry guard. status is in_progress (written BEFORE mitamae runs,
+#     so an interrupted apply can never leave the old proof valid), success,
+#     or mitamae_fail.
 write_state() {
-    local s_sha="$1" s_epoch="$2" a_sha="$3" a_status="$4" a_epoch="$5" tmp
+    local s_sha="$1" s_role="$2" s_epoch="$3" a_sha="$4" a_status="$5" a_epoch="$6" tmp
     tmp=$(mktemp "${STATE_FILE}.tmp.XXXXXX")
-    printf 'last_success_sha=%s\nlast_success_epoch=%s\nlast_attempt_sha=%s\nlast_attempt_status=%s\nlast_attempt_epoch=%s\n' \
-        "$s_sha" "$s_epoch" "$a_sha" "$a_status" "$a_epoch" > "$tmp"
+    printf 'last_success_sha=%s\nlast_success_role=%s\nlast_success_epoch=%s\nlast_attempt_sha=%s\nlast_attempt_status=%s\nlast_attempt_epoch=%s\n' \
+        "$s_sha" "$s_role" "$s_epoch" "$a_sha" "$a_status" "$a_epoch" > "$tmp"
     mv -f "$tmp" "$STATE_FILE"
 }
 
@@ -195,6 +202,7 @@ now_epoch=$(date +%s)
 # must not abort under `set -u` BEFORE the status= line (that would surface as
 # silent ssh_unreachable every cycle), hence the defaults on every read.
 last_success_sha=""
+last_success_role=""
 last_success_epoch=0
 last_attempt_sha=""
 last_attempt_status=""
@@ -202,6 +210,7 @@ if [[ -f "$STATE_FILE" ]]; then
     while IFS='=' read -r k v; do
         case "$k" in
             last_success_sha)    last_success_sha="$v" ;;
+            last_success_role)   last_success_role="$v" ;;
             last_success_epoch)  last_success_epoch="$v" ;;
             last_attempt_sha)    last_attempt_sha="$v" ;;
             last_attempt_status) last_attempt_status="$v" ;;
@@ -209,6 +218,7 @@ if [[ -f "$STATE_FILE" ]]; then
     done < "$STATE_FILE"
 fi
 [[ "$last_success_sha" =~ ^[a-f0-9]{40}$ ]] || last_success_sha=""
+[[ "$last_success_role" =~ ^[A-Za-z0-9._/-]+\.rb$ ]] || last_success_role=""
 [[ "$last_attempt_sha" =~ ^[a-f0-9]{40}$ ]] || last_attempt_sha=""
 [[ "$last_success_epoch" =~ ^[0-9]+$ ]] || last_success_epoch=0
 # A future-dated success (clock jumped ahead, e.g. NTP not yet synced on a
@@ -217,17 +227,19 @@ fi
 if [[ "$last_success_epoch" -gt "$now_epoch" ]]; then last_success_epoch=0; fi
 
 # The 4 conditions that together permit skipping the converge (ADR 0009):
-#   1. drift == 0                          — no new origin/main commit
-#   2. last_success_sha == expected_sha    — THIS sha has succeeded here
-#   3. last_attempt_status == success      — the most recent attempt did not fail
+#   1. drift == 0                             — no new origin/main commit
+#   2. last_success_{sha,role} == expected/role — THIS sha+role succeeded here
+#   3. last_attempt_status == success         — the most recent attempt neither
+#                                               failed nor was interrupted
 #   4. now < last_success + INTERVAL + jitter — inside the reconcile window
 # (2) is what the timestamp-only stamp lacked: after "A succeeded, then B
 # failed", HEAD is already B (re-anchored above) so drift==0, and A's fresh
-# timestamp alone would have suppressed B's retry. (3) covers the same sha
-# failing on a periodic reconcile: the success record still names this sha,
-# but the failed attempt must be retried next cycle, not throttled.
+# timestamp alone would have suppressed B's retry. (3) covers a failed or
+# interrupted attempt at the same sha: the success record still names it,
+# but the attempt must be retried next cycle, not throttled.
 verified=0
 if [[ -n "$last_success_sha" && "$last_success_sha" == "$expected_sha" \
+      && "$last_success_role" == "$role" \
       && "$last_attempt_status" == "success" ]]; then
     verified=1
 fi
@@ -244,24 +256,31 @@ fi
 
 start=$(date +%s)
 new_sha=$(git rev-parse HEAD)
+# Invalidate BEFORE the first side effect: if this process is killed mid-apply
+# (host reboot, OOM, an operator ^C on a manual run) no final record is
+# written, and without this line the previous success would still satisfy
+# condition (3) next cycle. in_progress fails (3), so an interrupted apply is
+# always retried. Still inside the flock, so no other runner can observe a
+# half-applied host as verified.
+write_state "$last_success_sha" "$last_success_role" "$last_success_epoch" "$new_sha" in_progress "$start"
 if ./bin/mitamae local "$role" >"$apply_log" 2>&1; then
     status=success
     end_epoch=$(date +%s)
-    # Success: all 5 fields advance to this sha, so the next drift==0 cycle
-    # can throttle until the reconcile window. The legacy timestamp stamp is
-    # no longer read; drop it once the per-SHA record exists.
-    write_state "$new_sha" "$end_epoch" "$new_sha" success "$end_epoch"
+    # Success: every field advances to this sha+role, so the next drift==0
+    # cycle can throttle until the reconcile window. The legacy timestamp
+    # stamp is no longer read; drop it once the per-SHA record exists.
+    write_state "$new_sha" "$role" "$end_epoch" "$new_sha" success "$end_epoch"
     rm -f "$LEGACY_STAMP_FILE"
     verified_field=" verified_sha=$new_sha"
     rc=0
 else
     status=mitamae_fail
     end_epoch=$(date +%s)
-    # Failure: record ONLY the attempt. last_success_* keeps naming the sha
-    # that last succeeded here (it may differ from new_sha), and the failed
-    # attempt guarantees the next cycle converges again instead of throttling
-    # — the retry-every-cycle contract ADR 0006 intended.
-    write_state "$last_success_sha" "$last_success_epoch" "$new_sha" mitamae_fail "$end_epoch"
+    # Failure: record ONLY the attempt. last_success_* keeps naming the
+    # sha+role that last succeeded here (it may differ from new_sha), and the
+    # failed attempt guarantees the next cycle converges again instead of
+    # throttling — the retry-every-cycle contract ADR 0006 intended.
+    write_state "$last_success_sha" "$last_success_role" "$last_success_epoch" "$new_sha" mitamae_fail "$end_epoch"
     verified_field=""
     rc=1
 fi

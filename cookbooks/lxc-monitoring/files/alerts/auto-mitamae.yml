@@ -160,7 +160,10 @@ groups:
             orchestrator.sh has not run the fleet phase for 30+ minutes because the canary
             host has not proved expected_sha succeeded on it. Check auto_mitamae_canary_last_status
             for the raw runner status (ssh_unreachable / lock_held / sha_mismatch / up_to_date).
-            Runbook: ssh root@192.168.1.10 'pct exec 104 -- bash -c "cat /var/lib/auto-mitamae/apply-state; tail -40 /tmp/auto-mitamae.log"'
+            If the raw status is lock_held for more than one apply's worth of time, a runner or
+            mitamae from an earlier cycle is still alive on the canary holding the flock (the
+            orchestrator's 300s ssh timeout does not stop remote processes).
+            Runbook: ssh root@192.168.1.10 'pct exec 104 -- bash -c "cat /var/lib/auto-mitamae/apply-state; pgrep -af mitamae; tail -40 /tmp/auto-mitamae.log"'
 
       - alert: NodeExporterDown
         # Source-of-truth alert: every other auto-mitamae alert is built on

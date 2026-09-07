@@ -88,6 +88,27 @@ if [[ ! -f "${HOSTS_JSON}" ]]; then
     exit 1
 fi
 
+# Read hosts.json ONCE, after the flock, and validate it before either phase
+# runs (ADR 0009 review F1). Both phases iterate this snapshot, so a cookbook
+# apply rewriting /etc/auto-mitamae/hosts.json mid-cycle cannot hand phase B
+# a different host set (or canary set) than phase A judged. A gate with zero
+# canary hosts would pass vacuously and ship an unvalidated sha to the fleet,
+# so a canary-less or malformed file fails the cycle loudly instead of
+# silently completing with nothing applied (jq errors inside a process
+# substitution used to be invisible).
+if ! hosts_snapshot=$(jq -c '
+        if (type != "array") then error("hosts.json: top level is not an array")
+        elif length == 0 then error("hosts.json: no hosts")
+        elif ([.[] | select((.host|type) != "string" or (.user|type) != "string"
+                            or (.role|type) != "string" or (.label|type) != "string")] | length) > 0
+             then error("hosts.json: entry missing host/user/role/label string")
+        elif ([.[] | select(.canary == true)] | length) == 0
+             then error("hosts.json: no canary host — the canary gate cannot validate any sha")
+        else . end' "${HOSTS_JSON}" 2>&1); then
+    echo "orchestrator: refusing cycle — ${hosts_snapshot}" >&2
+    exit 1
+fi
+
 tmp_out=$(mktemp "${OUTPUT_TEXTFILE}.tmp.XXXXXX")
 trap 'rm -f "${tmp_out}" "${OUTPUT_TEXTFILE}.pub"' EXIT
 
@@ -123,8 +144,21 @@ now=$(date +%s)
 # looked dead while it was in fact still applying hosts, and the tail hosts'
 # status went stale. cp-then-rename keeps a scrape from reading a half-written
 # file. The .pub temp is cleaned by the EXIT trap.
+#
+# The canary gate verdict is only known after the LAST canary host, but every
+# per-host publish before that replaces the whole file. Without a carry-over
+# the auto_mitamae_canary_gate series would vanish for the duration of a
+# multi-canary cycle, and a Prometheus evaluation in that gap would reset
+# AutoMitamaeCanaryHeld's `for:` clock (ADR 0009 review F6). So until this
+# cycle's verdict exists, re-publish the previous cycle's gate line verbatim.
+prev_gate_line=$(grep -m1 '^auto_mitamae_canary_gate{' "${OUTPUT_TEXTFILE}" 2>/dev/null || true)
+gate_verdict=""
 publish() {
-  cp "${tmp_out}" "${OUTPUT_TEXTFILE}.pub" && mv "${OUTPUT_TEXTFILE}.pub" "${OUTPUT_TEXTFILE}"
+  cp "${tmp_out}" "${OUTPUT_TEXTFILE}.pub"
+  if [[ -z "${gate_verdict}" && -n "${prev_gate_line}" ]]; then
+      echo "${prev_gate_line}" >> "${OUTPUT_TEXTFILE}.pub"
+  fi
+  mv "${OUTPUT_TEXTFILE}.pub" "${OUTPUT_TEXTFILE}"
 }
 
 # Helper: apply mitamae-runner on one host. Populates LAST_STATUS for the
@@ -257,7 +291,7 @@ while IFS= read -r entry; do
             canary_hold_status="${LAST_STATUS}"
             ;;
     esac
-done < <(jq -c '.[] | select(.canary == true)' "${HOSTS_JSON}")
+done < <(jq -c '.[] | select(.canary == true)' <<<"${hosts_snapshot}")
 
 # Always emit canary status metrics regardless of pass/hold/fail. expected_sha
 # already in the textfile; canary_last_sha echoes it for Grafana joins.
@@ -298,7 +332,7 @@ fi
 while IFS= read -r entry; do
     apply_one_host "${entry}"
     publish
-done < <(jq -c '.[] | select(.canary != true)' "${HOSTS_JSON}")
+done < <(jq -c '.[] | select(.canary != true)' <<<"${hosts_snapshot}")
 
 mv "${tmp_out}" "${OUTPUT_TEXTFILE}"
 trap - EXIT
