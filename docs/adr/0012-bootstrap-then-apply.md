@@ -63,3 +63,18 @@ CI は `bootstrap.rb` を darwin / linux 両 job で dry-run する。
   mitamae の評価モデル（`~/ManagedProjects/setup/.claude/rules/ruby.md`）で固定。同一プロセスでは解けない。
 - **`bin/mitamae` ラッパーで自動的に 2 回目を回す**: 「未充足を success として隠す」形になる。
   incomplete を明示して止める方を採る。
+
+## Review（adversarial, codex — `docs/adr/0011-0012-review-design.md`）
+
+| # | 所見 | 採否 | 反映 |
+|---|---|---|---|
+| G1 | `bin/doctor` が固定 profile で STS するため、ssh-keys の TTY 自動選択（別名の有効 profile）を持つホストが正常な初回認証に到達できず entry を止める。加えて `awscli` インストール後の PATH 反映は子プロセス内だけで、親 shell には伝わらない | 採用（次段） | wrapper 側で必要な PATH を明示し、doctor の必須条件を entry と同じ認証契約（TTY 自動選択）に合わせる再設計が必要。fleet の限定 profile はそのまま固定し、Mac への admin 資格情報配布はしない。`TODO.md` に記録 |
+| G2 | `record_gate_event` は tool/reason だけを記録し必須/任意を持たない。SSM 権限不足は WARN、gh 未認証も WARN、非 TTY の `auth_unavailable` は sentinel を残さず成功終了できる。ADR の「必須 gate 未充足を FAIL」は sentinel だけでは判定できない | 採用（次段） | gate に安定 ID と required/optional を持たせ、機械可読な結果で tool_missing / auth_unavailable / user_skip を区別して exit 3 にする再実装が必要。`TODO.md` に記録 |
+| G3 | `bin/converge` の `rm -f`（前回 sentinel 削除）は `--dry-run` でも実行され、gate-report の書き込みは execute resource なので dry-run では走らない。`--dry-run --skip-doctor` で mitamae が 0 を返すと、前回の成功証跡を消したまま converged と報告する | 採用（次段） | dry-run では sentinel の削除・完了判定を行わないよう分岐し、表示を「計画の検査完了」に分ける再実装が必要。`TODO.md` に記録 |
+| G4 | `require_external_auth` の対話ループ（functions:258〜259）に試行上限が無く、EOF は空文字に変換されて再チェックされる。自動化された無限再適用は無い（wrapper は bootstrap/entry を各 1 回しか呼ばない）という主張自体は正しい | 部分採用 | 「無限再実行はしない」を wrapper の呼出回数の説明に限定する訂正は本 PR の範囲。EOF 明示中断・試行上限の追加は G1/G2 の再実装と合わせて次段。全 gate の `only_if` 化は不採用（gate-report の集計設計と衝突） |
+| G5 | `bin/bootstrap-lxc-creds` は資格情報ファイルを置くだけで awscli を導入しない。runner は entry 呼び出しの終了 0 だけで success/verified SHA を記録し、fleet は wrapper の完了契約（sentinel・doctor）に参加していない | 採用（次段） | fleet 向けの独立した移行条件（新規 LXC の初回 bootstrap 検証、未完了時の verified SHA 非更新）を別途定義する。runner の flock・SHA/role 検証・forced-command 制約は変更しない。`TODO.md` に記録 |
+| G6 | bootstrap は host 設定を "持たない" と書いたが、実際は `functions:549`（host-profile 経由のディレクトリ作成）と `awscli/darwin.rb`（既存 Homebrew awscli 削除・profile ファイル登録）を経由し、entry のホスト種別検証（bare-metal 拒否等）より先に走る | 採用（文書 + 次段） | ADR の「host 設定なし」記述を実際の変更範囲に合わせて訂正（本節）。entry のホスト種別検証を bootstrap より前に置く再配置は次段。`TODO.md` に記録 |
+
+**訂正**: 「bootstrap は host 設定を持たない」（Decision 2 の記述）は誤り。`bootstrap.rb` → `functions` → `host-profile` の include 経路で `~/.setup_shin1ohno` 等のディレクトリが作られ、`include_platform_cookbook "awscli"` の darwin 側は既存 Homebrew awscli の削除と profile ファイル登録を行う。「認証 gate を呼ばない」は正しい（該当する `require_external_auth` 呼び出し元はいずれも bootstrap の include グラフに無い）。
+
+**次の段への追加**（G1/G2/G3/G5/G6、上表参照）: `bin/converge` の doctor 前置き・sentinel 判定・dry-run 分岐・fleet 移行条件は、本 PR の「唯一の入口」実装のまま次段の再実装対象として `TODO.md` に記録した。呼び出し側 OS 選択・platform-purity・既存 lint/reachability・fleet の runner 機構（flock・SHA/role 検証・forced-command 制約）は変更しない。
