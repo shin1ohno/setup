@@ -1,5 +1,67 @@
 # TODO
 
+## bin/converge's doctor gate, sentinel, and dry-run branch have known correctness gaps (Medium)
+
+- **Failure class**: the ADR 0012 `bin/converge` single-entry wrapper (doctor →
+  bootstrap → entry, INCOMPLETE via exit 3) has three real bugs and two design
+  gaps found by the ADR 0011/0012 adversarial design review
+  (`docs/adr/0011-0012-review-design.md`, G1/G2/G3/G5/G6):
+  - (G1) `bin/doctor` always STS-checks a FIXED profile
+    (`aws-config.json`), but `ssh-keys` auto-selects any valid profile at
+    TTY-time. A host whose only valid profile has a different name passes
+    ssh-keys' own gate but fails doctor's pre-check and never reaches entry —
+    doctor can block a legitimate first-time auth instead of enabling it.
+    Also, `awscli`'s PATH addition (`/usr/local/bin`) only takes effect inside
+    the child process that installed it; the parent wrapper shell's `PATH`
+    does not see it, so doctor's `aws` presence check can still fail
+    immediately after a successful install.
+  - (G2) `record_gate_event` records only `tool`/`reason`, with no
+    required/optional distinction. SSM permission shortfalls are WARN, gh
+    auth is WARN, and a non-TTY `auth_unavailable` can return without ever
+    writing a sentinel — so "a required gate did not run" is NOT something
+    the sentinel + doctor combination can currently detect, even though the
+    ADR's Decision 3 describes exit 3 as covering exactly that case.
+  - (G3) `bin/converge`'s `rm -f` (clearing the previous success sentinel)
+    executes even under `--dry-run`, and gate-report's write is an `execute`
+    resource that dry-run never reaches. `--dry-run --skip-doctor` returning
+    0 therefore reports "converged" while having just deleted the evidence of
+    the PREVIOUS real convergence.
+  - (G5) fleet hosts (`pve/lxc-*.rb`) do not participate in this completion
+    contract at all — `bin/bootstrap-lxc-creds` only places a credentials
+    file (does not install awscli), and the auto-mitamae runner records
+    success/verified-SHA off mitamae's exit code alone, with no sentinel or
+    doctor-equivalent check.
+  - (G6) the ADR's Decision 2 states bootstrap carries no host configuration;
+    in fact `bootstrap.rb` → `functions` → `host-profile` creates
+    `~/.setup_shin1ohno` and friends, and the darwin `awscli` branch removes
+    an existing Homebrew awscli install and registers a profile file — both
+    BEFORE entry's own host-type validation (e.g. the bare-metal container
+    refusal in `linux.rb`) runs.
+- **When each triggers**: G1 on any host whose valid AWS profile name differs
+  from the one hardcoded in `aws-config.json`, or immediately after a fresh
+  `awscli` install in the same wrapper invocation; G2 whenever a truly
+  required gate hits `auth_unavailable` in a non-TTY run; G3 on any
+  `--dry-run` invocation following a real prior convergence; G5 on any new
+  fleet LXC's first bootstrap; G6 whenever bootstrap runs against a host type
+  entry would have rejected.
+- **Why not fixed in the PR that found them**: each needs a real redesign —
+  G1/G2 need doctor's gate model reworked to mirror entry's own auth-selection
+  contract and to carry required/optional + machine-readable outcome, not a
+  one-line patch; G3 needs the dry-run branch to skip both the sentinel
+  deletion and the completion judgment; G5 needs an independent fleet
+  migration condition (verify fresh-LXC bootstrap, don't advance verified-SHA
+  on an incomplete run) that does not disturb the runner's existing flock /
+  SHA+role verification / forced-command constraints; G6 is a documentation
+  correction already applied to ADR 0012 plus a reordering (host-type
+  validation before bootstrap) that is next-step, not this PR's scope.
+- **First step**: for G3 (cheapest, most likely to bite first), guard the
+  sentinel `rm -f` and the gate-report write path on `$DRY_RUN` in
+  `bin/converge`, and add a harness case that runs `--dry-run` after a
+  simulated prior success and asserts the sentinel is unchanged. Then work
+  G1/G2 (doctor gate model) and G5 (fleet migration condition) as separate
+  changes, each starting from the exact repro in
+  `docs/adr/0011-0012-review-design.md`. Delete this entry in the resolving
+  commit.
 ## bin/check-memory-v2-manifest's CI-recipe and import-line scanners have known blind spots (Medium)
 
 - **Failure class 0 (`bin/check-memory-v2-manifest`'s file-existence loop)**: the
