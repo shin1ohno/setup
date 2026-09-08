@@ -1,7 +1,7 @@
 # Prometheus config for the home-LAN monitoring fleet.
 #
 # Phase 3b scrape targets: monitoring (self) + weave + Phase 3a 5 service
-# LXC (hydra, consent, memory, roon-mcp) + Phase 3b 4 hosts
+# LXC (hydra, consent, roon-mcp) + Phase 3b 4 hosts
 # (roon, samba, housekeeping, pro-dev) + bare-metal PVE host + PVE API
 # exporter. Phase 3c will add pro-router. Job names align with `host`
 # label conventions used by auto-mitamae-orchestrator (Phase 2b) textfile
@@ -61,14 +61,6 @@ scrape_configs:
           - "192.168.1.75:9100"
         labels:
           host: consent
-
-  - job_name: node-memory
-    honor_labels: true
-    static_configs:
-      - targets:
-          - "192.168.1.72:9100"
-        labels:
-          host: memory
 
   - job_name: node-roon-mcp
     honor_labels: true
@@ -151,6 +143,33 @@ scrape_configs:
 
   # Phase 3c: pro-router (CT 102) Tailscale subnet-router. Distinct from
   # the bare-metal PVE host's `node-pve` job further below.
+  # dns-resolver / homebridge / es-memory: fleet apply targets (hosts.json)
+  # that had no scrape job — found by bin/check-host-configs (ADR 0011), which
+  # also retired the node-memory job for CT 107 (lxc-memory, removed in #616).
+  - job_name: node-dns-resolver
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.61:9100"
+        labels:
+          host: dns-resolver
+
+  - job_name: node-homebridge
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.84:9100"
+        labels:
+          host: homebridge
+
+  - job_name: node-es-memory
+    honor_labels: true
+    static_configs:
+      - targets:
+          - "192.168.1.83:9100"
+        labels:
+          host: es-memory
+
   - job_name: node-pro-router
     honor_labels: true
     static_configs:

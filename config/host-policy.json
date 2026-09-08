@@ -1,0 +1,9 @@
+{
+  "_comment": "Explicit host-table policy (ADR 0011). bin/check-host-configs cross-checks auto-mitamae-orchestrator/files/hosts.json (fleet apply targets), lxc-monitoring/files/prometheus.yml node-* scrape jobs, and the host-profile FLEET ip table. Every host that is intentionally in one table and not another MUST be listed here with a reason; anything unlisted that differs FAILS CI. The canonical registry is SSM /host-registry/devices (home-monitor); this file holds only setup-side policy, never host data.",
+  "prometheus_only": {
+    "nrt-router": "AWS EC2 subnet router; provisioned by home-monitor scripts, not by auto-mitamae (no /root/setup, no forced-command key)"
+  },
+  "prometheus_job_label_aliases": {},
+  "apply_only": {},
+  "unmonitored_by_node_exporter": {}
+}
