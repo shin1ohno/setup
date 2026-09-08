@@ -44,9 +44,21 @@ SH1-5（home-monitor PR #148）を手で 1 周回した結果、この種の作�
   **観測で正否を確定できる**もの
 - ドキュメント・コメントの修正
 - 既知の壊れたリンク / 参照の修正
+- **テストのある単一リポジトリのバグ修正**。条件は 4 つすべて:
+  1. 原因が `file:line` で特定済みで、issue のコメントに書いてある（推測で埋めない）
+  2. 正否が CI（`go test` / `pytest` 等）で確定する。修正と同じ PR に回帰テストを足す
+  3. 実機・本番サービス・auth / secret に触れない。provider や cookbook のコードが対象で、
+     その効果が実機に届くのは version bump と apply（どちらも allowlist 外）の後
+  4. 1 つの PR で 1 つのリポジトリだけを変える。release・tag・version bump・依存の追加は
+     しない — それらは PR の「未決の判断」として人間に返す
 
 **allowlist 外（必ず停止）**: 新規のアーキテクチャ、破壊的変更、auth / secret に触るもの、
-原因が特定できないもの、実機の設定変更、terraform apply、依存の追加。
+原因が特定できないもの、実機の設定変更、terraform apply、依存の追加、release / version bump。
+
+2026-09-09 の SH1-6 / SH1-7（terraform-provider-rtx の不具合 2 件）が 4 番目のクラスを
+足した契機です。診断は `attempt 1` で `file:line` まで出ていたのに、Go のコード修正が
+allowlist 外で止まり、人間が同じ修正を手で書くことになりました。実機に触れず CI で
+正否が決まる修正は、宣言的設定の修正と同じ性質です。
 
 ## 手順
 
