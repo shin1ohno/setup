@@ -692,6 +692,18 @@ shin1ohno/herdr` answers "Could not resolve to a Repository", so whether a stabl
 past 0.8.0 shipped cannot be decided from here; `cookbooks/herdr/default.rb:20` still
 pins 0.8.0. Next cycle needs the correct repo path for this probe.
 
+Status 2026-09-09: **the trigger condition is met and the fix is confirmed shipped
+in a stable.** The 09-06 probe used the wrong repo path — it is
+`ogulcancelik/herdr`, not `shin1ohno/herdr` (the `url =` line in
+`cookbooks/herdr/default.rb:43` already names the right one). With the correct
+path, `gh api repos/ogulcancelik/herdr/releases/latest --jq .tag_name` returns
+**v0.9.0** (2026-09-07), and **v0.8.2**'s (2026-08-19) notes carry this exact bug:
+"Remote clients now continue redrawing at very large terminal sizes instead of
+freezing when a full ANSI frame exceeds the transport limit. (#2670)". So the
+"confirm its notes include the fix" half of the first step is done; what remains
+is recomputing the per-target sha256s, bumping `herdr_version` (0.8.0 -> 0.9.0),
+and restarting the server at a moment when no agent panes are active.
+
 ## Vector drops 94% of RTX DHCP lease events on the floor (Low)
 
 `transforms.parse` Stage 3 in `cookbooks/lxc-monitoring/files/vector.toml` matches
