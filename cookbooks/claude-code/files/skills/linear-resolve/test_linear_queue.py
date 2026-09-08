@@ -79,6 +79,47 @@ class Attempts(unittest.TestCase):
         self.assertEqual(q.attempts(i), 0)
 
 
+class TerminalDisposition(unittest.TestCase):
+    """The defect L3 found: a finished issue with no open decision was re-picked
+    every cycle until attempts ran out, because nothing expressed "done"."""
+
+    def test_done_marker_stops_the_loop(self):
+        i = issue("A", ["agent"], [
+            c("linear-loop done — 変更不要でした " + M, at="2026-09-08T01:00:00Z"),
+        ])
+        r = q.select({"issues": [i]}, OWNER, CFG)
+        self.assertIsNone(r["picked"])
+        self.assertEqual(r["decisions"][0]["reason"], "done, awaiting the operator")
+
+    def test_done_is_revocable_by_the_operator(self):
+        """A terminal state the operator cannot reopen would rebuild setup#963."""
+        i = issue("A", ["agent"], [
+            c("linear-loop done — 変更不要でした " + M, at="2026-09-08T01:00:00Z"),
+            c("やっぱり Dock は外して", at="2026-09-08T02:00:00Z"),
+        ])
+        r = q.select({"issues": [i]}, OWNER, CFG)
+        self.assertEqual(r["picked"]["identifier"], "A")
+        self.assertEqual(r["decisions"][0]["reason"], "done but the operator replied")
+
+    def test_a_third_party_cannot_revive_a_done_issue(self):
+        i = issue("A", ["agent"], [
+            c("linear-loop done " + M, at="2026-09-08T01:00:00Z"),
+            c("まだ終わってないのでは", uid=OTHER, at="2026-09-08T02:00:00Z"),
+        ])
+        self.assertIsNone(q.select({"issues": [i]}, OWNER, CFG)["picked"])
+
+    def test_the_phrase_from_a_human_is_not_a_done_marker(self):
+        i = issue("A", ["agent"], [c("linear-loop done って書いておくね")])
+        self.assertFalse(q.is_done(i))
+        self.assertEqual(q.select({"issues": [i]}, OWNER, CFG)["picked"]["identifier"], "A")
+
+    def test_label_removal_alone_also_stops_it(self):
+        """The other half of the belt-and-braces: if the comment failed but the
+        label removal succeeded, the agent-label gate catches it."""
+        i = issue("A", [], [c("linear-loop attempt 1 " + M)])
+        self.assertIsNone(q.select({"issues": [i]}, OWNER, CFG)["picked"])
+
+
 class Selection(unittest.TestCase):
     def test_picks_exactly_one_the_least_recently_updated(self):
         dump = {"issues": [
