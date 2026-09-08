@@ -849,3 +849,54 @@ is keyed on an address the AP does not own.
 - **Why not done here**: both touch home-monitor terraform / a network device's
   running config, which is outside the self-heal loop's autonomous envelope
   (network gear is read-only to it, and home-monitor TF is needs-human).
+
+## No AP-liveness signal exists; "is wlx402 alive" is inferred from log volume (Medium)
+
+- **Failure class**: `Net: syslog silent (<ap>)` is a document-count absence
+  rule, so on an AP whose log stream is entirely client-driven it cannot
+  separate "the AP is dead" from "nobody is using the WiFi". wlx402 has no
+  client-independent floor except one scheduled burst per day, so the window
+  has to exceed 24 h to stop flapping (setup#965 30 -> 360 min, setup#975
+  360 -> 1560 min). Each widening buys quiet at the cost of detection latency,
+  and 26 h is where that curve ends — the rule is now a pipeline-liveness
+  check, and a genuinely dead wlx402 stays undetected for about a day.
+- **When it triggers**: any AP loses power, wedges, or drops off the bridge.
+  Nothing pages until its once-daily scheduled message fails to arrive.
+  wlx313 (ITM) is in the same shape with a 30 min window it has not yet
+  earned, because there is still too little history to measure its gaps.
+- **First step**: pick the delivery path, because both candidates are outside
+  the self-heal loop's autonomous envelope and neither is obviously better:
+  (a) blackbox_exporter already ships a `tcp_connect` module
+  (`cookbooks/lxc-monitoring/files/blackbox.yml`) and the alert-rule pattern
+  exists (`files/alerts/rtx-snmp.yml`), so a `wlx-liveness` job probing
+  `.5:80`, `.6:80`, `.155:80` plus a `probe_success == 0 for: 5m` rule is a
+  small diff — but the Prometheus alert family is shipped DISABLED
+  (`SELF_HEAL_PROM_URL=""` in `cookbooks/self-heal-observer/default.rb`), so
+  it reaches nobody until that is switched on, which turns every `critical`
+  Prometheus alert into a GitHub issue at once; or (b) a Kibana synthetics TCP
+  monitor, which already has a working delivery path (the `Uptime monitor
+  down` family) but lives in home-monitor terraform = needs-human.
+- **Then**: once a liveness signal exists, drop the syslog-silence windows back
+  to something short, since their job reverts to catching a Vector/ingest drop
+  rather than a dead AP.
+
+## wlx402's clock has been wrong since its 2026-08-29 reboot (Low)
+
+- **Failure class**: `show environment` on wlx402 (192.168.1.5) reports boot
+  time `2020/01/01 09:00:17` and current time in 2020, i.e. the AP has been
+  free-running from its power-on default for its whole uptime. It runs
+  `schedule at 1 startup * ntpdate ntp.nict.jp syslog` and
+  `schedule at 2 */* 00:00 * ntpdate ntp.nict.jp syslog`, so ntpdate has
+  failed every attempt since the reboot. wlx323 (192.168.1.6) booted in the
+  same power event (`2026/08/29 17:39:36`, elapsed within an hour of wlx402's)
+  and holds a correct clock, so this is specific to wlx402, not to the site.
+- **Why it matters**: `show log` is the only source for the window ES has
+  already aged out, and its timestamps are unusable without first deriving the
+  offset from `show environment` — 2432 days in the setup#975 investigation.
+  Anyone reading that log during an incident will mis-order events.
+- **First step**: on wlx402, check whether `ntp.nict.jp` resolves and whether
+  the reply is reachable — the AP is configured with `dns server 192.168.1.253`
+  and the name currently returns AAAA records, so an AP without usable IPv6
+  egress would fail there. Compare against wlx323's `show config` NTP/DNS
+  lines, which work. Fixing it is a device config change = needs-human; the
+  self-heal loop is read-only on network gear.
