@@ -19,8 +19,13 @@ include_cookbook "lxc-shared-user"
 
 # IP forwarding is required for `tailscale up --advertise-routes`. Without
 # this sysctl any node accepting the advertised 192.168.1.0/24 route via
-# tailnet will black-hole packets through this LXC. Persisted via drop-in
-# so it survives reboots and `pct restart`.
+# tailnet will black-hole packets through this LXC.
+#
+# The drop-in alone does NOT survive a reboot: PVE masks systemd-sysctl.service
+# inside LXC containers, so /etc/sysctl.d is never replayed at boot and the
+# value only ever came from the `sysctl -p` below at converge time. The
+# pro-router-ip-forward.service unit installed further down is what actually
+# makes it persist (see that file's header for the 2026-08-16 incident).
 file "#{node[:setup][:root]}/lxc-pro-router-ip-forward.conf" do
   owner node[:setup][:user]
   group node[:setup][:group]
@@ -43,6 +48,26 @@ end
 execute "apply pro-router ip-forward sysctl" do
   command "sudo sysctl -p /etc/sysctl.d/99-lxc-pro-router-ip-forward.conf"
   action :nothing
+end
+
+# Boot persistence for the drop-in above. systemd-sysctl.service is masked in
+# every PVE LXC, so without this unit the forwarding sysctls are lost on every
+# `pct restart` / PVE host reboot until the next mitamae apply happens to run.
+ip_forward_unit_staging = "#{node[:setup][:root]}/lxc-pro-router/pro-router-ip-forward.service"
+
+directory "#{node[:setup][:root]}/lxc-pro-router" do
+  mode "755"
+end
+
+remote_file ip_forward_unit_staging do
+  source "files/pro-router-ip-forward.service"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+end
+
+systemd_unit "pro-router-ip-forward.service" do
+  staging_path ip_forward_unit_staging
 end
 
 # Reuse the canonical Tailscale install path. Static ::linux — pro-router is an
