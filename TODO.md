@@ -252,6 +252,11 @@ can never auto-resolve, because the name they query no longer exists.
   host before rollout (a wrong `terms` shape would silently blind every
   process-liveness rule in the fleet). Delete this entry in the resolving commit.
 
+Status 2026-09-06: unchanged. `cookbooks/lxc-kibana/default.rb` still matches a
+single spelling — `{ term: { "process.name": $process } }` at L101, with the KQL at
+L76 interpolating one `${process}`. #833 and #852 only chased the spelling of the
+day; the list-accepting fix this entry asks for is not in.
+
 ## Elastic CA rotation is not detected by the cert skip_if guards (Medium)
 
 The content-aware `skip_if` migration (PR "content-aware skip_if") changed the
@@ -281,6 +286,9 @@ needle, so the gate keeps skipping.
   compile-time skip_if, and share one implementation between the two cookbooks.
   Delete this entry in the resolving commit.
 
+Status 2026-09-06: no drift check yet. `rg 'serial'` across `cookbooks/**/*.rb`
+returns no cert-related hit, and `git log --grep='cert serial' -i` on main is empty.
+
 ## docs/rust.md — apply the estate-lens retro's sandbox-EPERM addendum (Low)
 
 From the 2026-07-24 claude-md-audit removal verification: the estate-lens
@@ -296,6 +304,10 @@ it.
   against the current sandbox behavior once, then add the section to
   `cookbooks/claude-code/files/docs/rust.md`. Delete this entry in that
   commit.
+
+Status 2026-09-06: not applied. `~/.claude/docs/rust.md` (4935 B, mtime Aug 1)
+matches neither `EPERM` nor `sandbox`; positive control `Rust|cargo` = 14 hits, so
+the file is being read and the addendum is genuinely absent.
 
 ## H2: MCP auth-proxy resource isolation (REVIEW NEEDED — post-cognee-decommission)
 
@@ -427,6 +439,9 @@ scope for the rules diet.
   families in `enabledPlugins` (keep `gws-*` operational skills) and confirm
   nothing in daily flows regresses.
 
+Status 2026-09-06: unchanged — a fresh headless session on sh1-cloud still lists the
+full `gws-*` / `recipe-*` / `persona-*` set in its available-skills block.
+
 ## auto-memory stale review — Cognee-referencing memories post-#656 (Low)
 
 From the 2026-07-06 claude-md-audit critic pass: project auto-memory dirs
@@ -440,6 +455,9 @@ pipelines and the old local MCP ports.
   reversal), but a proactive sweep shortens the stale window.
 - First step: `grep -rliE 'cognee|cognify|8001|8002' ~/.claude/projects/*/memory/`
   and update or delete each hit, syncing MEMORY.md index lines in the same pass.
+
+Status 2026-09-06: 8 files still match. `grep -rliE 'cognee|cognify|:8001|:8002'
+~/.claude/projects/*/memory/` = 8 hits out of 77 memory files on sh1-cloud.
 
 ## remindd daemon — connection/idle-timeout hardening (Low)
 
@@ -534,6 +552,11 @@ records why in a comment — so the cloud box is unaffected either way.
   rewriting to `cut -d' ' -f2` under a single-quoted `bash -c` wrapper (bash would
   otherwise expand `$2` as a positional parameter), exactly as done in the
   overlay's copy.
+
+Status 2026-09-06: still present. `cookbooks/ssh-keys/default.rb:383` runs
+`ssh-keyscan -t rsa,ecdsa,ed25519 -T 10 github.com 2>/dev/null > "$TMP"`, and no fix
+commit exists on main (`--grep` for keyscan returns only #786, which filed this
+entry, and #353). The end-to-end check still needs a home-LAN Linux host.
 
 ## lxc-elasticsearch / lxc-kibana / lxc-monitoring — nine dash-fatal pipefail sites (Medium)
 
@@ -633,24 +656,10 @@ this host and predates the Zed work.
   touch resources placed into system paths via `execute "sudo install ..."` —
   those legitimately name an owner.
 
-## `/todo-collect` の Slack saved sweep が End of results に到達しない (Medium)
-
-2026-08-17 の初回無人 run（sh1-cloud、`todo-collect-run.sh`）で `is:saved` を 6 ページ
-（120 件）辿っても投稿日 2025-04 まで遡り続け、End of results 未到達で打ち切った。ledger には
-truncated として残数不明のまま明記されている（silent cap は避けられている）。
-
-- **前回記録との矛盾**: 2026-07-08 の ledger は「115 件フル sweep（6 ページ、End of results 到達）」
-  と書いているが、同じ 6 ページで到達しないことが今回判明した。当時も打ち切っていた可能性が高く、
-  「全件見た」という前提で候補を絞っていた分の取りこぼしが残っている。
-- **なぜ現状の指示では閉じないか**: SKILL.md は「`cursor` を End of results まで辿る」と指示する
-  だけで、saved の総数が MCP 検索の実用ページ数を超えるケースの打ち切り規則を持たない。毎日の無人
-  run が同じ 120 件を再ページングし、末尾には永久に到達しない。
-- **最初の一歩**: `is:saved` に `before:` を組み合わせた時間窓分割ページング（saved は保存状態の
-  リストなので、投稿日の窓を古い方へずらしながら各窓で End of results を確定させる）を実測する。
-  実用ページ数の上限が窓分割でも越えられないなら、「候補化は直近 N 日の投稿に限り、それ以前は毎回
-  truncated 残数つきで明記する」を SKILL.md に明文化する。完了条件: sweep が End of results に
-  到達する、または打ち切り規則が SKILL.md に明記され ledger に残数が出る（このエントリは対応
-  コミットで削除）。
+Status 2026-09-06: the blast-radius count is still unrun, and the target is not in
+this repo — sh1-cloud is built by the `gcp-*` cookbooks in the zp-SHIN overlay
+(`projects/mercari-setup/cookbooks/gcp-{aws-federation,cli-tools,es-memory,
+metadata-route-guard,ssh-keys,tailscale,ubuntu-slim}`), so the grep has to run there.
 
 ## herdr — bump past 0.8.0 once a stable ships the oversized-frame render fix (Low)
 
@@ -678,6 +687,11 @@ stable = v0.8.0, the pinned version).
   a moment when no agent panes are active. Delete this entry in the resolving
   commit.
 
+Status 2026-09-06: probe unavailable from sh1-cloud — `gh release list -R
+shin1ohno/herdr` answers "Could not resolve to a Repository", so whether a stable
+past 0.8.0 shipped cannot be decided from here; `cookbooks/herdr/default.rb:20` still
+pins 0.8.0. Next cycle needs the correct repo path for this probe.
+
 ## Vector drops 94% of RTX DHCP lease events on the floor (Low)
 
 `transforms.parse` Stage 3 in `cookbooks/lxc-monitoring/files/vector.toml` matches
@@ -701,6 +715,9 @@ serving interface in between and ITM's RTX830 does not:
   that mapping is `dynamic: strict` and a new field is otherwise a whole-document
   rejection. Cover both spellings with a `[[tests]]` case each; the harness and
   its `vector test` invocation are already in the file.
+
+Status 2026-09-06: unchanged. No commit since #916 touches the lease parser; #962
+(today) rewrote parts of `vector.toml` for wlx313's syslog mapping only.
 
 ## pve-host holds the ULA /64 on both bridges, so v6 source selection is asymmetric (Low)
 
@@ -818,6 +835,9 @@ module either is in the map or is not), and emit
 `memory_keeper_reconcile_last_exit_code` from `memory-keeper-health.sh` via
 `systemctl show -p ExecMainStatus memory-keeper-reconcile.service` so a dead
 tick is visible with an empty queue. Delete this entry in the resolving commit.
+
+Status 2026-09-06: the lint check is still absent. `bin/lint-cookbooks` (43 KB)
+matches none of `import_|imported|deploy map|deploy_map`.
 
 ## wlx313 syslog depends on a DHCP lease that nothing reserves (Medium)
 
