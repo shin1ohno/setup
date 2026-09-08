@@ -71,3 +71,15 @@ setup 固有のポリシー（監視のみのホスト、適用のみのホス�
   （版付きローカルスナップショット）を維持。
 - **今すぐ file_sd + 生成器を実装する**: snapshot 形式が SSM 未確認のまま確定してしまう。検査を先に置き、
   形式は SSM を読める環境で決める。
+
+## Review（adversarial, codex — `docs/adr/0011-0012-review-design.md`）
+
+| # | 所見 | 採否 | 反映 |
+|---|---|---|---|
+| F1 | `bin/check-host-configs` の正規表現が最初の 1 target/1 host label しか読まず、二つ目以降の static target・別表記 job 名を検査から漏らす | 採用（次段） | YAML パーサー（Ruby 標準 `YAML`）で scrape_configs → static_configs → targets を全件走査する再実装が必要。本 PR の正規表現ベース実装では閉じない。`TODO.md` に失敗クラスと最初の一歩を記録 |
+| F2 | IPv4 抽出に失敗した job を無条件に DNS 扱いにし、target 自体の宛先や存在を読まずに host label だけで合格させる | 採用（次段） | target の構文・ポート検証と「解析不能」/「DNS」の区別が必要。DNS 名はオフラインの明示的対応表で検証し、名前解決や AWS 読み出しは CI に追加しない（home-monitor の IAM 境界は維持）。`TODO.md` に記録 |
+| F3 | 理由付き例外（`config/host-policy.json`）は key の有無だけで判定され、空理由文字列・重複分類・alias の job/host label 混在を拒否できない | 採用（次段） | 例外を `{reason, ...}` の型付き構造にし、空理由・未知キー・重複分類を拒否する検証を追加。job 名の別名と host label の別名を分離する。`TODO.md` に記録 |
+| F4 | FLEET 抽出が Ruby ソースを評価せず字面（引用符・空白）に依存し、抽出件数ゼロも FAIL にしない | 採用（次段） | IP を持つ identity subset を小さいデータファイルに分離し、host-profile と checker が同じ値を読む形へ移行。SSM snapshot 導入までの間、抽出不能・対応先なし IP を FAIL にする最小強化が必要。`TODO.md` に記録 |
+| F5 | snapshot（SSM schema 未確認）と file_sd（移行コスト）の延期理由が同一に書かれており、「一元化」というタイトルと実装範囲が不一致 | 採用（文書） | 両延期理由を分けて明記（本 ADR の該当節を参照）。file_sd は既存 static job のままでも今回の検証 (1)〜(4) を強化できるため、今回は F1〜F4 の静的検査強化を優先する |
+
+FLEET/Prometheus の 3 表照合そのもの（既存検証 (1)〜(4)、`node-memory` 削除・3 job 追加）は継続して green（`./bin/check-host-configs` は現行入力に対し OK — この結果は F1〜F4 の反例が現行入力に存在しないことを意味しない、レビュー本文の実行結果節を参照）。呼び出し側 OS 選択・platform-purity・薄い LXC entry・role 所有・home-monitor との IAM 境界は変更なし。

@@ -1,5 +1,41 @@
 # TODO
 
+## bin/check-host-configs's static-analysis checks have coverage gaps a well-formed config can exploit (Medium)
+
+- **Failure class**: the FAIL-tier checker added for ADR 0011 (`bin/check-host-configs`)
+  reads Prometheus's `node-*` scrape jobs and the FLEET table with regexes and
+  string matching rather than a structural parser, so it can report OK against
+  inputs its own design intends to catch. Surfaced by the ADR 0011/0012
+  adversarial design review (`docs/adr/0011-0012-review-design.md`, F1/F2/F4):
+  (F1) the regex reads only the FIRST `- targets:` entry and the FIRST `host:`
+  label per job, so a second static target or a re-quoted job name is invisible
+  to the checker; (F2) any job whose target the checker cannot parse as IPv4 is
+  treated as "DNS" and passed on host-label presence alone, without validating
+  the target string or its port; (F4) the FLEET extraction depends on the exact
+  quoting style of the Ruby literal (`'ip' => '...'`  vs a re-quoted or
+  reformatted line), so a changed IP that also changes quoting style drops out
+  of the extracted set instead of being compared.
+- **When it triggers**: any future edit to `prometheus.yml` that adds a second
+  static target to an existing job, uses double quotes on a job name, points a
+  job at a wrong host while keeping its label, or reformats the FLEET hash
+  literal in `cookbooks/host-profile/default.rb` — the checker stays green
+  while the drift it exists to catch goes uncaught.
+- **Why not fixed in the PR that found them**: closing F1/F2/F4 needs the
+  checker to parse the real Prometheus YAML (Ruby's stdlib `YAML` module)
+  rather than regex over lines, plus a target-syntax validator and an explicit
+  DNS-name allowlist keyed by policy (not by host-label presence) — a
+  structural rewrite of the checker, not a one-line patch. F3 (the
+  `config/host-policy.json` exception schema accepts an empty `reason` and
+  conflates job-name aliases with host-label aliases) needs a typed exception
+  schema. All four need review before landing so the rewritten checker does
+  not itself acquire new blind spots.
+- **First step**: rewrite the Prometheus-side read using `YAML.safe_load_file`
+  and walk `scrape_configs[].static_configs[].targets` exhaustively (not just
+  index 0), FAILing on any static target the walk cannot classify as IPv4 or an
+  explicitly policy-allowlisted DNS name. Add the F1/F2/F4 examples from
+  `docs/adr/0011-0012-review-design.md` as regression fixtures before touching
+  the implementation. Delete this entry in the resolving commit.
+
 ## Network fault detection covers thresholds only; the baseline-comparison half is unwritten (Medium)
 
 `expected-network-signals.json` (#948) ships ten `.es-query` rules, all of the
