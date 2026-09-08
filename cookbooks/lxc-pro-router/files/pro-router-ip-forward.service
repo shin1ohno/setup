@@ -1,0 +1,30 @@
+[Unit]
+# Apply the pro-router IP-forwarding drop-in at boot.
+#
+# Why a dedicated unit instead of relying on /etc/sysctl.d: PVE masks
+# systemd-sysctl.service inside LXC containers (most sysctls are read-only in a
+# container namespace), so /etc/sysctl.d/*.conf drop-ins are NEVER applied at
+# container boot. The drop-in therefore only ever took effect because a mitamae
+# apply ran `sysctl -p` at converge time -- the value then survived purely as
+# runtime state for as long as the CT stayed up.
+#
+# Observed 2026-08-16: after the PVE host rebooted, pro-router came back with
+# net.ipv4.ip_forward=0 and silently black-holed every LAN -> AWS VPC packet it
+# is supposed to forward. hydra (CT106) could not reach its RDS DSN in
+# 10.33.128.0/18 and never bound 4444/4445, which took down the hydra and
+# mcp.ohno.be monitors.
+#
+# Ordered before tailscaled so forwarding is on before subnet routes are
+# advertised.
+Description=Apply pro-router IP forwarding sysctls (systemd-sysctl is masked in PVE LXCs)
+After=local-fs.target
+Before=tailscaled.service
+ConditionPathExists=/etc/sysctl.d/99-lxc-pro-router-ip-forward.conf
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/sysctl -p /etc/sysctl.d/99-lxc-pro-router-ip-forward.conf
+
+[Install]
+WantedBy=multi-user.target
