@@ -1,0 +1,97 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# Guardrail (ADR 0011, handoff item 2): the three hand-edited host tables in
+# this repo must agree, or disagree only where config/host-policy.json says so.
+#
+#   A. cookbooks/auto-mitamae-orchestrator/files/hosts.json  — fleet apply targets
+#   B. cookbooks/lxc-monitoring/files/prometheus.yml node-* static jobs — node-exporter scrape
+#   C. cookbooks/host-profile/default.rb FLEET `ip` entries       — offline identity
+#
+# FAIL conditions:
+#   1. a hosts.json host with no node-* job scraping <host>:9100 (unmonitored
+#      apply target) unless policy.unmonitored_by_node_exporter names it
+#   2. a node-* job whose target is not a hosts.json host (scraping a retired
+#      or unmanaged box) unless policy.prometheus_only names its host label
+#   3. a node-* job whose `host` label differs from the hosts.json label for
+#      that IP (dashboards join on `host`) unless policy aliases it
+#   4. a FLEET `ip` that differs from hosts.json for the same label
+#   5. a policy entry that no longer applies (stale policy)
+#
+# Found on the day this landed: node-memory still scraped 192.168.1.72 (lxc-memory
+# retired in #616) and dns-resolver / homebridge / es-memory had no scrape job.
+# lint-cookbooks check 10 WARNs on part of this; this script FAILs.
+#
+# Usage: bin/check-host-configs   # exit 1 on any FAIL
+require "json"
+REPO = File.expand_path("..", __dir__)
+Dir.chdir(REPO)
+
+policy   = JSON.parse(File.read("config/host-policy.json"))
+hosts    = JSON.parse(File.read("cookbooks/auto-mitamae-orchestrator/files/hosts.json"))
+by_ip    = hosts.to_h { |h| [h["host"], h["label"]] }
+by_label = hosts.to_h { |h| [h["label"], h["host"]] }
+
+# B. node-* jobs: (job_name, target ip, host label) — minimal YAML walk, the
+# file's node jobs are all `static_configs` with one target + a host label.
+prom = File.read("cookbooks/lxc-monitoring/files/prometheus.yml")
+jobs = []
+prom.scan(/- job_name: (node-[\w-]+)\n(.*?)(?=\n  - job_name:|\z)/m) do |name, body|
+  ip    = body[/- "?(\d+\.\d+\.\d+\.\d+):9100"?/, 1]
+  label = body[/^\s+host: ([\w-]+)/, 1]
+  jobs << { job: name, ip: ip, label: label }
+end
+
+# C. FLEET ip entries
+fleet_ips = {}
+File.read("cookbooks/host-profile/default.rb").scan(/^\s+"([\w-]+)" => \{[^}]*"ip" => "([\d.]+)"/) { |l, ip| fleet_ips[l] = ip }
+
+fails = []
+aliases = policy.fetch("prometheus_job_label_aliases", {})
+prom_only = policy.fetch("prometheus_only", {})
+unmon = policy.fetch("unmonitored_by_node_exporter", {})
+apply_only = policy.fetch("apply_only", {})
+
+scraped_ips = jobs.map { |j| j[:ip] }.compact
+hosts.each do |h|
+  next if scraped_ips.include?(h["host"])
+  next if unmon.key?(h["label"])
+  fails << "1. hosts.json #{h["label"]} (#{h["host"]}) has no node-exporter scrape job in prometheus.yml"
+end
+
+jobs.each do |j|
+  next if j[:ip].nil? # DNS-named target (nrt-router) — handled by label check below
+  unless by_ip.key?(j[:ip])
+    next if prom_only.key?(j[:label])
+    fails << "2. prometheus.yml #{j[:job]} scrapes #{j[:ip]} which is not in hosts.json (retired or unmanaged host)"
+    next
+  end
+  expected = by_ip[j[:ip]]
+  actual   = aliases.fetch(j[:label], j[:label])
+  fails << "3. prometheus.yml #{j[:job]} label host=#{j[:label]} but hosts.json calls #{j[:ip]} '#{expected}'" unless actual == expected
+end
+jobs.select { |j| j[:ip].nil? }.each do |j|
+  fails << "2. prometheus.yml #{j[:job]} (DNS target) host=#{j[:label]} is not in hosts.json and not in policy.prometheus_only" unless prom_only.key?(j[:label]) || by_label.key?(j[:label])
+end
+
+fleet_ips.each do |label, ip|
+  next unless by_label.key?(label)
+  fails << "4. host-profile FLEET #{label} ip=#{ip} but hosts.json says #{by_label[label]}" unless by_label[label] == ip
+end
+
+prom_only.each_key do |l|
+  fails << "5. stale policy prometheus_only.#{l}: no node-* job carries host=#{l}" unless jobs.any? { |j| j[:label] == l }
+end
+unmon.each_key { |l| fails << "5. stale policy unmonitored_by_node_exporter.#{l}: not in hosts.json" unless by_label.key?(l) }
+apply_only.each_key { |l| fails << "5. stale policy apply_only.#{l}: not in hosts.json" unless by_label.key?(l) }
+
+puts "host-config consistency: hosts.json=#{hosts.size} node-jobs=#{jobs.size} fleet-ips=#{fleet_ips.size} policy-exceptions=#{prom_only.size + unmon.size + apply_only.size}"
+if fails.empty?
+  puts "OK: hosts.json, prometheus.yml node-* jobs and host-profile FLEET agree (modulo config/host-policy.json)."
+  exit 0
+end
+warn "FAIL: #{fails.size} host-table inconsistenc#{fails.size == 1 ? 'y' : 'ies'}:"
+fails.sort.each { |f| warn "  - #{f}" }
+warn ""
+warn "Fix the table, or record an intentional exception in config/host-policy.json with a reason."
+exit 1

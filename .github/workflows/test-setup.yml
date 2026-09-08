@@ -94,7 +94,7 @@ jobs:
         cat > test_core_install.rb << 'EOF'
         include_recipe "cookbooks/functions/default.rb"
         include_cookbook "homebrew"
-        include_cookbook "git"
+        include_platform_cookbook "git"
         include_cookbook "zsh"
         include_cookbook "tree"
         include_cookbook "wget"
@@ -157,13 +157,13 @@ jobs:
         sudo chmod 777 /tmp
         cat > test_essential.rb << 'EOF'
         include_recipe "cookbooks/functions/default.rb"
-        include_cookbook "fzf"
+        include_platform_cookbook "fzf"
         include_cookbook "bat"
         include_cookbook "ripgrep"
         include_cookbook "fd"
         include_cookbook "tmux"
-        include_cookbook "neovim"
-        include_cookbook "terraform"
+        include_platform_cookbook "neovim"
+        include_platform_cookbook "terraform"
         EOF
         ./bin/mitamae local test_essential.rb
 
@@ -195,8 +195,8 @@ jobs:
           python: { versions: %w(3.12.2 3.11.8) },
         )
         include_cookbook "nodejs"
-        include_cookbook "python"
-        include_cookbook "golang"
+        include_platform_cookbook "python"
+        include_platform_cookbook "golang"
         include_cookbook "rust"
         EOF
         ./bin/mitamae local test_languages.rb
@@ -345,11 +345,11 @@ jobs:
         export USER=runner
         cat > test_core_install.rb << 'EOF'
         include_recipe "cookbooks/functions/default.rb"
-        include_cookbook "git"
+        include_platform_cookbook "git"
         include_cookbook "zsh"
         include_cookbook "tree"
         include_cookbook "wget"
-        include_cookbook "build-essential"
+        include_platform_cookbook "build-essential"
         EOF
         ./bin/mitamae local test_core_install.rb
 
@@ -368,13 +368,13 @@ jobs:
         export USER=runner
         cat > test_essential.rb << 'EOF'
         include_recipe "cookbooks/functions/default.rb"
-        include_cookbook "fzf"
+        include_platform_cookbook "fzf"
         include_cookbook "bat"
         include_cookbook "ripgrep"
         include_cookbook "fd"
         include_cookbook "tmux"
-        include_cookbook "neovim"
-        include_cookbook "terraform"
+        include_platform_cookbook "neovim"
+        include_platform_cookbook "terraform"
         include_cookbook "docker-engine"
         EOF
         ./bin/mitamae local test_essential.rb
@@ -408,8 +408,8 @@ jobs:
           python: { versions: %w(3.12.2 3.11.8) },
         )
         include_cookbook "nodejs"
-        include_cookbook "python"
-        include_cookbook "golang"
+        include_platform_cookbook "python"
+        include_platform_cookbook "golang"
         include_cookbook "rust"
         EOF
         ./bin/mitamae local test_languages.rb
@@ -564,6 +564,18 @@ jobs:
         # cannot go stale as checks are added.
         ./bin/audit-cookbook-reachability
         ./bin/lint-cookbooks
+        # ADR 0011: hosts.json / prometheus.yml node-* jobs / host-profile FLEET
+        # must agree, or disagree only where config/host-policy.json says why.
+        ./bin/check-host-configs
+
+    - name: auto-mitamae per-SHA apply-state scenarios (ADR 0009)
+      run: |
+        # Runs the PRODUCTION runner + orchestrator unmodified in a tmpdir with
+        # a local git origin, a mitamae stand-in and an ssh stand-in. Covers
+        # the handoff's 4 acceptance scenarios (A ok → B fail → B retried;
+        # same-SHA reconcile failure retried; canary hold on
+        # unreachable/lock/mismatch/unverified; verified same-SHA throttled).
+        bash cookbooks/auto-mitamae-target/test/run-state-scenarios.sh
 
     - name: hr shell function regression suite
       run: |
@@ -576,6 +588,19 @@ jobs:
         sudo apt-get update -qq
         sudo apt-get install -y -qq zsh
         bash cookbooks/herdr/files/test-hr.sh cookbooks/herdr/files/hr.sh
+
+    - name: memory-v2 distribution units — MANIFEST complete + artifact installs and imports (ADR 0010)
+      run: |
+        # The cookbook deploys exactly files/{memory-mcp,memory-keeper}/MANIFEST.
+        # This copies ONLY those files into an empty directory and imports every
+        # module from there (nothing else on sys.path), so a module committed
+        # but not listed — the #895 merge_rules.py ModuleNotFoundError that ran
+        # for 4 days — fails here instead of on the LXC. memory-keeper is
+        # stdlib-only; memory-mcp needs its runtime wheels, installed into a
+        # throwaway venv from the same requirements-v2.txt the cookbook uses.
+        python3 -m venv /tmp/memory-mcp-venv
+        /tmp/memory-mcp-venv/bin/pip install -q -r cookbooks/lxc-es-memory/files/requirements-v2.txt
+        MEMORY_MCP_PYTHON=/tmp/memory-mcp-venv/bin/python ./bin/check-memory-v2-manifest
 
     - name: memory-mcp write-path regression suite
       run: |

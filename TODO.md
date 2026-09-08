@@ -62,6 +62,119 @@
   changes, each starting from the exact repro in
   `docs/adr/0011-0012-review-design.md`. Delete this entry in the resolving
   commit.
+## bin/check-memory-v2-manifest's CI-recipe and import-line scanners have known blind spots (Medium)
+
+- **Failure class 0 (`bin/check-memory-v2-manifest`'s file-existence loop)**: the
+  MANIFEST-vs-directory listing pipes `find ... | sed | sort` into a
+  `while IFS= read -r f` loop and then `grep -qxF "$f"` per line. A committed
+  filename containing a literal newline is split into two lines by the loop
+  and matched against the MANIFEST as two separate (and possibly already-listed)
+  entries, so it can pass without ever being individually verified. Fixing this
+  needs a NUL-delimited (`find -print0`) pipeline throughout, which the rest of
+  the script (associative dirname/cp logic) would also need to move to. Real-
+  world risk is low — this only matters for a developer-committed filename, not
+  external input — so it is deferred alongside D2/D4 below rather than folded
+  into the symlink-rejection fix this PR did ship (review D3, the symlink half).
+
+- **Failure class 1 (audit condition 5, `bin/audit-cookbook-reachability`)**: the
+  CI-embedded-recipe heredoc scanner reads raw workflow-file lines and requires
+  the `.rb` filename and the `<<` heredoc marker to appear on the SAME raw
+  line. A YAML folded/literal block scalar (`run: >` or `run: |`) can put the
+  `cat > x.rb` and the `<<'EOF'` marker on different physical lines while still
+  being one shell command after YAML decoding — that heredoc's
+  `include_cookbook` lines are never scanned, silently recreating exactly the
+  stale-include blind spot ADR 0010 exists to close. Surfaced by the ADR 0010
+  diff review (D2, `docs/adr/0010-review-diff.md`).
+- **Failure class 2 (`bin/check-memory-v2-manifest`'s server.py import check)**:
+  the `grep -hE '^(from|import) (mcp|starlette|httpx|uvicorn)\b'` extraction
+  reads matching lines textually, not via Python's grammar. A multi-line
+  `from mcp.server.fastmcp import (` breaks (continuation lines are not
+  extracted, so the piped `python3 -I -` sees a `SyntaxError`), and any
+  additional statement appended to a matching import line executes too
+  (`import mcp; print("EXTRA_STATEMENT_EXECUTED")` runs the print). The current
+  single-line-import shape in `server.py` is unaffected, but the checker's
+  "import time ES を叩かない" guarantee does not extend to a differently
+  written import going forward. Surfaced by the same diff review (D4).
+- **When each triggers**: D2 the next time a CI real-install step is authored
+  with a folded/literal `run:` block instead of the canonical
+  `cat > x.rb << 'EOF'` form; D4 the next time `server.py`'s mcp/starlette
+  imports are rewritten as multi-line or a statement is appended to one of
+  those lines.
+- **Why not fixed in the PR that found them**: both need a real re-implementation,
+  not a one-line patch — D2 needs the workflow YAML parsed with Psych so the
+  `run:` value is recovered before the heredoc scan runs (turning condition 5
+  into "scan the decoded script text", not "scan raw file lines"); D4 needs
+  `ast.parse` to select the module-level `Import`/`ImportFrom` nodes that name
+  the target packages, instead of a textual grep. Both are a different shape of
+  checker than the ones the ADR 0010 PR shipped.
+- **First step**: for D2, add a `Dir["#{REPO_ROOT}/.github/workflows/*.{yml,yaml}"].each { |wf| YAML.safe_load_file(wf) }`
+  pass that walks `jobs.*.steps[].run`, and run the existing heredoc-scan regex
+  against each decoded `run:` string (split on `\n`) instead of `File.foreach`
+  over the raw file; keep the existing raw-line scan as a fallback for any step
+  that is not a heredoc at all. Add the ADR 0010-review-diff.md D2 example as a
+  regression case. For D4, replace the `grep -hE` extraction with a small
+  `python3 -c 'import ast, sys; ...'` that parses `server.py`, walks
+  `ast.iter_child_nodes(tree)` for `ast.Import`/`ast.ImportFrom` nodes whose
+  module is one of mcp/starlette/httpx/uvicorn, and re-emits each as a
+  standalone one-line import statement for the existing `python3 -I -` pipe.
+  Delete this entry in the resolving commit.
+## bin/check-host-configs's static-analysis checks have coverage gaps a well-formed config can exploit (Medium)
+
+- **Failure class**: the FAIL-tier checker added for ADR 0011 (`bin/check-host-configs`)
+  reads Prometheus's `node-*` scrape jobs and the FLEET table with regexes and
+  string matching rather than a structural parser, so it can report OK against
+  inputs its own design intends to catch. Surfaced by the ADR 0011/0012
+  adversarial design review (`docs/adr/0011-0012-review-design.md`, F1/F2/F4):
+  (F1) the regex reads only the FIRST `- targets:` entry and the FIRST `host:`
+  label per job, so a second static target or a re-quoted job name is invisible
+  to the checker; (F2) any job whose target the checker cannot parse as IPv4 is
+  treated as "DNS" and passed on host-label presence alone, without validating
+  the target string or its port; (F4) the FLEET extraction depends on the exact
+  quoting style of the Ruby literal (`'ip' => '...'`  vs a re-quoted or
+  reformatted line), so a changed IP that also changes quoting style drops out
+  of the extracted set instead of being compared.
+- **When it triggers**: any future edit to `prometheus.yml` that adds a second
+  static target to an existing job, uses double quotes on a job name, points a
+  job at a wrong host while keeping its label, or reformats the FLEET hash
+  literal in `cookbooks/host-profile/default.rb` — the checker stays green
+  while the drift it exists to catch goes uncaught.
+- **Why not fixed in the PR that found them**: closing F1/F2/F4 needs the
+  checker to parse the real Prometheus YAML (Ruby's stdlib `YAML` module)
+  rather than regex over lines, plus a target-syntax validator and an explicit
+  DNS-name allowlist keyed by policy (not by host-label presence) — a
+  structural rewrite of the checker, not a one-line patch. F3 (the
+  `config/host-policy.json` exception schema accepts an empty `reason` and
+  conflates job-name aliases with host-label aliases) needs a typed exception
+  schema. All four need review before landing so the rewritten checker does
+  not itself acquire new blind spots.
+- **First step**: rewrite the Prometheus-side read using `YAML.safe_load_file`
+  and walk `scrape_configs[].static_configs[].targets` exhaustively (not just
+  index 0), FAILing on any static target the walk cannot classify as IPv4 or an
+  explicitly policy-allowlisted DNS name. Add the F1/F2/F4 examples from
+  `docs/adr/0011-0012-review-design.md` as regression fixtures before touching
+  the implementation. Delete this entry in the resolving commit.
+## auto-mitamae runner has no remote-side apply deadline; a stuck mitamae holds the flock and the canary gate (Medium)
+
+- **Failure class**: orchestrator.sh bounds only the LOCAL `ssh` with `timeout 300`.
+  The remote `mitamae-runner` keeps running after the ssh session drops, and
+  any child it spawned inherits fd 9 (the `/var/lock/auto-mitamae.lock` flock).
+  A mitamae that never exits (e.g. an ES node blocking on a RED-cluster wait)
+  therefore answers `lock_held` on every later cycle. Since ADR 0009 the canary
+  gate HOLDS the fleet on `lock_held` (it used to fall through and ship an
+  unvalidated sha), so a stuck canary now stops rollout until an operator
+  intervenes — visible via `AutoMitamaeCanaryHeld` (30m warning). Surfaced by
+  the ADR 0009 adversarial design review (F4, `docs/adr/0009-review-design.md`).
+- **When it triggers**: an apply on the canary that outlives the orchestrator's
+  300s ssh window and does not finish on its own.
+- **Not done in ADR 0009's PR**: choosing a runner-side deadline is a fleet
+  load / correctness trade-off (a fresh LXC's first converge legitimately runs
+  long) and the pre-existing behaviour is unchanged by the PR.
+- **First step**: measure real apply durations from
+  `auto_mitamae_last_apply_duration_seconds` (p99 per host over 30d), then wrap
+  `./bin/mitamae local` in `timeout --kill-after=30s <N>` with N above that p99,
+  recording `mitamae_timeout` as a distinct `last_attempt_status` / runner status
+  so the gate treats it as fail (retry), not hold. Add a harness case where the
+  stub sleeps past the deadline.
 
 ## Network fault detection covers thresholds only; the baseline-comparison half is unwritten (Medium)
 
