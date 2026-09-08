@@ -556,6 +556,9 @@ jobs:
         # cannot go stale as checks are added.
         ./bin/audit-cookbook-reachability
         ./bin/lint-cookbooks
+        # ADR 0011: hosts.json / prometheus.yml node-* jobs / host-profile FLEET
+        # must agree, or disagree only where config/host-policy.json says why.
+        ./bin/check-host-configs
 
     - name: auto-mitamae per-SHA apply-state scenarios (ADR 0009)
       run: |
