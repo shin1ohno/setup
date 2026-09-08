@@ -16,6 +16,10 @@
       "Bash(git checkout:*)",
       "Bash(git branch:*)",
       "Bash(git stash:*)",
+      "Bash(git push -u origin fix/:*)",
+      "Bash(git push -u origin feat/:*)",
+      "Bash(git push origin fix/:*)",
+      "Bash(git push origin feat/:*)",
       "Bash(npm install:*)",
       "Bash(pnpm install:*)",
       "Bash(npm test:*)",
@@ -42,13 +46,20 @@
       "mcp__claude_ai_memory__memory_stats"
     ],
     "ask": [
-      "Bash(git push:*)"
+      "Bash(git push)"
     ],
     "deny": [
       "Bash(sudo:*)",
       "Bash(rm -rf:*)",
       "Bash(rm -r :*)",
       "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git push --mirror:*)",
+      "Bash(git push --delete:*)",
+      "Bash(git push origin main)",
+      "Bash(git push -u origin main)",
+      "Bash(git push origin HEAD:main)",
       "Bash(git reset:*)",
       "Bash(git rebase:*)",
       "Read(.env.*)",
