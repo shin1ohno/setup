@@ -196,11 +196,25 @@ execute "pip install memory v2 deps" do
   notifies :run, "execute[restart memory-v2-proxy]"
 end
 
-# v2 application code: the 5 modules from files/memory-mcp/ + the auth proxy.
+# v2 application code: every runtime file listed in files/memory-mcp/MANIFEST
+# + the auth proxy. The MANIFEST is the single distribution unit (ADR 0010):
+# bin/check-memory-v2-manifest fails CI when a non-test file in that directory
+# is not listed, so a new module can no longer be committed without being
+# deployed (the #895 merge_rules.py → ModuleNotFoundError class).
 # proxy.py (files/auth-proxy/proxy.py) was shared with the retired v1 stack; the v2
 # enforcement matrix is env-gated (MEMORY_AUDIENCES) so one file serves both
 # namespaces.
-%w[server.py es_backend.py voyage.py scoring.py identity.py].each do |mod|
+# File.read + split, NOT File.readlines: mruby (the mitamae runtime) has no
+# File.readlines and aborts the compile with NoMethodError — caught by the
+# ADR 0010 design review against mitamae v1.14.0 (~/ManagedProjects/setup/.claude/rules/ruby.md
+# "mruby API constraints"). The MANIFEST is a committed source asset, so a
+# compile-time read is the right phase (unlike the `File.exist?`-on-generated-
+# file anti-pattern).
+memory_v2_manifest = ->(unit) {
+  File.read(File.join(File.dirname(__FILE__), "files", unit, "MANIFEST")).split("\n")
+      .map(&:strip).reject { |l| l.empty? || l.start_with?("#") }
+}
+memory_v2_manifest.call("memory-mcp").each do |mod|
   remote_file "#{app_dir_v2}/#{mod}" do
     source "files/memory-mcp/#{mod}"
     owner "root"
@@ -392,20 +406,13 @@ directory "#{keeper_dir}/prompts" do
   action :create
 end
 
-# keeper python + prompts. A changed .py is picked up on the NEXT timer fire
-# (each tick is a fresh /usr/bin/python3 process) — no unit restart needed.
-{
-  "reconcile.py"         => "reconcile.py",
-  "consolidate.py"       => "consolidate.py",
-  "claude_judge.py"      => "claude_judge.py",
-  "merge_rules.py"       => "merge_rules.py",
-  "es_client.py"         => "es_client.py",
-  "voyage_client.py"     => "voyage_client.py",
-  "prompts/reconcile.md" => "prompts/reconcile.md",
-  "prompts/promote.md"   => "prompts/promote.md",
-}.each do |src, dest|
-  remote_file "#{keeper_dir}/#{dest}" do
-    source "files/memory-keeper/#{src}"
+# keeper python + prompts — every runtime file listed in
+# files/memory-keeper/MANIFEST (ADR 0010; CI-checked, see the memory-mcp block
+# above). A changed .py is picked up on the NEXT timer fire (each tick is a
+# fresh /usr/bin/python3 process) — no unit restart needed.
+memory_v2_manifest.call("memory-keeper").each do |rel|
+  remote_file "#{keeper_dir}/#{rel}" do
+    source "files/memory-keeper/#{rel}"
     owner "root"
     group "root"
     mode "644"

@@ -601,7 +601,7 @@ end
 # `dig` is intentionally absent from this set: recipe Ruby has ~35 legitimate
 # `node.dig(...)` calls that converge fine on mitamae's node object.
 MRUBY_ABSENT = [
-  [/\bFile\.(mtime|stat|size|birthtime|ctime|atime)\b/, "File.%s is CRuby-only (mruby's File is a strict subset) — express time/age/size logic as a shell guard string instead"],
+  [/\bFile\.(mtime|stat|size|birthtime|ctime|atime|readlines)\b/, "File.%s is CRuby-only (mruby's File is a strict subset) — express time/age/size logic as a shell guard string instead"],
   [/\bRegexp\.last_match\s*\(/, "Regexp.last_match takes NO arguments on mruby — the arity form raises ArgumentError at converge; read the capture through $1 / $2"],
   [/\.zero\?/, "Integer#zero? is absent on mruby — write `== 0` (this codebase's existing idiom)"],
   [/\.filter_map\b/, "Enumerable#filter_map is CRuby-only — use .map { }.compact"],

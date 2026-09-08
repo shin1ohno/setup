@@ -1,0 +1,9 @@
+# memory-mcp v2 distribution unit (ADR 0010). One runtime file per line.
+# The cookbook deploys EXACTLY this list; bin/check-memory-v2-manifest fails CI
+# when a non-test file in this directory is missing here (the #895
+# merge_rules.py class) or a listed file does not exist.
+server.py
+es_backend.py
+voyage.py
+scoring.py
+identity.py

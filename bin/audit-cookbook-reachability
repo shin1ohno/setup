@@ -27,6 +27,15 @@
 #   2. include_platform_cookbook "X" with only one of the two per-OS recipes
 #   3. a per-OS recipe (cookbooks/*/{darwin,linux}.rb) that no caller includes
 #   4. a STALE INCLUDE — an include whose target recipe file does not exist
+#   5. a STALE INCLUDE inside a CI TEST RECIPE — the heredoc recipes that
+#      .github/workflows/*.yml write with `cat > <name>.rb << 'EOF'` for the
+#      workflow_dispatch real-install levels. They are not entry roots (they
+#      exist only inside the YAML) so conditions 1-4 never saw them, and the
+#      normal PR dry-run never executes them either; 13 references to
+#      cookbooks whose default.rb became darwin.rb + linux.rb survived there
+#      for a month. Same resolution rules as 4; the recipes contribute no
+#      reachability (a cookbook only a CI recipe includes is still dead in
+#      production).
 #
 # Condition 4 exists because reachability is keyed on the cookbook NAME: an
 # `include_cookbook "mcp"` left behind after mcp/default.rb became darwin.rb +
@@ -218,6 +227,58 @@ until queue.empty?
   end
 end
 
+# Condition 5: CI test recipes embedded in workflow YAML heredocs. mitamae runs
+# them from the repo root, so include_recipe paths resolve against REPO_ROOT.
+ci_stale = []
+Dir["#{REPO_ROOT}/.github/workflows/*.{yml,yaml}"].sort.each do |wf|
+  rel = wf.sub("#{REPO_ROOT}/", "")
+  delim = nil
+  File.foreach(wf).with_index(1) do |raw, ln|
+    if delim.nil?
+      if raw =~ /cat\s*>\s*\S+\.rb\s*<<-?\s*'?(\w+)'?\s*$/
+        delim = Regexp.last_match(1)
+      elsif raw =~ /<<.*\.rb\b|\.rb\b.*<</
+        # A recipe written by a heredoc in a form this scanner does not parse
+        # (`cat <<'EOF' > x.rb`, `tee x.rb <<'EOF'`, quoted "EOF", trailing
+        # comment). Silently skipping it would recreate the blind spot, so it
+        # is a FAIL until the scanner learns the form or the step is rewritten
+        # to the canonical `cat > <name>.rb << 'EOF'`.
+        ci_stale << "#{rel}:#{ln}: unsupported recipe heredoc form for the CI-recipe scan: #{raw.strip[0, 80]}"
+      end
+      next
+    end
+    if raw.strip == delim
+      delim = nil
+      next
+    end
+    next if raw =~ /\A\s*#/
+    raw.scan(/\binclude_cookbook\s+"([^"]+)"/) do |m|
+      parts = m[0].split("::")
+      parts << "default" if parts.length == 1
+      f = File.join("cookbooks", *parts) + ".rb"
+      ci_stale << "#{rel}:#{ln}: include_cookbook \"#{m[0]}\" -> #{f} does not exist" unless File.file?(f)
+    end
+    raw.scan(/\binclude_platform_cookbook\s+"([^"]+)"/) do |m|
+      %w[darwin linux].each do |os|
+        f = File.join("cookbooks", m[0], "#{os}.rb")
+        ci_stale << "#{rel}:#{ln}: include_platform_cookbook \"#{m[0]}\" -> #{f} does not exist" unless File.file?(f)
+      end
+    end
+    raw.scan(/\binclude_role\s+"([^"]+)"/) do |m|
+      parts = m[0].split("::")
+      parts << "default" if parts.length == 1
+      f = File.join("roles", *parts) + ".rb"
+      ci_stale << "#{rel}:#{ln}: include_role \"#{m[0]}\" -> #{f} does not exist" unless File.file?(f)
+    end
+    raw.scan(/\binclude_recipe\s+"([^"]+)"/) do |m|
+      # Same rule as the root walk: mitamae appends .rb when it is absent.
+      f = m[0].end_with?(".rb") ? m[0] : "#{m[0]}.rb"
+      ci_stale << "#{rel}:#{ln}: include_recipe \"#{m[0]}\" -> #{f} does not exist" unless File.file?(f)
+    end
+  end
+end
+ci_stale = ci_stale.uniq
+
 unreachable      = (all_cookbooks - reached_cookbooks).sort
 unexpected       = unreachable - ALLOWLIST
 stale_allowlist  = ALLOWLIST.select { |c| reached_cookbooks.include?(c) }
@@ -251,6 +312,16 @@ unless missing_targets.empty?
   warn "(dual-OS caller) or the static \"<name>::linux\" / \"<name>::darwin\" form."
 end
 
+unless ci_stale.empty?
+  warn ""
+  warn "FAIL: #{ci_stale.size} stale include(s) inside CI test recipes (.github/workflows heredocs):"
+  ci_stale.each { |msg| warn "  - #{msg}" }
+  warn ""
+  warn "These recipes run only on workflow_dispatch real-install levels, so the PR"
+  warn "dry-run never exercises them. Mirror the production role: a per-OS split"
+  warn "cookbook is included with include_platform_cookbook \"<name>\"."
+end
+
 unless half_split.empty?
   warn ""
   warn "FAIL: #{half_split.size} half-split cookbook reference(s) — include_platform_cookbook needs BOTH per-OS recipes:"
@@ -263,7 +334,7 @@ unless per_os_orphans.empty?
   per_os_orphans.each { |p| warn "  - #{p}" }
 end
 
-if unexpected.empty? && half_split.empty? && per_os_orphans.empty? && missing_targets.empty?
+if unexpected.empty? && half_split.empty? && per_os_orphans.empty? && missing_targets.empty? && ci_stale.empty?
   puts "OK: every cookbook is reachable or allowlisted."
   exit 0
 else
