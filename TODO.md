@@ -1,5 +1,28 @@
 # TODO
 
+## auto-mitamae runner has no remote-side apply deadline; a stuck mitamae holds the flock and the canary gate (Medium)
+
+- **Failure class**: orchestrator.sh bounds only the LOCAL `ssh` with `timeout 300`.
+  The remote `mitamae-runner` keeps running after the ssh session drops, and
+  any child it spawned inherits fd 9 (the `/var/lock/auto-mitamae.lock` flock).
+  A mitamae that never exits (e.g. an ES node blocking on a RED-cluster wait)
+  therefore answers `lock_held` on every later cycle. Since ADR 0009 the canary
+  gate HOLDS the fleet on `lock_held` (it used to fall through and ship an
+  unvalidated sha), so a stuck canary now stops rollout until an operator
+  intervenes — visible via `AutoMitamaeCanaryHeld` (30m warning). Surfaced by
+  the ADR 0009 adversarial design review (F4, `docs/adr/0009-review-design.md`).
+- **When it triggers**: an apply on the canary that outlives the orchestrator's
+  300s ssh window and does not finish on its own.
+- **Not done in ADR 0009's PR**: choosing a runner-side deadline is a fleet
+  load / correctness trade-off (a fresh LXC's first converge legitimately runs
+  long) and the pre-existing behaviour is unchanged by the PR.
+- **First step**: measure real apply durations from
+  `auto_mitamae_last_apply_duration_seconds` (p99 per host over 30d), then wrap
+  `./bin/mitamae local` in `timeout --kill-after=30s <N>` with N above that p99,
+  recording `mitamae_timeout` as a distinct `last_attempt_status` / runner status
+  so the gate treats it as fail (retry), not hold. Add a harness case where the
+  stub sleeps past the deadline.
+
 ## Network fault detection covers thresholds only; the baseline-comparison half is unwritten (Medium)
 
 `expected-network-signals.json` (#948) ships ten `.es-query` rules, all of the

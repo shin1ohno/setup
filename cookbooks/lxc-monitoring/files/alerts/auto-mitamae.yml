@@ -140,6 +140,51 @@ groups:
             canary marker in hosts.json if the canary host itself is broken.
             Runbook: ssh root@192.168.1.10 'pct exec 104 -- tail -80 /tmp/auto-mitamae.log'
 
+      - alert: AutoMitamaeCanaryHeld
+        # ADR 0009: the canary gate has held the fleet phase for 30m+. Not a
+        # cookbook failure (AutoMitamaeCanaryFailing covers those) — the canary
+        # answered ssh_unreachable / lock_held / sha_mismatch, or an up_to_date
+        # without a verified_sha for expected_sha (pre-0009 runner, or a
+        # sha whose success the canary has not recorded). The orchestrator
+        # retries every cycle; if this persists the canary host itself needs
+        # attention (reachability, a stuck manual apply holding the flock, or
+        # drift-checker lagging behind origin/main).
+        expr: auto_mitamae_canary_gate{result="hold"} == 1
+        for: 30m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "Canary gate holding fleet rollout 30m+ — canary unverified"
+          description: |
+            orchestrator.sh has not run the fleet phase for 30+ minutes because the canary
+            host has not proved expected_sha succeeded on it. Check auto_mitamae_canary_last_status
+            for the raw runner status (ssh_unreachable / lock_held / sha_mismatch / up_to_date).
+            If the raw status is lock_held for more than one apply's worth of time, a runner or
+            mitamae from an earlier cycle is still alive on the canary holding the flock (the
+            orchestrator's 300s ssh timeout does not stop remote processes).
+            Runbook: ssh root@192.168.1.10 'pct exec 104 -- bash -c "cat /var/lib/auto-mitamae/apply-state; pgrep -af mitamae; tail -40 /tmp/auto-mitamae.log"'
+
+      - alert: AutoMitamaeCanaryGateStale
+        # ADR 0009 review D6: the orchestrator republishes the PREVIOUS cycle's
+        # gate verdict until the current cycle decides its own. If cycles keep
+        # dying before the gate decides (every canary apply hitting the cron
+        # timeout), a stale `pass` would otherwise sit there forever — this
+        # catches a verdict that has not been re-decided for 15 minutes
+        # (3 orchestrator cycles).
+        expr: (time() - auto_mitamae_canary_gate_timestamp_seconds) > 900
+        for: 10m
+        labels:
+          severity: warning
+          component: auto-mitamae
+        annotations:
+          summary: "Canary gate verdict not re-decided for 15m+ — cycles are not reaching the gate"
+          description: |
+            auto_mitamae_canary_gate_timestamp_seconds has not advanced for 15+ minutes, so the
+            published gate verdict is a carry-over, not a fresh decision. Check orchestrator cron
+            output on CT 111 and the per-host apply durations of the canary hosts.
+            Runbook: ssh root@192.168.1.10 'pct exec 111 -- bash -c "systemctl is-active cron; tail -40 /var/log/auto-mitamae-orchestrator.log 2>/dev/null; cat /var/lib/node_exporter/textfile/auto-mitamae.prom | grep canary"'
+
       - alert: NodeExporterDown
         # Source-of-truth alert: every other auto-mitamae alert is built on
         # textfile metrics scraped through node-exporter. If node-exporter

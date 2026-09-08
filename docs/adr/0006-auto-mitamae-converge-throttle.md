@@ -1,6 +1,6 @@
 # ADR 0006: auto-mitamae fleet converge — 二段階カデンス (drift-gated throttle)
 
-**Status**: Accepted (2026-06-27)
+**Status**: Accepted (2026-06-27) — 成功状態の保存形式は ADR 0009 で拡張（時刻のみの stamp → SHA 単位の状態）
 
 ## Context
 
