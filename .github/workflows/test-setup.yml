@@ -70,6 +70,10 @@ jobs:
         sudo chmod 777 /tmp
         ./bin/mitamae local darwin.rb --dry-run
 
+    - name: Test bootstrap.rb (bin/converge phase 2) in dry-run mode
+      run: |
+        ./bin/mitamae local bootstrap.rb --dry-run
+
     - name: Preserve GITHUB_TOKEN across sudo (mise installs run under sudo -u runner)
       if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
       run: |
@@ -330,6 +334,10 @@ jobs:
       run: |
         export USER=runner
         ./bin/mitamae local linux.rb --dry-run
+
+    - name: Test bootstrap.rb (bin/converge phase 2) in dry-run mode
+      run: |
+        ./bin/mitamae local bootstrap.rb --dry-run
 
     - name: Test core tools installation
       if: ${{ github.event.inputs.test_level == 'core-tools' || github.event.inputs.test_level == 'essential-cookbooks' || github.event.inputs.test_level == 'language-runtimes' || github.event.inputs.test_level == 'all-cookbooks' }}
