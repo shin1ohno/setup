@@ -28,6 +28,12 @@ import sys
 
 BOT_MARKER = "<!-- linear-bot -->"
 ATTEMPT_RE = re.compile(r"^linear-loop attempt (\d+)\b", re.M)
+# The loop's terminal marker. Written into the comment that reports completion,
+# alongside removing the agent label. Two mechanisms rather than one because the
+# label removal is a mutation that can fail on a network blip: if the comment
+# landed and the label removal did not, this marker still stops the loop from
+# re-picking the issue every cycle until attempts run out.
+DONE_RE = re.compile(r"^linear-loop done\b", re.M)
 
 DEFAULTS = {
     "agent_label": "agent",
@@ -65,6 +71,17 @@ def attempts(issue):
     return n
 
 
+def is_done(issue):
+    """Has the loop already declared this issue finished?
+
+    Deliberately revocable: `classify` treats a done issue as finished only
+    while the operator has not spoken since. A terminal state the operator
+    cannot reopen by commenting would rebuild the permanent lock that setup#963
+    removed from the GitHub loop.
+    """
+    return any(is_bot_comment(c) and DONE_RE.search(c.get("body") or "") for c in comments(issue))
+
+
 def owner_unblocked(issue, owner_id):
     """True when the operator has spoken after the loop last did.
 
@@ -99,6 +116,10 @@ def classify(issue, owner_id, cfg):
         return False, "no agent label"
     if attempts(issue) >= cfg["max_attempts"]:
         return False, f"attempts exhausted ({cfg['max_attempts']})"
+    if is_done(issue):
+        if not owner_unblocked(issue, owner_id):
+            return False, "done, awaiting the operator"
+        return True, "done but the operator replied"
     if cfg["needs_human_label"] in labels:
         if not owner_unblocked(issue, owner_id):
             return False, "needs-human, awaiting the operator"
