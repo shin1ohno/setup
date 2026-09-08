@@ -56,6 +56,63 @@
   module is one of mcp/starlette/httpx/uvicorn, and re-emits each as a
   standalone one-line import statement for the existing `python3 -I -` pipe.
   Delete this entry in the resolving commit.
+## bin/check-host-configs's static-analysis checks have coverage gaps a well-formed config can exploit (Medium)
+
+- **Failure class**: the FAIL-tier checker added for ADR 0011 (`bin/check-host-configs`)
+  reads Prometheus's `node-*` scrape jobs and the FLEET table with regexes and
+  string matching rather than a structural parser, so it can report OK against
+  inputs its own design intends to catch. Surfaced by the ADR 0011/0012
+  adversarial design review (`docs/adr/0011-0012-review-design.md`, F1/F2/F4):
+  (F1) the regex reads only the FIRST `- targets:` entry and the FIRST `host:`
+  label per job, so a second static target or a re-quoted job name is invisible
+  to the checker; (F2) any job whose target the checker cannot parse as IPv4 is
+  treated as "DNS" and passed on host-label presence alone, without validating
+  the target string or its port; (F4) the FLEET extraction depends on the exact
+  quoting style of the Ruby literal (`'ip' => '...'`  vs a re-quoted or
+  reformatted line), so a changed IP that also changes quoting style drops out
+  of the extracted set instead of being compared.
+- **When it triggers**: any future edit to `prometheus.yml` that adds a second
+  static target to an existing job, uses double quotes on a job name, points a
+  job at a wrong host while keeping its label, or reformats the FLEET hash
+  literal in `cookbooks/host-profile/default.rb` — the checker stays green
+  while the drift it exists to catch goes uncaught.
+- **Why not fixed in the PR that found them**: closing F1/F2/F4 needs the
+  checker to parse the real Prometheus YAML (Ruby's stdlib `YAML` module)
+  rather than regex over lines, plus a target-syntax validator and an explicit
+  DNS-name allowlist keyed by policy (not by host-label presence) — a
+  structural rewrite of the checker, not a one-line patch. F3 (the
+  `config/host-policy.json` exception schema accepts an empty `reason` and
+  conflates job-name aliases with host-label aliases) needs a typed exception
+  schema. All four need review before landing so the rewritten checker does
+  not itself acquire new blind spots.
+- **First step**: rewrite the Prometheus-side read using `YAML.safe_load_file`
+  and walk `scrape_configs[].static_configs[].targets` exhaustively (not just
+  index 0), FAILing on any static target the walk cannot classify as IPv4 or an
+  explicitly policy-allowlisted DNS name. Add the F1/F2/F4 examples from
+  `docs/adr/0011-0012-review-design.md` as regression fixtures before touching
+  the implementation. Delete this entry in the resolving commit.
+## auto-mitamae runner has no remote-side apply deadline; a stuck mitamae holds the flock and the canary gate (Medium)
+
+- **Failure class**: orchestrator.sh bounds only the LOCAL `ssh` with `timeout 300`.
+  The remote `mitamae-runner` keeps running after the ssh session drops, and
+  any child it spawned inherits fd 9 (the `/var/lock/auto-mitamae.lock` flock).
+  A mitamae that never exits (e.g. an ES node blocking on a RED-cluster wait)
+  therefore answers `lock_held` on every later cycle. Since ADR 0009 the canary
+  gate HOLDS the fleet on `lock_held` (it used to fall through and ship an
+  unvalidated sha), so a stuck canary now stops rollout until an operator
+  intervenes — visible via `AutoMitamaeCanaryHeld` (30m warning). Surfaced by
+  the ADR 0009 adversarial design review (F4, `docs/adr/0009-review-design.md`).
+- **When it triggers**: an apply on the canary that outlives the orchestrator's
+  300s ssh window and does not finish on its own.
+- **Not done in ADR 0009's PR**: choosing a runner-side deadline is a fleet
+  load / correctness trade-off (a fresh LXC's first converge legitimately runs
+  long) and the pre-existing behaviour is unchanged by the PR.
+- **First step**: measure real apply durations from
+  `auto_mitamae_last_apply_duration_seconds` (p99 per host over 30d), then wrap
+  `./bin/mitamae local` in `timeout --kill-after=30s <N>` with N above that p99,
+  recording `mitamae_timeout` as a distinct `last_attempt_status` / runner status
+  so the gate treats it as fail (retry), not hold. Add a harness case where the
+  stub sleeps past the deadline.
 
 ## Network fault detection covers thresholds only; the baseline-comparison half is unwritten (Medium)
 

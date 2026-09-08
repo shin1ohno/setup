@@ -556,6 +556,18 @@ jobs:
         # cannot go stale as checks are added.
         ./bin/audit-cookbook-reachability
         ./bin/lint-cookbooks
+        # ADR 0011: hosts.json / prometheus.yml node-* jobs / host-profile FLEET
+        # must agree, or disagree only where config/host-policy.json says why.
+        ./bin/check-host-configs
+
+    - name: auto-mitamae per-SHA apply-state scenarios (ADR 0009)
+      run: |
+        # Runs the PRODUCTION runner + orchestrator unmodified in a tmpdir with
+        # a local git origin, a mitamae stand-in and an ssh stand-in. Covers
+        # the handoff's 4 acceptance scenarios (A ok → B fail → B retried;
+        # same-SHA reconcile failure retried; canary hold on
+        # unreachable/lock/mismatch/unverified; verified same-SHA throttled).
+        bash cookbooks/auto-mitamae-target/test/run-state-scenarios.sh
 
     - name: hr shell function regression suite
       run: |
