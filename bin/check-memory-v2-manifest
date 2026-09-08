@@ -27,7 +27,11 @@ BASE="$REPO/cookbooks/lxc-es-memory/files"
 fail=0
 T=$(mktemp -d "${TMPDIR:-/tmp}/memory-v2-artifact.XXXXXX"); trap 'rm -rf "$T"' EXIT
 
-manifest_entries() { grep -vE '^\s*(#|$)' "$BASE/$1/MANIFEST"; }
+# Normalize the same way the cookbook's compile-time loader does
+# (`.map(&:strip)` in cookbooks/lxc-es-memory/default.rb) — otherwise a
+# MANIFEST line the cookbook accepts (" scoring.py ", trailing CR) can
+# mismatch the checker's own file-exists / shape checks (review D5).
+manifest_entries() { grep -vE '^\s*(#|$)' "$BASE/$1/MANIFEST" | sed 's/\r$//; s/^[[:space:]]*//; s/[[:space:]]*$//'; }
 
 for unit in memory-mcp memory-keeper; do
   echo "== $unit"
@@ -41,13 +45,23 @@ for unit in memory-mcp memory-keeper; do
     grep -qxF "$f" "$dir/MANIFEST" || { echo "FAIL  $unit: $f exists but is not in MANIFEST (would not be deployed)"; fail=1; }
   done < <(cd "$dir" && find . -mindepth 1 \( -type f -o -type l \) | sed 's#^\./##' | sort)
   # 2. every listed file exists AND has a shape the cookbook can deploy: a
-  #    top-level *.py or prompts/*.md. The cookbook creates only the unit root
-  #    and prompts/; a deeper path would pass a copy-based check and fail on
-  #    the LXC with `cp: No such file or directory` (review F2).
+  #    top-level *.py for both units, plus prompts/*.md ONLY for memory-keeper
+  #    — its recipe creates keeper_dir/prompts before the MANIFEST loop;
+  #    memory-mcp's loop has no such directory resource, so a prompts/*.md
+  #    entry there would pass this check and then fail on the LXC with
+  #    `cp: No such file or directory` (review D1). A deeper path than either
+  #    shape would pass a copy-based check and fail the same way (review F2).
+  #    A symlink entry is also rejected here: `-f` follows the link and `cp`
+  #    copies the link's target content, so a symlink can smuggle in a file
+  #    outside the unit's own directory (review D3).
   while IFS= read -r f; do
     [[ -f "$dir/$f" ]] || { echo "FAIL  $unit: MANIFEST lists $f but it does not exist"; fail=1; }
-    [[ "$f" =~ ^[A-Za-z0-9_]+\.py$ || "$f" =~ ^prompts/[A-Za-z0-9_-]+\.md$ ]] \
-      || { echo "FAIL  $unit: MANIFEST entry $f is not a top-level .py or prompts/*.md — the cookbook only creates those directories"; fail=1; }
+    [[ -L "$dir/$f" ]] && { echo "FAIL  $unit: MANIFEST entry $f is a symlink — not a plain file the cookbook can deploy"; fail=1; }
+    shape_ok=0
+    [[ "$f" =~ ^[A-Za-z0-9_]+\.py$ ]] && shape_ok=1
+    [[ "$unit" == memory-keeper && "$f" =~ ^prompts/[A-Za-z0-9_-]+\.md$ ]] && shape_ok=1
+    [[ $shape_ok -eq 1 ]] \
+      || { echo "FAIL  $unit: MANIFEST entry $f is not a shape this unit's cookbook recipe creates a directory for (top-level .py; prompts/*.md only for memory-keeper)"; fail=1; }
   done < <(manifest_entries "$unit")
   # 3. artifact install into an empty dir
   inst="$T/$unit"; mkdir -p "$inst"

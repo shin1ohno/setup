@@ -1,5 +1,62 @@
 # TODO
 
+## bin/check-memory-v2-manifest's CI-recipe and import-line scanners have known blind spots (Medium)
+
+- **Failure class 0 (`bin/check-memory-v2-manifest`'s file-existence loop)**: the
+  MANIFEST-vs-directory listing pipes `find ... | sed | sort` into a
+  `while IFS= read -r f` loop and then `grep -qxF "$f"` per line. A committed
+  filename containing a literal newline is split into two lines by the loop
+  and matched against the MANIFEST as two separate (and possibly already-listed)
+  entries, so it can pass without ever being individually verified. Fixing this
+  needs a NUL-delimited (`find -print0`) pipeline throughout, which the rest of
+  the script (associative dirname/cp logic) would also need to move to. Real-
+  world risk is low — this only matters for a developer-committed filename, not
+  external input — so it is deferred alongside D2/D4 below rather than folded
+  into the symlink-rejection fix this PR did ship (review D3, the symlink half).
+
+- **Failure class 1 (audit condition 5, `bin/audit-cookbook-reachability`)**: the
+  CI-embedded-recipe heredoc scanner reads raw workflow-file lines and requires
+  the `.rb` filename and the `<<` heredoc marker to appear on the SAME raw
+  line. A YAML folded/literal block scalar (`run: >` or `run: |`) can put the
+  `cat > x.rb` and the `<<'EOF'` marker on different physical lines while still
+  being one shell command after YAML decoding — that heredoc's
+  `include_cookbook` lines are never scanned, silently recreating exactly the
+  stale-include blind spot ADR 0010 exists to close. Surfaced by the ADR 0010
+  diff review (D2, `docs/adr/0010-review-diff.md`).
+- **Failure class 2 (`bin/check-memory-v2-manifest`'s server.py import check)**:
+  the `grep -hE '^(from|import) (mcp|starlette|httpx|uvicorn)\b'` extraction
+  reads matching lines textually, not via Python's grammar. A multi-line
+  `from mcp.server.fastmcp import (` breaks (continuation lines are not
+  extracted, so the piped `python3 -I -` sees a `SyntaxError`), and any
+  additional statement appended to a matching import line executes too
+  (`import mcp; print("EXTRA_STATEMENT_EXECUTED")` runs the print). The current
+  single-line-import shape in `server.py` is unaffected, but the checker's
+  "import time ES を叩かない" guarantee does not extend to a differently
+  written import going forward. Surfaced by the same diff review (D4).
+- **When each triggers**: D2 the next time a CI real-install step is authored
+  with a folded/literal `run:` block instead of the canonical
+  `cat > x.rb << 'EOF'` form; D4 the next time `server.py`'s mcp/starlette
+  imports are rewritten as multi-line or a statement is appended to one of
+  those lines.
+- **Why not fixed in the PR that found them**: both need a real re-implementation,
+  not a one-line patch — D2 needs the workflow YAML parsed with Psych so the
+  `run:` value is recovered before the heredoc scan runs (turning condition 5
+  into "scan the decoded script text", not "scan raw file lines"); D4 needs
+  `ast.parse` to select the module-level `Import`/`ImportFrom` nodes that name
+  the target packages, instead of a textual grep. Both are a different shape of
+  checker than the ones the ADR 0010 PR shipped.
+- **First step**: for D2, add a `Dir["#{REPO_ROOT}/.github/workflows/*.{yml,yaml}"].each { |wf| YAML.safe_load_file(wf) }`
+  pass that walks `jobs.*.steps[].run`, and run the existing heredoc-scan regex
+  against each decoded `run:` string (split on `\n`) instead of `File.foreach`
+  over the raw file; keep the existing raw-line scan as a fallback for any step
+  that is not a heredoc at all. Add the ADR 0010-review-diff.md D2 example as a
+  regression case. For D4, replace the `grep -hE` extraction with a small
+  `python3 -c 'import ast, sys; ...'` that parses `server.py`, walks
+  `ast.iter_child_nodes(tree)` for `ast.Import`/`ast.ImportFrom` nodes whose
+  module is one of mcp/starlette/httpx/uvicorn, and re-emits each as a
+  standalone one-line import statement for the existing `python3 -I -` pipe.
+  Delete this entry in the resolving commit.
+
 ## Network fault detection covers thresholds only; the baseline-comparison half is unwritten (Medium)
 
 `expected-network-signals.json` (#948) ships ten `.es-query` rules, all of the

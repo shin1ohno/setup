@@ -109,3 +109,13 @@ cookbook は本番では dead）。修正前の実行で 13 件 FAIL、修正後
 | F6 | 条件 5 の抽出漏れと root 規則との差 | 採用 | `.rb` 補完・`::` 分割を root と揃え、`.yaml` も対象、解析不能な heredoc 形は FAIL |
 | F7 | server 除外で FastMCP/Starlette import が未検証 | 採用 | `server.py` の third-party import 行を実 wheel で実行 |
 | F8 | package 化の却下理由が変更量を過大に固定 | 採用（文書） | 却下理由を「配布先と起動方法を保つ小変更」に改め、flat `py-modules` なら import 書き換え不要と明記 |
+
+## Review 2（実装 diff、adversarial, codex — `docs/adr/0010-review-diff.md`）
+
+| # | 所見 | 採否 | 反映 |
+|---|---|---|---|
+| D1 | memory-mcp に許容した `prompts/*.md` を cookbook が配布しない（root しか作らない） | 採用 | 許容形を unit 別にし、`prompts/*.md` は memory-keeper のみ許可。memory-mcp のエントリは FAIL（負例で確認） |
+| D2 | YAML 折り返し（`>`/`\|` block scalar）の heredoc は条件 5 の走査対象から漏れる | 採用（次段） | 正しい修正は YAML を Psych でパースし `run:` 値を復元してから走査する再実装で、条件 5 の再設計になる。本 PR では見送り、`TODO.md` に失敗クラスと再現形を記録 |
+| D3 | ファイル列挙が symlink を拒否せず、改行入りファイル名で二重登録扱いになる | 部分採用 | symlink エントリを明示 FAIL に追加（負例で確認）。改行入りファイル名は `find -print0` 化が必要で、developer が commit する内容に対する低頻度の攻撃面のため本 PR では見送り、`TODO.md` に記録 |
+| D4 | server の import 行抽出が複数行 import を壊し、同一行の追加文まで実行する | 採用（次段） | 正しい修正は `ast.parse` で対象 import ノードだけを選ぶ再実装。現在の 3 行 grep は 2026-08 の FastMCP 消失という具体例には対応済みだが保証は限定的なままなので、`TODO.md` に記録して次段に回す |
+| D5 | cookbook の `.strip` と checker の未加工比較で MANIFEST 文法が食い違う（前後空白・CRLF） | 採用 | `manifest_entries()` で CR 除去 + 前後空白除去してから比較 |
