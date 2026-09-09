@@ -16,6 +16,40 @@ execute "brew install eternal-terminal" do
   not_if { brew_formula?("et") }
 end
 
+# --- etterminal on the non-interactive ssh PATH (issue #741) ---------------
+#
+# The et CLIENT bootstraps a session by running `ssh <host> etterminal ...`.
+# That is a NON-INTERACTIVE, non-login shell, whose PATH on macOS is the stock
+# /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin — `/etc/zprofile`'s path_helper
+# never runs, so the Homebrew prefix is absent. On Apple Silicon etterminal
+# lives in /opt/homebrew/bin, so `et mini` fails at the ssh sub-step with
+#   "Error starting ET process through ssh, please make sure your ssh works first"
+# followed by "Error connecting to server: 3: Client is not registered" —
+# the second line is the downstream effect, not the cause. Plain `ssh` to the
+# same host works, which is what makes this look like a network fault.
+# Intel Macs never hit it: their brew prefix was already on the default PATH.
+#
+# Same failure class, same fix as cookbooks/mosh/darwin.rb ("SSH non-interactive
+# sessions need /usr/local/bin in PATH") — mosh-server has been symlinked this
+# way for years. SIP prevents writing /usr/bin, so /usr/local/bin it is; this
+# cookbook already installs et-watchdog.sh there.
+#
+# NOTE this is the CLIENT-side entry point and is orthogonal to the etserver
+# daemon below: etserver can be listening on 2022 (synthetics green) while
+# every `et` login still fails, which is exactly how #741 presented.
+etterminal_path = "#{node[:homebrew][:prefix]}/bin/etterminal"
+
+# Guard on the link TARGET, not mere existence — an already-provisioned Mac
+# that changed brew prefix (Intel -> Apple Silicon migration) carries a symlink
+# pointing at a path that no longer exists, and a `test -L` guard would keep it
+# forever. Same reasoning as the plist content-diff guard below.
+execute "create etterminal symlink" do
+  user node[:setup][:system_user]
+  command "mkdir -p /usr/local/bin && ln -sf #{etterminal_path} /usr/local/bin/etterminal"
+  only_if "test -f #{etterminal_path}"
+  not_if "test \"$(readlink /usr/local/bin/etterminal)\" = \"#{etterminal_path}\""
+end
+
 # Configure and start etserver as a system daemon
 # Apple Silicon Macs use /opt/homebrew, Intel Macs use /usr/local
 etserver_path = node[:homebrew][:machine] == "arm64" ? "/opt/homebrew/bin/etserver" : "/usr/local/bin/etserver"
