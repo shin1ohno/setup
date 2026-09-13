@@ -459,6 +459,11 @@ pipelines and the old local MCP ports.
 Status 2026-09-06: 8 files still match. `grep -rliE 'cognee|cognify|:8001|:8002'
 ~/.claude/projects/*/memory/` = 8 hits out of 77 memory files on sh1-cloud.
 
+Status 2026-09-13: still 8 files. Same `grep -rliE 'cognee|cognify|:8001|:8002'
+~/.claude/projects/*/memory/` = 8 hits, now out of **89** memory files (77 a week
+ago) — the numerator is flat while the denominator grows, i.e. the stale set is
+not self-correcting on its own and nothing new is picking up the old references.
+
 ## remindd daemon — connection/idle-timeout hardening (Low)
 
 From the adversarial review of the `remindd` daemon (cookbooks/remind, added with
@@ -619,6 +624,14 @@ NOT defects.
   template input so the notify fires, and by applying to a fresh CT for the
   `ensure … exists` pair.
 
+Status 2026-09-13: all nine sites still present and still unwrapped, but **every
+line number in the table above has drifted** — locate by enclosing resource name,
+not by line. Current (`git grep -n 'set -euo pipefail'` on this branch):
+`lxc-elasticsearch/default.rb` 266 / 292; `lxc-kibana/default.rb` 343 / 359 /
+375 / 396; `lxc-monitoring/default.rb` 580 / 614 / 632. Each is still the first
+line of a bare `execute … command <<~SH.strip` (verified by reading the three
+lines above each hit), so no site has been wrapped in `bash -c` yet.
+
 ## sh1-cloud — every owner/group resource re-chowns on every apply (Low)
 
 On the GCE OS Login box `sh1-cloud`, mitamae reports `owner will change from
@@ -660,6 +673,19 @@ Status 2026-09-06: the blast-radius count is still unrun, and the target is not 
 this repo — sh1-cloud is built by the `gcp-*` cookbooks in the zp-SHIN overlay
 (`projects/mercari-setup/cookbooks/gcp-{aws-federation,cli-tools,es-memory,
 metadata-route-guard,ssh-keys,tailscale,ubuntu-slim}`), so the grep has to run there.
+
+Status 2026-09-13: blast-radius count RUN in the overlay, and it is small. In
+`kouzoh/zp-SHIN` `projects/mercari-setup/cookbooks/`, the literal
+`owner node[:setup][:user]` matches **0** files (`git grep -lF`), and the broader
+`^\s+(owner|group)\s` matches **6 lines in 1 cookbook** — `mercari-git/default.rb`
+:27/28, :36/37, :43/44 (three resources, each with both attributes). The `gcp-*`
+cookbooks carry none. Root condition re-confirmed on the host:
+`grep -c '^sh1_mercari_com:' /etc/passwd` = 0 while `getent passwd sh1_mercari_com`
+returns uid/gid 569775000, so mitamae's uid→name mapping genuinely has no local
+source. With a 3-resource blast radius, option (a) (drop `owner`/`group` under
+`node[:setup][:home]` + a lint check) is a small diff — the noise seen on every
+apply comes mostly from the public `setup` cookbooks, which also run on this host,
+so re-scope the count there before choosing.
 
 ## herdr — bump past 0.8.0 once a stable ships the oversized-frame render fix (Low)
 
@@ -703,6 +729,12 @@ freezing when a full ANSI frame exceeds the transport limit. (#2670)". So the
 "confirm its notes include the fix" half of the first step is done; what remains
 is recomputing the per-target sha256s, bumping `herdr_version` (0.8.0 -> 0.9.0),
 and restarting the server at a moment when no agent panes are active.
+
+Status 2026-09-13: unchanged and still actionable. `gh release list -R
+herdrdev/herdr` shows **v0.9.0 (2026-09-07) as the latest stable** with no newer
+stable since, and `cookbooks/herdr/default.rb:20` still pins
+`herdr_version = "0.8.0"`. Only the sha256 recompute + version bump + a
+no-active-panes restart remain.
 
 ## Vector drops 94% of RTX DHCP lease events on the floor (Low)
 
