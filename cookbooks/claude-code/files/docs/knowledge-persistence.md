@@ -68,6 +68,8 @@ Save immediately — do not wait to be asked:
 
 Structure each `knowledge` note as a self-contained block: Topic / Context (project, stack) / Problem / Solution / Why. (Adapt the labels for reviews — Rating/Pros/Cons/Verdict — or analyses — Findings/Recommendation/Risks.)
 
+**業務の記録には、事実と社内での解釈に加えて「その解釈への自分（agent）の評価」を含める。** 事実だけの記録は、次に引いたときに解釈のやり直しから始まる。評価は「実測と矛盾する」「分母が非対称」のように後から検算できる形で書く。Origin: 2026-09-10 —「それぞれの事実や社内での解釈、その解釈へのあなたの評価を記憶して」。
+
 ### Documents / PDFs
 
 For a whole document (a report, a spec, a long reference), use `ingest(document, dataset, doc_key)` — it upserts by `(dataset, doc_key)`, so re-ingesting the same key supersedes the prior version. For a PDF, extract the text first (PyPDF2 for text PDFs; render pages and read them for image-based PDFs), then `ingest` the extracted text.
