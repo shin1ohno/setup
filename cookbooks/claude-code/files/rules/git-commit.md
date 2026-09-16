@@ -155,6 +155,14 @@ If the `branch --show-current` test fails the chain aborts before staging, surfa
 
 **EnterWorktree-isolated session: the chained form is refused there — serialize into plain calls.** Inside an EnterWorktree session the harness rejects both any `git -C` aimed at the shared checkout and compound git commands ("too complex to verify that it stays inside the worktree") — including this `&&`-chain and even a single git call with an output redirect. Run single-purpose git calls from the worktree cwd instead (`git add <files>`, then `git commit -m …`), no `-C`, no chains. **The check is textual, so a non-git command is refused too whenever the substring `git` appears anywhere in it** — a `grep` whose PATTERN contains `github_pat_`, a heredoc whose body mentions `.git` or "GitHub", a `sed` whose path comes from a variable. Remedy: put the pattern or script in a file and pass it by path (`grep -f patterns.txt`, `python3 script.py`). Branch drift is not a risk there: the worktree has exactly one branch checked out and no sibling process switches it. Everywhere else the chained form above remains required. Detail: see `~/.claude/docs/git-commit-detail.md#worktree-isolated-serialization`.
 
+### `?` / `*` / `[` を含む commit メッセージは `-m` ではなく `-F <file>`
+
+ログインシェルは zsh なので、`git commit -m "…"` のメッセージ本文に glob 文字（`?` `*` `[`）が含まれると、再クォートの過程で語が glob として解釈され `no matches found` で失敗する。**メッセージ全体が壊れた 1 行として表示されるので、原因が引用符ではなく glob だと気付きにくい。** 対処はメッセージをファイルに書いて `git commit -F <path>`（PR 本文の `--body-file` と同じ理由・同じ形）。本文が 1 行で glob 文字を含まないときだけ `-m` を使う。Origin: 2026-09-16 — 本文に "status?" が含まれた多段落メッセージが `(eval):2: no matches found:` で失敗した。
+
+### 別リポジトリに worktree を作るときは `git worktree add` ＋ 絶対パス
+
+`EnterWorktree` は**セッションの現在リポジトリにしか** worktree を作れず、`path` 引数で既存 worktree に入る形も、対象がカレントリポか*その中にネストしたリポ*でなければ拒否される。兄弟リポ（`~/ManagedProjects/<other>`）で隔離作業をするなら `git worktree add <repo>/.claude/worktrees/<name> -b <branch> origin/main` で作り、以後は**絶対パスで編集し `git -C <worktree>` で commit する**。セッション自体は worktree-isolated にならないので、上の「文字列ベースの拒否」にも当たらない。Origin: 2026-09-16 — zp-SHIN を cwd にしたまま setup リポの隔離作業が必要になった。
+
 ### Cherry-pick is a commit operation — branch check applies
 
 `git cherry-pick` does not involve `git add`, so the "check before git add" trigger above is not reached. Before any `git cherry-pick`, run `git branch --show-current` and confirm the target is the intended branch — typically a fresh branch created from `origin/main` for this specific task, not whatever branch happens to be checked out.
