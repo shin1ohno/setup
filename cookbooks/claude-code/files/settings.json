@@ -206,7 +206,6 @@
   "enableAllProjectMcpServers": true,
   "skipDangerousModePermissionPrompt": true,
   "theme": "auto",
-  "model": "claude-fable-5[1m]",
   "effortLevel": "xhigh",
   "teammateMode": "in-process",
   "inputNeededNotifEnabled": true,
