@@ -932,3 +932,87 @@ is keyed on an address the AP does not own.
   egress would fail there. Compare against wlx323's `show config` NTP/DNS
   lines, which work. Fixing it is a device config change = needs-human; the
   self-heal loop is read-only on network gear.
+
+## Project-scoped always-loaded rules have never been audited (Medium)
+
+- **Failure class**: the 2026-09-16 `claude-md-audit` measured and audited the
+  1,241-line global always-loaded set (`~/.claude/CLAUDE.md` + `rules/` + the
+  `@`-imported `docs/knowledge-persistence.md`) and never looked at the
+  project-scoped set this repo adds on top: `CLAUDE.md` 169 lines +
+  `.claude/rules/{ruby,shell,infrastructure}.md` 530 lines = 699 lines
+  (measured 2026-09-17). None of it has been checked for staleness, for rules
+  the model now does natively, or for detail that belongs in on-demand `docs/`.
+- **Why it matters**: a session opened in this repo carries 1,940 always-loaded
+  lines, and the audit's headline conclusion — that only three levers actually
+  reduce the cost — was derived from the global half alone. The audit's own
+  Critic named this as its largest gap.
+- **First step**: run the same three sieves over `.claude/rules/infrastructure.md`
+  (the largest of the three) — per section, is it (a) stale against the current
+  fleet, (b) native model behaviour now, or (c) detail whose body can move to
+  `~/.claude/docs/infrastructure-detail.md`, which already exists and already
+  receives pointers from that file.
+
+## The 90 file memories have never been cross-checked against the rules files (Low)
+
+- **Failure class**: `~/.claude/projects/*/memory/` holds 90 markdown memories
+  totalling 2,463 lines (measured 2026-09-17). They are auto-mirrored to the
+  memory MCP, surface through `recall` at session start, and overlap the
+  always-loaded rules by an unmeasured amount. No inventory exists, so a rule
+  and a memory can assert the same thing — or contradict each other — with no
+  mechanism that would notice.
+- **Why it matters**: duplication splits the correction path.
+  `docs/knowledge-persistence.md` already records the measured case where a
+  hand-written duplicate outranked the corrected canonical mirror in `recall`.
+  A rules-versus-memory contradiction has the same shape, and nothing is
+  looking for it.
+- **First step**: list the title and first line of all 90, group each by the
+  rules file it most overlaps, and report two sets — memories that restate
+  always-loaded text (deletion candidates) and memories that contradict it
+  (correction candidates). Read-only for the first pass; no edits.
+
+## self-heal-resolve prose still describes the is_bot condition #963 removed (Medium)
+
+- **Failure class**: #963 (`d80c330`) changed exactly one line of
+  `cookbooks/claude-code/files/skills/self-heal-resolve/SKILL.md` — the jq
+  `is_bot` definition — dropping the unanchored
+  `test("self-heal-(resolve|create)")`. The surrounding prose was not updated:
+  the numbered list still names that substring match as condition 2 of three,
+  the two lines under it still explain a migration safeguard (#587/#588's
+  unmarked `🔧 着手` / `🔬 診断` comments) the code no longer provides, and the
+  inline comment above the jq still reads
+  `marker OR resolve/create を含む OR 旧 create プレフィックス` while the code
+  implements two conditions.
+- **Why it matters**: this file IS the loop's instructions, so the divergence is
+  between what the loop is told and what it does. A reader following the prose
+  expects an unmarked legacy bot comment to be filtered out; the code now reads
+  it as an operator signal. #963's commit message states that fail-open
+  direction was deliberate and costs one redundant cycle — but nothing in the
+  file says so, so the next editor is as likely to "restore" the removed
+  pattern and rebuild the permanent lock #963 removed.
+- **First step**: cut the numbered list to two conditions, delete the
+  migration-safeguard explanation, fix the inline comment, and carry #963's
+  fail-open rationale into the file as one sentence naming what it trades.
+  `skills/linear-resolve/linear_queue.py`'s module docstring already states the
+  lesson in the right shape — reuse its framing.
+
+## linear-resolve is deployed with no runner, timer, or dedicated IAM (Medium)
+
+- **Failure class**: `skills/linear-resolve/` reached this host in the
+  2026-09-17 apply (3 files, verified executable). Its own closing line says the
+  runner, the systemd timer and the read-only `linear-probe` IAM profile are a
+  separate PR, so the loop runs only on manual invocation — and a manual run
+  stops at step 2: the GraphQL poll to `api.linear.app` returns `HTTP 401`
+  because `LINEAR_API_KEY` is not in the environment and nothing on this host
+  supplies it. A repo-wide grep finds the variable named only in the skill's own
+  SKILL.md.
+- **Why it matters**: the skill exists to cut the measured escalation latency
+  (261 h and 305 h on the GitHub loop) down to one poll interval, which requires
+  running unattended. The deterministic half is already verified working — the
+  selector picks the least-recently-updated actionable issue and correctly
+  classifies the #963 GO-comment case, checked against a 4-case fixture on
+  2026-09-17 — so only the plumbing is missing.
+- **First step**: decide where the API key lives; the SSM-gated pattern
+  `probe.sh` already uses for its own credentials is the existing facility, so
+  probe that before designing anything new. Then the runner script and a
+  `systemd` user timer at the 10-minute default, verified by next-elapse rather
+  than `is-active` per the timer gate in `.claude/rules/infrastructure.md`.

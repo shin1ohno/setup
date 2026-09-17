@@ -1,6 +1,6 @@
 ---
 name: web-crawl
-description: Config-driven web crawler — monitor known sites, run topic-radar searches, or recursively crawl a seed URL; dedups and persists findings to memory (pluggable sink). Run manually as /web-crawl or as a scheduled cloud task via /schedule.
+description: Config-driven web crawler — monitor known sites, run topic-radar searches, or recursively crawl a seed URL; dedups and persists findings to memory (pluggable sink). Run manually as /web-crawl, or register the same procedure as a recurring task on whichever scheduling facility the target host actually has.
 user-invocable: true
 argument-hint: "[target-name | url | 'topic:<query>'] [--mode monitor|radar|crawl] [--depth N] [--sink memory|es]"
 ---
@@ -9,7 +9,7 @@ argument-hint: "[target-name | url | 'topic:<query>'] [--mode monitor|radar|craw
 
 ## Purpose
 
-A single, config-driven web crawler with three acquisition modes (monitor / radar / crawl) and a pluggable persistence sink. Findings are deduplicated and persisted to memory by default. Run it manually with `/web-crawl`, or register the same procedure as a scheduled cloud task via `/schedule`.
+A single, config-driven web crawler with three acquisition modes (monitor / radar / crawl) and a pluggable persistence sink. Findings are deduplicated and persisted to memory by default. Run it manually with `/web-crawl`, or register the same procedure as a recurring task — see `Scheduling as a recurring task`, which probes for the facility before naming one.
 
 Two orthogonal axes:
 
@@ -39,7 +39,7 @@ Load and merge target definitions in this precedence order (later wins on same `
    ```bash
    curl -fsSL https://raw.githubusercontent.com/shin1ohno/setup/main/config/web-crawl-targets.yaml
    ```
-   In a cloud `/schedule` run, use WebFetch on the same URL instead of `curl`.
+   In a cloud run with no shell, use WebFetch on the same URL instead of `curl`.
    > Until this skill's PR merges to `main`, that URL 404s. Pre-merge, read the working-tree `config/web-crawl-targets.yaml` (local) or the branch raw URL.
 2. **Local override (optional, private)** — `~/.claude/web-crawl/targets.local.yaml` if it exists. Merge on top of the canonical set, matching by `name`. This is where **private or sensitive** targets go — they never get committed. (Same convention as `~/.claude/settings.local.json` / `.env`.)
 
@@ -111,4 +111,4 @@ Checklist when registering:
 - **cron in UTC** (convert from Asia/Tokyo = UTC+9). One routine = one job.
 - Attach the **memory MCP** in the routine's `mcp_connections` so `recall`/`remember` work in the cloud environment.
 - **Graceful empty-state**: no new items → finish successfully, do not error.
-- **Verify after registering**: run the routine once immediately (`/schedule … run`), then `recall(query="web-crawl <target-name> <today>", top_k=5)` and confirm a hit whose content is the just-crawled item — proof the cloud write landed — before trusting the schedule. (Query semantically; a `tags` filter is unreliable right after a write, per Step 3.)
+- **Verify after registering**: trigger the routine once manually through the facility you registered it on (a `systemd` user timer's own `.service`, the runner script's one-shot flag), then `recall(query="web-crawl <target-name> <today>", top_k=5)` and confirm a hit whose content is the just-crawled item — proof the cloud write landed — before trusting the schedule. (Query semantically; a `tags` filter is unreliable right after a write, per Step 3.)
