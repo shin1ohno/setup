@@ -59,7 +59,7 @@ This applies equally to **`kms:Decrypt`** chains for SSM SecureString (see the `
 
 Origin: 2026-05-11 two-stage `aws login --remote → aws-credentials fetches pve-bootstrap-ssm` was structurally moot — `pve-bootstrap-ssm` has `/ssh-keys/*` only, not `/cognee/*`, so admin auth couldn't fix `aws ssm get-parameter --name /cognee/llm-endpoint --profile pve-bootstrap-ssm`.
 
-**Auto-discovery is TTY-only — fleet cookbooks MUST pin `--profile`**: the `require_external_auth` profile auto-discovery (setup, added 2026-06) runs ONLY on a TTY — in a non-TTY context the helper returns BEFORE auto-discovery executes. Fleet cookbooks run via `auto-mitamae-target` over an SSH forced-command (non-TTY), so they NEVER reach auto-discovery; a fleet cookbook with a *bare* gate silently does nothing (skips its `.env`) on a fresh/rotated LXC.
+**Auto-discovery is TTY-only — fleet cookbooks never reach it**: the `require_external_auth` profile auto-discovery (setup, added 2026-06) runs ONLY on a TTY — in a non-TTY context the helper returns BEFORE auto-discovery executes. (The prescription that used to sit in this heading — "fleet cookbooks MUST pin `--profile`" — predates #503, which moved fleet gating to the runner preset; see the "Do NOT re-propose" note below before acting on it.) Fleet cookbooks run via `auto-mitamae-target` over an SSH forced-command (non-TTY), so they NEVER reach auto-discovery; a fleet cookbook with a *bare* gate silently does nothing (skips its `.env`) on a fresh/rotated LXC.
 
 - Fleet cookbook (non-TTY) → EXPLICIT `--profile <scoped>` in `check_command` AND every aws call.
 - darwin / manual-operator cookbook (TTY) → bare gate + auto-discovery is fine (Pattern B: `mcp`, `local-mcp`).
@@ -124,7 +124,7 @@ Do NOT re-propose "every fleet cookbook must pin `--profile`" — that guidance 
 - **fleet / non-TTY** — bare gate + `mitamae-runner.sh` presets `export AWS_PROFILE=pve-bootstrap-ssm` before apply (lint `BARE_OK` category)
 - **explicit `--profile` pin** — only the residual cookbooks not yet on the runner preset
 
-Full mechanics (auto-discovery TTY-only behavior, lint checks) live in `~/.claude/docs/aws-iam.md#multi-profile-auth-chain`; the pre-#503 "MUST pin" wording there still needs the same correction. Origin: #503 moved fleet gating to the runner preset.
+Full mechanics (auto-discovery TTY-only behavior, lint checks) live in this file's **"Multi-profile auth chain — enumerate every profile's IAM scope at design time"** section. Origin: #503 moved fleet gating to the runner preset.
 
 Before writing a `require_external_auth` / `deploy_with_ssm_env` gate that probes an SSM path on a FLEET cookbook pinned to a scoped profile (e.g. `pve-bootstrap-ssm`), live-probe that EXACT path with that profile:
 

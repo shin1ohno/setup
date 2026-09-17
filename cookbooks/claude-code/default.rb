@@ -288,7 +288,7 @@ directory "#{node[:setup][:home]}/.claude/docs" do
   action :create
 end
 
-%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md remote-trigger.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md planning-detail.md aws-iam.md domain-writing.md rule-placement-detail.md pve-lxc-detail.md docker-compose-detail.md ffi-audit.md claude-code-plugins.md adversarial-review-detail.md negative-search-detail.md todo-management.md rust.md docker-compose.md fractal-nodes.md gpg-key-distribution.md).each do |file_name|
+%w(knowledge-persistence.md debugging-detail.md infrastructure-detail.md claude-cli-headless.md elasticsearch.md mcp-deployment.md neovim.md release-plz.md tailscale.md weave-protocol.md frontend-dev.md cookbook-prs.md mise-migration.md kibana-lens.md ios-build.md data-collection.md ruby-detail.md git-commit-detail.md shell-detail.md sub-agents-detail.md planning-detail.md aws-iam.md domain-writing.md rule-placement-detail.md pve-lxc-detail.md docker-compose-detail.md ffi-audit.md claude-code-plugins.md adversarial-review-detail.md negative-search-detail.md todo-management.md rust.md docker-compose.md fractal-nodes.md gpg-key-distribution.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
     source "files/docs/#{file_name}"
     owner node[:setup][:user]
@@ -628,6 +628,7 @@ end
 %w(
   aws-iam-detail.md
   claude-code-plugins-detail.md
+  remote-trigger.md
   rust-detail.md
 ).each do |file_name|
   file "#{node[:setup][:home]}/.claude/docs/#{file_name}" do
