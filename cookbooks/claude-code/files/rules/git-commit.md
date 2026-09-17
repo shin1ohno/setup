@@ -35,7 +35,7 @@ Absent an explicit opt-in OR an established convention, always go PR branch → 
 
 Origin: see docs/git-commit-detail.md#default-to-pr-branch
 
-**Push permission shape (settings.json, since 2026-09-08)**: a `fix/` or `feat/` **branch** push is allowed without a prompt (`Bash(git push -u origin fix/:*)` and the `feat/` / no-`-u` variants), so do not present one as `! git push …` — just run it. What stays gated: `main`-targeting pushes in their canonical spellings and every history-rewriting or remote-deleting form (`--force`, `-f`, `--force-with-lease`, `--mirror`, `--delete`) are **denied**; a bare `git push` (no refspec — it pushes whatever the current branch tracks, which may be `main`) still **asks**. Permission rules are evaluated deny → ask → allow and a matching `ask` beats even a more specific `allow`, which is why the broad `Bash(git push:*)` ask entry had to go for branch pushes to run at all; Bash patterns are prefix matches with the wildcard only at the end (`Bash(git push -u origin fix/*)` never matches — write `fix/:*`). Because the match is a prefix, **a flag only reaches a deny entry when it sits where that entry spells it** — `git push --force X` is denied, and so are the `git push origin --force …` / `-u origin --force …` orderings (added after `git push origin --delete …` was observed running unblocked against a `Bash(git push --delete:*)` entry). Three residual holes the config cannot close, where the behavioral rule below is the only enforcement: a rewrite flag **trailing** the branch (`git push origin fix/x --force`) matches the allow pattern and is never seen by any deny entry; a multi-branch push whose first branch matches an allow pattern (`git push -u origin fix/a main`) is allowed wholesale; and a non-canonical `main` spelling (`git push origin main:main`) matches no deny entry. So: never write a push with a rewrite flag after the refspec, never batch `main` into a branch push, and never reach `main` by an unusual spelling. Non-`origin` remotes are covered by no entry at all — the note below governs them.
+**Push permission shape (settings.json, since 2026-09-08)**: a `fix/` or `feat/` **branch** push runs without a prompt — do not present one as `! git push …`, just run it. Still gated: `main`-targeting pushes in their canonical spellings and every history-rewriting or remote-deleting form (`--force`, `-f`, `--force-with-lease`, `--mirror`, `--delete`) are **denied**; a bare `git push` with no refspec still **asks**. Three residual holes the config cannot close, where this rule is the only enforcement: **a rewrite flag placed after the refspec**, **`main` batched into a branch push**, and **a non-canonical `main` spelling** (`origin main:main`). So never put a rewrite flag after the refspec, never batch `main` into a branch push, and never reach `main` by an unusual spelling. Prefix-match mechanics, the flag-ordering deny entries, and non-`origin` remotes: Detail: see `~/.claude/docs/git-commit-detail.md#push-permission-shape`.
 
 **Deny-list scope note**: The `Bash(git push:*)` matcher (an `ask` entry before 2026-09-08, and the same prefix semantics as today's deny entries) only matches commands that *start with* `git push` — a compound `cd /repo && git push ...`, or a non-GitHub remote whose URL form is exotic (CodeCommit `codecommit::...`, GitLab via custom remote, internal Gitea), can bypass the matcher. The behavioral rule is the reliable enforcement, not the deny entry: always present a blocked push as `! git push <remote> <branch>` and let the user run it, and apply the same `!` user-authorization rule manually for any push to a non-GitHub remote. Do not exploit the compound-form loophole to auto-push; treat the deny entry as a backstop, not a complete safety net.
 
@@ -62,6 +62,8 @@ Origin: see docs/git-commit-detail.md#merge-execution-default
 自分の PR の merge 完了時（self-execute 後、またはユーザー報告/`!` 実行 merge を `gh pr view <n> --json state` の MERGED で probe 確認後）は、同 turn で post-merge cleanup まで実行する: `git fetch --prune` → local main を ff 更新 → **今 merge した PR の head ブランチ**（同一 plan 内で merge 済みの兄弟ブランチ含む）を削除（squash merge は `git branch --merged` に出ないため `-D`。MERGED probe 済みであることが削除の承認根拠）。ユーザーに「git pull してブランチ掃除」を毎回言わせない。
 
 ガード 3 点: (a) 削除スコープは今 merge した PR のブランチに限定 — 全体 sweep は Branch Cleanup Survey（`docs/git-commit-detail.md#branch-cleanup-survey`、AskUserQuestion 付き）のまま。`/clean_gone` は全 [gone] ブランチを一括 `-D` するため、このフォロースルーには使わない。(b) 対象ブランチが checkout 中の場合: 未コミット WIP は作業ツリーに属しブランチには属さないので削除回避の理由にならない（stash → main へ checkout → 削除 → stash pop）。ただし autonomous loop が working tree を共有するリポでは shared HEAD を checkout しない — この場合と、ブランチが別 worktree に checkout 中の場合（`branch -D` が失敗する）は削除をスキップしてよい。(c) 削除しない場合は probe 済みの正確な理由を 1 行で報告する（例:「feat/X は worktree .claude/worktrees/X に checkout 中のため保持」）— 推測の理由（「WIP upstream なので」等）を書かない。Origin: 2026-06-24〜29 の 6 セッションで「マージしたので git pull してブランチ掃除」の同一指示が反復; 削除回避理由の誤説明で確認往復（2026-06-27）。
+
+**worktree セッションの撤収も同 turn — 発火線は cwd**: cwd が worktree 配下のセッションは、`EnterWorktree` 由来か `fractal init` / `git worktree add` 由来かに関係なく撤収まで完了させます。`ExitWorktree(action:"remove")` が通らないときに「セッション内からは削除できません」と断定しないこと — 不能は capability claim なので、同 turn に `git -C <primary> worktree remove <path>` を 1 回試してから報告します。Origin: 2026-09 — 同一メッセージで primary checkout の main を ff 更新しておきながら「セッション内からは削除できません」と書き、`worktree remove` をユーザーに渡した。
 
 **EnterWorktree セッションの撤収も同 turn**: EnterWorktree で作業したセッションは、PR が `gh pr view <n> --json state` で MERGED と確認できた時点で撤収まで完了させる — `ExitWorktree(action: "remove")` → head ブランチ削除（squash merge は `-D`）→ 呼び出し元リポの local main を `git fetch --prune` + ff 更新。ガード (b) の「別 worktree に checkout 中ならスキップしてよい」は、**その worktree が自分のもの（このセッションが EnterWorktree で作った）である場合には適用しない** — 自分の worktree は撤収対象であって削除回避の理由ではない。撤収しない場合は probe 済みの理由を 1 行で報告する（未 merge の兄弟 PR がその worktree に依存している等）。Origin: 2026-07-24〜08-06 の 4 セッションで「ブランチを掃除してmainに戻りたい」「worktreeは削除できますか？」が反復 — setup / zp-SHIN は shared-tree 回避で worktree 利用が既定なので、ガード (b) をそのまま読むと撤収漏れが構造的に残る。
 
@@ -90,48 +92,21 @@ Origin: see docs/git-commit-detail.md#config-editing-branch-check
 
 ### Branch check immediately before `gh pr create`
 
-The branch check at first commit time is necessary but not sufficient. In multi-stream worktree sessions where multiple branches coexist, the current branch can change between commit and PR-create — a parallel agent finishes, you switch context, and `gh pr create` runs against the NEW current branch. The PR's title and body describe one set of changes, but the diff contains a different stream's content.
-
-Before `gh pr create`, assert the current branch matches the intended branch in the same Bash invocation:
-
-```bash
-test "$(git -C . branch --show-current)" = "feat/my-branch" && \
-  cat /tmp/pr-body.md | gh pr create --base main --title "..." --body-file -
-```
-
-Or, more explicit, pass `--head <branch>` to gh:
+The check at first-commit time is necessary but not sufficient: in a multi-stream session the current branch can drift between commit and PR-create, shipping one stream's diff under another's title. Pass `--head <branch>` explicitly — gh then ignores the CWD's branch state entirely:
 
 ```bash
 cat /tmp/pr-body.md | gh pr create --base main --head feat/my-branch --title "..." --body-file -
 ```
 
-The `--head` form is the safest — gh uses the explicit branch regardless of CWD's current branch state.
-
-Origin: see docs/git-commit-detail.md#pr-create-branch-check
+Detail (the drift mechanics and the `test … &&` alternative): see `~/.claude/docs/git-commit-detail.md#pr-create-branch-check`.
 
 ### Multi-repo tasks
 
-When a task spans 2+ repositories (e.g., CWD is `weave`, edits land in `edge-agent`), run the branch check **per repository** before the first `git add` in each repo:
-
-    git -C /absolute/path/to/other-repo branch --show-current
-    git -C /absolute/path/to/other-repo log --oneline -3
-
-Tool-side CWD resets (Bash sandbox reverts to the primary working directory on each invocation) mean a cd-based branch check only describes the primary repo; a CWD-based check is insufficient when edits reach into a sibling repo via absolute paths. Run the check per-repo, explicitly naming the path with `git -C`.
-
-Origin: see docs/git-commit-detail.md#multi-repo-branch-check
+When a task spans 2+ repositories, run the branch check **per repository** with `git -C /absolute/path` before the first `git add` in each — a CWD-based check only ever describes the primary repo, and edits reaching a sibling repo through absolute paths are invisible to it. Detail: see `~/.claude/docs/git-commit-detail.md#multi-repo-branch-check`.
 
 ### Cross-repo propagation: enumerate first
 
-When a task propagates a value (hostname, SSH key, config entry, API endpoint, env var) across multiple repos, grep all likely-affected repos BEFORE writing any file. Create branches and PRs for every affected repo in one planning round — do not discover repos sequentially as edits progress.
-
-```
-# Example: adding a new host `neo` — grep for existing hosts to find all touchpoints
-grep -rln '"air"\|"pro"' ~/ManagedProjects/*/ 2>/dev/null
-```
-
-If the grep surfaces K repos, the plan should list K branch/PR pairs up front. Do not start the first repo's PR and discover the second repo's need mid-flight — the user sees sequential round-trips where one coordinated planning step would have sufficed.
-
-Origin: see docs/git-commit-detail.md#cross-repo-propagation
+When propagating a value (hostname, SSH key, config entry, API endpoint, env var) across repos, grep every likely-affected repo **before writing any file**, and put all K branch/PR pairs in the plan up front. Discovering the second repo mid-flight turns one coordinated planning step into sequential round-trips. Detail: see `~/.claude/docs/git-commit-detail.md#cross-repo-propagation`.
 
 ### Re-check after any long-running background operation
 
@@ -155,27 +130,17 @@ If the `branch --show-current` test fails the chain aborts before staging, surfa
 
 **EnterWorktree-isolated session: the chained form is refused there — serialize into plain calls.** Inside an EnterWorktree session the harness rejects both any `git -C` aimed at the shared checkout and compound git commands ("too complex to verify that it stays inside the worktree") — including this `&&`-chain and even a single git call with an output redirect. Run single-purpose git calls from the worktree cwd instead (`git add <files>`, then `git commit -m …`), no `-C`, no chains. **The check is textual, so a non-git command is refused too whenever the substring `git` appears anywhere in it** — a `grep` whose PATTERN contains `github_pat_`, a heredoc whose body mentions `.git` or "GitHub", a `sed` whose path comes from a variable. Remedy: put the pattern or script in a file and pass it by path (`grep -f patterns.txt`, `python3 script.py`). Branch drift is not a risk there: the worktree has exactly one branch checked out and no sibling process switches it. Everywhere else the chained form above remains required. Detail: see `~/.claude/docs/git-commit-detail.md#worktree-isolated-serialization`.
 
-### `?` / `*` / `[` を含む commit メッセージは `-m` ではなく `-F <file>`
+### A commit message containing `?` / `*` / `[` goes through `-F <file>`, not `-m`
 
-ログインシェルは zsh なので、`git commit -m "…"` のメッセージ本文に glob 文字（`?` `*` `[`）が含まれると、再クォートの過程で語が glob として解釈され `no matches found` で失敗する。**メッセージ全体が壊れた 1 行として表示されるので、原因が引用符ではなく glob だと気付きにくい。** 対処はメッセージをファイルに書いて `git commit -F <path>`（PR 本文の `--body-file` と同じ理由・同じ形）。本文が 1 行で glob 文字を含まないときだけ `-m` を使う。Origin: 2026-09-16 — 本文に "status?" が含まれた多段落メッセージが `(eval):2: no matches found:` で失敗した。
+The login shell is zsh, so a glob character anywhere in the body of `git commit -m "…"` gets re-quoted into a pattern and the command aborts with `no matches found`. **The whole message comes back as one mangled line, which points at the quoting rather than at globbing** — the second attempt tends to fiddle with quotes instead of leaving `-m` behind. Write the message to a file and use `git commit -F <path>`, for the same reason PR bodies go through `--body-file`. Keep `-m` only for a single-line body with no glob characters. Origin: 2026-09-16 — a multi-paragraph message containing "status?" failed with `(eval):2: no matches found:`.
 
-### 別リポジトリに worktree を作るときは `git worktree add` ＋ 絶対パス
+### A worktree in a sibling repo is created with `git worktree add` and driven by absolute paths
 
-`EnterWorktree` は**セッションの現在リポジトリにしか** worktree を作れず、`path` 引数で既存 worktree に入る形も、対象がカレントリポか*その中にネストしたリポ*でなければ拒否される。兄弟リポ（`~/ManagedProjects/<other>`）で隔離作業をするなら `git worktree add <repo>/.claude/worktrees/<name> -b <branch> origin/main` で作り、以後は**絶対パスで編集し `git -C <worktree>` で commit する**。セッション自体は worktree-isolated にならないので、上の「文字列ベースの拒否」にも当たらない。Origin: 2026-09-16 — zp-SHIN を cwd にしたまま setup リポの隔離作業が必要になった。
+`EnterWorktree` creates a worktree **only in the session's current repository**, and entering an existing one by `path` is refused unless the target belongs to the current repo or to a repo *nested inside* it. To isolate work in a sibling repo (`~/ManagedProjects/<other>`), create it with `git worktree add <repo>/.claude/worktrees/<name> -b <branch> origin/main`, then **edit through absolute paths and commit with `git -C <worktree>`**. The session itself does not become worktree-isolated, so the textual refusal above does not apply either. Origin: 2026-09-16 — isolated work was needed in the setup repo while cwd stayed in zp-SHIN.
 
 ### Cherry-pick is a commit operation — branch check applies
 
-`git cherry-pick` does not involve `git add`, so the "check before git add" trigger above is not reached. Before any `git cherry-pick`, run `git branch --show-current` and confirm the target is the intended branch — typically a fresh branch created from `origin/main` for this specific task, not whatever branch happens to be checked out.
-
-The standard pattern for moving an existing commit onto its own clean branch:
-
-    git fetch origin && \
-      git checkout -b fix/<topic> origin/main && \
-      git cherry-pick <hash>
-
-Never cherry-pick onto an existing feature branch unless that branch is the cherry-pick's intended destination. The "branch is not main" heuristic is insufficient — the branch may be another in-flight feature (the user's WIP, a sibling task) that has nothing to do with the commit you're moving.
-
-Origin: see docs/git-commit-detail.md#cherry-pick-branch-check
+`git cherry-pick` never touches `git add`, so the "check before git add" trigger above is not reached. Run `git branch --show-current` first and confirm the target is the intended branch — normally a fresh one cut from `origin/main` for this task. Never cherry-pick onto an existing feature branch unless that branch is the intended destination; "not main" is not enough of a test. Detail (the standard 3-command pattern): see `~/.claude/docs/git-commit-detail.md#cherry-pick-branch-check`.
 
 ### Branch overlap pre-flight: open PR file scope
 
@@ -262,39 +227,23 @@ Detail (mechanism + 2-option remediation + origins): see `~/.claude/docs/git-com
 
 Every `gh pr create / edit / merge / checks / view`, `gh api`, and `git push` over **HTTPS** fails inside the Claude Code command sandbox — the TLS root store and outbound egress are blocked (`tls: failed to verify certificate`, GraphQL POST blocked). Run these with `dangerouslyDisableSandbox: true`.
 
-`git push` over an **SSH** remote works in-sandbox (SSH egress is allowed); only HTTPS pushes and `gh` CLI calls need sandbox-disabled.
+`git push` over an **SSH** remote works in-sandbox; only HTTPS pushes and `gh` CLI calls need sandbox-disabled. When a post-commit block is planned (`push → gh pr create → gh pr checks`), run the network steps sandbox-disabled from the start rather than discovering it one failed command at a time.
 
-When a post-commit block is planned (`push → gh pr create → gh pr checks`), run the network steps sandbox-disabled from the start rather than discovering it one failed command at a time. This is a sandbox-config fact, not a one-off — treat a `tls: failed to verify certificate` / blocked-egress error from any `gh`/HTTPS call as expected-in-sandbox and retry sandbox-disabled, per the Bash tool's sandbox-failure guidance.
+**Intermittent HTTPS timeouts are transient too**: an already-sandbox-disabled `gh` call failing with `dial tcp …:443: i/o timeout` gets up to 3 retries (immediately → 5s → 15s) before any diagnosis. A merge that timed out may or may not have landed — probe `gh pr view <n> --json state` before re-issuing.
 
-**Intermittent HTTPS timeouts are transient too**: when an already-sandbox-disabled `gh` call (`pr create` / `merge` / `view` / `api`) fails with `dial tcp …:443: i/o timeout`, treat it like the `pr checks --watch` transient rule — retry up to 3 times (immediately → 5s → 15s) before diagnosing. An SSH `git push` succeeding while HTTPS times out confirms the degradation is network-layer, not repo-side. A merge that timed out may or may not have landed: probe `gh pr view <n> --json state` before re-issuing. Origin: 2026-07-08 — ~10 intermittent 443 timeouts across one session; every operation succeeded on retry while SSH pushes worked throughout.
+**`gh auth refresh` refuses to run while `GITHUB_TOKEN` is exported**, and on these machines it always is. Wrap it *and every following `gh` call that needs the refreshed credential* in `env -u GITHUB_TOKEN`. Before writing a scope-expanding runbook, read the current token's scopes and prefer the web UI for one-off account-level operations — `gh auth refresh -s admin:public_key` widens the keyring token permanently.
 
-Origin: see docs/git-commit-detail.md#gh-network-sandbox
-
-**`gh auth refresh` REFUSES to run while `GITHUB_TOKEN` is exported** — and on these machines it always is. The zsh cookbook ships `~/.setup_shin1ohno/profile.d/50-github-token.sh` (setup#597, for mise's GitHub rate limit) which exports `gh auth token` into every interactive shell. `gh` treats an exported `GITHUB_TOKEN`/`GH_TOKEN` as an override and refuses the OAuth flow outright: `The value of the GITHUB_TOKEN environment variable is being used for authentication. To refresh credentials stored in GitHub CLI, first clear the value from the environment.` Any `gh auth refresh` — in a runbook, a script, or a `!` block — needs `env -u GITHUB_TOKEN`, and so does **every subsequent `gh` call that must use the refreshed credential**: the shell's `GITHUB_TOKEN` still holds the OLD token after a refresh, so wrapping only the refresh leaves the next command on the stale scope.
-
-Before writing a scope-expanding runbook, check what the current token actually has and whether the web UI avoids the round-trip entirely: `curl -sI https://api.github.com/user -H "Authorization: token $GITHUB_TOKEN" | grep -i x-oauth-scopes`. Prefer the web UI for one-off account-level operations (adding an SSH key, adding a signing key) — `gh auth refresh -s admin:public_key` widens the keyring token *permanently*, and because `50-github-token.sh` re-exports it, every tool reading `GITHUB_TOKEN` in every shell can then manage SSH keys on the account. Same browser-interaction count, durably wider blast radius.
-
-Origin: see docs/git-commit-detail.md#gh-auth-refresh
+Detail (why SSH differs, the timeout evidence, the exported-token mechanics and the blast-radius argument): see `~/.claude/docs/git-commit-detail.md#gh-network-sandbox` and `#gh-auth-refresh`.
 
 ## GPG Signing Failures
 
-If `git commit` fails with a GPG signing error or timeout, present the user with the full cache-refresh command:
+On a GPG signing error or timeout, hand the user the two-part cache refresh as one fenced block — reloading the agent alone does not prime pinentry, and a truncation that swallows `--clearsign` leaves the next commit failing the same way:
 
 ```
 ! gpg-connect-agent reloadagent /bye && echo "test" | gpg --clearsign > /dev/null
 ```
 
-The first part reloads the agent; the second forces a `gpg --clearsign` in the user's terminal, which triggers pinentry and caches the passphrase so the next `git commit` inside the Claude Code Bash sandbox signs silently without timing out again.
-
-Do not use the shorter `gpg-connect-agent reloadagent /bye` alone — it reloads the agent but does not pre-cache the passphrase, so the very next commit can trigger a fresh pinentry that times out in the sandbox.
-
-Do not bypass signing with `-c commit.gpgsign=false` unless the user explicitly requests it.
-
-**Output integrity**: present the full two-part chain as a single uninterrupted code line — never let a response truncation boundary split it. The user copy-pastes whatever you emit; if your output ends with `… echo "test" | gp` (truncated mid-word), the user runs `echo "test" | gpg` (no `--clearsign`), gpg returns "no command supplied" warning, and the pinentry cache is NOT primed. The very next commit then fails with the same "No passphrase given" error and the user has wasted a turn re-running.
-
-Before emitting the GPG cache-refresh `!` line, scan the line you are about to write and verify both halves are intact. If you cannot fit the full command on a single line, emit it as a fenced code block (which preserves it as one logical unit) — never inline-formatted at the end of a sentence where the line wrap can swallow trailing tokens.
-
-Origin: see docs/git-commit-detail.md#gpg-signing-failures
+Never bypass signing with `-c commit.gpgsign=false` unless the user asks for it. Why both halves are needed, and the truncation failure in full: Detail: see `~/.claude/docs/git-commit-detail.md#gpg-signing-failures`.
 
 ## Working directory `.git` check before first file write
 

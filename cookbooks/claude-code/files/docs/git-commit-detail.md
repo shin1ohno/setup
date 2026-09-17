@@ -162,6 +162,24 @@ Edit the tracked copy in `~/ManagedProjects/`, not the deploy copy. The deploy c
 
 Origin: 2026-05-03 LXC bootstrap — edited 14 files in `~/setup-main/` (no `.git`) before the dual-location surfaced.
 
+## push-permission-shape
+
+Mechanics behind the summary in `rules/git-commit.md`.
+
+Permission rules are evaluated deny → ask → allow, and a matching `ask` beats even a more specific `allow` — which is why the broad `Bash(git push:*)` ask entry had to go for branch pushes to run at all. Bash patterns are prefix matches with the wildcard only at the end: `Bash(git push -u origin fix/*)` never matches; write `fix/:*`.
+
+Because the match is a prefix, **a flag only reaches a deny entry when it sits where that entry spells it**. `git push --force X` is denied, and so are the `git push origin --force …` and `-u origin --force …` orderings — those were added after `git push origin --delete …` was observed running unblocked against a `Bash(git push --delete:*)` entry.
+
+The three residual holes, spelled out:
+
+- A rewrite flag **trailing** the branch (`git push origin fix/x --force`) matches the allow pattern and is never seen by any deny entry.
+- A multi-branch push whose first branch matches an allow pattern (`git push -u origin fix/a main`) is allowed wholesale.
+- A non-canonical `main` spelling (`git push origin main:main`) matches no deny entry.
+
+Non-`origin` remotes are covered by no entry at all — the deny-list scope note below governs them.
+
+The same prefix-match asymmetry is why a blanket `Bash(sudo:*)` deny cannot be narrowed safely by adding allow entries: deny wins, so an allow for a read-only subcommand never fires, and enumerating the dangerous sudo forms runs into the identical trailing-argument hole.
+
 ## deny-list-nongithub-remote
 
 ## Default to PR Branch; Do Not Push to main — deny-list scope + non-GitHub remotes
@@ -297,17 +315,50 @@ Origin: 2026-05-11 CLAUDE.md trim — 5+ Writes on an unrelated open PR's branch
 
 ## pr-create-branch-check
 
+In multi-stream worktree sessions where several branches coexist, the current branch can change between commit and PR-create: a parallel agent finishes, context switches, and `gh pr create` runs against the NEW current branch. The PR's title and body then describe one set of changes while the diff carries a different stream's content.
+
+The alternative to `--head` is asserting the branch in the same Bash invocation, so the chain aborts before the PR is opened:
+
+```bash
+test "$(git -C . branch --show-current)" = "feat/my-branch" && \
+  cat /tmp/pr-body.md | gh pr create --base main --title "..." --body-file -
+```
+
+`--head` is still safer, because it does not depend on the assertion being written correctly.
+
 Origin: 2026-05-09 multi-stream worktree — PR shipped with wrong stream's diff (current branch drifted between commit and PR-create).
 
 ## multi-repo-branch-check
+
+The per-repo form is two calls, both naming the path explicitly:
+
+    git -C /absolute/path/to/other-repo branch --show-current
+    git -C /absolute/path/to/other-repo log --oneline -3
+
+Tool-side CWD resets (the Bash sandbox reverts to the primary working directory on each invocation) are why a cd-based check cannot cover a sibling repo.
 
 Origin: 2026-04-23 iOS — bare branch check described primary CWD, not the sibling repo edited.
 
 ## cross-repo-propagation
 
+The enumeration is one grep against the existing values, before any file is written:
+
+```
+# Example: adding a new host `neo` — grep for existing hosts to find all touchpoints
+grep -rln '"air"\|"pro"' ~/ManagedProjects/*/ 2>/dev/null
+```
+
 Origin: 2026-04-25 `neo` host add — `home-monitor/ssh-devices.tf` discovered as a second sequential PR.
 
 ## cherry-pick-branch-check
+
+The standard pattern for moving an existing commit onto its own clean branch:
+
+    git fetch origin && \
+      git checkout -b fix/<topic> origin/main && \
+      git cherry-pick <hash>
+
+The "branch is not main" heuristic is insufficient on its own — the branch may be another in-flight feature (the user's WIP, a sibling task) with nothing to do with the commit being moved.
 
 Origin: 2026-04-25 cherry-picked onto the user's unrelated WIP branch.
 
@@ -321,12 +372,26 @@ Origin: 2026-05-07 — `--body-file /tmp/...` denied right after a Write the ver
 
 ## gh-network-sandbox
 
+Inside the command sandbox the TLS root store and outbound egress are blocked, so `gh pr create / edit / merge / checks / view`, `gh api` and HTTPS `git push` all fail (`tls: failed to verify certificate`, GraphQL POST blocked). SSH egress is allowed, which is why an SSH remote pushes fine in-sandbox. This is a sandbox-config fact rather than a one-off: treat a TLS or blocked-egress error from any `gh`/HTTPS call as expected-in-sandbox and retry sandbox-disabled, per the Bash tool's own sandbox-failure guidance.
+
+For the transient case, an SSH `git push` succeeding while HTTPS times out confirms the degradation is network-layer, not repo-side. Origin: 2026-07-08 — about 10 intermittent 443 timeouts in one session; every operation succeeded on retry while SSH pushes worked throughout.
+
 Origin: 2026-06-26 — every gh/HTTPS call across PR #556/#563/#564 required a sandbox-disabled retry; SSH push succeeded in-sandbox.
 
 ## gh-auth-refresh
 
+The zsh cookbook ships `~/.setup_shin1ohno/profile.d/50-github-token.sh` (setup#597, for mise's GitHub rate limit), which exports `gh auth token` into every interactive shell. `gh` treats an exported `GITHUB_TOKEN`/`GH_TOKEN` as an override and refuses the OAuth flow outright: `The value of the GITHUB_TOKEN environment variable is being used for authentication. To refresh credentials stored in GitHub CLI, first clear the value from the environment.`
+
+So `env -u GITHUB_TOKEN` is needed on the refresh **and on every subsequent `gh` call that must use the refreshed credential** — the shell's `GITHUB_TOKEN` still holds the OLD token after a refresh, so wrapping only the refresh leaves the next command on the stale scope.
+
+Read the current scopes before widening them: `curl -sI https://api.github.com/user -H "Authorization: token $GITHUB_TOKEN" | grep -i x-oauth-scopes`. For a one-off account-level operation (adding an SSH key, adding a signing key), the web UI costs the same single browser interaction, whereas `gh auth refresh -s admin:public_key` widens the keyring token *permanently* — and because `50-github-token.sh` re-exports it, every tool reading `GITHUB_TOKEN` in every shell can then manage SSH keys on the account.
+
 Origin: 2026-08-01 sh1-cloud — a runbook step `gh auth refresh -h github.com -s admin:public_key` failed on gh's own refusal; the fix needed `env -u` on both that and the follow-up `gh ssh-key add`, and the scope widening was avoidable by pasting into github.com/settings/keys instead.
 
 ## gpg-signing-failures
+
+The first half of the chain reloads the agent; the second forces a `gpg --clearsign` in the user's own terminal, which triggers pinentry and caches the passphrase so the next `git commit` inside the Claude Code Bash sandbox signs silently instead of timing out again. `gpg-connect-agent reloadagent /bye` alone reloads the agent without priming the cache, so the very next commit can raise a fresh pinentry that times out in the sandbox.
+
+**Output integrity.** The user copy-pastes whatever is emitted. If the output ends `… echo "test" | gp` — truncated mid-word — the user runs `echo "test" | gpg` with no `--clearsign`, gpg warns "no command supplied", the cache is NOT primed, and the next commit fails with the same "No passphrase given" error. Before emitting the line, check that both halves are intact, and emit it as a fenced code block rather than inline at the end of a sentence where a line wrap can swallow trailing tokens.
 
 Origin: 2026-05-04 retro — emitted `... echo "test" | gp` truncated mid-word; cold pinentry cache failed the next commit.

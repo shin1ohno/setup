@@ -6,6 +6,8 @@ Doctrine for when and how to search + save durable knowledge. `@`-imported by CL
 
 harness native のファイル記憶（`~/.claude/projects/<slug>/memory/*.md`）は、`hooks/mirror-file-memory.rb` が MCP ストアへ自動でミラーする。memory ファイルを Write / Edit した時点で PostToolUse hook が該当ファイルだけを送り、SessionStart の `--sweep` が取りこぼし（他ホスト・手編集・hook が lock を取れなかった場合）を回収する。**同じ内容を `remember` / `ingest` で手動でもう一度書かないこと** — doc_key が `<host>/<project-slug>/<slug>` で upsert されるので、手書きの重複だけが残る。
 
+複製の実害は訂正経路が分かれることです。複製するとファイル側にしか訂正が入らず、ストアには古い主張が残り、`recall` が古い方を高スコアで返します（実測 2026-09-16: 手書き複製が、反証追記入りのファイル正本ミラーより上位に出た）。したがって**自分がこのセッションで保存した結論が後続の観測で反証されたら、同 turn でファイル記憶を Edit する**（mirror が doc_key で上書きする）。`remember` で別 note を足して訂正するのは禁止で、すでに複製を作ってしまった場合だけ `revise` で直します（自分が書いた doc しか supersede できません）。
+
 3 点の含意:
 
 - **ミラーは `fact` の代替にならない**。`ingest` は server 側で `source_class=tool-output` 固定（どのホストから書いても `user-stated` にはならない）。ユーザー属性・嗜好・決定は従来どおり `remember(type='fact')` で保存する — `recall` が「指示として扱ってよい」と教えるのは `user-stated` の `fact` だけ。
@@ -68,7 +70,7 @@ Save immediately — do not wait to be asked:
 
 Structure each `knowledge` note as a self-contained block: Topic / Context (project, stack) / Problem / Solution / Why. (Adapt the labels for reviews — Rating/Pros/Cons/Verdict — or analyses — Findings/Recommendation/Risks.)
 
-**業務の記録には、事実と社内での解釈に加えて「その解釈への自分（agent）の評価」を含める。** 事実だけの記録は、次に引いたときに解釈のやり直しから始まる。評価は「実測と矛盾する」「分母が非対称」のように後から検算できる形で書く。Origin: 2026-09-10 —「それぞれの事実や社内での解釈、その解釈へのあなたの評価を記憶して」。
+**A work record carries the fact, the internal reading of it, and the agent's own assessment of that reading.** A record holding only facts makes the next reader redo the interpretation from scratch. Write the assessment so it can be checked later — "contradicts the measured value", "the denominators are asymmetric" — not as an impression. Origin: 2026-09-10 — the operator asked for "the facts, the internal interpretation, and your assessment of that interpretation" to be stored together.
 
 ### Documents / PDFs
 
