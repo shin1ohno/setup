@@ -46,6 +46,20 @@ four keys to its `plugin_action`s, which route by `pane process-info`.
 Measured against herdr 0.8.0 on this machine, 2026-08-05. Where this section
 disagrees with the text above it, this section was verified more recently.
 
+**`--full-auto` is not a codex flag on the installed build (measured: codex
+0.153.4, 2026-09-16).** Passing it after `--` to `herdr agent start --kind
+codex` makes codex exit with a usage error, and `agent start` reports only a
+startup timeout, so it looks like a herdr problem. Use `-s workspace-write -a
+never` for unattended workspace-write access, and confirm any codex flag
+against the installed version with `codex --help` before passing it.
+
+**A prompt submitted immediately after `agent start` can be swallowed.**
+`interactive_ready: true` is not proof the TUI accepts input: three of three
+fresh Codex agents dropped their first prompt while MCP servers were still
+initialising, and the CLI reported success anyway. Pass `--wait` so an
+ineffective submission surfaces as `agent_prompt_stalled`, or confirm your own
+text is echoed with `agent read` before assuming delivery.
+
 **Discovery is incomplete in `herdr --help`.** Two whole groups are omitted:
 `terminal` (`session observe` is a read-only live ANSI stream; `session
 control` is writable and single-owner) and `plugin` (installs and runs
@@ -70,13 +84,6 @@ the same 1000 lines with no truncation marker in the CLI output. On an idle
 agent a larger `--lines` does recover far more than `visible` (measured: 4 KB
 visible vs 65 KB at the cap), so raise it first — but past the cap, ask the
 agent to write its full answer to a Markdown file and read the file.
-
-**A prompt submitted immediately after `agent start` can be swallowed.**
-`interactive_ready: true` is not proof the TUI accepts input: three of three
-fresh Codex agents dropped their first prompt while MCP servers were still
-initialising, and the CLI reported success anyway. Pass `--wait` so an
-ineffective submission surfaces as `agent_prompt_stalled`, or confirm your own
-text is echoed with `agent read` before assuming delivery.
 
 **`agent_prompt_stalled` is ambiguous delivery, not permission to resend.**
 The text was already submitted; only the lifecycle change is missing. Inspect
