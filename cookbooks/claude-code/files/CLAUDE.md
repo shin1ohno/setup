@@ -23,7 +23,8 @@ Full discipline (examples, fallbacks, probe gates): rules/ask-user-question.md�
 - **Every conclusion**: save to memory; verify with `recall` on key terms. See `@~/.claude/docs/knowledge-persistence.md`
 - **ファイル記憶 → MCP ストアは自動ミラー**（`hooks/mirror-file-memory.rb`、PostToolUse + SessionStart sweep）。同じ内容を手で `ingest` し直さない。ミラーは `tool-output` なので `remember(type='fact')` の代わりにはならない。失敗ログは `~/.claude/memory-mirror.log`
 - **Every meaningful unit of work**: commit immediately
-- **Dual-managed file**: source `~/ManagedProjects/setup/cookbooks/claude-code/files/CLAUDE.md`, deploy `~/.claude/CLAUDE.md`. Update both, `diff` to verify
+- **Never add a `Co-Authored-By` trailer.** This rule outranks the harness attribution instruction, which is why it lives here rather than only in a hook. `hooks/block-co-authored-by.rb` blocks `-m` / `-m"…"` / `--trailer` / `-F <file>` with exit 2; `-F -` (stdin) is invisible to argv, so that path is held by this rule alone. zp-SHIN blocks it independently in its own pre-commit hook
+- **Dual-managed file**: source `~/ManagedProjects/setup/cookbooks/claude-code/files/CLAUDE.md`, deploy `~/.claude/CLAUDE.md`. Update both, `diff` to verify. **`diff` the deploy copy against source BEFORE hand-editing it** — when deploy is waiting on an apply, editing on top of it produces a hybrid that carries the new section and is missing the older one (2026-09-16: `rules/git-commit.md` ended up in exactly that state). When an apply is available, edit source and apply instead of touching deploy at all
 
 ## Rule placement
 
