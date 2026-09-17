@@ -35,6 +35,8 @@ If a template keyword was detected, also read the matching template:
 
 Execute 3 steps sequentially. Each step is delegated to an independent agent via the Agent tool.
 
+Before launching each step's Agent call, emit one status line to the user (e.g. 「設計中（Step 1/3）…」「執筆中（Step 2/3）…」「編集中（Step 3/3）…」). When the Step 3 decision sends the work back to Step 1, name the cycle (「Step 3 の判定により Step 1 へ戻ります（cycle 2/3）」). This pipeline is intentionally synchronous, so the progress line is this skill's own responsibility, not the background-agent tracking rule's.
+
 ### Step 1: Plan (Structure Design)
 
 Launch Agent tool (subagent_type: "general-purpose"):
