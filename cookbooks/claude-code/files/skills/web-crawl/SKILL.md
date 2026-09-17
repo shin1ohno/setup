@@ -100,9 +100,11 @@ persisted: <N>   skipped(dedup): <M>   [truncated: <if any>]
 
 If nothing new: report "no new items" and stop cleanly.
 
-## Scheduling as a cloud task (`/schedule`)
+## Scheduling as a recurring task
 
-Register a cloud routine whose prompt is **self-contained**: the cloud environment does not run mitamae, so this skill is not auto-loaded there. Inline this skill's procedure into the prompt; the targets are NOT inlined — the prompt fetches them from the canonical raw URL (Step 1), so adding a target later needs only a `git push`, not a routine edit.
+**Probe the scheduling facility before writing the registration.** `/schedule` is not present in this host's skill roster (checked 2026-09-16); what exists here is `/loop` for in-session repetition, `CronCreate` for session-scoped crons that are NOT persisted to disk, and **systemd user timers** — the mechanism this host actually uses for recurring work (`todo-collect`, `todo-reconcile`, `external-handoff-worker`, `obsidian-sync`). A cloud routine that must outlive the session needs either a timer on this box or a facility confirmed to exist wherever it will run. The checklist below describes the cloud-routine shape and stays valid for whichever facility the probe finds; do not register against a command name without confirming it resolves.
+
+Register a routine whose prompt is **self-contained**: the cloud environment does not run mitamae, so this skill is not auto-loaded there. Inline this skill's procedure into the prompt; the targets are NOT inlined — the prompt fetches them from the canonical raw URL (Step 1), so adding a target later needs only a `git push`, not a routine edit.
 
 Checklist when registering:
 
