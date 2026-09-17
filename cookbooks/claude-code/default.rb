@@ -171,6 +171,12 @@ end
 
 # Merge managed keys into settings.json, preserving unmanaged keys (e.g. mcpServers)
 # Deep-merges `permissions` so machine-specific allow/deny entries are preserved
+#
+# `model` is deliberately NOT in files/settings.json: the shallow merge below lets
+# managed win on every top-level key, so pinning the model here rolls the live
+# value back on each apply (2026-09-16: live claude-fable-5-1[1m] vs managed
+# claude-fable-5[1m]). Model generation is owned by the live file; re-adding the
+# key means chasing it in the cookbook every time the generation changes.
 settings_path = "#{node[:setup][:home]}/.claude/settings.json"
 managed_file  = File.join(File.dirname(__FILE__), "files", "settings.json")
 
