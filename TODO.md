@@ -1016,3 +1016,46 @@ is keyed on an address the AP does not own.
   probe that before designing anything new. Then the runner script and a
   `systemd` user timer at the 10-minute default, verified by next-elapse rather
   than `is-active` per the timer gate in `.claude/rules/infrastructure.md`.
+
+## rust cookbook — the auto-self-update workaround is host-local, and every mise shim call spawns a rustup (Medium)
+
+- **Failure class**: `rustup update stable` (`cookbooks/rust/default.rb`) aborted
+  the whole apply on pro-dev with `failed to set permissions for
+  '$HOME/.cargo/bin/rustup-init': No such file or directory (os error 2)`. The
+  message is misleading. rustup unlinks `$CARGO_HOME/bin/rustup-init` on EVERY
+  invocation (`cleanup_self_updater`, rustup 1.29.0 `src/cli/self_update.rs`
+  1416-1425) and `prepare_update` downloads the new rustup into that exact path,
+  so any concurrent rustup deletes the self-update's target mid-transfer. The
+  write and `sync_data` still succeed on the unlinked fd, `download_file`
+  returns Ok, and the next line — `make_executable` — reports ENOENT.
+- **What drives the concurrency**: `~/.config/mise/config.toml` declares
+  `rust = "latest"`, so mise runs `rustup component list --installed --toolchain
+  1.96.0` on every shim activation — measured at ~1 rustup per shim call (20
+  `~/.local/share/mise/shims/jq --version` calls raised the 4-second distinct
+  rustup count from 9 to 26). The coralline statusline runs at
+  `refreshInterval:1` and calls `jq`, which on this host resolves only to the
+  mise shim (`/usr/bin/jq` does not exist), so each live Claude Code session
+  contributes ~1 rustup/s. With ~6 sessions up, `~/.cargo/bin/rustup-init` never
+  survives 0.2 s and the self-update can never complete.
+- **Current state**: worked around on pro-dev ONLY, by hand —
+  `rustup set auto-self-update disable`, now `auto_self_update = "disable"` in
+  `~/.rustup/settings.toml`. `rustup update stable` exits 0 again. Nothing in
+  `cookbooks/rust` sets this, so a rebuilt host, or any other host, returns to
+  the failing configuration. rustup stays at 1.29.0; 1.29.1 is available.
+- **First step**: add the setting to `cookbooks/rust/default.rb` as an `execute`
+  ordered before the `rustup update stable` resource, guarded by a `not_if` that
+  greps `auto_self_update = "disable"` out of `$HOME/.rustup/settings.toml`.
+  Then decide separately whether the per-shim rustup spawn is acceptable:
+  dropping `rust = "latest"` from the mise config removes it outright and ends
+  the continuous 4-8 process/s churn, but changes how rust resolves for every
+  mise consumer — probe which repos depend on the mise shim before touching it.
+  Delete this entry in the resolving commit.
+
+Origin: 2026-09-19 pro-dev. Root cause confirmed by reproducing the unlink in an
+isolated `CARGO_HOME` (a bare `rustup --version` removes a pre-created
+`rustup-init`) and by the shim-burst measurement above. A second, independent
+bug surfaced in the same session: toolchain 1.96.0 lacked the `rust-analyzer`
+component, so the mise shim and rustup fell back to each other without bound and
+`rust-analyzer --version` never returned. Fixed by
+`rustup component add rust-analyzer --toolchain 1.96.0` — also host-local, and
+needs the same cookbook treatment to survive a rebuild.
