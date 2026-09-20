@@ -62,6 +62,14 @@
   changes, each starting from the exact repro in
   `docs/adr/0011-0012-review-design.md`. Delete this entry in the resolving
   commit.
+
+Status 2026-09-20: G3 is still unguarded. On origin/main `bin/converge:62` is
+a bare `rm -f "$sentinel"`, and `--dry-run` only assigns `dry="--dry-run"` at
+:32 — the sentinel removal sits outside any dry-run branch, so `--dry-run
+--skip-doctor` still deletes the evidence of the previous real convergence.
+`git log --grep=converge` on main has #973 (the PR that filed this) as its
+newest converge commit, so none of G1/G2/G3 has been touched since.
+
 ## bin/check-memory-v2-manifest's CI-recipe and import-line scanners have known blind spots (Medium)
 
 - **Failure class 0 (`bin/check-memory-v2-manifest`'s file-existence loop)**: the
@@ -118,6 +126,13 @@
   module is one of mcp/starlette/httpx/uvicorn, and re-emits each as a
   standalone one-line import statement for the existing `python3 -I -` pipe.
   Delete this entry in the resolving commit.
+
+Status 2026-09-20: D2 is unimplemented. `git grep -ic yaml origin/main --
+bin/check-memory-v2-manifest` = 0, so the scanner still does no YAML parsing
+at all and cannot walk `jobs.*.steps[].run` (positive control:
+`REPO_ROOT|manifest` = 17 hits in the same 7602-byte file, so the grep is
+reading it).
+
 ## bin/check-host-configs's static-analysis checks have coverage gaps a well-formed config can exploit (Medium)
 
 - **Failure class**: the FAIL-tier checker added for ADR 0011 (`bin/check-host-configs`)
@@ -153,6 +168,12 @@
   explicitly policy-allowlisted DNS name. Add the F1/F2/F4 examples from
   `docs/adr/0011-0012-review-design.md` as regression fixtures before touching
   the implementation. Delete this entry in the resolving commit.
+
+Status 2026-09-20: unchanged. `safe_load_file` = 0 hits in
+`bin/check-host-configs` (4695 B) while the positive control `prometheus` = 11
+hits, so the Prometheus-side read is still the regex / index-0 form rather
+than an exhaustive `scrape_configs[].static_configs[].targets` walk.
+
 ## auto-mitamae runner has no remote-side apply deadline; a stuck mitamae holds the flock and the canary gate (Medium)
 
 - **Failure class**: orchestrator.sh bounds only the LOCAL `ssh` with `timeout 300`.
@@ -175,6 +196,11 @@
   recording `mitamae_timeout` as a distinct `last_attempt_status` / runner status
   so the gate treats it as fail (retry), not hold. Add a harness case where the
   stub sleeps past the deadline.
+
+Status 2026-09-20: no deadline yet. `git grep -n 'kill-after|mitamae_timeout'
+origin/main -- cookbooks/ bin/` returns 0 hits, so `./bin/mitamae local` still
+runs unbounded and `mitamae_timeout` exists as a `last_attempt_status` value
+nowhere in the tree.
 
 ## Network fault detection covers thresholds only; the baseline-comparison half is unwritten (Medium)
 
@@ -222,6 +248,11 @@ window on preceding days, and no rule computes that today.
 - **Wait for**: about a week of the #948 rules running, so the false-positive
   rate of the threshold half is known before adding a noisier class on top.
 
+Status 2026-09-20: the baseline-comparison half is still unwritten.
+`esqlQuery` / `esql` matches only `TODO.md` on origin/main — no Kibana
+alerting rule, no generator, and no CT111 producer references it. The
+one-rule-by-hand first step has not been taken.
+
 ## Roon process-name toggles re-fire 4 false "Process down" alerts per update (Medium)
 
 `setup-process-alerts.sh` builds one `.es-query` rule per (host, process) pair and
@@ -256,6 +287,13 @@ Status 2026-09-06: unchanged. `cookbooks/lxc-kibana/default.rb` still matches a
 single spelling — `{ term: { "process.name": $process } }` at L101, with the KQL at
 L76 interpolating one `${process}`. #833 and #852 only chased the spelling of the
 day; the list-accepting fix this entry asks for is not in.
+
+Status 2026-09-20: unchanged, and the location recorded on 09-06 is wrong. The
+single-spelling match lives in
+`cookbooks/lxc-kibana/files/setup-process-alerts.sh:101` (`{ term: {
+"process.name": $process } }`), not in `cookbooks/lxc-kibana/default.rb:101` —
+`process.name` has 0 hits in `default.rb`. Locate by file name; the 09-06 path
+sends the probe to the wrong file.
 
 ## Elastic CA rotation is not detected by the cert skip_if guards (Medium)
 
@@ -363,6 +401,12 @@ the security posture must be RE-AUDITED before acting. FLAGGED for human review.
 - Recovery already done (2026-05-30): cron re-enabled, fleet converged 18/18,
   ES RED cluster fixed; resilience hardening in setup PR #394.
 
+Status 2026-09-20: Alertmanager is still not deployed by any cookbook. `git
+grep -ln alertmanager origin/main -- cookbooks/` returns one unrelated file
+(`elastic-agent/files/elastic-agent.synthetics-input.yml`) — no receiver
+definition, no unit, no cookbook. The invisibility gap is intact, which also
+keeps the self-deadlock item below blocked by design.
+
 ## auto-mitamae self-deadlock — disabled cron cannot self-heal
 
 - The monitoring apply that recreates `/etc/cron.d/auto-mitamae-orchestrator`
@@ -408,6 +452,12 @@ the security posture must be RE-AUDITED before acting. FLAGGED for human review.
   `home-monitor/pve-bootstrap-iam.tf` into `pve-monitoring-aws-billing.tf`, then
   add a value-drift check to the elastic-agent env-generation `skip_if`.
 
+Status 2026-09-20: not adopted. In home-monitor origin/main,
+`elastic-billing-reader` still has a single static `aws_iam_access_key`
+(`pve-monitoring-aws-billing.tf:35`), while the primary/secondary harness it
+is meant to copy exists only at `pve-bootstrap-iam.tf:54` (`for_each =
+toset(["primary", "secondary"])`). Both coupled gaps are open.
+
 ## mini always-on power: enforce durability across macOS updates (Low)
 
 Status 2026-07-04: fixed the #603 root cause (mini idle-slept because
@@ -442,6 +492,11 @@ scope for the rules diet.
 Status 2026-09-06: unchanged — a fresh headless session on sh1-cloud still lists the
 full `gws-*` / `recipe-*` / `persona-*` set in its available-skills block.
 
+Status 2026-09-20: unchanged — this weekly headless reconcile session's own
+available-skills block still carries the full `gws-*` / `recipe-*` /
+`persona-*` set, so the listing cost is paid by every scheduled run on this
+host, not only by interactive sessions.
+
 ## auto-memory stale review — Cognee-referencing memories post-#656 (Low)
 
 From the 2026-07-06 claude-md-audit critic pass: project auto-memory dirs
@@ -458,6 +513,16 @@ pipelines and the old local MCP ports.
 
 Status 2026-09-06: 8 files still match. `grep -rliE 'cognee|cognify|:8001|:8002'
 ~/.claude/projects/*/memory/` = 8 hits out of 77 memory files on sh1-cloud.
+
+Status 2026-09-13: still 8 files. Same `grep -rliE 'cognee|cognify|:8001|:8002'
+~/.claude/projects/*/memory/` = 8 hits, now out of **89** memory files (77 a week
+ago) — the numerator is flat while the denominator grows, i.e. the stale set is
+not self-correcting on its own and nothing new is picking up the old references.
+
+Status 2026-09-20: still 8 files, now out of **91** memory files (89 a week
+ago, 77 on 09-06). Same `grep -rliE 'cognee|cognify|:8001|:8002'
+~/.claude/projects/*/memory/` on sh1-cloud. Third consecutive week of a flat
+numerator against a growing denominator.
 
 ## remindd daemon — connection/idle-timeout hardening (Low)
 
@@ -476,6 +541,11 @@ of scope for the initial PR.
   child-channel options surfaced via HB config), set a modest idle timeout (~30s) and
   connection cap in `cookbooks/remind/files/daemon/Sources/remindd/main.swift`, and
   add a slowloris probe to the verification steps.
+
+Status 2026-09-20: unchanged. `idleTimeout|idle_timeout|maxConcurrent` = 0
+hits under `cookbooks/remind/` on origin/main (positive control:
+`cookbooks/remind/default.rb` matches `remind`), so the daemon still has
+neither a read/idle timeout nor a max-connection cap.
 
 ## elastic-agent — two Linux defects that abort the whole apply (Medium)
 
@@ -519,6 +589,12 @@ no longer apply — locate by resource name.)
   dispatching `test-setup.yml` at `all-cookbooks`, which runs a non-sudo
   `./bin/mitamae local linux.rb` — exactly the non-root Linux profile defect 2
   fails under.
+
+Status 2026-09-20: defect 1 is still present at
+`cookbooks/elastic-agent/linux.rb:314` — the `execute "render
+elastic-agent.yml"` command string still opens with `set -euo pipefail`, which
+dash rejects. Locate by resource name; this line number drifts between
+releases.
 
 ## ssh-keys — known_hosts keyscan is dash-fatal on Linux (Medium)
 
@@ -619,6 +695,14 @@ NOT defects.
   template input so the notify fires, and by applying to a fresh CT for the
   `ensure … exists` pair.
 
+Status 2026-09-13: all nine sites still present and still unwrapped, but **every
+line number in the table above has drifted** — locate by enclosing resource name,
+not by line. Current (`git grep -n 'set -euo pipefail'` on this branch):
+`lxc-elasticsearch/default.rb` 266 / 292; `lxc-kibana/default.rb` 343 / 359 /
+375 / 396; `lxc-monitoring/default.rb` 580 / 614 / 632. Each is still the first
+line of a bare `execute … command <<~SH.strip` (verified by reading the three
+lines above each hit), so no site has been wrapped in `bash -c` yet.
+
 ## sh1-cloud — every owner/group resource re-chowns on every apply (Low)
 
 On the GCE OS Login box `sh1-cloud`, mitamae reports `owner will change from
@@ -660,6 +744,19 @@ Status 2026-09-06: the blast-radius count is still unrun, and the target is not 
 this repo — sh1-cloud is built by the `gcp-*` cookbooks in the zp-SHIN overlay
 (`projects/mercari-setup/cookbooks/gcp-{aws-federation,cli-tools,es-memory,
 metadata-route-guard,ssh-keys,tailscale,ubuntu-slim}`), so the grep has to run there.
+
+Status 2026-09-13: blast-radius count RUN in the overlay, and it is small. In
+`kouzoh/zp-SHIN` `projects/mercari-setup/cookbooks/`, the literal
+`owner node[:setup][:user]` matches **0** files (`git grep -lF`), and the broader
+`^\s+(owner|group)\s` matches **6 lines in 1 cookbook** — `mercari-git/default.rb`
+:27/28, :36/37, :43/44 (three resources, each with both attributes). The `gcp-*`
+cookbooks carry none. Root condition re-confirmed on the host:
+`grep -c '^sh1_mercari_com:' /etc/passwd` = 0 while `getent passwd sh1_mercari_com`
+returns uid/gid 569775000, so mitamae's uid→name mapping genuinely has no local
+source. With a 3-resource blast radius, option (a) (drop `owner`/`group` under
+`node[:setup][:home]` + a lint check) is a small diff — the noise seen on every
+apply comes mostly from the public `setup` cookbooks, which also run on this host,
+so re-scope the count there before choosing.
 
 ## herdr — bump past 0.8.0 once a stable ships the oversized-frame render fix (Low)
 
@@ -703,6 +800,18 @@ freezing when a full ANSI frame exceeds the transport limit. (#2670)". So the
 "confirm its notes include the fix" half of the first step is done; what remains
 is recomputing the per-target sha256s, bumping `herdr_version` (0.8.0 -> 0.9.0),
 and restarting the server at a moment when no agent panes are active.
+
+Status 2026-09-13: unchanged and still actionable. `gh release list -R
+herdrdev/herdr` shows **v0.9.0 (2026-09-07) as the latest stable** with no newer
+stable since, and `cookbooks/herdr/default.rb:20` still pins
+`herdr_version = "0.8.0"`. Only the sha256 recompute + version bump + a
+no-active-panes restart remain.
+
+Status 2026-09-20: **the bump target moved again.** `gh release list -R
+herdrdev/herdr` now shows **v0.9.1 (2026-09-16) as Latest**, with v0.9.0
+(09-07) behind it, while `cookbooks/herdr/default.rb:20` still pins
+`herdr_version = "0.8.0"`. Bump to 0.9.1 rather than 0.9.0, and recompute the
+release sha256 values for that tag.
 
 ## Vector drops 94% of RTX DHCP lease events on the floor (Low)
 
@@ -764,6 +873,13 @@ fd97:b085:767d::/64 dev vmbr1  proto ra       <- pre-existing SLAAC
   `ip -6 route get <a CT ULA>`); if nothing needs it, add `token`/`accept_ra`
   handling so only vmbr0 carries the /64 while vmbr1 keeps just the default
   route. Verify with `ip -6 route get` returning `src fd97:b085:767d::10`.
+
+Status 2026-09-20: the repo side is unchanged —
+`cookbooks/pve-host/default.rb` mentions `accept_ra` only in comments (:101,
+:118, :120) and sets no `token` / `accept_ra` on vmbr1. The deciding probes
+(`ss -6 -tunap`, `ip -6 route get <CT ULA>`) need the PVE host itself, which
+does not resolve from sh1-cloud, so this item cannot close from the weekly
+headless run — it needs a session with fleet reach.
 
 ## CT 103 (housekeeping) runs, but still has no working job (Medium)
 
@@ -881,6 +997,12 @@ is keyed on an address the AP does not own.
 - **Why not done here**: both touch home-monitor terraform / a network device's
   running config, which is outside the self-heal loop's autonomous envelope
   (network gear is read-only to it, and home-monitor TF is needs-human).
+
+Status 2026-09-20: still unreserved. In home-monitor origin/main,
+`config/rtx-routers/itm/config.txt.tftpl` carries **no** `dhcp scope bind`
+(positive control: `dhcp scope` = 1 hit), and the AP's MAC `ac:44:f2:5a:d7:20`
+appears nowhere in the repo at all. The Vector source map therefore still keys
+on an address the AP does not own.
 
 ## No AP-liveness signal exists; "is wlx402 alive" is inferred from log volume (Medium)
 
