@@ -257,6 +257,42 @@ single spelling — `{ term: { "process.name": $process } }` at L101, with the K
 L76 interpolating one `${process}`. #833 and #852 only chased the spelling of the
 day; the list-accepting fix this entry asks for is not in.
 
+## Every Kibana restart resurrects 8 orphaned "Process down" alerts as a false storm (Medium)
+
+`.alerts-stack.alerts-default` still holds 8 alert docs with
+`kibana.alert.status: active` that never got their recovered transition — left
+over from the 2026-07-06 / 07-11 license storm and the 08-04 / 08-16 roon-mcp and
+weave incidents (`kibana.alert.start` 2026-07-06 .. 2026-08-16, `@timestamp` never
+refreshed since): es-0/java, es-2/java, es-2/controller, monitoring/vector,
+roon-mcp/dockerd, roon-mcp/roon-mcp, weave/mosquitto, weave/weave-server. The
+observer's stale-guard (`rule_is_stale` in
+`cookbooks/self-heal-observer/files/self-heal-observer.sh`, #522) drops them each
+cycle only by asking `GET /api/alerting/rule/<uuid>` whether the rule is `ok`, and
+treats any non-200 or timeout as "keep" (fail-safe). So whenever Kibana's API is
+down for one observer cycle, all 8 orphans flip to open and self-heal-create
+opens 8 issues, which close again on the next cycle.
+
+- **Observed 2026-09-22**: CT 115 (kibana) was rebooted at 05:01:00Z during the
+  PVE host upgrade. The observer cycle at 05:02:05Z logged
+  `stale_excluded=0 new=9`; the cycles at 05:00:03Z and 05:04:03Z both logged
+  `stale_excluded=8`. Issues #1015-#1019, #1021-#1023 opened at 05:04Z and were
+  auto-closed at 05:06Z. `metrics-system.process-default` shows 2 docs/min for all
+  8 processes throughout 04:44-05:06Z, so none of the processes went down.
+- **Why it recurs**: nothing ages these docs out, and the upcoming PVE host
+  reboot (and any later Kibana restart or API stall longer than the 10 s curl
+  timeout) will produce the same 8 issues again.
+- **First step**: (a) a one-off cleanup of the 8 docs — untrack them through
+  Kibana (`POST /internal/alerting/alerts/_bulk_untrack` with their
+  `kibana.alert.uuid`s) so they stop matching `kibana.alert.status: active`. This
+  is a write to a Kibana system index, so the owner runs it; the self-heal loop
+  does not. (b) harden `rule_is_stale` so an unanswered rule lookup does not open a
+  NEW key: when Kibana does not answer, keep keys that are already open in
+  `self-heal-state` but defer keys that are not yet open by one cycle, or
+  treat an active doc whose `@timestamp` is hours older than its rule's interval
+  as stale. Live active alerts refresh `@timestamp` on every execution (the "Disk
+  Usage" alert was current to the minute on 2026-09-22), so staleness can be
+  detected without asking Kibana. Delete this entry in the resolving commit.
+
 ## Elastic CA rotation is not detected by the cert skip_if guards (Medium)
 
 The content-aware `skip_if` migration (PR "content-aware skip_if") changed the
