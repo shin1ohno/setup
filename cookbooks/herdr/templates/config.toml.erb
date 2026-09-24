@@ -79,6 +79,17 @@ codex = [
 delivery = "terminal"
 delay_seconds = 1
 
+[terminal]
+# Pin the pane shell instead of leaving it to herdr's default ($SHELL, then
+# /bin/sh). $SHELL is whatever the process that started the server inherited,
+# and on an OS Login / sssd account that is the directory's /bin/bash:
+# `herdr --remote <host>` starts the server over a non-interactive ssh channel,
+# where the zsh cookbook's ~/.bash_profile hand-off never runs, so every pane
+# came up as bash. Measured 2026-09-24 on sh1-cloud: server environ held
+# SHELL=/bin/bash and each pane's root process was /bin/bash. The value is the
+# zsh cookbook's path for this platform, so macOS gets Homebrew's zsh.
+default_shell = "<%= @zsh_path %>"
+
 [advanced]
 # tmux: set -g history-limit 50000  (NOTE: herdr counts BYTES, not lines) → ~20 MB
 scrollback_limit_bytes = 20971520
