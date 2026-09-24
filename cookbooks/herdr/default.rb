@@ -17,7 +17,7 @@
 
 # Local vars, not top-level constants: mitamae loads every recipe into one
 # Ruby namespace, so a generic `VERSION` would collide across cookbooks.
-herdr_version = "0.8.0"
+herdr_version = "0.9.1"
 
 # sha256 of each release binary at v#{herdr_version}. On version bump, recompute:
 #   for t in macos-aarch64 macos-x86_64 linux-aarch64 linux-x86_64; do
@@ -27,10 +27,10 @@ herdr_version = "0.8.0"
 # completion below are generated from whichever binary this pin installs, and
 # their guards compare content, so both refresh on the next apply.
 checksums = {
-  "macos-aarch64" => "d53a9f93fccfdfcc55632927bf51002f5add0aa7990bcdf508ffbd84ac658178",
-  "macos-x86_64"  => "77cb5afd6c8fcaaaf3bc28e474ec01c209331ad08094e20d7f8aa9b0bb78d649",
-  "linux-aarch64" => "f647ac66468d9efbc642fe534fb284468f0aea60641606fc008dfc0d82a3ca87",
-  "linux-x86_64"  => "b872ea7e40fa2cb17e857ac9b62b1bf26db7b403c622f5d2f3f5b35f6e9acd28",
+  "macos-aarch64" => "5fc7a7e7adfaca56fa80aa89dcb025693357268dab8285b9ce2d08a2313c89de",
+  "macos-x86_64"  => "053be0639935fe54ab5efbdb46651054e4f6a753a5b43153c88bd6912bce1e94",
+  "linux-aarch64" => "f4ccf4de745f2cb9a39a983e9ba3703dad50ec2a58dea83026ceab721bbd8d9e",
+  "linux-x86_64"  => "2a02fed16beb651ef006e1d43f048f652ca4dc58ad053cd2d44450563d5c54b7",
 }
 
 os = platform_value(darwin: "macos", linux: "linux")
