@@ -6,7 +6,7 @@ This machine's herdr is managed by `cookbooks/herdr` in the setup repo
 **`~/.config/herdr/config.toml` is a render target, not a source.** The
 cookbook rewrites it on every apply, so a direct edit disappears at the next
 converge. To change a keybinding or the theme, edit
-`cookbooks/herdr/files/config.toml`, apply, then run
+`cookbooks/herdr/templates/config.toml.erb`, apply, then run
 `herdr server reload-config`. Reload live-applies keys, UI, notifications,
 update checks and the CJK options; shell/cwd policy affects only new panes,
 and a restart is not a substitute — it kills every pane process.

@@ -129,11 +129,18 @@ execute "link smart-splits.nvim herdr plugin" do
   not_if "grep -q 'smart-splits.nvim' '#{herdr_plugins_json}' 2>/dev/null"
 end
 
-remote_file "#{node[:setup][:home]}/.config/herdr/config.toml" do
+# Same per-platform path cookbooks/zsh registers in /etc/shells.
+zsh_path = platform_value(
+  darwin: "#{node[:homebrew][:prefix]}/bin/zsh",
+  linux: "/usr/bin/zsh",
+)
+
+template "#{node[:setup][:home]}/.config/herdr/config.toml" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
-  source "files/config.toml"
+  source "templates/config.toml.erb"
+  variables(zsh_path: zsh_path)
 end
 
 # `hr` — fzf-powered session launcher, the herdr analog of `tm` (cookbooks/fzf
