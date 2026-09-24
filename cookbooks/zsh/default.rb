@@ -190,6 +190,26 @@ execute "echo 'unsetopt GLOBAL_RCS' >> #{node[:setup][:home]}/.zshenv" do
   not_if "fgrep -q 'unsetopt GLOBAL_RCS' #{node[:setup][:home]}/.zshenv"
 end
 
+# zsh does not set SHELL itself, so a zsh started by anything other than the
+# .bash_profile hand-off above keeps whatever SHELL its parent had. On an
+# NSS-directory account that is /bin/bash: a herdr server started by
+# `herdr --remote` over a non-interactive ssh channel pins its panes to zsh
+# (cookbooks/herdr default_shell) but still hands them SHELL=/bin/bash, so
+# everything spawning "$SHELL" from inside -- herdr's scratch popup, Claude
+# Code's Bash tool, vim :shell -- started bash again (seen 2026-09-24 on
+# sh1-cloud). Correct it from inside zsh, whichever way zsh was started.
+# Priority 10 so it runs before the profile.d entries that may spawn "$SHELL".
+add_profile "shell" do
+  priority 10
+  bash_content <<~EOS
+    # Only inside zsh: this profile is also sourced by bash-compatible shells.
+    if [ -n "${ZSH_VERSION:-}" ] && [ "${SHELL:-}" != '#{zsh_path}' ] && [ -x '#{zsh_path}' ]; then
+      SHELL='#{zsh_path}'
+      export SHELL
+    fi
+  EOS
+end
+
 # GITHUB_TOKEN from the gh CLI's stored credential, so every tool that hits the
 # GitHub API authenticated gets the 5000 req/h limit instead of the 60 req/h
 # unauthenticated one. The original pain was `mise up` exhausting 60 req/h
