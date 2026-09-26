@@ -133,6 +133,14 @@ When the task is "edit one line of an INI/JSON/YAML file" or "remove a section h
 
 Detail (concrete substitution table + origin): see `~/.claude/docs/shell-detail.md#sed-awk-over-python3`.
 
+## A `sed` delimiter must not occur in the pattern OR the replacement
+
+Switching `s/…/…/` to `s#…#…#` (or `|`, `@`) to dodge slashes in a path only works if the new delimiter appears in neither side. Scan the **replacement** text too: GitHub references (`#123`), URL fragments and shell comments bring `#` in; a pipe-separated table brings `|`. The failure is `unknown option to 's'` — or, worse, a silently truncated substitution when the stray delimiter lands where a flag is legal. When the replacement's character set is not under your control, split the edit, pick a delimiter that cannot occur (a control character via `$'\x01'`), or write the edit as a small script file. After any scripted edit, `grep` for the new text before staging — a failed `sed` inside a chain leaves the file untouched and the next `git add` commits the old content. Origin: 2026-09-26 — `s#…#…#` with a replacement containing a PR reference like `#123456` failed and the unmodified file was committed, then amended.
+
+## No leading bare `cd` in a command whose exit code or stdout you read
+
+`cd <dir> && cmd` runs the login shell's `chpwd` hook (an auto-`tree` / `ls` on these machines) between the two, so its output lands in the stdout you are about to parse and `$?` of a trailing pipeline no longer means what you think. This is the general form of the git-specific rule in `~/.claude/rules/git-commit.md` ("Never use `cd` to set git context") and the search-specific one in `~/.claude/rules/ask-user-question.md` (Negative search): it applies to every command whose result you read — a formatter's `-check`, a test runner, a validator, a count. Pass the directory to the tool instead (`-chdir=`, `-C`, `--prefix`, `--manifest-path`, absolute paths), or isolate it as `( cd /abs && cmd )` and capture the exit code of `cmd` itself, not of a `| head` after it. Origin: 2026-09-26 — `cd /tmp && terraform fmt -check … | head; echo $?` printed a full `/tmp` tree and reported `head`'s exit code; the check had to be rerun with `-chdir`.
+
 ## awk Cross-platform Pitfalls (BWK vs gawk)
 
 Detail: see `~/.claude/docs/shell-detail.md#awk-bwk-vs-gawk`.
