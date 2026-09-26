@@ -18,8 +18,8 @@ When launching 3+ sub-agents in parallel over the same repository, declare which
 **Pre-launch checklist**:
 
 1. List planned file edits per stream (in the prompt body)
-2. Cross-reference: does the same file appear in 2+ streams' scopes?
-3. If yes, choose explicitly:
+2. Cross-reference: does the same file appear in 2+ streams' scopes? Then check the other direction: does every entry of the manifest the streams are built from (the module list, an INTERFACES file, a scaffold `find` listing) appear in at least one stream's scope? An entry with zero owners is the symmetric plan defect — it ships as a missing module the integrator writes unplanned. A registration test added to catch this must take its expected list from that same manifest, not from one stream's files, or it inherits the blind spot. Origin: 2026-09-26 — 18 of 43 manifest modules were owned by no stream
+3. If a file has 2+ owners, choose explicitly:
    - **Serialize**: stream B waits for stream A to merge, then rebases
    - **Merge into one stream**: combine the two scopes into one agent
    - **Split the file**: split the cookbook / module so each stream owns a distinct file (e.g., `cookbooks/elastic-agent/files/elastic-agent.linux.yml.tmpl` vs `elastic-agent.darwin.yml.tmpl`)

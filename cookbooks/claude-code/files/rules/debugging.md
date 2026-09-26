@@ -55,6 +55,10 @@ Add a status/observe command *as part of the feature*, not as a follow-up, when:
 
 If no observation tool exists in the codebase yet, build a minimal one (`status` subcommand, `--verbose` flag, query script) during the same unit of work.
 
+## Adapter layers need tests with host-shaped input
+
+A thin adapter between tested pure logic and an implicitly-shaped host runtime — an n8n Code node, a Lambda handler, a webhook controller, a CLI argument parser — needs its own test that feeds it the input shape the host actually delivers and asserts what it hands to the logic. Unit tests on the wrapped logic say nothing about the wrapper: the logic can be correct while every call site passes it the wrong shape. When a plan's test tiers cover only the pure-logic layer, name the missing adapter tier as a plan gap before implementation, not as a review finding after it. Same failure class as the FFI boundary audit (`~/.claude/docs/ffi-audit.md`). Origin: 2026-09-26 — 390 passing unit tests on the logic layer, while five Code-node adapters passed the wrong input shapes (one would have blocked every promotion); found only at review.
+
 ## Auth-boundary error visibility — log Err variant on every reject
 
 Authentication and authorization gates (JWT validators, OAuth bearer verifiers, `auth_request` handlers, API key checks, session cookie validators, mTLS peer cert checks) MUST log the rejection variant at WARN or ERROR level **unconditionally** — never gated behind `#[cfg(debug_assertions)]`, `RUST_LOG=trace`, `DEBUG=1`, or any flag that defaults off in production.
