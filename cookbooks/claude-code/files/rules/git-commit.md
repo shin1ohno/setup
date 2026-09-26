@@ -118,7 +118,7 @@ Detail (full per-case trigger list + daemon/worktree mechanics + file-write/diag
 
 The branch you started the task on is not the branch you are necessarily on now. Committing on the wrong branch requires a cherry-pick + reset cleanup cycle that wastes a turn and leaves a confusing history.
 
-**Never use `cd` to set git context.** `cd` does not survive the CWD reset between Bash invocations, and a bare `cd <dir>` can additionally trigger a shell `chpwd` hook (e.g. an auto-`tree`/`ls`) that floods stdout and masks the `Shell cwd was reset to ...` line you need to see. Use `git -C /absolute/path` on **every** git call — branch check, add, and commit — never a leading `cd` to "enter" the repo first.
+**Never use `cd` to set git context.** `cd` does not survive the CWD reset between Bash invocations, and a bare `cd <dir>` can additionally trigger a shell `chpwd` hook (e.g. an auto-`tree`/`ls`) that floods stdout and masks the `Shell cwd was reset to ...` line you need to see. Use `git -C /absolute/path` on **every** git call — branch check, add, and commit — never a leading `cd` to "enter" the repo first. The same hook corrupts any command whose exit code or stdout you read, not just git — general form: `~/ManagedProjects/setup/.claude/rules/shell.md` "No leading bare `cd` in a command whose exit code or stdout you read".
 
 **Required pattern** when committing to a fix/feat branch: explicit branch verification + `git -C /absolute/path` in the SAME Bash call as the commit (no leading `cd`):
 
