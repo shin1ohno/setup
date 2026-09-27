@@ -72,6 +72,7 @@
       "Bash(git reset:*)",
       "Bash(git rebase:*)",
       "Read(.env.*)",
+      "Read(~/.config/memory-mirror/**)",
       "Read(id_rsa)",
       "Read(id_ed25519)",
       "Edit(.env*)"
@@ -126,7 +127,8 @@
           },
           {
             "type": "command",
-            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/mirror-file-memory.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/mirror-file-memory.rb",
+            "timeout": 60
           }
         ]
       }
@@ -141,7 +143,8 @@
           },
           {
             "type": "command",
-            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/mirror-file-memory.rb --sweep"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/mirror-file-memory.rb --sweep --session-start",
+            "timeout": 75
           }
         ]
       },
