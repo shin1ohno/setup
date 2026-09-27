@@ -148,6 +148,12 @@ When collecting information from multiple sources (URLs, products, brands, categ
 
 Detail (numbered breakdown + examples): see `~/.claude/docs/sub-agents-detail.md#bulk-research-pattern`.
 
+## Verify / Dedup Criteria Must Match the Data Model
+
+Before dispatching a verify- or dedup-role agent that may flag "duplicates" or "orphans" — above all one whose findings a fix/forget-role agent will act on — write the store's real uniqueness invariant into its prompt. A key that legitimately repeats (chunks of one document sharing a `doc_key`, versions sharing an id, locale rows sharing a slug) turns a plausible "same key twice = duplicate" spec into a delete order for valid data, and the downstream fixer acts on it without further review. State the invariant precisely ("a duplicate is two different live `parent_id`s for one `doc_key`; the chunks of one `parent_id` are one document") and limit the fixer's delete scope to items the current run created.
+
+Detail (origin): see `~/.claude/docs/sub-agents-detail.md#dedup-criteria-data-model`.
+
 ## Synthesis Stage — Pass Data by Path, Split the Output
 
 A synthesis stage that merges N upstream streams fails in two ways that both look like a flaky API rather than a design error: an oversized prompt and an oversized single response.
