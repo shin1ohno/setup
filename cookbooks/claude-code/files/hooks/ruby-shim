@@ -5,5 +5,11 @@
 # shim, `ruby` is not on PATH and every hook silently exits 127.
 # Mise shims are added so hooks that shell out to node / npm
 # (pre-commit-test.rb npm-test path) also resolve correctly.
+#
+# -E UTF-8: hooks can start without a UTF-8 locale (LANG unset), which makes
+# Ruby's default external encoding US-ASCII. Every hook reads a JSON payload
+# from stdin, and JSON.parse then raises Encoding::InvalidByteSequenceError on
+# any non-ASCII (Japanese) content — the hook exits 1, which Claude Code treats
+# as a non-blocking error, so guard hooks silently stop guarding.
 export PATH="$HOME/.rbenv/shims:$HOME/.local/share/mise/shims:$PATH"
-exec ruby "$@"
+exec ruby -E UTF-8 "$@"

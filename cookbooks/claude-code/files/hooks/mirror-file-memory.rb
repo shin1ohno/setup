@@ -45,6 +45,13 @@ require "open3"
 require "socket"
 require "uri"
 
+# Memory notes are mostly Japanese. Without a UTF-8 locale the default external
+# encoding is US-ASCII, so JSON.parse($stdin.read) raises before the config is
+# even read and File.read tags note bodies as US-ASCII. ruby-shim already passes
+# -E UTF-8; pinning it here too keeps a direct `ruby mirror-file-memory.rb
+# --sweep` from a locale-less shell working.
+Encoding.default_external = Encoding::UTF_8
+
 HOME         = Dir.home
 CONFIG_PATH  = ENV["MEMORY_MIRROR_CONFIG"]       || File.join(HOME, ".claude", "memory-mirror.json")
 STATE_PATH   = ENV["MEMORY_MIRROR_STATE"]        || File.join(HOME, ".claude", "memory-mirror-state.json")
