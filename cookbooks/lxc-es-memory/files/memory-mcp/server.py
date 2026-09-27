@@ -16,6 +16,7 @@ Run: uvicorn server:app --host 127.0.0.1 --port 8010 --workers 1
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 from contextlib import asynccontextmanager
@@ -26,8 +27,27 @@ from starlette.routing import Mount
 
 import es_backend as be
 import identity
-from policy_mcp import PolicyFastMCP
-from policy_mcp import request_headers as _headers
+
+try:
+    from policy_mcp import PolicyFastMCP
+    from policy_mcp import request_headers as _headers
+except ImportError:
+    # memory-work (sh1-cloud) runs this server from the private overlay, whose
+    # file list has not been verified to follow MANIFEST, so policy_mcp.py may be
+    # absent there. That deployment never had the gate and does not set
+    # CLIENT_POLICY: start ungated as before. With CLIENT_POLICY set, a missing
+    # gate must stop the server rather than silently drop the restriction.
+    if os.environ.get(identity.CLIENT_POLICY_ENV) is not None:
+        raise
+    print("POLICY disabled: policy_mcp.py is not installed and CLIENT_POLICY is unset",
+          file=sys.stderr, flush=True)
+    from mcp.server.fastmcp import FastMCP as PolicyFastMCP
+
+    def _headers(ctx):
+        try:
+            return ctx.request_context.request.headers
+        except (AttributeError, ValueError, LookupError):
+            return {}
 
 # ToolAnnotations moved across mcp versions; import defensively so a version
 # skew does not break startup. TODO Phase-0: pin mcp version, confirm import.
@@ -281,7 +301,9 @@ async def memory_stats(ctx: Context = None) -> dict:
 
 # Every tool is registered above; validate CLIENT_POLICY's tool names against
 # them and log the effective policy (POLICY / AUDIT policy_invalid lines).
-mcp.check_client_policy()
+# The ungated fallback above (plain FastMCP) has no policy to check.
+if hasattr(mcp, "check_client_policy"):
+    mcp.check_client_policy()
 
 
 # --------------------------------------------------------------------------- #

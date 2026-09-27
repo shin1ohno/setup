@@ -570,7 +570,11 @@ def test_cross_file():
     tree = ast.parse(src)
     check("server.py builds the gated server (mcp = PolicyFastMCP(...))",
           "\nmcp = PolicyFastMCP(" in src)
-    check("server.py validates the policy at startup", "\nmcp.check_client_policy()\n" in src)
+    check("server.py validates the policy at startup", "    mcp.check_client_policy()\n" in src)
+    # The ungated fallback (policy_mcp.py missing, e.g. a fixed-list deployment)
+    # is only allowed while CLIENT_POLICY is unset; set, it must re-raise.
+    check("server.py refuses the ungated fallback when CLIENT_POLICY is set",
+          "if os.environ.get(identity.CLIENT_POLICY_ENV) is not None:\n        raise\n" in src)
     forget = next((n for n in tree.body
                    if isinstance(n, ast.AsyncFunctionDef) and n.name == "forget"), None)
     kws = [kw.arg for node in ast.walk(forget) if isinstance(node, ast.Call)
