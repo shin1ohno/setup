@@ -625,6 +625,28 @@ jobs:
         # against the pre-fix backend 17 of the cases fail.
         python3 cookbooks/lxc-es-memory/files/memory-mcp/test_tag_preservation.py
 
+    - name: memory-mcp client policy suite (CLIENT_POLICY decisions)
+      run: |
+        # identity.py CLIENT_POLICY decides which tools and datasets a
+        # client_credentials caller may use — the only limit on what a leaked
+        # machine token can do. Dependency-free: the parser (the production
+        # value is read from memory-mcp-v2.service; malformed values must fail
+        # closed), the decision matrix, es_backend's forget-by-id dataset scope,
+        # and drift between the unit, the proxy's ALLOWED_CLIENT_IDS and
+        # server.py. Both polarities are asserted, so neither an allow-all nor a
+        # deny-all gate passes.
+        python3 cookbooks/lxc-es-memory/files/memory-mcp/test_client_policy.py
+
+    - name: memory-mcp client policy suite (PolicyFastMCP wiring, real mcp)
+      run: |
+        # Reuses the venv built by the MANIFEST step above. Drives tools/call
+        # over PolicyFastMCP's real streamable-HTTP app with the proxy's
+        # X-Verified-* headers and asserts refused calls never reach the tool
+        # body; a plain FastMCP driven the same way is the negative control. Then
+        # imports server.py (ES bootstrap stubbed) to prove the served object is
+        # the gated class and the production policy validates against its tools.
+        /tmp/memory-mcp-venv/bin/python cookbooks/lxc-es-memory/files/memory-mcp/test_client_policy.py --wiring
+
     - name: memory-keeper merge-rules regression suite
       run: |
         # cookbooks/lxc-es-memory/files/memory-keeper folds facts together in two

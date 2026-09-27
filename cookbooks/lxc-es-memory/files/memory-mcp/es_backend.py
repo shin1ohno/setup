@@ -26,7 +26,8 @@ import httpx
 
 import scoring
 import voyage
-from identity import AuthzError, audit_supersede, authorize_supersede
+from identity import (POLICY_DENIED_MESSAGE, AuthzError, audit_policy_deny,
+                      audit_supersede, authorize_supersede)
 
 # --------------------------------------------------------------------------- #
 # Config (contract §2a). Index names come from the unit's Environment= lines.
@@ -859,17 +860,35 @@ async def _mark_superseded(index: str, doc_id: str, sb_value: str, now: str) -> 
                    {"doc": {"superseded_by": sb_value, "superseded_at": now}})
 
 
+def _in_allowed_datasets(dataset, allowed_datasets) -> bool:
+    # isinstance first: a keyword field can hold an array, and a list is not
+    # hashable for the frozenset membership test.
+    return isinstance(dataset, str) and dataset in allowed_datasets
+
+
 async def supersede(id: str | None = None, dataset: str | None = None,
                     doc_key: str | None = None, grant: str = "authorization_code",
-                    agent: str = "") -> dict:
+                    agent: str = "", allowed_datasets=None) -> dict:
     """Logical delete (contract §4 forget). Authz per §3. knowledge supports
-    dataset/doc_key scope; a knowledge chunk id supersedes its whole parent doc."""
+    dataset/doc_key scope; a knowledge chunk id supersedes its whole parent doc.
+
+    allowed_datasets (identity.allowed_datasets): None = unrestricted; otherwise
+    the target must be a knowledge document in one of those datasets. The
+    CLIENT_POLICY gate already checks a `dataset` argument; the id path is
+    checked here because only the resolved document says which dataset it is in.
+    """
     now = _now_iso()
 
     if id:
         meta = await _get_target_meta(id)
         if meta is None:
             return {"superseded_count": 0}
+        if allowed_datasets is not None:
+            target_dataset = meta["source"].get("dataset")
+            if not (meta["index"] == KNOWLEDGE_INDEX
+                    and _in_allowed_datasets(target_dataset, allowed_datasets)):
+                audit_policy_deny("forget", agent, target_dataset)
+                raise AuthzError(POLICY_DENIED_MESSAGE)
         if not authorize_supersede(grant, agent, meta["source_class"], meta["agent"]):
             raise AuthzError(
                 f"grant={grant} agent={agent} not permitted to forget id={id}")
@@ -888,6 +907,9 @@ async def supersede(id: str | None = None, dataset: str | None = None,
         return {"superseded_count": count}
 
     if dataset and doc_key:
+        if allowed_datasets is not None and not _in_allowed_datasets(dataset, allowed_datasets):
+            audit_policy_deny("forget", agent, dataset)
+            raise AuthzError(POLICY_DENIED_MESSAGE)
         must = [{"term": {"dataset": dataset}}, {"term": {"doc_key": doc_key}}]
         # client_credentials may only forget its own provenance.agent docs.
         if grant == "client_credentials":

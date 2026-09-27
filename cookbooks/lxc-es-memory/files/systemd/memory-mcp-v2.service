@@ -19,6 +19,16 @@ Environment=KNOWLEDGE_INDEX=memory-knowledge
 Environment=EPISODE_INDEX=memory-episode
 Environment=STATS_INDEX=memory-stats
 Environment=ALL_ALIAS=memory-all
+# Per-client tool policy for client_credentials callers (identity.py
+# CLIENT_POLICY; format client=tool,tool@dataset|dataset, `;`-separated).
+# authorization_code (claude.ai) is not subject to it. An unlisted client, a
+# malformed value or an unknown tool name denies every client_credentials call —
+# so a client added to the proxy's ALLOWED_CLIENT_IDS needs an entry here too.
+# memory-keeper writes ES directly and monitoring-prober only lists tools, so
+# both are known with no tools. memory-mirror is the file-memory mirror hook.
+# Startup logs one `POLICY <client> -> ...` line per entry, or
+# `AUDIT policy_invalid`.
+Environment="CLIENT_POLICY=memory-keeper=;monitoring-prober=;memory-mirror=ingest,forget@file-memory"
 # Shares the v1 venv (/opt/es-memory/venv) with requirements-v2.txt installed
 # into it; WorkingDirectory=app-v2 makes `server:app` resolve to app-v2/server.py.
 ExecStart=/opt/es-memory/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8010 --workers 1
