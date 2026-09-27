@@ -3,7 +3,8 @@
 8 async tools (recall / remember / ingest / revise / forget / get / browse /
 memory_stats) over 3 ES indices. No LLM: write intelligence lives in the mini
 memory-keeper. Provenance is stamped SERVER-SIDE from the auth-proxy's verified
-X-Verified-* headers (identity.py), never from tool args.
+X-Verified-* headers (identity.py), never from tool args. Every tools/call
+first passes the per-client CLIENT_POLICY gate (policy_mcp.PolicyFastMCP).
 
 Stateful streamable-HTTP (NOT stateless) — the claude.ai connector requires an
 Mcp-Session-Id on initialize (2026-07-02 production finding). Single-worker
@@ -15,16 +16,38 @@ Run: uvicorn server:app --host 127.0.0.1 --port 8010 --workers 1
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 from contextlib import asynccontextmanager
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import Context
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
 import es_backend as be
 import identity
+
+try:
+    from policy_mcp import PolicyFastMCP
+    from policy_mcp import request_headers as _headers
+except ImportError:
+    # memory-work (sh1-cloud) runs this server from the private overlay, whose
+    # file list has not been verified to follow MANIFEST, so policy_mcp.py may be
+    # absent there. That deployment never had the gate and does not set
+    # CLIENT_POLICY: start ungated as before. With CLIENT_POLICY set, a missing
+    # gate must stop the server rather than silently drop the restriction.
+    if os.environ.get(identity.CLIENT_POLICY_ENV) is not None:
+        raise
+    print("POLICY disabled: policy_mcp.py is not installed and CLIENT_POLICY is unset",
+          file=sys.stderr, flush=True)
+    from mcp.server.fastmcp import FastMCP as PolicyFastMCP
+
+    def _headers(ctx):
+        try:
+            return ctx.request_context.request.headers
+        except (AttributeError, ValueError, LookupError):
+            return {}
 
 # ToolAnnotations moved across mcp versions; import defensively so a version
 # skew does not break startup. TODO Phase-0: pin mcp version, confirm import.
@@ -42,7 +65,7 @@ except Exception:  # pragma: no cover
         pass
 
 
-mcp = FastMCP("memory")
+mcp = PolicyFastMCP("memory")
 
 # Self-bootstrap the 4 ES indices + memory-all alias before serving. Runs in a
 # throwaway loop with an ephemeral client (es_backend.ensure_indices) so the
@@ -58,17 +81,8 @@ def _ann(**kw):
 # --------------------------------------------------------------------------- #
 # Identity plumbing
 # --------------------------------------------------------------------------- #
-def _headers(ctx):
-    """Inbound HTTP headers from the MCP request context.
-
-    Documented path on the streamable-http FastMCP:
-    ctx.request_context.request.headers (a case-insensitive Starlette Headers).
-    """
-    # TODO Phase-0: confirm Context->request path on installed mcp wheel
-    try:
-        return ctx.request_context.request.headers
-    except AttributeError:
-        return {}
+# _headers (policy_mcp.request_headers) reads the inbound HTTP headers; it lives
+# next to the policy gate, which needs the same identity before any tool runs.
 
 
 def _session_id(ctx) -> str:
@@ -206,8 +220,13 @@ async def ingest(document: str, dataset: str, doc_key: str | None = None,
     the tags of the version being superseded; passing tags=[] clears them."""
     ident = identity.parse_identity(_headers(ctx))
     prov = identity.build_provenance(ident, _session_id(ctx), "tool-output")
-    return await be.ingest_document(document, dataset, doc_key, provenance=prov,
-                                    tags=tags)
+    # A caller restricted by CLIENT_POLICY (allowed_datasets not None) is never
+    # handed a job_id: it cannot call memory_stats, so a failed background job
+    # would be invisible to it. Its documents are capped at
+    # identity.RESTRICTED_INGEST_MAX_CHARS, which bounds the inline work.
+    return await be.ingest_document(
+        document, dataset, doc_key, provenance=prov, tags=tags,
+        background=identity.allowed_datasets(ident) is None)
 
 
 @mcp.tool(annotations=_ann(destructiveHint=True))
@@ -233,8 +252,12 @@ async def forget(id: str | None = None, dataset: str | None = None,
     doc_key). Superseded docs are excluded from recall but retained in the chain."""
     ident = identity.parse_identity(_headers(ctx))
     try:
+        # allowed_datasets scopes the id path too: the policy gate can check a
+        # `dataset` argument, but only the backend knows which dataset an id
+        # resolves to.
         return await be.supersede(id=id, dataset=dataset, doc_key=doc_key,
-                                  grant=ident["grant"], agent=ident["agent"])
+                                  grant=ident["grant"], agent=ident["agent"],
+                                  allowed_datasets=identity.allowed_datasets(ident))
     except be.AuthzError as exc:
         raise ToolError(str(exc))
 
@@ -274,6 +297,13 @@ async def memory_stats(ctx: Context = None) -> dict:
     """Per-type counts, raw-fact backlog (keeper-health signal), latest keeper
     stats docs, and in-flight ingest jobs."""
     return await be.stats()
+
+
+# Every tool is registered above; validate CLIENT_POLICY's tool names against
+# them and log the effective policy (POLICY / AUDIT policy_invalid lines).
+# The ungated fallback above (plain FastMCP) has no policy to check.
+if hasattr(mcp, "check_client_policy"):
+    mcp.check_client_policy()
 
 
 # --------------------------------------------------------------------------- #

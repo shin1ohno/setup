@@ -89,6 +89,8 @@ _identity = types.ModuleType("identity")
 _identity.AuthzError = type("AuthzError", (Exception,), {})
 _identity.audit_supersede = lambda *a, **kw: None
 _identity.authorize_supersede = lambda *a, **kw: True
+_identity.audit_policy_deny = lambda *a, **kw: None
+_identity.POLICY_DENIED_MESSAGE = "policy_denied: stub"
 sys.modules["identity"] = _identity
 
 import es_backend as be  # noqa: E402  (import after the stubs are installed)
