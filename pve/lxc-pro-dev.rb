@@ -182,4 +182,8 @@ end
 # `/loop`. See docs/self-heal-github-issues-plan.md.
 include_cookbook "self-heal-loops"
 
+# File-memory mirror credentials + config for the workstation user (the
+# auto-mitamae apply runs as root; the cookbook resolves shin1ohno itself).
+include_cookbook "memory-mirror"
+
 lxc_entry(tags: ["lxc", "pro-dev", "dev-workstation"])

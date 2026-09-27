@@ -1058,3 +1058,56 @@ Origin: 2026-09-19 pro-dev. Supersedes the entry filed earlier the same day in
 #1002, which recorded `rustup set auto-self-update disable` as the fix. That
 workaround has since been reverted: the driver is gone, so it was no longer
 load-bearing and would have read as a setting with no surviving reason.
+
+## pro-dev's /home/shin1ohno/.claude never converges under auto-mitamae (Medium)
+
+- **Failure class**: auto-mitamae applies pro-dev as root (`hosts.json` user
+  root, canary), so `cookbooks/claude-code` writes `node[:setup][:home]` =
+  `/root/.claude`. The operator's `/home/shin1ohno/.claude` only moves on a
+  manual `./bin/mitamae local` run as shin1ohno. Observed 2026-09-27: the
+  deployed `CLAUDE.md` was the 2026-09-08 version and `hooks/mirror-file-memory.rb`
+  the 2026-08-21 one, weeks behind main.
+- **Why it matters**: every hook and rule fix merged to main (e.g. #1043's
+  UTF-8 shim) silently does not reach the host where most sessions run.
+  `cookbooks/memory-mirror` already resolves the real user under root; the
+  claude-code cookbook does not.
+- **First step**: apply the same target-user resolution to `cookbooks/claude-code`
+  when running as root on pro-dev (see `cookbooks/memory-mirror/default.rb`),
+  dry-run it as root, and confirm owner/mode of the rendered files.
+
+## memory-mirror follow-ups after the first rollout (Medium)
+
+- **Failure class**: the machine client `memory-mirror` (CLIENT_POLICY:
+  ingest,forget@file-memory) shipped with accepted gaps.
+  - ingest supersedes any `file-memory` doc with the same doc_key, whoever wrote
+    it — needed once so the first sweep can take over the 105 docs migrated by
+    hand on 2026-09-26, but a leaked credential can overwrite other hosts' docs.
+  - `PROXY_SHARED_SECRET` is unset on CT119, so a local process there can forge
+    `X-Verified-*` and bypass the policy. Once set, read tools also need it
+    (the gate now parses identity on every tools/call).
+  - CT119 has no persistent journald, so `POLICY` / `AUDIT deny` lines are lost
+    on restart.
+  - memory-work (sh1-cloud) runs the same server code from the private overlay.
+    `server.py` falls back to an ungated FastMCP when `policy_mcp.py` is absent
+    and CLIENT_POLICY is unset, but whether the overlay deploys by MANIFEST and
+    whether it should adopt a CLIENT_POLICY of its own is unverified (air and
+    the overlay were unreachable from pro-dev).
+  - neo is offline (118 days); it needs the interactive darwin apply, `--check`
+    and a first manual `--sweep` when it returns.
+- **First step**: after the first sweep on every personal host, add a
+  `provenance.agent` condition to `_supersede_prior_doc` for client_credentials
+  callers (or split into per-host clients bound to a doc_key prefix), then set
+  `PROXY_SHARED_SECRET` in both units.
+
+## mcp-probe's memory e2e has been red since 2026-08-29 and sends its secret over LAN HTTP (Medium)
+
+- **Failure class**: `cookbooks/mcp-probe/files/probe.py` probes
+  `/memory/mcp/` with a trailing slash, which returns 307 after auth, so the
+  memory e2e metric has read 0 since 2026-08-29. `fetch-secrets.sh` also points
+  `HYDRA_TOKEN_URL` at `http://192.168.1.71:4444`, so the client secret crosses
+  the LAN in plaintext. Separately, the live Hydra registration of
+  `monitoring-prober` still lists the retired `cognee` audience while
+  `bin/register-mcp-prober` does not.
+- **First step**: drop the trailing slash, switch the token URL to
+  `https://mcp.ohno.be/oauth2/token`, and re-register the prober's audience;
+  verify the textfile metric turns 1.
