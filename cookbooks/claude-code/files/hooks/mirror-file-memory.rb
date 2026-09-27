@@ -67,9 +67,11 @@
 #   `host` (optional, both forms) is the doc_key prefix; it defaults to the
 #   short hostname, which is not stable on macOS.
 #
-# doc_key = <host>/<project-slug>/<note basename without .md>. A note whose
-# document exceeds 45,000 characters (the server's cap for a restricted client)
-# is skipped with a WARN and reported to the agent until it shrinks.
+# doc_key = <host>/<project-slug>/<note basename without .md>. An oversized note
+# is skipped with a WARN and reported to the agent until it shrinks: in the
+# client_credentials form, a document past 45,000 characters (the server
+# policy's cap for a restricted client); in the server-name form, a note body
+# past 512 KB (that store has no such policy).
 #
 # State — ~/.claude/memory-mirror-state.json: doc_key => {sha256, doc_id, ...},
 #   written after every item. sha match => no HTTP at all (a steady-state sweep
@@ -105,7 +107,12 @@ PROJECTS_DIR = ENV["MEMORY_MIRROR_PROJECTS_DIR"] || File.join(HOME, ".claude", "
 DEFAULT_HOST = ENV["MEMORY_MIRROR_HOST"]         || Socket.gethostname.to_s.split(".").first
 
 INDEX_BASENAME   = "MEMORY.md"
-MAX_CHARS        = 45_000 # server-side cap on a restricted client's ingest document
+# Size caps differ by config form. client_credentials: the server policy refuses
+# a restricted client's ingest document past this many characters. Server-name
+# form: that store has no such policy, so only the hook's original guard applies
+# — a memory note is a few KB, and a note body past 512 KB is not one.
+MAX_CHARS        = 45_000
+MAX_BYTES        = 512 * 1024
 OPEN_TIMEOUT     = 2
 READ_TIMEOUT     = 20
 HELPER_TIMEOUT   = 10
@@ -599,25 +606,34 @@ def prepare_note(config, path, rel, state)
              "project: #{slug}\n" \
              "source_host: #{config[:host]}\n" \
              "source_path: #{path}\n\n" + body
+  size = config[:kind] == :client_credentials ? document.length : body.bytesize
   status =
     if state.entries.dig(key, "sha256") == sha then :unchanged
-    elsif document.length > MAX_CHARS then :too_large
+    elsif size > size_limit(config) then :too_large
     else :send
     end
-  { path: path, key: key, sha: sha, document: document, status: status }
+  { path: path, key: key, sha: sha, document: document, size: size, status: status }
+end
+
+def size_limit(config)
+  config[:kind] == :client_credentials ? MAX_CHARS : MAX_BYTES
+end
+
+def size_unit(config)
+  config[:kind] == :client_credentials ? "characters" : "bytes"
 end
 
 # Records the skip so a steady-state sweep stays offline, while every sweep
 # still reports the note until it shrinks (see oversized_keys).
-def record_too_large(note, state)
+def record_too_large(config, note, state)
   state.entries[note[:key]] = {
     "sha256" => note[:sha],
     "skipped" => "too_large",
-    "chars" => note[:document].length,
+    "size" => "#{note[:size]} #{size_unit(config)}",
     "source_path" => note[:path],
   }
   state.save
-  log("WARN", "skipped #{note[:key]}: #{note[:document].length} chars exceeds #{MAX_CHARS}")
+  log("WARN", "skipped #{note[:key]}: #{note[:size]} #{size_unit(config)} exceeds #{size_limit(config)}")
 end
 
 def mirror_one(client, config, note, state)
@@ -654,10 +670,10 @@ def oversized_keys(state, live)
   live.keys.select { |k| state.entries.dig(k, "skipped") == "too_large" }
 end
 
-def report_oversized(report, keys)
+def report_oversized(report, config, keys)
   return if keys.empty?
 
-  report.problem("#{keys.length} note(s) exceed #{MAX_CHARS} characters and are not mirrored " \
+  report.problem("#{keys.length} note(s) exceed #{size_limit(config)} #{size_unit(config)} and are not mirrored " \
                  "(#{keys.first(5).join(', ')}); split or shorten them.")
 end
 
@@ -705,12 +721,12 @@ def sweep(config, mode, report)
     return
   end
 
-  too_large.each { |n| record_too_large(n, state) }
+  too_large.each { |n| record_too_large(config, n, state) }
 
   # Steady state: return before connecting, so a session start does not mint a
   # token (or run a headersHelper) for nothing.
   if to_send.empty? && gone.empty?
-    report_oversized(report, oversized_keys(state, live))
+    report_oversized(report, config, oversized_keys(state, live))
     log("INFO", "sweep: #{paths.length} notes, all up to date")
     return
   end
@@ -752,7 +768,7 @@ def sweep(config, mode, report)
   warn "memory-mirror sweep: #{summary}"
   log("INFO", "sweep #{summary}")
   report.problem("#{counts[:failed]} note(s) failed to reach #{config[:label]} (#{summary}).") if counts[:failed] > 0
-  report_oversized(report, oversized_keys(state, live))
+  report_oversized(report, config, oversized_keys(state, live))
 end
 
 def hook(report)
@@ -781,8 +797,8 @@ def hook(report)
       when :unchanged
         nil
       when :too_large
-        record_too_large(note, state)
-        report_oversized(report, [note[:key]])
+        record_too_large(config, note, state)
+        report_oversized(report, config, [note[:key]])
       else
         mirror_one(connect(config), config, note, state)
       end

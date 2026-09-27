@@ -11,7 +11,8 @@
 # as additionalContext, the first-bulk guard, per-item state (a sweep killed
 # mid-run keeps what it finished), the session-start time budget, a Japanese
 # payload under a locale-less env, forget by (dataset, doc_key), the 45,000
-# character cap, the local credentials-file check, the trailing-slash redirect,
+# character cap (client_credentials only; the server form keeps its 512 KB
+# guard), the local credentials-file check, the trailing-slash redirect,
 # --check against an enforcing and a non-enforcing server, and that neither the
 # client secret nor any token reaches stdout or the log.
 #
@@ -297,6 +298,20 @@ t "server form: ingest carries the headersHelper token" \
 t "server form: no token endpoint call" is "$(count path=/oauth2/token)" 0
 t "server form: success is silent" test -z "$out"
 t "server form: helper token never logged" not grep -q helper-token "$H/.claude/memory-mirror.log"
+# The 45,000-character cap is the restricted client's server policy; the
+# memory-work store behind the server form has none, so only the 512 KB body
+# guard applies there.
+python3 -c 'print("x" * 45100)' > "$(note_path long)"
+python3 -c 'print("x" * 530000)' > "$(note_path huge)"
+reset_server
+out=$(hook_write long)
+t "server form: a 45,100-char note is still sent" is "$(count tool=ingest args.doc_key=oldhost/proj/long)" 1
+t "server form: no size report for it" test -z "$out"
+reset_server
+out=$(hook_write huge)
+t "server form: a note past 512 KB is not sent" is "$(count tool=ingest args.doc_key=oldhost/proj/huge)" 0
+t "server form: 512 KB guard reported in bytes" grep -q 'exceed 524288 bytes' <<<"$out"
+rm -f "$(note_path long)" "$(note_path huge)"
 
 # --- client_credentials: Bearer ------------------------------------------------
 
