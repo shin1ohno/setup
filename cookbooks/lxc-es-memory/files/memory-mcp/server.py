@@ -200,8 +200,13 @@ async def ingest(document: str, dataset: str, doc_key: str | None = None,
     the tags of the version being superseded; passing tags=[] clears them."""
     ident = identity.parse_identity(_headers(ctx))
     prov = identity.build_provenance(ident, _session_id(ctx), "tool-output")
-    return await be.ingest_document(document, dataset, doc_key, provenance=prov,
-                                    tags=tags)
+    # A caller restricted by CLIENT_POLICY (allowed_datasets not None) is never
+    # handed a job_id: it cannot call memory_stats, so a failed background job
+    # would be invisible to it. Its documents are capped at
+    # identity.RESTRICTED_INGEST_MAX_CHARS, which bounds the inline work.
+    return await be.ingest_document(
+        document, dataset, doc_key, provenance=prov, tags=tags,
+        background=identity.allowed_datasets(ident) is None)
 
 
 @mcp.tool(annotations=_ann(destructiveHint=True))

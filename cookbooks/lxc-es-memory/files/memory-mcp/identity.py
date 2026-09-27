@@ -179,10 +179,28 @@ def audit_supersede(target_id, agent: str, grant: str) -> None:
 #
 #     client=tool,tool@dataset|dataset;client=
 #
-# `client=` with no tools means "known, may call nothing". Fail-closed
-# throughout: a malformed policy, a client that is not listed, and a missing or
-# unrecognised grant header all deny every call rather than guessing.
+# `client=` with no tools means "known, may call nothing". Once the variable is
+# set, the gate is fail-closed throughout: a malformed policy, a client that is
+# not listed, and a missing or unrecognised grant header all deny every call
+# rather than guessing. Set to the empty string it is an empty policy (every
+# client_credentials call denied).
+#
+# UNSET is different: the gate is off and every call behaves as it did before
+# the policy existed, announced by an `AUDIT policy_unset` startup line. This
+# server code is shared with deployments whose units predate the policy (the
+# work store); enforcing an absent policy there would deny every machine call,
+# reads included, on their next deploy. CT119's unit sets it, and
+# test_client_policy.py fails if that line goes missing.
 CLIENT_POLICY_ENV = "CLIENT_POLICY"
+
+# The only tools a policy may grant: the ones whose dataset scope is actually
+# enforced — ingest by its `dataset` argument here, forget by that argument
+# here and by the resolved document's dataset in es_backend.supersede. recall
+# and browse take a dataset only inside `filters`, get and revise take a bare
+# id, memory_stats is store-wide; granting any of them `@file-memory` would log
+# a scope the gate does not enforce, so the parser refuses them. Extend this
+# set only together with real dataset scoping for the added tool.
+DATASET_SCOPED_TOOLS = frozenset({"ingest", "forget"})
 
 # Every policy refusal carries exactly this text. The caller learns that it was
 # refused, not which constraint refused it; the reason stays server-side.
@@ -192,6 +210,15 @@ POLICY_DENIED_MESSAGE = "policy_denied: this client is not permitted to make thi
 # Bounds the size — and the Voyage embedding spend — of any single write a leaked
 # machine token can make. The file-memory mirror hook skips notes over the same
 # limit with a WARN, so the two sides must change together.
+#
+# This is the whole effective limit: a restricted ingest never takes the
+# background-job path (server.ingest passes background=False whenever
+# allowed_datasets is not None), because a failed job is visible only through
+# memory_stats, which no restricted client is granted — the caller would be
+# told nothing while the note never landed. Synchronous, the result is always
+# {doc_id, chunk_count} or a tool error. 45000 characters chunk to at most 84
+# chunks (worst case measured against chunk_text's 1200/150 windows), one
+# Voyage batch (voyage.BATCH_MAX = 128), so the request stays one embed call.
 RESTRICTED_INGEST_MAX_CHARS = 45000
 
 _CLIENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -200,6 +227,17 @@ _DATASET_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 _DENY = (False, POLICY_DENIED_MESSAGE)
 _ACTIVE = object()  # sentinel: "use the policy loaded from the environment"
+
+
+class _PolicyUnset:
+    def __repr__(self) -> str:
+        return "POLICY_UNSET"
+
+
+# The loaded policy when CLIENT_POLICY is not in the environment at all: the
+# gate is off (see the note on CLIENT_POLICY_ENV). Distinct from None (set but
+# invalid: deny every client_credentials call) and {} (set but empty: same).
+POLICY_UNSET = _PolicyUnset()
 
 
 class PolicyError(ValueError):
@@ -226,9 +264,10 @@ def parse_client_policy(spec: str) -> dict:
         datasets := dataset ("|" dataset)*
 
     A tool list without `@datasets` grants no dataset, so any call that names
-    one is refused. The empty string is an empty policy (no machine client may
-    do anything). Anything else that does not match — including a duplicate
-    client, tool or dataset, and an empty entry from a stray `;` — raises
+    one is refused. Only DATASET_SCOPED_TOOLS may be granted. The empty string
+    is an empty policy (no machine client may do anything). Anything else that
+    does not match — including a duplicate client, tool or dataset, a tool
+    outside DATASET_SCOPED_TOOLS, and an empty entry from a stray `;` — raises
     PolicyError, so a typo can only ever narrow what a client may do.
 
     Returns {client_id: {"tools": tuple, "datasets": tuple}}.
@@ -246,6 +285,11 @@ def parse_client_policy(spec: str) -> dict:
             raise PolicyError(f"client {client}: listed twice")
         tools_part, at, datasets_part = rest.partition("@")
         tools = _split_tokens(tools_part, ",", _TOOL_RE, "tool", client) if tools_part else ()
+        unscoped = sorted(set(tools) - DATASET_SCOPED_TOOLS)
+        if unscoped:
+            raise PolicyError(
+                f"client {client}: tool(s) {','.join(unscoped)} are not dataset-scoped"
+                f" (grantable: {','.join(sorted(DATASET_SCOPED_TOOLS))})")
         datasets: tuple = ()
         if at:
             if not tools:
@@ -255,9 +299,12 @@ def parse_client_policy(spec: str) -> dict:
     return policy
 
 
-def _load_client_policy(spec: str):
-    """(policy, error). policy None = invalid, which denies every
+def _load_client_policy(spec):
+    """(policy, error) for the raw environment value. spec None (not set) =
+    POLICY_UNSET, the gate is off; policy None = invalid, which denies every
     client_credentials call."""
+    if spec is None:
+        return POLICY_UNSET, ""
     try:
         return parse_client_policy(spec), ""
     except PolicyError as exc:
@@ -265,14 +312,14 @@ def _load_client_policy(spec: str):
 
 
 _CLIENT_POLICY, _CLIENT_POLICY_ERROR = _load_client_policy(
-    os.environ.get(CLIENT_POLICY_ENV, ""))
+    os.environ.get(CLIENT_POLICY_ENV))
 
 
 def unknown_policy_tools(policy, registered) -> list:
-    """Tool names the policy grants that the server does not register. A name
-    that matches nothing is a typo that silently denies what was meant to be
-    allowed, so check_client_policy treats it as an invalid policy."""
-    if not policy:
+    """Tool names the policy grants that the server does not register — a tool
+    renamed or removed under a policy that still grants it. check_client_policy
+    treats that as an invalid policy rather than a silent partial denial."""
+    if not isinstance(policy, dict):
         return []
     granted = {t for entry in policy.values() for t in entry["tools"]}
     return sorted(granted - set(registered))
@@ -280,6 +327,9 @@ def unknown_policy_tools(policy, registered) -> list:
 
 def policy_lines(policy, error: str = "") -> list:
     """The startup lines describing the effective policy (journald)."""
+    if policy is POLICY_UNSET:
+        return [f"AUDIT policy_unset {CLIENT_POLICY_ENV} is not set: the per-client"
+                " tool gate is OFF and every client_credentials call is allowed"]
     if policy is None:
         return [f"AUDIT policy_invalid reason={error or 'unknown'} "
                 "client_credentials=deny-all"]
@@ -304,10 +354,14 @@ def check_client_policy(registered_tools) -> None:
         print(line, file=sys.stderr, flush=True)
 
 
-def _policy_entry(ident: dict, policy):
-    """The policy entry governing a client_credentials identity, or None."""
-    pol = _CLIENT_POLICY if policy is _ACTIVE else policy
-    if pol is None:
+def _effective_policy(policy):
+    return _CLIENT_POLICY if policy is _ACTIVE else policy
+
+
+def _policy_entry(ident: dict, pol):
+    """The entry of a resolved policy governing a client_credentials identity,
+    or None."""
+    if not isinstance(pol, dict):
         return None
     return pol.get((ident or {}).get("client_id") or "")
 
@@ -331,16 +385,21 @@ def authorize_tool(ident: dict, name, arguments, policy=_ACTIVE) -> tuple:
       forget-by-id is scoped in es_backend.supersede (allowed_datasets), where
       the target document's dataset is known.
     - any other grant value, including a missing header: denied.
+    - CLIENT_POLICY not set at all (POLICY_UNSET): every call allowed, as
+      before the policy existed.
 
     `arguments` is the raw JSON object from the request, before FastMCP's
     pydantic coercion, so the checks see exactly what the client sent.
     """
+    pol = _effective_policy(policy)
+    if pol is POLICY_UNSET:
+        return True, ""
     grant = (ident or {}).get("grant", "")
     if grant == GRANT_AUTHZ_CODE:
         return True, ""
     if grant != GRANT_CLIENT_CREDS:
         return _DENY
-    entry = _policy_entry(ident, policy)
+    entry = _policy_entry(ident, pol)
     if entry is None:
         return _DENY
     if not isinstance(name, str) or name not in entry["tools"]:
@@ -362,14 +421,19 @@ def authorize_tool(ident: dict, name, arguments, policy=_ACTIVE) -> tuple:
 
 
 def allowed_datasets(ident: dict, policy=_ACTIVE):
-    """Datasets a caller may touch: None = unrestricted (authorization_code),
-    otherwise a frozenset — empty for anyone the policy does not grant."""
+    """Datasets a caller may touch: None = unrestricted (authorization_code, or
+    CLIENT_POLICY not set), otherwise a frozenset — empty for anyone the policy
+    does not grant. Not None also means "restricted caller" to server.ingest,
+    which then keeps the ingest synchronous."""
+    pol = _effective_policy(policy)
+    if pol is POLICY_UNSET:
+        return None
     grant = (ident or {}).get("grant", "")
     if grant == GRANT_AUTHZ_CODE:
         return None
     if grant != GRANT_CLIENT_CREDS:
         return frozenset()
-    entry = _policy_entry(ident, policy)
+    entry = _policy_entry(ident, pol)
     return frozenset(entry["datasets"]) if entry else frozenset()
 
 

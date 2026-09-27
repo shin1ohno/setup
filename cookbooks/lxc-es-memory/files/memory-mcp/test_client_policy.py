@@ -9,11 +9,16 @@ passes.
 
 Covered here, dependency-free (plain python3, like the other suites):
   - the parser: the production value from memory-mcp-v2.service, other valid
-    shapes, and malformed values, which must fail closed;
+    shapes, and malformed values — including grants of tools that are not
+    dataset-scoped — which must fail closed;
+  - CLIENT_POLICY unset (gate off, pre-policy behaviour) versus set-but-empty
+    (every client_credentials call denied);
   - authorize_tool: unlisted client, missing / unknown grant, tool, dataset,
     document length and tags constraints; authorization_code unaffected;
   - es_backend.supersede: a restricted forget by id (or by dataset) cannot
     reach a document outside its datasets;
+  - es_backend.ingest_document: a restricted (background=False) ingest of a
+    maximum-length document stays inline instead of becoming a job;
   - cross-file drift: every policy client is in the proxy's
     ALLOWED_CLIENT_IDS and vice versa, every granted tool exists in server.py,
     and server.py actually builds the gated server.
@@ -61,7 +66,9 @@ def unit_env(unit: str, key: str) -> str:
 
 
 # The production policy, read from the unit that deploys it — so this suite
-# fails when the committed value stops meaning what these tests expect.
+# fails when the committed value stops meaning what these tests expect, and
+# (unit_env exits non-zero) when the line is removed, which would switch the
+# gate off.
 PRODUCTION_POLICY = unit_env("memory-mcp-v2.service", "CLIENT_POLICY")
 os.environ["CLIENT_POLICY"] = PRODUCTION_POLICY
 # The proxy shared secret is a separate gate; keep it out of the way here.
@@ -160,7 +167,7 @@ def test_parser():
 
     check("empty value is an empty policy", identity.parse_client_policy("") == {})
     check("tools without @datasets grant no dataset",
-          identity.parse_client_policy("a=recall") == {"a": {"tools": ("recall",), "datasets": ()}})
+          identity.parse_client_policy("a=ingest") == {"a": {"tools": ("ingest",), "datasets": ()}})
     check("several datasets separated by |",
           identity.parse_client_policy("a.b_c-1=ingest@x|y.z")
           == {"a.b_c-1": {"tools": ("ingest",), "datasets": ("x", "y.z")}})
@@ -171,9 +178,29 @@ def test_parser():
         "a=,ingest", "a=ingest,", "a= ingest", " a=", "a=ingest ,forget",
         "a=Ingest", "a=in-gest", "a=b=c", "a=ingest@x;", "a=ingest@x y",
         "-a=", "a=ingest@-x", "a=ingest\n", "a=ingest@x\n",
+        "a=forgot@x",
     ]
     bad = [s for s in malformed if not raises_policy_error(s)]
     check(f"{len(malformed)} malformed values are rejected", not bad, f"accepted {bad!r}")
+
+    # Only ingest and forget enforce a dataset scope. A grant of any other tool
+    # would print "@ file-memory" on the POLICY line while reaching the whole
+    # store (recall/browse filter inside `filters`, get/revise take a bare id),
+    # so the parser refuses it — with or without @datasets.
+    check("only ingest and forget are grantable",
+          identity.DATASET_SCOPED_TOOLS == frozenset({"ingest", "forget"}))
+    unscoped = [
+        "x=recall@file-memory", "x=recall", "x=get,browse@file-memory",
+        "x=ingest,revise@file-memory", "x=remember@file-memory", "x=memory_stats",
+        "memory-mirror=ingest,forget@file-memory;x=browse@file-memory",
+    ]
+    bad = [s for s in unscoped if not raises_policy_error(s)]
+    check(f"{len(unscoped)} grants of a tool that is not dataset-scoped are rejected",
+          not bad, f"accepted {bad!r}")
+    pol_unscoped, err = identity._load_client_policy("x=recall@file-memory")
+    check("x=recall@file-memory loads as an invalid policy naming the tool",
+          pol_unscoped is None and "recall" in err and "not dataset-scoped" in err,
+          f"got {pol_unscoped!r} / {err!r}")
 
     pol_none, err = identity._load_client_policy("a=ingest@")
     check("a malformed value loads as an invalid (None) policy with a reason",
@@ -186,6 +213,33 @@ def test_parser():
           identity.authorize_tool(HUMAN, "recall", {"query": "x"}, policy=None) == ALLOWED)
     check("invalid policy: no dataset is allowed",
           identity.allowed_datasets(MIRROR, policy=None) == frozenset())
+
+    # Unset and set-but-empty must not be confused: unset keeps deployments
+    # whose units predate the policy on their old behaviour; an explicit empty
+    # value is an enforced policy that grants nothing.
+    pol_unset, err = identity._load_client_policy(None)
+    check("an unset variable loads as POLICY_UNSET",
+          pol_unset is identity.POLICY_UNSET and err == "", f"got {pol_unset!r} / {err!r}")
+    ingest_args = {"document": "x", "dataset": "file-memory"}
+    unset = identity.POLICY_UNSET
+    check("unset: the gate is off for client_credentials (pre-policy behaviour)",
+          identity.authorize_tool(MIRROR, "recall", {"query": "x"}, policy=unset) == ALLOWED
+          and identity.authorize_tool(cc("someone-else"), "ingest",
+                                      dict(ingest_args, dataset="other", tags=["t"]),
+                                      policy=unset) == ALLOWED)
+    check("unset: a missing grant header is not refused either",
+          identity.authorize_tool({}, "recall", {"query": "x"}, policy=unset) == ALLOWED)
+    check("unset: allowed_datasets is unrestricted (None)",
+          identity.allowed_datasets(MIRROR, policy=unset) is None
+          and identity.allowed_datasets({}, policy=unset) is None)
+    pol_empty, err = identity._load_client_policy("")
+    check("set but empty: loads as an enforced empty policy",
+          pol_empty == {} and err == "", f"got {pol_empty!r} / {err!r}")
+    check("set but empty: every client_credentials call is denied",
+          identity.authorize_tool(MIRROR, "ingest", ingest_args, policy={}) == DENIED
+          and identity.allowed_datasets(MIRROR, policy={}) == frozenset())
+    check("set but empty: authorization_code is unaffected",
+          identity.authorize_tool(HUMAN, "recall", {"query": "x"}, policy={}) == ALLOWED)
 
 
 # --------------------------------------------------------------------------- #
@@ -304,9 +358,13 @@ def test_startup_and_audit():
                                    "get", "browse", "memory_stats"]), f"got {tools}")
     check("every tool the production policy grants exists in server.py",
           identity.unknown_policy_tools(identity._CLIENT_POLICY, tools) == [])
-    check("a misspelled tool is reported as unknown",
-          identity.unknown_policy_tools(identity.parse_client_policy("a=ingest,forgot@x"), tools)
-          == ["forgot"])
+    without_forget = [t for t in tools if t != "forget"]
+    check("a granted tool the server no longer registers is reported as unknown",
+          identity.unknown_policy_tools(identity.parse_client_policy("a=ingest,forget@x"),
+                                        without_forget) == ["forget"])
+    check("unset or invalid policy has no unknown tools to report",
+          identity.unknown_policy_tools(identity.POLICY_UNSET, tools) == []
+          and identity.unknown_policy_tools(None, tools) == [])
 
     check("startup lines for the production policy",
           identity.policy_lines(identity._CLIENT_POLICY) == [
@@ -316,18 +374,28 @@ def test_startup_and_audit():
           ], f"got {identity.policy_lines(identity._CLIENT_POLICY)}")
     check("startup line for an invalid policy",
           identity.policy_lines(None, "boom")[0].startswith("AUDIT policy_invalid"))
+    check("startup line for an unset policy says the gate is off",
+          identity.policy_lines(identity.POLICY_UNSET)[0].startswith("AUDIT policy_unset")
+          and "OFF" in identity.policy_lines(identity.POLICY_UNSET)[0])
 
     saved = (identity._CLIENT_POLICY, identity._CLIENT_POLICY_ERROR)
     try:
         out = capture_stderr(identity.check_client_policy, tools)
         check("check_client_policy keeps a valid policy and logs one POLICY line per client",
               identity._CLIENT_POLICY == saved[0] and out.count("POLICY ") == 3, f"got {out!r}")
-        identity._CLIENT_POLICY = identity.parse_client_policy("memory-mirror=ingest,forgot@file-memory")
-        out = capture_stderr(identity.check_client_policy, tools)
-        check("an unknown tool name invalidates the whole policy (fail-closed)",
+        identity._CLIENT_POLICY = identity.parse_client_policy("memory-mirror=ingest,forget@file-memory")
+        out = capture_stderr(identity.check_client_policy, without_forget)
+        check("an unregistered granted tool invalidates the whole policy (fail-closed)",
               identity._CLIENT_POLICY is None and "AUDIT policy_invalid" in out
               and identity.authorize_tool(MIRROR, "ingest",
                                           {"document": "x", "dataset": "file-memory"}) == DENIED,
+              f"got {out!r}")
+        identity._CLIENT_POLICY, identity._CLIENT_POLICY_ERROR = identity.POLICY_UNSET, ""
+        out = capture_stderr(identity.check_client_policy, tools)
+        check("check_client_policy leaves an unset policy unset and says so",
+              identity._CLIENT_POLICY is identity.POLICY_UNSET
+              and out.startswith("AUDIT policy_unset")
+              and not any(line.startswith("POLICY ") for line in out.splitlines()),
               f"got {out!r}")
     finally:
         identity._CLIENT_POLICY, identity._CLIENT_POLICY_ERROR = saved
@@ -433,6 +501,62 @@ def test_supersede_scope():
 
 
 # --------------------------------------------------------------------------- #
+# 4b. es_backend.ingest_document — a restricted ingest never becomes a job
+# --------------------------------------------------------------------------- #
+def voyage_batch_max():
+    """voyage.BATCH_MAX from the source (voyage is stubbed in this process)."""
+    with open(os.path.join(HERE, "voyage.py"), encoding="utf-8") as fh:
+        for node in ast.parse(fh.read()).body:
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and getattr(node.targets[0], "id", None) == "BATCH_MAX"):
+                return node.value.value
+    raise SystemExit("voyage.py: no BATCH_MAX")
+
+
+def test_ingest_sync():
+    # 524-char paragraphs are the measured worst case for chunk_text's
+    # 1200/150 windows: the largest chunk count a document of the restricted
+    # maximum length can produce.
+    limit = identity.RESTRICTED_INGEST_MAX_CHARS
+    unit = "a" * 524 + "\n\n"
+    worst = (unit * (limit // len(unit) + 1))[:limit]
+    n_chunks = len(be.chunk_text(worst))
+    check("a maximum-length restricted document can exceed the job threshold",
+          n_chunks > be.INGEST_JOB_THRESHOLD,
+          f"{n_chunks} chunks <= threshold {be.INGEST_JOB_THRESHOLD}")
+    check("...but still fits one Voyage batch, so inline stays one embed call",
+          n_chunks <= voyage_batch_max(), f"{n_chunks} chunks > BATCH_MAX {voyage_batch_max()}")
+
+    inline, spawned = [], []
+
+    async def fake_ingest_chunks(chunks, dataset, doc_key, new_doc_id, provenance, **kw):
+        inline.append((dataset, len(chunks)))
+        return len(chunks)
+
+    def fake_spawn(coro):
+        spawned.append(coro)
+        coro.close()  # never awaited; closing avoids a "never awaited" warning
+
+    saved = (be._ingest_chunks, be._spawn, dict(be._JOBS))
+    be._ingest_chunks, be._spawn = fake_ingest_chunks, fake_spawn
+    try:
+        res = run(be.ingest_document(worst, "file-memory", "k", background=False))
+        check("background=False: a large document is ingested inline with its doc_id",
+              set(res) == {"doc_id", "chunk_count"} and res["chunk_count"] == n_chunks
+              and inline == [("file-memory", n_chunks)] and spawned == [],
+              f"got {res!r} inline={inline} spawned={len(spawned)}")
+        inline.clear()
+        res = run(be.ingest_document(worst, "file-memory", "k"))
+        check("default (unrestricted callers): the same document still becomes a job",
+              set(res) == {"job_id"} and inline == [] and len(spawned) == 1,
+              f"got {res!r} inline={inline} spawned={len(spawned)}")
+    finally:
+        be._ingest_chunks, be._spawn = saved[0], saved[1]
+        be._JOBS.clear()
+        be._JOBS.update(saved[2])
+
+
+# --------------------------------------------------------------------------- #
 # 5. cross-file drift
 # --------------------------------------------------------------------------- #
 def test_cross_file():
@@ -454,6 +578,13 @@ def test_cross_file():
            for kw in node.keywords] if forget else []
     check("server.forget passes allowed_datasets to be.supersede",
           "allowed_datasets" in kws, f"got {kws}")
+    ingest = next((n for n in tree.body
+                   if isinstance(n, ast.AsyncFunctionDef) and n.name == "ingest"), None)
+    bg = [ast.unparse(kw.value) for node in ast.walk(ingest) if isinstance(node, ast.Call)
+          and isinstance(node.func, ast.Attribute) and node.func.attr == "ingest_document"
+          for kw in node.keywords if kw.arg == "background"] if ingest else []
+    check("server.ingest keeps restricted callers synchronous",
+          bg == ["identity.allowed_datasets(ident) is None"], f"got {bg}")
     with open(os.path.join(HERE, "MANIFEST"), encoding="utf-8") as fh:
         check("policy_mcp.py is deployed (MANIFEST)", "policy_mcp.py" in fh.read().split())
 
@@ -581,6 +712,24 @@ def test_wiring():
           res_plain[0].get("isError") is False and ran_plain == [("recall", "x")],
           f"got {res_plain} {ran_plain}")
 
+    # CLIENT_POLICY unset: the same gated server lets every call through, as a
+    # deployment whose unit predates the policy expects.
+    saved = (identity._CLIENT_POLICY, identity._CLIENT_POLICY_ERROR)
+    identity._CLIENT_POLICY, identity._CLIENT_POLICY_ERROR = identity.POLICY_UNSET, ""
+    ran_unset = []
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(buf):
+            res_unset = run(drive(build_server(PolicyFastMCP, ran_unset),
+                                  [requests[0], requests[6]]))
+    finally:
+        identity._CLIENT_POLICY, identity._CLIENT_POLICY_ERROR = saved
+    check("wiring: with CLIENT_POLICY unset, machine and anonymous calls run",
+          all(r.get("isError") is False for r in res_unset)
+          and ran_unset == [("recall", "x"), ("recall", "anonymous")]
+          and "AUDIT deny" not in buf.getvalue(),
+          f"got {res_unset} {ran_unset} {buf.getvalue()!r}")
+
     test_server_module(PolicyFastMCP)
 
 
@@ -594,6 +743,14 @@ def test_server_module(policy_cls):
         return None
 
     stub.ensure_indices = _no_bootstrap
+    backgrounds = []
+
+    async def _ingest_document(document, dataset, doc_key=None, provenance=None,
+                               tags=None, background=True):
+        backgrounds.append((dataset, background))
+        return {"doc_id": "d1", "chunk_count": 1}
+
+    stub.ingest_document = _ingest_document
     real_be = sys.modules.get("es_backend")
     sys.modules["es_backend"] = stub
     buf = io.StringIO()
@@ -618,11 +775,25 @@ def test_server_module(policy_cls):
         refused = str(exc).startswith("policy_denied:")
     check("server.py's mcp refuses a call that carries no identity", refused)
 
+    def ctx_with(grant, client_id, sub):
+        headers = {"x-verified-grant": grant, "x-verified-client-id": client_id,
+                   "x-verified-sub": sub}
+        return types.SimpleNamespace(request_context=types.SimpleNamespace(
+            request=types.SimpleNamespace(headers=headers)))
+
+    run(server.ingest(document="x", dataset="file-memory",
+                      ctx=ctx_with("client_credentials", "memory-mirror", "memory-mirror")))
+    run(server.ingest(document="x", dataset="notes",
+                      ctx=ctx_with("authorization_code", "claude-ai", "shin1ohno@gmail.com")))
+    check("server.ingest: the mirror is kept inline, claude.ai may still get a job",
+          backgrounds == [("file-memory", False), ("notes", True)], f"got {backgrounds}")
+
 
 test_parser()
 test_authorize_tool()
 test_startup_and_audit()
 test_supersede_scope()
+test_ingest_sync()
 test_cross_file()
 test_wiring()
 

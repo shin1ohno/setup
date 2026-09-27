@@ -645,12 +645,18 @@ async def remember_fact(content: str, tags: list | None, provenance: dict) -> di
 # --------------------------------------------------------------------------- #
 async def ingest_document(document: str, dataset: str, doc_key: str | None = None,
                           provenance: dict | None = None,
-                          tags: list | None = None) -> dict:
+                          tags: list | None = None,
+                          background: bool = True) -> dict:
     """Chunk → embed → index NEW chunks (parent_id = new synthetic doc id) →
     supersede the prior version's chunks (new-first, no empty window). >40 chunks
     runs in a background job; a job_id is returned and surfaced in stats().
 
     tags=None inherits the superseded version's tags; tags=[] clears them.
+
+    background=False always ingests inline, so the caller gets {doc_id,
+    chunk_count} or the exception. server.ingest uses it for callers restricted
+    by CLIENT_POLICY: they cannot call memory_stats, the only place a failed
+    job is visible (see identity.RESTRICTED_INGEST_MAX_CHARS).
     """
     doc_key = doc_key or content_hash(document)
     chunks = chunk_text(document)
@@ -658,7 +664,7 @@ async def ingest_document(document: str, dataset: str, doc_key: str | None = Non
         return {"doc_id": None, "chunk_count": 0}
 
     new_doc_id = uuid4().hex
-    if len(chunks) > INGEST_JOB_THRESHOLD:
+    if background and len(chunks) > INGEST_JOB_THRESHOLD:
         job_id = uuid4().hex
         _JOBS[job_id] = {
             "job_id": job_id,
