@@ -36,6 +36,8 @@ include_cookbook "remind"
 include_cookbook "edge-agent::darwin"
 include_cookbook "elastic-agent::darwin"
 include_cookbook "macos-hub"
+# File-memory mirror credentials + config; self-gates to mini / neo.
+include_cookbook "memory-mirror"
 
 # Gate visibility report — must stay the LAST include so its compile phase
 # runs after every require_external_auth gate has recorded its outcome.
