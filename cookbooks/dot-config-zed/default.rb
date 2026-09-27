@@ -106,6 +106,10 @@ template "#{zed_config_dir}/settings.json" do
   mode "600"
   variables(ssh_connections_json: ssh_connections_json)
   source "templates/settings.json.erb"
+  # sensitive: the render replaces the whole file, so any token Zed wrote into
+  # it would be printed as `-` lines of mitamae's INFO-level diff
+  # (bin/lint-cookbooks check 15).
+  sensitive true
 end
 
 # Install solargraph into the active rbenv ruby so Zed's Ruby extension

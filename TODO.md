@@ -1111,3 +1111,44 @@ load-bearing and would have read as a setting with no surviving reason.
 - **First step**: drop the trailing slash, switch the token URL to
   `https://mcp.ohno.be/oauth2/token`, and re-register the prober's audience;
   verify the textfile metric turns 1.
+
+## claude-code's settings.json merge drops live-only `env` and `hooks` entries on every apply (Low)
+
+- **Failure class**: `cookbooks/claude-code` writes `existing.merge(managed)`,
+  a shallow merge, so the managed `env` and `hooks` maps replace the live ones
+  wholesale. An env var or hook added to the live `~/.claude/settings.json`
+  (Claude Code's own settings UI, the update-config skill) is removed by the
+  next apply — unattended on pro-dev. `permissions` and `enabledPlugins`
+  already get an explicit per-field merge for exactly this reason.
+- **Why it matters**: the removal is silent. `sensitive true` (check 15) now
+  keeps the removed values out of the runner log, but the loss itself remains.
+  Switching `env` to a per-field merge also changes semantics: an entry
+  deleted from `files/settings.json` would then stay in the live file.
+- **First step**: decide per field (env, hooks) between "managed set wins
+  wholesale" and "live-only entries survive"; for the latter, add
+  `merged["env"] = existing.fetch("env", {}).merge(managed["env"])` next to the
+  enabledPlugins merge and dry-run it against a live file carrying an extra key.
+
+## LXC journald never reaches Elasticsearch (Medium)
+
+- **Failure class**: `logs-system.journal` holds only host `pro` (the PVE host,
+  468,527 docs as of 2026-09-27); none of the 17 LXCs ship journald, and the
+  `system.syslog` / `system.auth` data streams do not exist. Only elastic-agent's
+  own logs arrive from the LXCs. Found while checking whether mitamae diffs had
+  leaked secrets into ES (they had not).
+- **Why it matters**: service failures inside an LXC (unit crashes, auth
+  rejections, OOM) are invisible to Kibana and to the self-heal observer unless
+  a metric happens to cover them.
+- **First step**: on one LXC, compare `elastic-agent inspect` output against
+  `cookbooks/elastic-agent/files/elastic-agent.linux.yml.tmpl`'s journald input
+  and check whether the unprivileged container can read `/var/log/journal`
+  (persistent storage may be off: CT119 has no journal files).
+
+## auto-mitamae orchestrator log grows without rotation (Low)
+
+- **Failure class**: CT111 `/var/log/auto-mitamae-orchestrator.log` is appended
+  by three cron jobs with no logrotate rule (4.5 MB / 53,922 lines on
+  2026-09-27, mode 0644). It carries status lines only, no mitamae output.
+- **First step**: add a logrotate drop-in in `cookbooks/auto-mitamae-orchestrator`
+  (weekly, rotate 4, compress, copytruncate) and verify with
+  `logrotate -d /etc/logrotate.d/auto-mitamae-orchestrator`.

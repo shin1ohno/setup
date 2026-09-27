@@ -292,6 +292,19 @@ if ! write_state "$last_success_sha" "$last_success_role" "$last_success_epoch" 
     echo "status=state_write_fail sha=$new_sha drift=$drift duration=0 old=$old_sha ts=$(ts)"
     exit 1
 fi
+# The apply log is root-only. mitamae prints changed files' diffs at INFO, so a
+# placement that misses `sensitive true` (bin/lint-cookbooks check 15), or an
+# error that echoes a value, puts secrets here — and the default umask made the
+# file world-readable in /tmp. Truncate first, then chmod: the file is empty
+# for the moment it is still 0644, and a redirect onto an existing file keeps
+# its mode. mitamae's own umask is left alone (a 077 there would change the
+# mode of every file and directory the converge creates). Not fatal: a log that
+# cannot be created fails the redirect below too, which reports mitamae_fail
+# and keeps the status= line; the warning goes to stderr, which the
+# orchestrator tolerates (it takes the first status= line).
+if ! { : >"$apply_log" && chmod 600 "$apply_log"; }; then
+    echo "mitamae-runner: could not restrict ${apply_log} to mode 0600" >&2
+fi
 if ./bin/mitamae local "$role" >"$apply_log" 2>&1; then
     status=success
     end_epoch=$(date +%s)

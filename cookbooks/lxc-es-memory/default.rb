@@ -279,11 +279,15 @@ end
 
 # Place the v2 env (converge-time only_if, not compile-time File.exist? — see
 # ~/ManagedProjects/setup/.claude/rules/ruby.md mitamae evaluation model).
+# sensitive: the env carries the ES credentials and the embedding API key, and
+# mitamae otherwise prints the INFO-level file diff into the auto-mitamae
+# runner's log (check 15).
 remote_file env_path_v2 do
   source env_v2_temp_path
   owner "root"
   group "root"
   mode "600"
+  sensitive true
   notifies :run, "execute[restart memory-mcp-v2]"
   notifies :run, "execute[restart memory-v2-proxy]"
   only_if "test -f #{env_v2_temp_path}"

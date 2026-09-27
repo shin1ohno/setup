@@ -215,11 +215,19 @@ merged["statusLine"] = {
   "refreshInterval" => 1,
 }
 
+# sensitive: the content is the LIVE file re-merged, and the shallow merge above
+# replaces `env` and `hooks` wholesale. A value added to the live `env` (an API
+# key set through Claude Code's own settings, say) is therefore dropped on the
+# next apply and printed as a `-` line of mitamae's INFO-level diff, and
+# unmanaged keys such as mcpServers headers show up as context lines. On
+# pro-dev that diff goes into the unattended auto-mitamae runner log
+# (bin/lint-cookbooks check 15).
 file settings_path do
   content JSON.pretty_generate(merged) + "\n"
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
+  sensitive true
 end
 
 # Deploy hook scripts

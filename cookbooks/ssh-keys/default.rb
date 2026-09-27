@@ -146,11 +146,15 @@ if private_key
   key_path = "#{ssh_dir}/#{current_device['ssh']['key_file']}"
   private_key_content = private_key.end_with?("\n") ? private_key : "#{private_key}\n"
 
+  # sensitive: a new or rotated key would otherwise be printed whole in
+  # mitamae's INFO-level file diff (the old key as `-` lines too), which the
+  # auto-mitamae runner writes to its log on every fleet host (check 15).
   file key_path do
     owner user
     group group
     mode "0600"
     content private_key_content
+    sensitive true
   end
 end
 

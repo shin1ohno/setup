@@ -89,11 +89,16 @@ directory app_state_dir do
   mode "755"
 end
 
+# tokens.json is the roon-mcp credential store. The seed is only `{}` and the
+# not_if keeps the resource from ever rewriting a populated file, but if that
+# guard regressed, the file diff would print the live tokens as `-` lines —
+# `sensitive` keeps them out of the runner log even then (check 15).
 file "#{app_state_dir}/tokens.json" do
   owner "1000"
   group "1000"
   mode "600"
   content "{}\n"
+  sensitive true
   not_if "test -s #{app_state_dir}/tokens.json"
 end
 

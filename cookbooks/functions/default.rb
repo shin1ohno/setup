@@ -1030,11 +1030,17 @@ define :deploy_with_ssm_env,
     end
   end
 
+  # sensitive: mitamae 1.14 prints a changed file's diff at INFO — the new
+  # secret as `+` lines and the one it replaces as `-` lines — and on the
+  # unattended auto-mitamae path that lands in the runner's log. Every adopter
+  # places decrypted SSM values here, so the helper sets it for all of them
+  # (bin/lint-cookbooks check 15).
   remote_file op do
     source tp
     owner fowner
     group fgroup
     mode fmode
+    sensitive true
     only_if "test -f #{tp}"
     notifies :run, rsrc if rsrc
   end

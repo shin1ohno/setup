@@ -85,9 +85,14 @@ calls() { wc -l < "$CALLS" | tr -d ' '; }
 
 # ---------------------------------------------------------------- scenario 1
 echo "== scenario 1: A success → B fails → B retried → B succeeds → up_to_date"
+# The apply log can carry mitamae's file diffs, so the runner makes it 0600
+# even when a previous run left it world-readable (a redirect keeps the mode).
+echo stale-apply-output > "$T/apply.log"; chmod 644 "$T/apply.log"
 out=$(run_runner "$SHA_A")
 assert_eq "s1 initial A" success "$(status_of "$out")"
 assert_eq "s1 mitamae calls after A" 1 "$(calls)"
+assert_eq "s1 apply log is owner-only after a converge" "-rw-------" "$(ls -l "$T/apply.log" | cut -c1-10)"
+assert_eq "s1 apply log no longer holds the previous run's output" 0 "$(grep -c stale-apply-output "$T/apply.log")"
 
 echo b > "$T/src/b.txt"; git -C "$T/src" add -A; git -C "$T/src" commit -qm B
 git -C "$T/src" push -q origin main
