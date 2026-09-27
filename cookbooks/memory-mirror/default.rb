@@ -27,7 +27,9 @@
 # AWS: the gate is bare (no --profile), like ssh-keys — a Mac apply is
 # interactive and require_external_auth auto-discovers a profile that can read
 # the parameter; the auto-mitamae runner exports AWS_PROFILE=pve-bootstrap-ssm,
-# which is granted /memory/*. Listed in bin/lint-cookbooks BARE_OK.
+# which is granted /memory/*. Listed in bin/lint-cookbooks BARE_OK. Both paths
+# hand the profile over through the process environment, so the generator must
+# run without an `execute ... user` (see the gate below).
 
 excluded_labels = %w[air sh1-cloud]
 mirror_hostnames = %w[mini pro-dev]
@@ -110,31 +112,61 @@ end
 
 # The secret is written by the generator under umask 077 and moved into place
 # with an explicit owner; it never appears in argv (printf is a shell builtin)
-# or in mitamae's output. The gate reads the SecureString itself, so it passes
-# only when this identity can actually decrypt it.
-deploy_with_ssm_env "memory-mirror" do
-  tool_name        "AWS SSM access for /memory/mirror-client-* (auto-discovered profile, region=#{aws_region})"
-  check_command    "aws ssm get-parameter --name /memory/mirror-client-secret --with-decryption " \
-                   "--query Parameter.Value --output text --region #{aws_region} >/dev/null 2>&1"
-  instructions     "Configure an AWS profile with ssm:GetParameter on /memory/mirror-client-id and " \
-                   "/memory/mirror-client-secret plus kms:Decrypt for the SecureString in #{aws_region} " \
-                   "(pve-bootstrap-ssm and sh1admn both qualify). The parameters are created by " \
-                   "bin/register-memory-mirror. Then press Enter to retry."
-  generate_command <<~SH
-    set -e
-    umask 077
-    CLIENT_ID=$(aws ssm get-parameter --name /memory/mirror-client-id --query Parameter.Value --output text --region #{aws_region})
-    CLIENT_SECRET=$(aws ssm get-parameter --name /memory/mirror-client-secret --with-decryption --query Parameter.Value --output text --region #{aws_region})
-    test -n "$CLIENT_ID"
-    test -n "$CLIENT_SECRET"
-    printf 'MEMORY_MIRROR_CLIENT_ID=%s\\nMEMORY_MIRROR_CLIENT_SECRET=%s\\n' "$CLIENT_ID" "$CLIENT_SECRET" > #{env_temp_path}
-  SH
-  temp_path        env_temp_path
-  output_path      client_env_path
-  expected_keys    %w[MEMORY_MIRROR_CLIENT_ID MEMORY_MIRROR_CLIENT_SECRET]
-  owner            target_user
-  group            target_group
-  mode             "600"
+# or in mitamae's output.
+#
+# The gate decrypts the SecureString, so it passes only when this identity can
+# actually read it, but it queries Parameter.Name: on the TTY path
+# require_external_auth strips the `>/dev/null` and re-runs the command with
+# its output captured, and mitamae logs captured stdout at debug level (so
+# does the "Verify (paste to debug)" line when pasted). The server-side
+# decrypt still needs kms:Decrypt; only the printed field differs.
+#
+# Explicit resources rather than deploy_with_ssm_env: that helper always runs
+# its generator as `execute ... user`, which mitamae turns into
+# `sudo -H -u <user>`, and sudo's env_reset drops AWS_PROFILE — the only thing
+# this bare gate's profile travels in. On pro-dev, root's ~/.aws holds just the
+# named pve-bootstrap-ssm profile, so the generator would fail with "Unable to
+# locate credentials" and abort the canary apply; on a Mac an auto-discovered
+# non-default profile would be lost the same way. With no `user`, the generator
+# runs as mitamae itself (root on pro-dev, the operator on a Mac) and inherits
+# its environment. skip_if is the same content-aware check the helper builds
+# from expected_keys.
+env_keys = %w[MEMORY_MIRROR_CLIENT_ID= MEMORY_MIRROR_CLIENT_SECRET=]
+
+require_external_auth(
+  tool_name: "AWS SSM access for /memory/mirror-client-* (auto-discovered profile, region=#{aws_region})",
+  check_command: "aws ssm get-parameter --name /memory/mirror-client-secret --with-decryption " \
+                 "--query Parameter.Name --output text --region #{aws_region} >/dev/null 2>&1",
+  instructions: "Configure an AWS profile with ssm:GetParameter on /memory/mirror-client-id and " \
+                "/memory/mirror-client-secret plus kms:Decrypt for the SecureString in #{aws_region} " \
+                "(pve-bootstrap-ssm and sh1admn both qualify). The parameters are created by " \
+                "bin/register-memory-mirror. Then press Enter to retry.",
+  skip_if: -> { file_has_all?(client_env_path, env_keys) },
+) do
+  execute "generate memory-mirror client.env" do
+    command <<~SH
+      set -e
+      umask 077
+      CLIENT_ID=$(aws ssm get-parameter --name /memory/mirror-client-id --query Parameter.Value --output text --region #{aws_region})
+      CLIENT_SECRET=$(aws ssm get-parameter --name /memory/mirror-client-secret --with-decryption --query Parameter.Value --output text --region #{aws_region})
+      test -n "$CLIENT_ID"
+      test -n "$CLIENT_SECRET"
+      printf 'MEMORY_MIRROR_CLIENT_ID=%s\\nMEMORY_MIRROR_CLIENT_SECRET=%s\\n' "$CLIENT_ID" "$CLIENT_SECRET" > #{env_temp_path}
+    SH
+  end
+end
+
+remote_file client_env_path do
+  source env_temp_path
+  owner target_user
+  group target_group
+  mode "600"
+  only_if "test -f #{env_temp_path}"
+end
+
+file env_temp_path do
+  action :delete
+  only_if "test -f #{env_temp_path}"
 end
 
 mirror_config = {

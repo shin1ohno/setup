@@ -131,9 +131,13 @@ ALLOW3 = %w[
 # relies on TTY auto-discovery on darwin AND on AWS_PROFILE preset by the fleet
 # entry point (cookbooks/auto-mitamae-target/files/mitamae-runner.sh exports
 # AWS_PROFILE=pve-bootstrap-ssm before invoking mitamae). Both branches converge
-# on a working profile without per-cookbook --profile pinning:
-#   - ssh-keys: every host.
-#   - memory-mirror: pro-dev (fleet, root auto-mitamae) + personal Macs.
+# on a working profile without per-cookbook --profile pinning. The profile
+# travels only in the process environment, so every aws call of such a cookbook
+# must run without `execute ... user`: mitamae wraps that in `sudo -H -u`, whose
+# env_reset drops AWS_PROFILE.
+#   - ssh-keys: every host (compile-time run_command fetches).
+#   - memory-mirror: pro-dev (fleet, root auto-mitamae) + personal Macs
+#     (generator `execute` with no `user`).
 # (The darwin-only local-mcp stack that used to be listed here moved to the
 # private mercari-setup overlay in #585.)
 # Everything NOT listed here (and not in ALLOW3, which is skipped wholesale)
