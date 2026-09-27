@@ -602,3 +602,29 @@ git grep -nE '\.strip %|\bformat\(|\bsprintf\(' cookbooks/
 A hit is not automatically a bug — check whether the template also contains a literal `%`.
 
 Origin: 2026-08-01 sh1-cloud — a `known_hosts` keyscan `execute` built with `<<~'OUTER'.strip % { known: … }` whose body also ran `printf "%s\n%s\n%s\n"`. Passed `ruby -c`; found by rendering the cookbook through a stub DSL, which raised `ArgumentError: named<known> after unnumbered(1)` immediately.
+
+## execute-user-sudo-env
+
+## `execute ... user:` drops inherited environment variables
+
+mitamae 1.14's backend builds any command whose resource sets `user` as `sudo -H -u <user> -- /bin/sh -c "<command>"`, unconditionally (`mrblib/mitamae/backend.rb:71-73`), even when `<user>` is the user mitamae already runs as. sudo's default `env_reset` then drops every variable not on its keep list. The ones a recipe most often relies on are `AWS_PROFILE` / `AWS_REGION` (the auto-mitamae runner exports `AWS_PROFILE=pve-bootstrap-ssm` for non-TTY fleet applies, and `require_external_auth`'s TTY auto-discovery exports the profile it found) and tool-specific PATH additions.
+
+The failure only appears where the generator actually runs: CI has no SSM access and dry-runs do not execute resources, so both stay green. On the target the generator fails with `Unable to locate credentials` and aborts the apply.
+
+Fix options, in order of preference: run the generator without `user` (as mitamae itself) and put owner/group on the placement resource; or pass the variable explicitly in the command (`AWS_PROFILE=... aws ...`); or configure sudo's `env_keep` — which changes policy host-wide and is rarely worth it.
+
+Origin: 2026-09-27 — the first version of `cookbooks/memory-mirror` used `deploy_with_ssm_env`, whose generator always runs as `execute … user u`. The independent review traced the sudo wrap in the vendored mitamae source and showed the pro-dev canary apply (root, `AWS_PROFILE` as the only profile carrier) would have aborted once the SSM parameters existed. The cookbook switched to explicit resources with a user-less generator before merge.
+
+## secret-in-mitamae-diff
+
+## Secret-bearing file placements and the INFO diff
+
+mitamae's file executor (`resource_executor/file.rb` `show_content_diff`) runs `diff -u` between the live file and the new content and logs every line at INFO whenever they differ. For a file that holds a secret, that prints the new value as `+` lines and the old one as `-` lines. `sensitive true` (defined on `MItamae::Resource::File` and inherited by `RemoteFile` and `Template`) replaces the diff with `diff exists, but not displaying sensitive content`.
+
+Where the output goes: the auto-mitamae runner redirects the whole apply into `/tmp/auto-mitamae.log` on each host (overwritten per converge; 0600 since setup#1048, 0644 before), and a manual apply goes wherever the operator redirects it — a shell redirect under umask 002 makes it 0664.
+
+What is out of scope: placements done by `execute` (`sudo install -m 0600`, `printf … >`), `local_ruby_block` writes, and `action :delete` never produce a diff. `file` with `action :edit` does — the edited result is diffed.
+
+The gate half: `require_external_auth` re-runs a failing `check_command` on the TTY path after `_strip_redirect` removes a trailing `>/dev/null 2>&1`, and mitamae logs captured stdout at debug level. A check that prints a decrypted SecureString therefore leaks it on exactly the interactive path. `--with-decryption --query Parameter.Name` keeps the kms:Decrypt permission check and prints only the name.
+
+Origin: 2026-09-27 — (1) the first real apply of `cookbooks/memory-mirror` on pro-dev printed the `MEMORY_MIRROR_CLIENT_SECRET=` line into a redirected log that stayed on disk about 36 seconds (setup#1047 added `sensitive`); (2) the review of the same cookbook caught the gate printing the decrypted secret. setup#1048 then swept the repo: 8 placements marked, lint check 15 added, runner log made 0600. A read-only check found no secret in ES (mitamae output is not shipped there) or in any runner log.

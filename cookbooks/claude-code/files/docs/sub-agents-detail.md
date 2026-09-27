@@ -54,6 +54,10 @@ Example: "Look up all reviews for this brand" → 1 agent per brand in backgroun
 Example: "Find bindings for this board" → 1 agent per brand group in background
 ```
 
+## dedup-criteria-data-model
+
+Origin: 2026-09-27 pro-dev — a 17-batch workflow migrated local file-memory notes into the memory v2 store, each batch followed by a verifier and a fixer allowed to `forget`. The verifier prompt said "more than one live item for a doc_key = duplicate". memory v2 splits one ingest into several items that share `doc_key` and `parent_id` and differ only in `chunk_index` (a 10 KB note became 10 items), so every multi-chunk document would have been reported as a duplicate and the fixer would have forgotten valid chunks. Caught before any verifier ran: the workflow was stopped, the prompt rewritten to "two different live parent_ids per doc_key", the fixer limited to items the batch itself created and forbidden from forgetting individual chunks, and the run resumed — the completed writers replayed from cache. The final store check (115 doc_keys, 0 duplicate parents) used the corrected invariant.
+
 ## synthesis-stage-data-by-path
 
 Origin: 2026-08-05 — a two-phase workflow (6 discovery streams → 6 category verifiers → 1 synthesis) lost its synthesis step to `API Error: Server error mid-response`, returning `catalog: null` while all 12 upstream agents had succeeded. Two causes, both in how the synthesis call was built: the script interpolated the whole verified dataset (248KB of JSON) into the synthesis prompt, and asked one agent for a 6-section catalog in a single response. Resuming with the dataset written to a file (the prompt carried only the path plus the jq commands to read columns) and the output split across two agents by section range succeeded — the upstream agents replayed from cache, so only the synthesis re-ran. Both fixes are cheap and independent of the failure being transient: the prompt size grows with the fan-out, which is exactly the case the fan-out exists for.

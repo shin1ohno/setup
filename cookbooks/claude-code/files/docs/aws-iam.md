@@ -543,3 +543,23 @@ enumerate each region explicitly — never wildcard the region either,
 same evaluator restriction.
 
 Origin: 2026-05-10 KMS Decrypt for Tailscale rotation shipped wildcarded ARNs → `AccessDeniedException` on every SSM `GetParameter` with no error clue. Replaced with `data.aws_caller_identity.current.account_id`.
+
+<a id="cli-input-json-stdin"></a>
+
+## `--cli-input-json file:///dev/stdin` fails on aws-cli 2.34 — send a secret with `--value file:///dev/stdin`
+
+On aws-cli 2.34.41, `printf '{"Name":…,"Value":…}' | aws ssm put-parameter --cli-input-json file:///dev/stdin` fails with `ParamValidation: Error parsing parameter 'cli-input-json': Invalid JSON received`, even for valid JSON. The same JSON read from a real file (`--cli-input-json file://$tmp`) works, and a per-parameter `file:///dev/stdin` works too (verified with `get-parameter --name file:///dev/stdin`). Only the `--cli-input-json` + stdin combination is broken; re-check with `aws --version` before relying on this, since it is version-specific behaviour, not an API contract.
+
+To keep a secret out of argv, pipe it into the per-parameter loader:
+
+```bash
+printf '%s' "$SECRET" |
+  aws ssm put-parameter --name /x/secret --type SecureString --overwrite \
+    --value file:///dev/stdin --profile "$AWS_PROFILE" --region "$AWS_REGION"
+```
+
+`printf` is a shell builtin, so the value never appears in a process list. Use `--cli-input-json` only when several fields genuinely need JSON, and read it from a 0600 temp file.
+
+**Register-then-store scripts**: when a credential is minted in one system (a Hydra / OAuth client) and its secret is then written to SSM, a failed write leaves the upstream registration live with an unrecoverable secret. Print the recovery step (delete the upstream client, re-run) in the failure path, and verify the stored parameter before declaring success.
+
+Origin: 2026-09-27 — `bin/register-memory-mirror` registered the Hydra client `memory-mirror`, then failed at the `--cli-input-json file:///dev/stdin` write and lost the secret. The client was deleted and re-registered with the fixed script (setup#1046).

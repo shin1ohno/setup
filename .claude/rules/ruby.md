@@ -162,6 +162,18 @@ Detail: see `~/.claude/docs/ruby-detail.md#converge-fail-batch-diagnose`.
 
 Detail: see `~/.claude/docs/ruby-detail.md#dry-run-sandbox`.
 
+## `execute ... user:` runs through `sudo -H -u` and drops the inherited environment
+
+mitamae 1.14 wraps every `execute` that sets `user` in `sudo -H -u <user> -- /bin/sh -c …` (`mrblib/mitamae/backend.rb`), and sudo's env_reset removes the variables the recipe expected to inherit — `AWS_PROFILE` first among them. A generator that finds its AWS identity through the ambient profile (a bare-gate cookbook on the auto-mitamae path, where the runner exports `AWS_PROFILE=pve-bootstrap-ssm`) then fails with "Unable to locate credentials" — only on a real apply, never in CI or a dry-run, which never reach the generator. `deploy_with_ssm_env` always sets `user`, so do not use it for such a generator: run the generator without `user` and set owner/group on the placement instead, or pass the variable explicitly inside the command.
+
+Detail: see `~/.claude/docs/ruby-detail.md#execute-user-sudo-env`.
+
+## Secret-bearing placements are `sensitive true`; auth gates never print a decrypted value
+
+mitamae prints a changed file / remote_file / template's content diff at INFO — the new secret as `+` lines and the one it replaces as `-` lines — and on the unattended auto-mitamae path that output lands in the runner log. Mark every placement whose content can hold a secret `sensitive true`; `bin/lint-cookbooks` check 15 enforces it (exemptions go in `SENSITIVE_EXEMPT` with a reason). Placements done by `execute` (`sudo install`, `printf >`) never diff and are out of scope. Separately, a `require_external_auth` `check_command` must not print a decrypted value even behind `>/dev/null`: on the TTY path the helper strips that redirect and re-runs the command with its output captured. Keep `--with-decryption` (it still exercises kms:Decrypt) but query metadata (`--query Parameter.Name`).
+
+Detail: see `~/.claude/docs/ruby-detail.md#secret-in-mitamae-diff`.
+
 ## mruby API constraints — File.mtime / File.stat / Integer#zero? / Regexp.last_match(n) not available
 
 mitamae runs on **mruby**, not CRuby, and mruby simply lacks a number of CRuby convenience methods. `ruby -c` (CRuby) accepts every one of them, so the gap only surfaces at converge time. The `File` class is a strict subset:
