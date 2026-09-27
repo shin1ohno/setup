@@ -11,8 +11,18 @@ harness native のファイル記憶（`~/.claude/projects/<slug>/memory/*.md`�
 3 点の含意:
 
 - **ミラーは `fact` の代替にならない**。`ingest` は server 側で `source_class=tool-output` 固定（どのホストから書いても `user-stated` にはならない）。ユーザー属性・嗜好・決定は従来どおり `remember(type='fact')` で保存する — `recall` が「指示として扱ってよい」と教えるのは `user-stated` の `fact` だけ。
-- **ファイル側が正本**。逆方向（MCP → ファイル）の同期は無い。ファイルを削除すると次の sweep が `forget(doc_id)` を呼んでミラーも消える。
-- **失敗は静かに落ちない**。hook は書き込みを絶対にブロックせず `exit 0` するが、失敗は `~/.claude/memory-mirror.log` に 1 行残り、sweep 側は SessionStart の additionalContext で「recall から引けない状態」を通知する。ミラー先は `~/.claude/memory-mirror.json`（`{"server","dataset","enabled"}`）で決まり、この config が無いホストでは hook 自体が no-op。
+- **ファイル側が正本**。逆方向（MCP → ファイル）の同期は無い。ファイルを削除すると次の sweep が forget を呼んでミラーも消える。
+- **失敗は静かに落ちない**。hook は書き込みを絶対にブロックせず `exit 0` するが、失敗は `~/.claude/memory-mirror.log` に 1 行残り、同じ内容が agent にも返る（PostToolUse と SessionStart の additionalContext）。ミラー先は `~/.claude/memory-mirror.json` で決まり、この config が無いホストでは hook 自体が no-op。
+
+config は 2 形式ある。
+
+- **work overlay**: `{"server","dataset","enabled"}`。`server` は `~/.claude.json` の `mcpServers` にある http サーバ名（memory-work）で、認証は `headersHelper`。
+- **個人ホスト**（pro-dev・mini・neo、`cookbooks/memory-mirror` が配る）: `{"url","auth":{"type":"client_credentials",…},"host","dataset","enabled"}`。Hydra の machine client `memory-mirror` で個人ストア（claude.ai `memory` コネクタと同じ es-memory）へ送る。サーバ側の `CLIENT_POLICY` により、この client ができるのは `file-memory` への ingest と自分の文書の forget だけ。資格情報は `~/.config/memory-mirror/client.env`（0600）で、agent が読む場所ではない。
+
+個人ホストの運用:
+
+- 疎通確認は `ruby ~/.claude/hooks/mirror-file-memory.rb --check`。実トークンで ingest・forget・拒否の 3 系統を往復する。
+- SessionStart の sweep（`--sweep --session-start`）には 40 秒の予算と初回一括ガードがある。state が無い状態で 20 件を超えると送らないので、初回だけ手で `--sweep` を実行する。
 
 ## Connector timeout ≠ service down — curl the endpoint before declaring an outage
 

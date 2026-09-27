@@ -672,6 +672,16 @@ jobs:
         bash cookbooks/claude-code/files/hooks/test-warn-background-launch-no-progress.sh \
           cookbooks/claude-code/files/hooks/warn-background-launch-no-progress.rb
 
+    - name: File-memory mirror hook regression suite
+      run: |
+        # hooks/mirror-file-memory.rb talks to a python3 fake token + MCP server on
+        # 127.0.0.1: the old server-name config (work overlay), the
+        # client_credentials config (Bearer, https-only, token failure surfaced
+        # as additionalContext), the SessionStart first-bulk guard and time
+        # budget, per-item state, and a Japanese payload under an empty locale.
+        bash cookbooks/claude-code/files/hooks/test-mirror-file-memory.sh \
+          cookbooks/claude-code/files/hooks/mirror-file-memory.rb
+
     - name: Validate JSON files
       run: |
         # Check if any JSON files exist and validate them
