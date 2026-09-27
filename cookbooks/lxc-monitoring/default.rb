@@ -528,11 +528,15 @@ end
 
 # Place .env at converge time (only_if test -f), then clean up the staged
 # copy. Same compile-vs-converge guard pattern as cookbooks/lxc-hydra.
+# sensitive: the .env holds the Grafana admin password, PVE API token, RTX SNMP
+# community and Vector's ES password; without it mitamae prints them in the
+# INFO-level file diff that the auto-mitamae runner logs (check 15).
 remote_file env_output_path do
   source env_temp_path
   owner user
   group group
   mode "0600"
+  sensitive true
   notifies :run, "execute[restart monitoring]"
   notifies :run, "execute[generate snmp.yml]"
   only_if "test -f #{env_temp_path}"

@@ -91,6 +91,19 @@
 #      copies. The duplication is accepted; drift is not, because a fix applied
 #      to one copy leaves the other broken and nothing else compares them.
 #      Pairs: see DUPLICATE_PAIRS.
+#  15. [FAIL] secret-shaped file/remote_file/template without `sensitive true`
+#      (ratchet) — mitamae 1.14 prints a changed file's diff at INFO: the new
+#      content as `+` lines and the live content it replaces as `-` lines. On
+#      the unattended auto-mitamae path that output lands in the runner's log,
+#      which is how the memory-mirror client secret got printed on its first
+#      apply (#1047). A placement is secret-shaped when its resolved path
+#      looks like a credential (.env, tokens.json, private key, keystore,
+#      credentials, ...), its `source` is a converge-time file rather than a
+#      committed `files/` / `templates/` asset (every such copy in the repo
+#      places an SSM --with-decryption generator's output), or its `content` /
+#      `variables` expression names a secret. Deletes and content-less `file`
+#      resources never diff and are skipped. False positives go in
+#      SENSITIVE_EXEMPT with the reason the file holds no secret.
 #
 # Usage:  bin/lint-cookbooks   # exit 1 on any FAIL-tier violation (WARN never
 #                              # affects the exit code)
@@ -1026,6 +1039,142 @@ DUPLICATE_PAIRS.each do |left, right|
       "must be byte-identical to #{left} (deliberate copy for the other " \
       "platform's cookbook) but differs — apply the edit to BOTH copies " \
       "(check 14)")
+end
+
+# --- check 15: secret-shaped placement without `sensitive true` (ratchet) --
+#
+# mitamae 1.14's File executor (inherited by remote_file and template) runs
+# `diff -u <live> <staged>` whenever the content changes and logs every line at
+# INFO — the new content as `+` lines and the live content being replaced as
+# `-` lines, so even a placement whose NEW content is harmless can print an old
+# secret. `sensitive true` swaps the diff for "diff exists, but not displaying
+# sensitive content". The fleet is converged unattended by auto-mitamae
+# (mitamae-runner.sh), whose output is kept in a log, so an unmarked secret
+# placement writes the secret there on its first apply and on every rotation.
+#
+# FAIL tier, as a ratchet: the sweep that introduced this check left zero
+# unmarked hits, the fix is one attribute line, and a miss is a credential in a
+# log file on every fleet host. A false positive costs one SENSITIVE_EXEMPT
+# entry with its reason; stale entries fail too, so the list cannot rot.
+#
+# Secret-shaped = any of:
+#   path    — the resolved resource name matches SECRET_PATH (a committed
+#             `source "files/..."` remote_file is exempt from this signal:
+#             its content is the git blob, so the diff reveals nothing new)
+#   source  — `source` is not a committed files/ or templates/ asset, i.e. the
+#             file is produced at converge time. Every such copy in this repo
+#             places an SSM --with-decryption generator's output (the
+#             deploy_with_ssm_env helper and the explicit .env quartets).
+#   content — the `content` / `variables` expression names a secret-bearing
+#             identifier (e.g. `content private_key_content`). Quoted strings
+#             and heredoc bodies are ignored: those are static repo text.
+# Skipped: `action :delete` and a `file` with no `content` — neither diffs.
+SECRET_PATH = %r{
+  \.env\b | tokens?\.json\b | credentials?\b | secret | passw(?:or)?d |
+  \bid_(?:rsa|dsa|ecdsa|ed25519)\b | private | \.key\b | \.pem\b |
+  keystore | \.jks\b | \.p12\b | \.pfx\b | kubeconfig | \.kube/config |
+  \.netrc\b | \.pgpass\b | api[_-]?key
+}ix
+SECRET_NAME = /private|secret|token|passw|credential|api_?key/i
+
+# file => [resource-name expression exactly as written]. Each entry names a
+# placement that trips a signal above but holds no secret.
+SENSITIVE_EXEMPT = {
+  # compose .env carrying only UID=1000/GID=1000 for `user: "${UID}:${GID}"`;
+  # the APM ApiKey lives in apm.env, which an execute writes (no file diff).
+  "cookbooks/lxc-roon-mcp/default.rb" => ['"#{deploy_dir}/.env"'],
+  # observer.env holds endpoints and the SSM parameter NAME of the elastic
+  # password (fetched at run time), no credential value; mode 0644.
+  "cookbooks/self-heal-observer/default.rb" => ["ENV_FILE"],
+}.freeze
+
+RESOURCE_HEAD = /\A(\s*)(file|remote_file|template)\s+(.+?)\s+do\s*(?:\|[^|]*\|)?\s*(?:#.*)?\z/
+REPO_SOURCE   = %r{\A\s*source\s+["'](?:files|templates)/}
+
+def strip_quoted(expr)
+  expr.gsub(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/, "")
+end
+
+exempt_used = Hash.new { |h, k| h[k] = Set.new }
+
+recipe_files.each do |file|
+  lines  = File.readlines(file).map(&:chomp)
+  masked = heredoc_lines(lines)
+
+  lines.each_with_index do |line, idx|
+    next if masked.include?(idx) || line =~ /\A\s*#/
+    next unless line =~ RESOURCE_HEAD
+
+    indent = Regexp.last_match(1).length
+    kind   = Regexp.last_match(2)
+    expr   = Regexp.last_match(3).strip
+
+    body = []
+    j = idx + 1
+    while j < lines.length
+      l = lines[j]
+      unless masked.include?(j)
+        break if l =~ /\A {#{indent}}end\b/
+        body << l unless l =~ /\A\s*#/
+      end
+      j += 1
+    end
+
+    next if body.any? { |l| l =~ /\A\s*action\s+:delete\b/ }
+    next if body.any? { |l| l =~ /\A\s*sensitive\s+true\b/ }
+
+    content_line = body.find { |l| l =~ /\A\s*content\b/ }
+    source_line  = body.find { |l| l =~ /\A\s*source\b/ }
+    next if kind == "file" && content_line.nil?
+
+    repo_sourced = source_line && source_line =~ REPO_SOURCE
+    path_text =
+      if expr =~ /\A[A-Za-z_]\w*\z/
+        resolve_var(expr, lines) || expr
+      elsif expr.start_with?('"')
+        quoted_concat(expr)
+      else
+        expr
+      end
+
+    reasons = []
+    if path_text =~ SECRET_PATH && !(kind == "remote_file" && repo_sourced)
+      reasons << "path `#{path_text}` looks like a credential"
+    end
+    if source_line && !repo_sourced
+      reasons << "`#{source_line.strip}` is produced at converge time, not a committed asset"
+    end
+    [content_line, *body.select { |l| l =~ /\A\s*variables\b/ }].compact.each do |l|
+      next unless strip_quoted(l.sub(/\A\s*(?:content|variables)\b/, "")) =~ SECRET_NAME
+
+      reasons << "`#{l.strip}` names a secret"
+    end
+    next if reasons.empty?
+
+    if SENSITIVE_EXEMPT.fetch(file, []).include?(expr)
+      exempt_used[file] << expr
+      next
+    end
+
+    add(violations, file, idx + 1,
+        "`#{kind} #{expr}` places a secret-shaped file without `sensitive " \
+        "true` (#{reasons.join('; ')}). mitamae prints the content diff at " \
+        "INFO — new value as `+`, replaced value as `-` — into the " \
+        "auto-mitamae runner log. Add `sensitive true`, or list it in " \
+        "bin/lint-cookbooks SENSITIVE_EXEMPT with the reason it holds no " \
+        "secret (check 15)")
+  end
+end
+
+SENSITIVE_EXEMPT.each do |file, exprs|
+  exprs.each do |expr|
+    next if exempt_used[file].include?(expr)
+
+    add(violations, file, 1,
+        "SENSITIVE_EXEMPT lists `#{expr}` but no unmarked secret-shaped " \
+        "placement by that name remains — drop the entry from " \
+        "bin/lint-cookbooks (check 15 ratchet)")
+  end
 end
 
 # --- report ----------------------------------------------------------------
