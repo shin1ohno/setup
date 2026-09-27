@@ -1128,3 +1128,27 @@ load-bearing and would have read as a setting with no surviving reason.
   wholesale" and "live-only entries survive"; for the latter, add
   `merged["env"] = existing.fetch("env", {}).merge(managed["env"])` next to the
   enabledPlugins merge and dry-run it against a live file carrying an extra key.
+
+## LXC journald never reaches Elasticsearch (Medium)
+
+- **Failure class**: `logs-system.journal` holds only host `pro` (the PVE host,
+  468,527 docs as of 2026-09-27); none of the 17 LXCs ship journald, and the
+  `system.syslog` / `system.auth` data streams do not exist. Only elastic-agent's
+  own logs arrive from the LXCs. Found while checking whether mitamae diffs had
+  leaked secrets into ES (they had not).
+- **Why it matters**: service failures inside an LXC (unit crashes, auth
+  rejections, OOM) are invisible to Kibana and to the self-heal observer unless
+  a metric happens to cover them.
+- **First step**: on one LXC, compare `elastic-agent inspect` output against
+  `cookbooks/elastic-agent/files/elastic-agent.linux.yml.tmpl`'s journald input
+  and check whether the unprivileged container can read `/var/log/journal`
+  (persistent storage may be off: CT119 has no journal files).
+
+## auto-mitamae orchestrator log grows without rotation (Low)
+
+- **Failure class**: CT111 `/var/log/auto-mitamae-orchestrator.log` is appended
+  by three cron jobs with no logrotate rule (4.5 MB / 53,922 lines on
+  2026-09-27, mode 0644). It carries status lines only, no mitamae output.
+- **First step**: add a logrotate drop-in in `cookbooks/auto-mitamae-orchestrator`
+  (weekly, rotate 4, compress, copytruncate) and verify with
+  `logrotate -d /etc/logrotate.d/auto-mitamae-orchestrator`.
