@@ -141,6 +141,14 @@ Switching `s/…/…/` to `s#…#…#` (or `|`, `@`) to dodge slashes in a path 
 
 `cd <dir> && cmd` runs the login shell's `chpwd` hook (an auto-`tree` / `ls` on these machines) between the two, so its output lands in the stdout you are about to parse and `$?` of a trailing pipeline no longer means what you think. This is the general form of the git-specific rule in `~/.claude/rules/git-commit.md` ("Never use `cd` to set git context") and the search-specific one in `~/.claude/rules/ask-user-question.md` (Negative search): it applies to every command whose result you read — a formatter's `-check`, a test runner, a validator, a count. Pass the directory to the tool instead (`-chdir=`, `-C`, `--prefix`, `--manifest-path`, absolute paths), or isolate it as `( cd /abs && cmd )` and capture the exit code of `cmd` itself, not of a `| head` after it. Origin: 2026-09-26 — `cd /tmp && terraform fmt -check … | head; echo $?` printed a full `/tmp` tree and reported `head`'s exit code; the check had to be rerun with `-chdir`.
 
+## The Bash tool's `find` is bfs, not GNU findutils
+
+On pro-dev the Bash tool's `find` is a shell function from the zsh shell snapshot that runs bfs 4.1.1 (`type find`). GNU-only spellings such as `-newermt '-120 seconds'` are an error there, not a no-match: the message goes to stderr, and a pipeline that counts the output (`find … | wc -l`) still reads 0 and exits 0. A liveness or stall watcher built that way reports "no activity" on every pass while its target is busy. Before relying on a `find` probe in a loop, run it once against a directory you know is being written and confirm a non-zero count; `-mmin -N` works in both implementations. Origin: 2026-09-28 agent-pilot — a review-workflow watcher reported "STALL: no activity for 10 min" while seven agent transcripts were being written.
+
+## A denied pattern anywhere in a compound command denies all of it
+
+The permission layer refuses a whole multi-line or `&&`-chained Bash command when any part of it matches a deny rule, so a command that does useful work and then cleans up with `rm -rf` loses the useful part too. Put `rm -rf` (and any other deny-listed form) in a Bash call of its own, or leave the leftovers when they are untracked scratch. The allow rule `Bash(rm -rf /tmp/:*)` in `~/.claude/settings.json` matches the literal command text: `rm -rf "$T"` with `$T` under /tmp still falls to the `Bash(rm -rf:*)` deny, so write the literal path when you rely on it. Origin: 2026-09-27/28 agent-pilot — three compound commands (a `gh aw compile` run, a sandbox dry-run setup, a sandbox sync) were refused for their cleanup step and had to be rebuilt.
+
 ## awk Cross-platform Pitfalls (BWK vs gawk)
 
 Detail: see `~/.claude/docs/shell-detail.md#awk-bwk-vs-gawk`.
