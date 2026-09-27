@@ -625,6 +625,32 @@ jobs:
         # against the pre-fix backend 17 of the cases fail.
         python3 cookbooks/lxc-es-memory/files/memory-mcp/test_tag_preservation.py
 
+    - name: memory-mcp client policy suite (CLIENT_POLICY decisions)
+      run: |
+        # identity.py CLIENT_POLICY decides which tools and datasets a
+        # client_credentials caller may use — the only limit on what a leaked
+        # machine token can do. Dependency-free: the parser (the production
+        # value is read from memory-mcp-v2.service; malformed values and grants
+        # of tools that are not dataset-scoped must fail closed), unset versus
+        # set-but-empty, the decision matrix, es_backend's forget-by-id dataset
+        # scope, the inline (never background-job) restricted ingest, and drift
+        # between the unit, the proxy's ALLOWED_CLIENT_IDS and server.py. Both
+        # polarities are asserted, so neither an allow-all nor a deny-all gate
+        # passes.
+        python3 cookbooks/lxc-es-memory/files/memory-mcp/test_client_policy.py
+
+    - name: memory-mcp client policy suite (PolicyFastMCP wiring, real mcp)
+      run: |
+        # Reuses the venv built by the MANIFEST step above. Drives tools/call
+        # over PolicyFastMCP's real streamable-HTTP app with the proxy's
+        # X-Verified-* headers and asserts refused calls never reach the tool
+        # body; a plain FastMCP driven the same way is the negative control, and
+        # the gated server with CLIENT_POLICY unset lets the same calls run. Then
+        # imports server.py (ES bootstrap stubbed) to prove the served object is
+        # the gated class, the production policy validates against its tools,
+        # and server.ingest keeps the restricted mirror off the job path.
+        /tmp/memory-mcp-venv/bin/python cookbooks/lxc-es-memory/files/memory-mcp/test_client_policy.py --wiring
+
     - name: memory-keeper merge-rules regression suite
       run: |
         # cookbooks/lxc-es-memory/files/memory-keeper folds facts together in two

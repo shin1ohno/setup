@@ -30,7 +30,9 @@ Environment=MEMORY_AUDIENCES=https://mcp.ohno.be/memory,memory
 # Anthropic-account (Apple relay) address. A mismatch here 403s every claude.ai
 # request once /memory/ is served by this proxy (enforcement is inert on v1).
 Environment=ALLOWED_SUBS=shin1ohno@gmail.com,sh1@mercari.com
-Environment=ALLOWED_CLIENT_IDS=memory-keeper,monitoring-prober
+# Which client_credentials clients may reach the server at all; what each may do
+# there is memory-mcp-v2.service's CLIENT_POLICY, which must list the same ids.
+Environment=ALLOWED_CLIENT_IDS=memory-keeper,monitoring-prober,memory-mirror
 ExecStart=/opt/es-memory/venv/bin/python proxy.py
 Restart=on-failure
 RestartSec=5
