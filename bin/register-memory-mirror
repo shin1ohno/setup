@@ -14,7 +14,7 @@
 #     (ingest/forget in dataset file-memory).
 #   - the secret never appears in a process argv on any hop: the Hydra
 #     registration payload travels over ssh stdin into curl `-d @-`, and the
-#     SSM write reads its JSON from stdin (--cli-input-json file:///dev/stdin).
+#     SSM write reads the value from stdin (--value file:///dev/stdin).
 #
 # Why this lives in bin/ rather than the cookbook: the consuming hosts' IAM
 # principals (pve-bootstrap-ssm on pro-dev, operator profiles on Macs) only
@@ -130,16 +130,20 @@ printf '{"client_id":"%s","client_name":"Memory Mirror","client_secret":"%s","gr
 # 5. Verify what Hydra stored.
 verify_metadata
 
-# 6. Store in SSM. The secret goes through --cli-input-json on stdin, never
-#    --value (which would put it in aws's argv).
+# 6. Store in SSM. The secret reaches aws on stdin through the CLI's per-parameter
+#    file:// loader (`--value file:///dev/stdin`), never as a literal --value
+#    (which would put it in aws's argv). Not --cli-input-json file:///dev/stdin:
+#    aws-cli 2.34 rejects that with "Invalid JSON received" (observed
+#    2026-09-27), while the per-parameter loader reads stdin as expected.
 log "writing $SSM_ID_PARAM (String) and $SSM_SECRET_PARAM (SecureString) to SSM..."
 store_failed() {
   fail "SSM write failed after registration; the secret is lost. Recovery: ssh root@$PVE_HOST pct exec $HYDRA_CTID -- curl -fsS -X DELETE $HYDRA_ADMIN/admin/clients/$CLIENT_ID  then re-run this script."
 }
 aws ssm put-parameter --name "$SSM_ID_PARAM" --type String --value "$CLIENT_ID" --overwrite \
   --profile "$AWS_PROFILE" --region "$AWS_REGION" >/dev/null || store_failed
-printf '{"Name":"%s","Type":"SecureString","Overwrite":true,"Value":"%s"}' "$SSM_SECRET_PARAM" "$SECRET" |
-  aws ssm put-parameter --cli-input-json file:///dev/stdin \
+printf '%s' "$SECRET" |
+  aws ssm put-parameter --name "$SSM_SECRET_PARAM" --type SecureString --overwrite \
+    --value file:///dev/stdin \
     --profile "$AWS_PROFILE" --region "$AWS_REGION" >/dev/null || store_failed
 unset SECRET
 
