@@ -101,9 +101,11 @@
 #      credentials, ...), its `source` is a converge-time file rather than a
 #      committed `files/` / `templates/` asset (every such copy in the repo
 #      places an SSM --with-decryption generator's output), or its `content` /
-#      `variables` expression names a secret. Deletes and content-less `file`
-#      resources never diff and are skipped. False positives go in
-#      SENSITIVE_EXEMPT with the reason the file holds no secret.
+#      `variables` expression — or a local it reads — names a secret or takes
+#      its value from a compile-time fetch (SSM, ENV, run_command). Deletes and
+#      content-less `file` resources never diff and are skipped. False
+#      positives go in SENSITIVE_EXEMPT with the reason the file holds no
+#      secret.
 #
 # Usage:  bin/lint-cookbooks   # exit 1 on any FAIL-tier violation (WARN never
 #                              # affects the exit code)
@@ -1066,9 +1068,17 @@ end
 #             places an SSM --with-decryption generator's output (the
 #             deploy_with_ssm_env helper and the explicit .env quartets).
 #   content — the `content` / `variables` expression names a secret-bearing
-#             identifier (e.g. `content private_key_content`). Quoted strings
-#             and heredoc bodies are ignored: those are static repo text.
+#             identifier (e.g. `content private_key_content`), or reads its
+#             value at compile time (FETCH_EXPR: an SSM fetch, `ENV[...]`,
+#             `run_command` output, a backtick). A local the expression reads
+#             is resolved one level, so `body = run_command("aws ssm ...
+#             --with-decryption").stdout` then `content body` is caught however
+#             the variable is named. Quoted strings and heredoc bodies are
+#             otherwise ignored: those are static repo text.
 # Skipped: `action :delete` and a `file` with no `content` — neither diffs.
+# CONTENT_SELF_TEST pins the content signal against the shapes that once
+# slipped past it (a renamed or inlined fetch), so a regex edit that drops
+# one fails here instead of passing silently.
 SECRET_PATH = %r{
   \.env\b | tokens?\.json\b | credentials?\b | secret | passw(?:or)?d |
   \bid_(?:rsa|dsa|ecdsa|ed25519)\b | private | \.key\b | \.pem\b |
@@ -1076,6 +1086,11 @@ SECRET_PATH = %r{
   \.netrc\b | \.pgpass\b | api[_-]?key
 }ix
 SECRET_NAME = /private|secret|token|passw|credential|api_?key/i
+# Matched against an expression with its quoted strings removed, so each
+# alternative is code, not text: an SSM helper or `ssm` local, the ENV hash, a
+# compile-time command (run_command, backticks, %x). The two aws flags only
+# survive the strip inside backticks / %x, which quoting does not cover.
+FETCH_EXPR = /ssm|--with-decryption|get-parameters?\b|\bENV\s*(?:\[|\.fetch\b)|\brun_command\b|`|%x[(\[{]/i
 
 # file => [resource-name expression exactly as written]. Each entry names a
 # placement that trips a signal above but holds no secret.
@@ -1094,6 +1109,58 @@ REPO_SOURCE   = %r{\A\s*source\s+["'](?:files|templates)/}
 def strip_quoted(expr)
   expr.gsub(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/, "")
 end
+
+# Why a `content` / `variables` line is secret-shaped ([] when it is not). The
+# expression itself is checked, then — one level deep — every local it reads
+# that is assigned in the same file: the `ident = ...` line with its
+# backslash continuation, plus the deeper-indented lines under it (a
+# `begin ... end` or `if` right-hand side). Heredoc bodies stay excluded.
+def content_reasons(line, lines, masked = Set.new)
+  expr = strip_quoted(line.sub(/\A\s*(?:content|variables)\b/, ""))
+  reasons = []
+  reasons << "`#{line.strip}` names a secret" if expr =~ SECRET_NAME
+  reasons << "`#{line.strip}` reads its value at compile time" if expr =~ FETCH_EXPR
+  expr.scan(/\b[a-z_]\w*/).uniq.each do |ident|
+    assign = /\A(\s*)#{Regexp.escape(ident)}\s*=(?![=~>])/
+    lines.each_with_index do |l, i|
+      next if masked.include?(i) || l !~ assign
+
+      base = Regexp.last_match(1).length
+      rhs, last = join_continuation(lines, i)
+      k = last + 1
+      while k < lines.length && (lines[k].strip.empty? || lines[k][/\A */].length > base)
+        rhs += "\n#{lines[k]}" unless masked.include?(k)
+        k += 1
+      end
+      rhs = strip_quoted(rhs.sub(assign, ""))
+      next unless rhs =~ SECRET_NAME || rhs =~ FETCH_EXPR
+
+      reasons << "`#{ident}` (line #{i + 1}) is assigned from a secret or " \
+                 "a compile-time fetch"
+      break
+    end
+  end
+  reasons
+end
+
+# [content line, the file's other lines, expect a hit?]. Positives are the
+# shapes a name-only check missed; negatives keep the fetch signal from
+# swallowing static or merely derived content.
+CONTENT_SELF_TEST = [
+  ['  content fetch_ssm.call("/ssh-keys/probe/private")', [], true],
+  ['  content ENV["PROBE_API_TOKEN"]', [], true],
+  ["  content body",
+   ['body = run_command("aws ssm get-parameter --name /p/x --with-decryption").stdout'],
+   true],
+  ["  content cfg",
+   ["cfg =", "  begin", '    run_command("aws ssm get-parameter --name /p/x").stdout', "  end"],
+   true],
+  ["  content `aws ssm get-parameter --name /p/x --with-decryption`", [], true],
+  ["  content private_key_content", [], true],
+  ['  content "PATH=/usr/local/bin:/usr/bin\n"', [], false],
+  ['  content JSON.pretty_generate(merged) + "\n"', ["merged = existing.merge(managed)"], false],
+  ["  content cron_content", ["cron_content = <<~CRON"], false],
+].freeze
 
 exempt_used = Hash.new { |h, k| h[k] = Set.new }
 
@@ -1145,9 +1212,7 @@ recipe_files.each do |file|
       reasons << "`#{source_line.strip}` is produced at converge time, not a committed asset"
     end
     [content_line, *body.select { |l| l =~ /\A\s*variables\b/ }].compact.each do |l|
-      next unless strip_quoted(l.sub(/\A\s*(?:content|variables)\b/, "")) =~ SECRET_NAME
-
-      reasons << "`#{l.strip}` names a secret"
+      reasons.concat(content_reasons(l, lines, masked))
     end
     next if reasons.empty?
 
@@ -1175,6 +1240,17 @@ SENSITIVE_EXEMPT.each do |file, exprs|
         "placement by that name remains — drop the entry from " \
         "bin/lint-cookbooks (check 15 ratchet)")
   end
+end
+
+CONTENT_SELF_TEST.each do |line, context, expect_hit|
+  hit = !content_reasons(line, context).empty?
+  next if hit == expect_hit
+
+  add(violations, "bin/lint-cookbooks", 1,
+      "check 15 self-test: `#{line.strip}` #{hit ? 'was' : 'was not'} " \
+      "flagged as secret-shaped, expected #{expect_hit ? 'a hit' : 'no hit'} " \
+      "— the content signal (SECRET_NAME / FETCH_EXPR / content_reasons) " \
+      "regressed")
 end
 
 # --- report ----------------------------------------------------------------

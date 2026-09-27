@@ -1111,3 +1111,20 @@ load-bearing and would have read as a setting with no surviving reason.
 - **First step**: drop the trailing slash, switch the token URL to
   `https://mcp.ohno.be/oauth2/token`, and re-register the prober's audience;
   verify the textfile metric turns 1.
+
+## claude-code's settings.json merge drops live-only `env` and `hooks` entries on every apply (Low)
+
+- **Failure class**: `cookbooks/claude-code` writes `existing.merge(managed)`,
+  a shallow merge, so the managed `env` and `hooks` maps replace the live ones
+  wholesale. An env var or hook added to the live `~/.claude/settings.json`
+  (Claude Code's own settings UI, the update-config skill) is removed by the
+  next apply — unattended on pro-dev. `permissions` and `enabledPlugins`
+  already get an explicit per-field merge for exactly this reason.
+- **Why it matters**: the removal is silent. `sensitive true` (check 15) now
+  keeps the removed values out of the runner log, but the loss itself remains.
+  Switching `env` to a per-field merge also changes semantics: an entry
+  deleted from `files/settings.json` would then stay in the live file.
+- **First step**: decide per field (env, hooks) between "managed set wins
+  wholesale" and "live-only entries survive"; for the latter, add
+  `merged["env"] = existing.fetch("env", {}).merge(managed["env"])` next to the
+  enabledPlugins merge and dry-run it against a live file carrying an extra key.
