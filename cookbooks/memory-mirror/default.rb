@@ -111,8 +111,10 @@ directory config_dir do
 end
 
 # The secret is written by the generator under umask 077 and moved into place
-# with an explicit owner; it never appears in argv (printf is a shell builtin)
-# or in mitamae's output.
+# with an explicit owner; it never appears in argv (printf is a shell builtin).
+# The placement is `sensitive`: without it mitamae prints the file diff at INFO,
+# secret line included (observed on the first pro-dev apply, 2026-09-27), and
+# on the root auto-mitamae path that output lands in the runner's log.
 #
 # The gate decrypts the SecureString, so it passes only when this identity can
 # actually read it, but it queries Parameter.Name: on the TTY path
@@ -161,6 +163,7 @@ remote_file client_env_path do
   owner target_user
   group target_group
   mode "600"
+  sensitive true
   only_if "test -f #{env_temp_path}"
 end
 
