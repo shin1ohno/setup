@@ -127,18 +127,20 @@ ALLOW3 = %w[
 ].to_set
 
 # Check 5: cookbooks whose FULLY-BARE auth gate (no --profile/AWS_PROFILE) is
-# intentional. Two cases:
-#   - darwin-only stacks (local-mcp) rely on require_external_auth's profile
-#     auto-discovery, which is TTY-only on darwin.
-#   - fleet+darwin shared cookbooks (ssh-keys) rely on TTY auto-discovery on
-#     darwin AND on AWS_PROFILE preset by the fleet entry point
-#     (cookbooks/auto-mitamae-target/files/mitamae-runner.sh exports
-#     AWS_PROFILE=pve-bootstrap-ssm before invoking mitamae). Both branches
-#     converge on a working profile without per-cookbook --profile pinning.
+# intentional. The one accepted shape is a fleet+darwin shared cookbook that
+# relies on TTY auto-discovery on darwin AND on AWS_PROFILE preset by the fleet
+# entry point (cookbooks/auto-mitamae-target/files/mitamae-runner.sh exports
+# AWS_PROFILE=pve-bootstrap-ssm before invoking mitamae). Both branches converge
+# on a working profile without per-cookbook --profile pinning:
+#   - ssh-keys: every host.
+#   - memory-mirror: pro-dev (fleet, root auto-mitamae) + personal Macs.
+# (The darwin-only local-mcp stack that used to be listed here moved to the
+# private mercari-setup overlay in #585.)
 # Everything NOT listed here (and not in ALLOW3, which is skipped wholesale)
 # must pin an explicit --profile. mcp/codex-cli are already covered by ALLOW3.
 BARE_OK = %w[
   cookbooks/ssh-keys/default.rb
+  cookbooks/memory-mirror/default.rb
 ].to_set
 
 # --- file discovery --------------------------------------------------------
