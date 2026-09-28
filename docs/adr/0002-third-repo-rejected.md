@@ -1,6 +1,6 @@
 # ADR 0002: Third Repository (`home-identity` / `home-registry`) Rejected
 
-**Status**: Accepted (2026-05-07)
+**Status**: Accepted (2026-05-07) — IAM・KMS・SSM 書き込みの定義を持たないアプリケーションだけのリポ（`shin1ohno/ai-memory`）は本 ADR の却下の対象外（ADR 0013「ADR 0002・0003 との関係」）
 **Decision date**: 2026-05-07 (Phase A round-table session, supersedes the proposal made by Software Architect Round 1)
 
 ## Context

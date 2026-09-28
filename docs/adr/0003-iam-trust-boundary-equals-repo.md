@@ -1,6 +1,6 @@
 # ADR 0003: IAM Trust Boundary = Repository Boundary
 
-**Status**: Accepted (2026-05-07)
+**Status**: Accepted (2026-05-07) — IAM 信頼境界を動かさないアプリケーションだけのリポ（`shin1ohno/ai-memory`）は「第 3 リポは自動的に却下」の対象外で、不変条件 1〜4 は保たれる（ADR 0013「ADR 0002・0003 との関係」）
 
 ## Context
 

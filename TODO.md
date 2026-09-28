@@ -1,5 +1,28 @@
 # TODO
 
+## Any fleet LXC can read an account-wide GitHub push key, and setup main is unprotected (High)
+
+- **Failure class**: a compromise of ONE fleet LXC becomes a fleet-wide root
+  compromise. Every fleet host shares the `pve-bootstrap-ssm` identity, which
+  reads every device key under SSM `/ssh-keys/devices/*` and may decrypt them
+  (home-monitor `pve-bootstrap-iam.tf:108-124`). Each of those keys is
+  registered as a GitHub *user* SSH key (`ssh-devices.tf:117`,
+  `github_user_ssh_key`), i.e. push access to every repository of the account.
+  setup's `main` has no ruleset and no branch protection (probed 2026-09-28:
+  `gh api repos/shin1ohno/setup/rulesets --jq length` → 0,
+  `…/branches/main/protection` → 404 "Branch not protected"), and auto-mitamae
+  converges every setup `main` SHA onto the fleet as root within minutes.
+- **Why now**: found by the adversarial review of the ai-memory extraction
+  ADR draft (`docs/adr/0013-ai-memory-own-repo.md`). A new `shin1ohno/ai-memory`
+  repo created with default settings would inherit the same exposure for
+  CT 119. It is outside that ADR's scope, so it is tracked here.
+- **First step**: adversarial review (credential scope change, rules/
+  adversarial-review.md) of two independent fixes, then pick: (a) a `main`
+  ruleset on setup (no direct push, required checks) — check first that the
+  self-heal loop and the auto-mitamae canary do not push to `main`;
+  (b) per-host read scoping of `/ssh-keys/devices/<host>/*` instead of the
+  shared wildcard, or deploy keys per repository instead of user keys.
+
 ## bin/converge's doctor gate, sentinel, and dry-run branch have known correctness gaps (Medium)
 
 - **Failure class**: the ADR 0012 `bin/converge` single-entry wrapper (doctor →
