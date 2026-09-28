@@ -16,12 +16,75 @@
   ADR draft (`docs/adr/0013-ai-memory-own-repo.md`). A new `shin1ohno/ai-memory`
   repo created with default settings would inherit the same exposure for
   CT 119. It is outside that ADR's scope, so it is tracked here.
-- **First step**: adversarial review (credential scope change, rules/
-  adversarial-review.md) of two independent fixes, then pick: (a) a `main`
-  ruleset on setup (no direct push, required checks) — check first that the
-  self-heal loop and the auto-mitamae canary do not push to `main`;
-  (b) per-host read scoping of `/ssh-keys/devices/<host>/*` instead of the
-  shared wildcard, or deploy keys per repository instead of user keys.
+- **Decided (2026-09-28)**: setup `main` keeps no ruleset (ADR 0013 Decision
+  10), so the fix is on the key side. The F1 adversarial review
+  (`~/.claude/plans/ai-memory-extraction-2026-09-27/review-f1.md`) chose
+  per-host read scope plus separate GitHub keys, not deploy keys: the shared
+  principal reads only `/ssh-keys/devices/*/public`; only the four
+  interactive dev machines (pro-dev's user, air, neo, mini) get a GitHub key,
+  generated apart from their login keys under `/ssh-keys/github/<k>`; the 24
+  `github_user_ssh_key.device` registrations go; service LXCs leave the
+  managed `authorized_keys` sections and their seed lines are removed on
+  every CT; the keys that stay trusted are rotated. The canary (CT 104 root)
+  currently fetches setup over SSH with `tf-device-pro` through a blanket
+  `insteadOf`, so that is fixed before any key is withdrawn.
+- **First step**: F2 (Linear SH1-63, home-monitor, apply with the user's
+  permission) Phase 1 — the additive Terraform (C1-C4, C10 in review-f1.md
+  §3.1); then F3 (SH1-64) in setup (ssh-keys role split, real-read gate,
+  `insteadOf` retirement on CT 104 root, pro-dev and mini, seed-line removal
+  after the user approves the target list).
+
+## CT 104 root holds the admin (`sh1admn`) static key (Medium)
+
+- **Failure class**: an unattended fleet LXC carries admin AWS credentials,
+  against this repo's rule that fleet LXCs never get `sh1admn` keys (CLAUDE.md,
+  AWS profile resolution). A compromise of the canary reaches admin/billing.
+  The comment at `cookbooks/memory-mirror/default.rb:129-130` assumes the
+  opposite.
+- **Why**: found as V-2 by the F1 review verifier (review-f1.md §5), outside
+  F1's scope.
+- **First step**: on CT 104, list `aws configure list-profiles` and which
+  cookbook or bootstrap placed the `sh1admn` profile for root; decide whether
+  root needs it at all (the interactive user already has admin), then remove
+  it through the owning cookbook, not by hand.
+
+## mitamae-runner's role-name check lets `..` and a leading `/` through (Low)
+
+- **Failure class**: `cookbooks/auto-mitamae-target/files/mitamae-runner.sh:79`
+  validates the role path with a regex that accepts `..` segments and an
+  absolute path, so the forced-command entry could be pointed at a recipe
+  outside `pve/`. The caller is the orchestrator's key, so this is defence in
+  depth, not an open hole.
+- **Why**: X-1 from the F1 review (review-f1.md §5).
+- **First step**: tighten the regex to `^pve/lxc-[a-z0-9-]+\.rb$` (plus the
+  PVE host's entry), with a run-state scenario that feeds `../x.rb` and
+  `/tmp/x.rb` and expects a refusal.
+
+## The orchestrator key's `from="192.168.1.76"` may be spoofable on the LXC bridge (Low, unverified)
+
+- **Failure class**: `pve-firewall` is disabled, so another LXC on the same
+  bridge might claim 192.168.1.76 and satisfy the `from=` restriction on the
+  orchestrator's forced-command key [unverified].
+- **Why**: X-2 from the F1 review (review-f1.md §5, §6 U-13).
+- **First step**: on the PVE host read `pve-firewall status` and whether any
+  `/etc/pve/firewall/*.fw` sets `ipfilter`; if not, enable per-CT `ipfilter`
+  for the fleet CTs before relying on `from=`.
+
+## Every LXC can read the orchestrator private key and the monitoring secrets (Medium)
+
+- **Failure class**: home-monitor's `monitoring_lxc_ssm_read` policy, meant for
+  CT 111 (monitoring), is attached to the shared `pve-bootstrap-ssm` user
+  (`pve-monitoring-lxc.tf:185-195,271-273`), so every LXC can read
+  `/ssh-keys/orchestrator/private` and the CT 111-only secrets (Grafana admin
+  password, the PVE API token). One LXC compromise yields the key that pushes
+  mitamae runs to every host.
+- **Why**: DEPLOYKEY-8 from the F1 review (review-f1.md §5); kept out of F2 so
+  the key fix stays small.
+- **First step**: give CT 111 its own IAM principal (seeded like
+  `bin/bootstrap-lxc-creds` does, but not copied to other CTs), move the
+  CT 111-only entries of `monitoring_lxc_ssm_arns` onto it, and leave only
+  `/ssh-keys/orchestrator/public` and `/ssh-keys/break-glass/public` on the
+  shared user (every LXC's auto-mitamae-target reads those two).
 
 ## bin/converge's doctor gate, sentinel, and dry-run branch have known correctness gaps (Medium)
 
