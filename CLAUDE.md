@@ -160,7 +160,7 @@ Host registry の canonical source は **AWS SSM Parameter `/host-registry/devic
 
 新ホストの追加: `home-monitor/contracts/devices.json` に entry を追加 + `terraform apply` (`kind: lxc` なら `pve/lxc-<name>.rb` も追加)。setup repo の cookbook 修正は不要。
 
-廃案 (Phase A round-table で却下): submodule 経由配送 (cross-VCS auth + protocol.codecommit.allow=always 運用負担)、第 3 リポ抽出 (privilege aggregation anti-pattern)、モノレポ化 (IAM 信頼境界破壊)。詳細: `docs/adr/0001-0004-*.md`。
+廃案 (Phase A round-table で却下): submodule 経由配送 (cross-VCS auth + protocol.codecommit.allow=always 運用負担)、第 3 リポ抽出 (privilege aggregation anti-pattern)、モノレポ化 (IAM 信頼境界破壊)。詳細: `docs/adr/0001-0004-*.md`。アプリケーションだけのリポ (ai-memory、IAM・KMS・SSM 書き込みを持たない) はこの却下の対象外 (`docs/adr/0013-ai-memory-own-repo.md`)。
 
 ## Always-loaded project rules (moved from global ~/.claude/rules 2026-08-17)
 
