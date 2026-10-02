@@ -249,8 +249,12 @@ rtx_leave_admin() {
   if [[ "$RTX_LAST" =~ \(Y/N\)\ ?$ ]]; then rtx_cmd "N" "$USER_PROMPT" || true; fi
 }
 
-filter_line() { # text n -> the "ethernet filter n ..." line, trailing space trimmed
-  sed -e 's/[[:space:]]*$//' <<<"$1" | grep -E "^ethernet filter $2 " | head -n 1 || true
+# text n -> the "ethernet filter n ..." line, trailing space trimmed and the
+# router's wildcard spelling *:*:*:*:*:* folded to the * this script types
+# (rtx-hnd writes the long form into its config, observed 2026-10-03).
+filter_line() {
+  sed -e 's/[[:space:]]*$//' -e 's/\*:\*:\*:\*:\*:\*/*/g' <<<"$1" \
+    | grep -E "^ethernet filter $2 " | head -n 1 || true
 }
 
 # 17/18 must currently be "reject-log M *" / "reject-log * M" for one MAC M:
