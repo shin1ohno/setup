@@ -305,8 +305,8 @@ es_get "/self-heal-state/_doc/<sha1>"   # status / first_seen / flap_count / occ
 - **A/B（cookbook 経由）**:
   1. `git checkout -b fix/self-heal-<short> origin/main`（`~/.claude/rules/git-commit.md` の branch hygiene）
   2. 該当 cookbook / alert rule を修正
-  3. `bin/lint-cookbooks` + `bin/audit-cookbook-reachability` + 該当の dry-run（mitamae-validator agent or
-     `./bin/mitamae local <recipe>.rb --dry-run`）
+  3. `bin/lint-cookbooks` + `bin/audit-cookbook-reachability` + 該当の dry-run（mitamae-validator agent が使えれば
+     sub-agent に委譲し、なければ `./bin/mitamae local <recipe>.rb --dry-run` を直接実行する）
   4. PR 作成（issue 番号を body に `Fixes #<n>` で紐付け）→ Step 4 へ
 - **C（transient restart）**: flap_count / occurrences を確認。flap でなく既知サービスなら
   `pct exec <ct_id> -- bash -lc "systemctl restart <unit>"`（または docker compose restart）。
@@ -372,12 +372,8 @@ needs-human を付けて停止し、試した仮説を comment（マーカー付
 処理した issue を `resolved(class) / restarted / escalated-needs-human / no-op(already-resolved) / skipped`
 で 1 行報告。
 
-## /loop での回し方
+## スケジューリング
 
-```
-/loop 30m /self-heal-resolve
-```
-
-5 分の observer + 10 分の create に対し、resolve は調査 + 適用 + 検証で時間がかかるので 30 分間隔。
-**初回は対話的に 1 件（例: roon issue）で e2e を確認してから**無人 /loop に載せること（plan の方針）。
+スケジューリングは runner が行う（Claude Code: /loop 相当を使わない。起動は self-heal-resolve-run.sh）。
+**初回は対話的に 1 件（例: roon issue）で e2e を確認してから**無人運用に載せること（plan の方針）。
 無人運用中も `self-heal-needs-human` が付いた issue はメール通知で人間に届く。

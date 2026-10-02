@@ -78,7 +78,7 @@ gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow \
 
 ### Step 4: Register `CARGO_REGISTRY_TOKEN` secret
 
-Use AskUserQuestion to collect the token value (user supplies it, paste into chat), then:
+Ask the user (use a question tool if one is available, otherwise write numbered options in the body; Claude Code: AskUserQuestion / Codex: request_user_input) to collect the token value (user supplies it, paste into chat), then:
 
 ```
 gh secret set CARGO_REGISTRY_TOKEN --repo <owner>/<repo> --body '<token>'
@@ -94,7 +94,7 @@ If this is a workspace with a never-published crate, surface the `publish-new` s
 
 ### Step 6: Record the setup in TODO.md / the memory MCP
 
-If the repo is part of an ecosystem tracked in memory, note the setup completion with:
+If the repo is part of an ecosystem tracked in memory (when a memory MCP is available), note the setup completion with:
 
 - Repo URL
 - `CARGO_REGISTRY_TOKEN` scope + allow-list

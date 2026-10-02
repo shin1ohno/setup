@@ -14,7 +14,7 @@ Verify that the current implementation is correct by running all available check
 
 ## Argument Parsing
 
-`$ARGUMENTS` is an optional scope hint (e.g., a file path or feature name). If omitted, run all detected checks.
+The invocation arguments (the user's request text) are an optional scope hint (e.g., a file path or feature name). If omitted, run all detected checks.
 
 ## Workflow
 
@@ -36,13 +36,13 @@ Check for these markers in order and run all matching checks:
 
 ### Step 1.5: Static Review (Design, Naming, Comments)
 
-Launch a `code-reviewer` agent to scan the current diff (`git diff HEAD`) for issues that automated tools cannot catch:
+Delegate to a code-review sub-agent if available, otherwise review in this session (Claude Code: `code-reviewer` agent via the Agent tool), scanning the current diff (`git diff HEAD`) for issues that automated tools cannot catch:
 
 - **Design**: does the change fit the system architecture? Are interfaces consistent with existing patterns?
 - **Naming**: are new names clear, descriptive, and consistent with project conventions?
 - **Comments**: do comments explain "why" rather than "what"? Are misleading comments flagged?
 
-This step runs in parallel with Step 2 (automated checks).
+When a sub-agent is used, this step runs in parallel with Step 2 (automated checks).
 
 ### Step 2: Run Checks
 
@@ -64,6 +64,6 @@ For failures, include the relevant error output (truncated to 50 lines per check
 
 ### Step 4: UI Verification (if applicable)
 
-If `$ARGUMENTS` mentions UI, frontend, or visual changes:
+If the invocation arguments mention UI, frontend, or visual changes:
 - Remind the user to check the result in a browser
-- If the Chrome extension is available, suggest using it for screenshot comparison
+- If a browser automation tool is available (Claude Code: Chrome extension), suggest using it for screenshot comparison

@@ -9,30 +9,32 @@ argument-hint: "[topic or question]"
 
 ## Purpose
 
-Investigate a topic by searching the existing knowledge store (the memory MCP) and the web, then persist findings automatically.
+Investigate a topic by searching the existing knowledge store (the memory MCP, if available) and the web, then persist findings automatically.
 
 ## Argument Parsing
 
-`$ARGUMENTS` is the research topic or question. If omitted, use AskUserQuestion to ask what to research.
+The invocation arguments (the user's request text) are the research topic or question. If omitted, ask the user what to research (use a question tool if available, otherwise write numbered options in the body; Claude Code: AskUserQuestion / Codex: request_user_input).
 
 ## Workflow
 
 ### Step 1: Search Existing Knowledge
 
-Launch 2 `researcher` agents **in parallel** via the Agent tool (both with `run_in_background: true`):
+If the memory MCP is not available, skip this step and treat the whole topic as a gap in Step 2.
+
+Run 2 research searches **in parallel** as background sub-agents if sub-agents are available; otherwise run them one after the other in this session (Claude Code: 2 `researcher` agents via the Agent tool, both with `run_in_background: true`):
 
 **Agent A — knowledge search:**
-- Search the memory MCP via `recall` over stored knowledge (documents/chunks): relationships, facts, and overviews
+- Search the memory MCP (`recall`) over stored knowledge (documents/chunks): relationships, facts, and overviews
 - Use `top_k=15` for broad exploration
-- Topic: `$ARGUMENTS`
+- Topic: the research topic or question from the invocation arguments
 
 **Agent B — memory search:**
-- Search the memory MCP via `recall` for any user-related context on the topic
-- Topic: `$ARGUMENTS`
+- Search the memory MCP (`recall`) for any user-related context on the topic
+- Topic: the research topic or question from the invocation arguments
 
 ### Step 2: Gap Analysis and Contradiction Detection
 
-When both agents return, synthesize their results:
+When both searches return, synthesize their results:
 
 1. List what is already known (from the memory MCP)
 2. **Contradiction check**: if the two searches return conflicting information, flag the contradiction explicitly and investigate which is current
@@ -41,12 +43,12 @@ When both agents return, synthesize their results:
 
 ### Step 3: Web Research
 
-Launch a `researcher` agent to fill identified gaps:
+Delegate to a sub-agent if available, otherwise execute in this session (Claude Code: `researcher` agent via the Agent tool), to fill identified gaps:
 
 - Provide the specific gaps as search targets
-- Agent uses WebSearch to find sources, WebFetch to extract details
+- Agent uses web search to find sources and page fetch to extract details (Claude Code: WebSearch / WebFetch)
 - **Source credibility**: tag each finding with source type (official docs / engineering blog / forum post / vendor marketing). Flag findings that rely on a single low-credibility source
-- Agent saves new findings to the memory MCP (`remember` / `ingest`) before returning
+- If the memory MCP is available, agent saves new findings to it (`remember` / `ingest`) before returning
 
 ### Step 4: Report
 
@@ -68,4 +70,4 @@ Present findings in BLUF format:
 
 ### Step 5: Persist
 
-If Step 3 was skipped (existing knowledge was sufficient), save the synthesized conclusion to the memory MCP via `ingest` — the synthesis itself is new knowledge even if the inputs were not.
+If Step 3 was skipped (existing knowledge was sufficient) and the memory MCP is available, save the synthesized conclusion to the memory MCP via `ingest` — the synthesis itself is new knowledge even if the inputs were not.

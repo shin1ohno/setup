@@ -2,7 +2,7 @@
 
 Load when you are about to assert "not found / zero references / unsupported".
 
-The always-loaded summary (positive control, `git grep` / `git ls-files` cross-check, no leading `cd`) is the CLAUDE.md bullet `Negative search is not evidence of absence`. This file holds the three per-case gotchas that generalize it.
+The always-loaded summary (positive control, `git grep` / `git ls-files` cross-check, no leading `cd`) is the `Negative search is not evidence of absence` paragraph in `~/.agents/AGENTS.md`. This file holds the three per-case gotchas that generalize it.
 
 ## Template mechanisms hide hostname / URL literals
 
