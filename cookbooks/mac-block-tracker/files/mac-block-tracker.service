@@ -1,0 +1,26 @@
+[Unit]
+Description=Keep ann's Mac in the rtx-hnd MAC block when its Private Wi-Fi Address rotates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=mac-block-tracker
+Group=mac-block-tracker
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY of the mac-block-tracker IAM user
+# (home-monitor mac-block-tracker.tf). No leading '-': without the credential
+# the unit fails visibly instead of passing every run as a no-op.
+EnvironmentFile=/etc/mac-block-tracker/aws.env
+# AirPlay `pi` and model of ann's Mac, read over unicast mDNS on 2026-10-02.
+Environment=TRACKER_PI=422abf2b-9844-4e5a-a113-18c5a484d5e7
+Environment=TRACKER_MODEL=Mac15,12
+Environment=HOME=/var/lib/mac-block-tracker
+StateDirectory=mac-block-tracker
+StateDirectoryMode=0700
+RuntimeDirectory=mac-block-tracker
+RuntimeDirectoryMode=0700
+ExecStart=/usr/local/libexec/mac-block-tracker/mac-block-tracker.sh
+TimeoutStartSec=300
+# Namespace hardening (ProtectSystem / PrivateTmp / DynamicUser …) is left
+# out on purpose: it fails with status=226/NAMESPACE in privileged PVE LXCs
+# (see mcp-probe.service). The dedicated system user is the boundary.

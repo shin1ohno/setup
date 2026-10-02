@@ -86,6 +86,32 @@
   `/ssh-keys/orchestrator/public` and `/ssh-keys/break-glass/public` on the
   shared user (every LXC's auto-mitamae-target reads those two).
 
+## mac-block-tracker holds the router's shared admin password and trusts a spoofable pi (Medium)
+
+- **Failure class**: `cookbooks/mac-block-tracker` runs unattended on pro-dev
+  with an IAM key that reads `/rtx-routers/hnd/admin_password`, i.e. full
+  control of rtx-hnd, and it decides what to write from an AirPlay `pi` that
+  any LAN device can claim. The 2026-10-02 adversarial review's three blockers
+  (router key left behind on the fallback path, password sent without waiting
+  for `Password:`, TOFU host key) are fixed, and the write path now needs the
+  ip/MAC pair in the router's DHCP table, two consecutive sightings, a reject
+  pair on 17/18 and at most 3 moves a day. What remains: (1) a device that
+  changes its own MAC to a family member's private MAC and answers with ann's
+  pi can still get that MAC blocked at night (mail on every move is the only
+  signal); (2) the admin password is the router's single shared one, so the
+  key is as strong as full router control; (3) a unit-level failure before
+  the script runs (missing `aws.env`, ExecStart error) is not mailed, only
+  visible as a failed unit.
+- **Why**: found by the adversarial review of the tracker (items 3, 15, 20);
+  out of scope for the first version, which the user wanted live before ann's
+  next rotation (about 10-14).
+- **First step**: probe whether RTX1210 Rev.14.01 accepts a separate login
+  user with `administrator=2` (admin without the shared password) by reading
+  `login user ?` / `user attribute ?` on the router; if it does, give the
+  tracker its own user and key and drop `admin_password` from the IAM policy.
+  For (3), add `OnFailure=` pointing at a oneshot that publishes to
+  home-monitoring-alerts.
+
 ## bin/converge's doctor gate, sentinel, and dry-run branch have known correctness gaps (Medium)
 
 - **Failure class**: the ADR 0012 `bin/converge` single-entry wrapper (doctor →
@@ -816,6 +842,16 @@ serving interface in between and ITM's RTX830 does not:
 
 Status 2026-09-06: unchanged. No commit since #916 touches the lease parser; #962
 (today) rewrote parts of `vector.toml` for wlx313's syslog mapping only.
+
+Status 2026-10-02: the verb list is wrong as well, so the first step above is not
+enough on its own. The routers log `Allocates` and `Released`, not `Assigns` /
+`Releases`: over 2026-09-25 → 10-02, hnd had 3,776 `[DHCPD]` documents (207
+Allocates, 3,568 Extends, 1 Released) with 0 parsed, and itm had 304 (97
+Allocates, 207 Extends) with exactly the 207 Extends parsed. New leases — the
+event that shows a rotated Private Wi-Fi Address — are therefore unparsed on
+both routers. Use `(?P<dhcp_event>Allocates|Extends|Released|Assigns|Releases)`
+together with the optional interface token. Found while tracing ann's Mac's MAC
+rotation (cookbooks/mac-block-tracker).
 
 ## pve-host holds the ULA /64 on both bridges, so v6 source selection is asymmetric (Low)
 

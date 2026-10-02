@@ -186,4 +186,8 @@ include_cookbook "self-heal-loops"
 # auto-mitamae apply runs as root; the cookbook resolves shin1ohno itself).
 include_cookbook "memory-mirror"
 
+# Keeps ann's Mac inside the rtx-hnd MAC block across Private Wi-Fi Address
+# rotation (home-monitor mac-block-tracker.tf declares the slot and IAM user).
+include_cookbook "mac-block-tracker"
+
 lxc_entry(tags: ["lxc", "pro-dev", "dev-workstation"])
