@@ -55,10 +55,19 @@ directory staging_dir do
   mode "755"
 end
 
+# #{etc_dir} is 0751: other users may traverse it but not list it, so the
+# operator-user apply can `diff` the 0644 known_hosts inside (the install
+# guard below) while aws.env stays 0640 root:#{tracker_user}. 0750 made that
+# guard fail as non-root and re-install on every operator apply.
 execute "create #{libexec_dir} and #{etc_dir}" do
   command "sudo install -d -m 0755 -o root -g root #{libexec_dir} && " \
-          "sudo install -d -m 0750 -o root -g #{tracker_user} #{etc_dir}"
+          "sudo install -d -m 0751 -o root -g #{tracker_user} #{etc_dir}"
   not_if "test -d #{libexec_dir} && test -d #{etc_dir}"
+end
+
+execute "set #{etc_dir} mode 0751" do
+  command "sudo chmod 0751 #{etc_dir}"
+  not_if "test \"$(stat -c %a #{etc_dir})\" = 751"
 end
 
 # --- script ---------------------------------------------------------------------
