@@ -2,7 +2,7 @@
 
 # Notion - note-taking and collaboration platform
 # This cookbook installs the ncli CLI wrapper for Notion's Remote MCP and the
-# Claude Code "notion" skill.
+# "notion" agent skill (stored in ~/.agents/skills, linked into ~/.claude/skills).
 #
 # The Notion desktop app is intentionally NOT installed here: the app install
 # (Homebrew Cask) was dropped so this cookbook only manages CLI/skill assets.
@@ -39,14 +39,25 @@ claude_path = "#{node[:setup][:home]}/.local/bin/claude"
 # nyosegawa/notion-cli@a325ac7a, v0.3.3). The skill drives ncli usage from
 # Claude Code; it requires `ncli login` (OAuth) and optionally
 # `ncli rest login` (integration token) as one-time manual steps.
-skill_dir = "#{node[:setup][:home]}/.claude/skills/notion"
+#
+# Real files live in ~/.agents/skills/notion (the directory Codex reads);
+# agents_skill_link points ~/.claude/skills/notion at them. The whole skill
+# stays gated on the claude binary, as before.
+skill_dir = "#{node[:setup][:home]}/.agents/skills/notion"
 
-directory skill_dir do
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "755"
-  action :create
-  only_if "test -f #{claude_path}"
+[
+  "#{node[:setup][:home]}/.agents",
+  "#{node[:setup][:home]}/.agents/skills",
+  skill_dir,
+  "#{skill_dir}/references",
+].each do |dir|
+  directory dir do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+    only_if "test -f #{claude_path}"
+  end
 end
 
 remote_file "#{skill_dir}/SKILL.md" do
@@ -54,14 +65,6 @@ remote_file "#{skill_dir}/SKILL.md" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "644"
-  action :create
-  only_if "test -f #{claude_path}"
-end
-
-directory "#{skill_dir}/references" do
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "755"
   action :create
   only_if "test -f #{claude_path}"
 end
@@ -75,6 +78,10 @@ end
     action :create
     only_if "test -f #{claude_path}"
   end
+end
+
+agents_skill_link "notion" do
+  gate "test -f #{claude_path}"
 end
 
 # Operator hint when claude binary is missing (claude-code cookbook

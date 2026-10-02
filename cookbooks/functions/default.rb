@@ -1050,3 +1050,72 @@ define :deploy_with_ssm_env,
     only_if "test -f #{tp}"
   end
 end
+
+# Link a skill whose real files live in ~/.agents/skills/<name> (the directory
+# Codex reads) into ~/.claude/skills/<name> (Claude Code does not read
+# .agents/skills). Call it AFTER the caller has deployed the skill's files to
+# ~/.agents/skills/<name>.
+#
+# Migration: mitamae `link` cannot replace a real directory — without force it
+# fails, with force it nests a link INSIDE the directory and still exits 0. So a
+# leftover real ~/.claude/skills/<name> is removed first, after any file only it
+# holds (e.g. a local .claude/settings.local.json) is copied across. If such a
+# file cannot be preserved the apply fails loudly instead of deleting it.
+#
+# Usage:
+#   agents_skill_link "writing"
+#   agents_skill_link "notion" do
+#     gate "test -f #{claude_path}"   # optional shell guard for every step
+#   end
+define :agents_skill_link, gate: nil do
+  skill  = params[:name]
+  home   = node[:setup][:home]
+  shared = "#{home}/.agents/skills/#{skill}"
+  claude = "#{home}/.claude/skills/#{skill}"
+  gate   = params[:gate] || "true"
+
+  legacy_dir  = "#{gate} && test -d #{claude} && ! test -L #{claude}"
+  only_legacy = "diff -rq #{claude} #{shared} 2>/dev/null | grep -q '^Only in #{claude}'"
+
+  [
+    "#{home}/.agents",
+    "#{home}/.agents/skills",
+    shared,
+  ].each do |dir|
+    directory dir do
+      owner node[:setup][:user]
+      group node[:setup][:group]
+      mode "755"
+      action :create
+      only_if gate
+    end
+  end
+
+  # No owner/mode: ~/.claude/skills is shared with Claude-only skills and
+  # other cookbooks, so this only guarantees it exists.
+  directory "#{home}/.claude/skills" do
+    action :create
+    only_if gate
+  end
+
+  execute "keep files only in #{claude}" do
+    command "cp -an #{claude}/. #{shared}/ || true"
+    only_if legacy_dir
+  end
+
+  directory claude do
+    action :delete
+    only_if "#{legacy_dir} && ! #{only_legacy}"
+  end
+
+  execute "refuse to link over #{claude}" do
+    command "echo '#{claude} holds files that could not be copied to #{shared}' >&2; exit 1"
+    only_if "#{legacy_dir} && #{only_legacy}"
+  end
+
+  link claude do
+    to shared
+    force true
+    only_if gate
+  end
+end

@@ -65,6 +65,13 @@ fetch_ssm() {
     echo ""
   fi
 
+  # ~120 skills under ~/.agents/skills exceed the default budget; Codex then silently cuts every description to ~400 chars.
+  if [ ! -f "${PREAMBLE_FILE}" ] || ! grep -qE '^\[skills\]' "${PREAMBLE_FILE}"; then
+    echo "[skills]"
+    echo "max_context_tokens = 8000"
+    echo ""
+  fi
+
   # Add trusted projects
   echo "[projects.\"${HOME_DIR}\"]"
   echo 'trust_level = "trusted"'
