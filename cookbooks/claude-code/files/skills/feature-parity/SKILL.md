@@ -1,7 +1,7 @@
 ---
 name: feature-parity
 description: Compare implementation against a reference implementation and produce a gap analysis
-user_invocable: true
+user-invocable: true
 ---
 
 # Feature Parity Audit Skill
@@ -20,7 +20,7 @@ Ask the user to specify:
 
 ### Step 2: Parallel Exploration
 
-Launch 2 Explore agents in parallel:
+Delegate to 2 read-only exploration sub-agents in parallel if sub-agents are available (otherwise run the two audits one after another in this session; Claude Code: Explore agents via the Agent tool):
 
 **Agent 1: Reference Implementation Audit**
 - Read every source file in the reference
@@ -50,8 +50,8 @@ Group gaps by priority:
 
 ### Step 5: User Decision
 
-Use AskUserQuestion (multiSelect) to let the user choose which gaps to address.
+Ask the user to choose which gaps to address, allowing multiple selections (use the question tool if available, otherwise write numbered options in the message body; Claude Code: AskUserQuestion with multiSelect / Codex: request_user_input).
 
 ### Step 6: Plan
 
-For selected gaps, enter plan mode and design the implementation.
+For selected gaps, present an implementation plan and get approval before implementing (Claude Code: plan mode).

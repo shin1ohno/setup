@@ -13,17 +13,17 @@ Deeply explore requirements for a feature before implementation begins. The outp
 
 ## Argument Parsing
 
-`$ARGUMENTS` is a brief description of the feature. If omitted, use AskUserQuestion to ask what the user wants to build.
+The invocation arguments (the user's request text) are a brief description of the feature. If omitted, ask the user what they want to build (use a question tool if available, otherwise write numbered options in the body; Claude Code: AskUserQuestion / Codex: request_user_input).
 
 ## Workflow
 
 ### Phase 1: Initial Understanding
 
-Read any files referenced in `$ARGUMENTS` to understand the current state.
+Read any files referenced in the invocation arguments to understand the current state.
 
 ### Phase 2: Interview
 
-Use AskUserQuestion repeatedly to explore these dimensions:
+Ask the user questions repeatedly (question tool, if available; otherwise numbered options in the body) to explore these dimensions:
 
 1. **User intent** — What problem does this solve? Who benefits?
 2. **Scope** — What is explicitly in scope? What is out of scope?

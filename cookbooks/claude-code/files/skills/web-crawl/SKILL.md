@@ -9,7 +9,7 @@ argument-hint: "[target-name | url | 'topic:<query>'] [--mode monitor|radar|craw
 
 ## Purpose
 
-A single, config-driven web crawler with three acquisition modes (monitor / radar / crawl) and a pluggable persistence sink. Findings are deduplicated and persisted to memory by default. Run it manually with `/web-crawl`, or register the same procedure as a recurring task — see `Scheduling as a recurring task`, which probes for the facility before naming one.
+A single, config-driven web crawler with three acquisition modes (monitor / radar / crawl) and a pluggable persistence sink. Findings are deduplicated and persisted to memory by default. Run it manually (Claude Code: `/web-crawl`), or register the same procedure as a recurring task — see `Scheduling as a recurring task`, which probes for the facility before naming one.
 
 Two orthogonal axes:
 
@@ -22,7 +22,7 @@ Increasing acquisition modes never changes a sink; adding a sink never changes a
 
 ## Argument Parsing
 
-`$ARGUMENTS` selects the target(s):
+The invocation arguments (the user's request text) select the target(s):
 
 - **empty** → run every target in the config.
 - **`<target-name>`** (matches a config `name`) → run just that target with its config values.
@@ -39,11 +39,11 @@ Load and merge target definitions in this precedence order (later wins on same `
    ```bash
    curl -fsSL https://raw.githubusercontent.com/shin1ohno/setup/main/config/web-crawl-targets.yaml
    ```
-   In a cloud run with no shell, use WebFetch on the same URL instead of `curl`.
+   In a cloud run with no shell, use a web-fetch tool (Claude Code: WebFetch) on the same URL instead of `curl`.
    > Until this skill's PR merges to `main`, that URL 404s. Pre-merge, read the working-tree `config/web-crawl-targets.yaml` (local) or the branch raw URL.
-2. **Local override (optional, private)** — `~/.claude/web-crawl/targets.local.yaml` if it exists. Merge on top of the canonical set, matching by `name`. This is where **private or sensitive** targets go — they never get committed. (Same convention as `~/.claude/settings.local.json` / `.env`.)
+2. **Local override (optional, private)** — `~/.agents/skills/web-crawl/targets.local.yaml` if it exists (the environment variable `WEB_CRAWL_TARGETS` overrides that path when set; the former location `~/.claude/web-crawl/targets.local.yaml` is also read if it exists). Merge on top of the canonical set, matching by `name`. This is where **private or sensitive** targets go — they never get committed. (Same convention as `~/.claude/settings.local.json` / `.env`.)
 
-If neither source yields any target and `$ARGUMENTS` gave no ad-hoc URL/topic, report "no targets configured" and stop (graceful empty-state).
+If neither source yields any target and the invocation arguments gave no ad-hoc URL/topic, report "no targets configured" and stop (graceful empty-state).
 
 A target entry:
 ```yaml
@@ -62,9 +62,9 @@ A target entry:
 
 **Bounds (all modes):** max 50 pages fetched per target per run; per-fetch timeout; on `crawl`, stay on the **seed's domain** only and honor `depth`. If you hit a cap, say so explicitly in the report ("stopped at 50/… pages") — never silently truncate. **Public content only** — do not crawl authenticated or internal URLs; route anything sensitive to the local override and a non-memory sink.
 
-- **monitor** — WebFetch each `urls` entry. Extract the discrete items on the page (release entries, changelog headings, list items, article links). These candidates go to Step 3.
-- **radar** — WebSearch `query`. Collect result URLs + titles as candidates. Optionally WebFetch the top results for a fuller summary.
-- **crawl** — WebFetch `seed`; extract same-domain links; BFS to `depth` (respecting the page cap); extract the main textual content of each fetched page as a candidate.
+- **monitor** — Fetch each `urls` entry with the web-fetch tool (WebFetch). Extract the discrete items on the page (release entries, changelog headings, list items, article links). These candidates go to Step 3.
+- **radar** — Run a web search for `query` (Claude Code: WebSearch). Collect result URLs + titles as candidates. Optionally fetch the top results (WebFetch) for a fuller summary.
+- **crawl** — Fetch `seed` (WebFetch); extract same-domain links; BFS to `depth` (respecting the page cap); extract the main textual content of each fetched page as a candidate.
 
 ## Step 3: Persist (by sink) — with dedup
 
@@ -72,7 +72,9 @@ Compute a stable key per candidate: the **normalized URL** (strip fragments/trac
 
 ### sink: `memory` (default — implemented)
 
-For each candidate not already known:
+Requires a memory MCP (tools `recall` / `remember`). If none is available, skip persistence, report the candidates under "New this run" and say "memory sink unavailable".
+
+For each candidate not already known (when the memory MCP is available):
 
 1. **Dedup check** — `recall(query="<normalized-url> <title>", top_k=5)` and treat the candidate as already captured if any hit's content contains the same normalized URL (or is unmistakably the same item); count it as skipped. Also skip if its key is already in the in-session seen-set.
    - Do **not** rely on a `tags` filter to narrow this. In memory-v2, `recall(query=…, filters={tags:[…]})` returns nothing until the async keeper has reconciled the write, so it misses same-run and just-written items (verified empty 2026-07-05, seconds *and* minutes after the write, while the same content was found immediately by a plain semantic query). Dedup correctness therefore comes from the semantic query + normalized-URL match + the in-session seen-set — not from tag filtering.
@@ -102,13 +104,13 @@ If nothing new: report "no new items" and stop cleanly.
 
 ## Scheduling as a recurring task
 
-**Probe the scheduling facility before writing the registration.** `/schedule` is not present in this host's skill roster (checked 2026-09-16); what exists here is `/loop` for in-session repetition, `CronCreate` for session-scoped crons that are NOT persisted to disk, and **systemd user timers** — the mechanism this host actually uses for recurring work (`todo-collect`, `todo-reconcile`, `external-handoff-worker`, `obsidian-sync`). A cloud routine that must outlive the session needs either a timer on this box or a facility confirmed to exist wherever it will run. The checklist below describes the cloud-routine shape and stays valid for whichever facility the probe finds; do not register against a command name without confirming it resolves.
+**Probe the scheduling facility before writing the registration.** `/schedule` is not present in this host's skill roster (checked 2026-09-16); what exists here is in-session repetition (Claude Code: `/loop`), session-scoped crons that are NOT persisted to disk (Claude Code: `CronCreate`), and **systemd user timers** — the mechanism this host actually uses for recurring work (`todo-collect`, `todo-reconcile`, `external-handoff-worker`, `obsidian-sync`). A cloud routine that must outlive the session needs either a timer on this box or a facility confirmed to exist wherever it will run. The checklist below describes the cloud-routine shape and stays valid for whichever facility the probe finds; do not register against a command name without confirming it resolves.
 
 Register a routine whose prompt is **self-contained**: the cloud environment does not run mitamae, so this skill is not auto-loaded there. Inline this skill's procedure into the prompt; the targets are NOT inlined — the prompt fetches them from the canonical raw URL (Step 1), so adding a target later needs only a `git push`, not a routine edit.
 
 Checklist when registering:
 
 - **cron in UTC** (convert from Asia/Tokyo = UTC+9). One routine = one job.
-- Attach the **memory MCP** in the routine's `mcp_connections` so `recall`/`remember` work in the cloud environment.
+- When the memory sink is used, attach the **memory MCP** in the routine's `mcp_connections` (Claude Code cloud routines) so `recall`/`remember` work in the cloud environment.
 - **Graceful empty-state**: no new items → finish successfully, do not error.
-- **Verify after registering**: trigger the routine once manually through the facility you registered it on (a `systemd` user timer's own `.service`, the runner script's one-shot flag), then `recall(query="web-crawl <target-name> <today>", top_k=5)` and confirm a hit whose content is the just-crawled item — proof the cloud write landed — before trusting the schedule. (Query semantically; a `tags` filter is unreliable right after a write, per Step 3.)
+- **Verify after registering**: trigger the routine once manually through the facility you registered it on (a `systemd` user timer's own `.service`, the runner script's one-shot flag), then (with the memory MCP available) `recall(query="web-crawl <target-name> <today>", top_k=5)` and confirm a hit whose content is the just-crawled item — proof the cloud write landed — before trusting the schedule. (Query semantically; a `tags` filter is unreliable right after a write, per Step 3.)

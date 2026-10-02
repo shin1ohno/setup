@@ -8,7 +8,8 @@
 # changes on its next run.
 #
 # Anything private or sensitive must NOT go here — put it in the (gitignored,
-# home-local) override instead:  ~/.claude/web-crawl/targets.local.yaml
+# home-local) override instead:  ~/.agents/skills/web-crawl/targets.local.yaml
+# (or the path in $WEB_CRAWL_TARGETS; the old ~/.claude/web-crawl/targets.local.yaml is still read)
 # (URLs/queries written here are world-readable; only public-web monitoring belongs here.)
 #
 # Schema per target:

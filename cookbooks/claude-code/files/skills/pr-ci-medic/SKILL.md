@@ -62,6 +62,8 @@ push 前に**必ずローカル検証を通す**。「CI が言う修正」を�
 
 ## ループ化（substrate B / 半自動）
 
+この節は Claude Code 専用（CronCreate ループ）。他の環境ではスケジューラ側（cron / CI）で同じ手順を起動する。
+
 morning-triage から呼ばれるのが主。単独 cron も可だが、自律コード push は同席運用を推奨:
 
 ```

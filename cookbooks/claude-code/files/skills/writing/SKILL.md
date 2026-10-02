@@ -8,38 +8,38 @@ user-invocable: true
 
 ## Argument Parsing
 
-Treat `$ARGUMENTS` as the task content. If omitted, use AskUserQuestion to prompt the user for input.
+Treat the invocation arguments (the user's request text) as the task content. If omitted, ask the user for input (use a question tool if available, otherwise write numbered options in the body; Claude Code: AskUserQuestion / Codex: request_user_input).
 
-**Template keywords**: if `$ARGUMENTS` starts with `dvq` or `rfc`, load the corresponding template from `~/.claude/skills/writing/templates/` and use it as structural guidance in Step 1. Strip the keyword from the arguments before passing the remainder as the task content.
+**Template keywords**: if the invocation arguments start with `dvq` or `rfc`, load the corresponding template from `~/.agents/skills/writing/templates/` and use it as structural guidance in Step 1. Strip the keyword from the arguments before passing the remainder as the task content.
 
 - `dvq [topic]` — strategic vision document (DVQ template)
 - `rfc [topic]` — technical decision document (RFC template)
 
 ## Preparation: Load Personas and Templates
 
-Read the following 2 files using the Read tool:
+Read the following 2 files (Claude Code: Read tool):
 
-1. `~/.claude/skills/writing/personas/document-writer.md` - Writer persona
-2. `~/.claude/skills/writing/personas/marginal-utility-editor.md` - Editor persona
+1. `~/.agents/skills/writing/personas/document-writer.md` - Writer persona
+2. `~/.agents/skills/writing/personas/marginal-utility-editor.md` - Editor persona
 
 If a template keyword was detected, also read the matching template:
-- `~/.claude/skills/writing/templates/dvq.md` for `dvq`
-- `~/.claude/skills/writing/templates/rfc.md` for `rfc`
+- `~/.agents/skills/writing/templates/dvq.md` for `dvq`
+- `~/.agents/skills/writing/templates/rfc.md` for `rfc`
 
 **Japanese language gate**: judge whether the prose you will write or edit is primarily Japanese (auto-detect from the task content / target document — English identifiers or code snippets inside a Japanese document still count as Japanese; skip for English documents). If Japanese, also read the AI-slop references:
-- `~/.claude/skills/writing/references/phrases.md` - banned vocabulary
-- `~/.claude/skills/writing/references/structures.md` - structural anti-patterns
-- `~/.claude/skills/writing/references/examples.md` - before/after contrast cases
+- `~/.agents/skills/writing/references/phrases.md` - banned vocabulary
+- `~/.agents/skills/writing/references/structures.md` - structural anti-patterns
+- `~/.agents/skills/writing/references/examples.md` - before/after contrast cases
 
 ## Workflow
 
-Execute 3 steps sequentially. Each step is delegated to an independent agent via the Agent tool.
+Execute 3 steps sequentially. Each step is delegated to an independent sub-agent if sub-agents are available (Claude Code: Agent tool); otherwise execute the step in this same session, using the step's persona, references and prior-step output as its working context.
 
-Before launching each step's Agent call, emit one status line to the user (e.g. 「設計中（Step 1/3）…」「執筆中（Step 2/3）…」「編集中（Step 3/3）…」). When the Step 3 decision sends the work back to Step 1, name the cycle (「Step 3 の判定により Step 1 へ戻ります（cycle 2/3）」). This pipeline is intentionally synchronous, so the progress line is this skill's own responsibility, not the background-agent tracking rule's.
+Before launching each step (the sub-agent call or the in-session execution), emit one status line to the user (e.g. 「設計中（Step 1/3）…」「執筆中（Step 2/3）…」「編集中（Step 3/3）…」). When the Step 3 decision sends the work back to Step 1, name the cycle (「Step 3 の判定により Step 1 へ戻ります（cycle 2/3）」). This pipeline is intentionally synchronous, so the progress line is this skill's own responsibility, not the background-agent tracking rule's.
 
 ### Step 1: Plan (Structure Design)
 
-Launch Agent tool (subagent_type: "general-purpose"):
+Delegate to a sub-agent if available, otherwise execute in this session (Claude Code: Agent tool, subagent_type: "general-purpose"):
 
 - Persona: include document-writer content in the prompt
 - Instructions:
@@ -53,7 +53,7 @@ Launch Agent tool (subagent_type: "general-purpose"):
 
 ### Step 2: Write (Drafting)
 
-Launch Agent tool:
+Delegate to a sub-agent if available, otherwise execute in this session (Claude Code: Agent tool):
 
 - Persona: include document-writer content in the prompt
 - Pass the structure design from Step 1 as prior context
@@ -67,7 +67,7 @@ Launch Agent tool:
 
 ### Step 3: Edit (Marginal Utility Editing)
 
-Launch Agent tool:
+Delegate to a sub-agent if available, otherwise execute in this session (Claude Code: Agent tool):
 
 - Persona: include marginal-utility-editor content in the prompt. **If the document is Japanese, ALSO include the full contents of `references/phrases.md`, `references/structures.md`, and `references/examples.md` in the prompt** — sub-agents do not share the orchestrator's Read cache, so these must be re-injected exactly like the persona, not merely read in Preparation.
 - Pass the draft from Step 2

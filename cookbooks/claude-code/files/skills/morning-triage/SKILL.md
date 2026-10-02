@@ -34,7 +34,7 @@ pr-ci-medic に委譲する。Addy Osmani の朝ルーチン実例の実装。**
 収集ゼロなら "no overnight signals — skipped" で STOP（graceful empty state）。
 
 ### Step 1. triage ledger 作成
-`~/.claude/triage/<YYYY-MM-DD>.md`（ローカル）に優先度つきで書く:
+state ディレクトリ（既定 `~/.claude/triage/`、環境変数 `TRIAGE_STATE_DIR` で上書き可）の `<YYYY-MM-DD>.md`（ローカル）に優先度つきで書く:
 P0=自分の失敗 PR（マージブロック中）, P1=レビュー依頼, P2=アサイン issue, P3=scheduled 失敗。
 各項目: repo / 種別 / リンク / 一行要約 / 推奨アクション。
 
@@ -44,9 +44,10 @@ flagged）を ledger の該当行に追記。
 
 ### Step 3. 修正起案（propose のみ・作成/検査分離）
 well-scoped な P0 修正について:
-- 作成サブエージェント: `git worktree`（`isolation: worktree`）で修正を起案。
-- 検査サブエージェント: **別エージェント**が、リポの test/lint/skill 契約に照らして検証（adversarial-review /
+- 作成サブエージェント（sub-agent が使えれば委譲し、なければ同一セッションで実行する。Claude Code: Agent ツール）: `git worktree` で隔離して修正を起案（Claude Code: `isolation: worktree`）。
+- 検査サブエージェント: **作成者とは別のエージェント**が、リポの test/lint/skill 契約に照らして検証（adversarial-review /
   sub-agents ルール準拠）。検査を通ったものだけ pr-ci-medic 経由で PR ブランチに push。merge しない。
+  sub-agent が使えない環境では作成者自身に検査させない — 修正案を ledger に「検査待ち」として置き、push しない。
 - レビュー依頼 PR（他人の）は**コメント下書きを ledger に置くだけ**（自動投稿しない）。
 
 ### Step 4. サマリ
@@ -54,11 +55,13 @@ ledger 末尾に P0-P3 件数と処理状況のサマリ。
 
 ## ループ化（substrate B）
 
+この節は Claude Code 専用（CronCreate ループ）。他の環境ではスケジューラ側（cron / CI）で同じ手順を起動する。
+
 平日朝のローカル cron。例:
 
 ```
 CronCreate(cron="33 9 * * 1-5", durable=true,
-  prompt="Follow ~/ManagedProjects/setup/cookbooks/claude-code/files/skills/morning-triage/SKILL.md in DIAGNOSE mode for repos kouzoh/zp-SHIN and shin1ohno/setup. Write the dated ledger under ~/.claude/triage/ and report P0-P3 counts. Do not merge or auto-post anything.")
+  prompt="Follow ~/ManagedProjects/setup/cookbooks/claude-code/files/skills/morning-triage/SKILL.md in DIAGNOSE mode for repos kouzoh/zp-SHIN and shin1ohno/setup. Write the dated ledger under the state directory (TRIAGE_STATE_DIR, default ~/.claude/triage/) and report P0-P3 counts. Do not merge or auto-post anything.")
 ```
 
 CronCreate は 7 日失効・同席前提。propose を無人で回さない。恒久・無人化は自律コード push を含むため設計外
