@@ -10,4 +10,5 @@ puts <<~MSG
   2. Communicate in Japanese
   3. Preserve: current plan state, modified file paths, test commands, AskUserQuestion decisions
   4. CLAUDE.md source of truth: cookbooks/claude-code/files/CLAUDE.md
+  5. Shared Claude+Codex layer (imported by CLAUDE.md): cookbooks/claude-code/files/AGENTS.md → ~/.agents/AGENTS.md
 MSG

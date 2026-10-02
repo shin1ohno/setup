@@ -48,7 +48,7 @@ When the request itself enumerates required partitions — outcomes to evaluate 
 
 When the work is handed to a workflow or sub-agent, put the partition list into the `schema` keys so a missing partition fails structurally instead of arriving as a plausible-looking imbalance.
 
-Same discipline as CLAUDE.md's 増分更新の棚卸し (diff line counts against the prior version, mark unverified rows) — this is that rule applied to the FIRST version.
+Same discipline as the shared `~/.agents/AGENTS.md`'s 増分更新の棚卸し (diff line counts against the prior version, mark unverified rows) — this is that rule applied to the FIRST version.
 
 Origin: 2026-07-24 — a knowledge-worker overtime study whose request spelled out five outcome classes ((1) physical health (2) mental health: depression / anxiety / burnout (3) cognition (4) productivity (5) employment sustainability) came back weighted toward vascular disease. The user rejected it (「いずれも肉体労働を中心とした、物理的な血管などの疾患に寄りすぎていませんか？…その前提で調査と分析をやり直して欲しいです」) and one whole deep-research workflow run was wasted.
 
@@ -76,7 +76,7 @@ Origin: 2026-06-15 sage TS→Rust full rewrite — serial phase plan rejected at
 
 Before a plan includes a NEW mechanism — a tunnel, a proxy, a bespoke key/secret distribution path, a wrapper script, a sync daemon — decide in one line whether the platform's **standard** mechanism alone satisfies the requirement (`authorized_keys` + plain ssh, the official CLI's default auth path, a direct IAM grant, the service's own scheduler), and write that decision into the plan. If the standard mechanism suffices and you still choose the extra layer, state the reason it buys (smaller exposed surface, audit requirement, existing fleet convention) and put the choice through AskUserQuestion. A plan that introduces an added layer without this line is incomplete.
 
-This is distinct from CLAUDE.md's **Existing-facility probe** (reuse what this repo already ships) — that one asks "does a facility exist here?", this one asks "does the platform already do this without any facility?".
+This is distinct from the **Existing-facility probe** in the shared `~/.agents/AGENTS.md` (reuse what this repo already ships) — that one asks "does a facility exist here?", this one asks "does the platform already do this without any facility?".
 
 Origin: 2026-07-30 sh1-cloud — the user pushed the solution shape back three times in one session (「普通にssh authorize keyを登録しておけばいいだけじゃないんですか？なぜここでtailscaleを使うのでしょう？」「ちょっとソリューションがズレている気がします。tailscaleで同じネットワークで入り、tailscaleに依存しない普通のsshでログインしたいです」「ちょっと待って。githubにsshできるように鍵を設定する方が良いのでは？」), each time against a layer proposed ahead of the plain mechanism. The end state kept Tailscale as the network but moved auth back to plain ssh keys.
 
