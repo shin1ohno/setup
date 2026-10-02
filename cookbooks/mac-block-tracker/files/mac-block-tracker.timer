@@ -1,0 +1,12 @@
+[Unit]
+Description=Run mac-block-tracker every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnActiveSec=1min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+Unit=mac-block-tracker.service
+
+[Install]
+WantedBy=timers.target
