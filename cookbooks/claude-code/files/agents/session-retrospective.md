@@ -77,7 +77,7 @@ Before proposing changes, read these files to understand what already exists:
 - `~/.claude/CLAUDE.md` — current global rules
 - `~/.claude/rules/` — current rule files (glob for *.md)
 - `~/.claude/agents/` — current agent definitions
-- `~/.claude/skills/` — current skill definitions
+- `~/.claude/skills/` and `~/.agents/skills/` — current skill definitions (shared skills live in `~/.agents/skills/`; `~/.claude/skills/<name>` is a symlink to them)
 - `~/.claude/settings.json` — current hooks and permissions
 
 ## Output Format

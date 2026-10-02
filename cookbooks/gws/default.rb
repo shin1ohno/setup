@@ -20,15 +20,17 @@ execute "persist gws file keyring backend in .zshenv" do
   not_if "fgrep -q 'GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND' #{node[:setup][:home]}/.zshenv"
 end
 
-# Agent Skills: generate from the installed gws binary and sync into Claude
-# Code's skills dir (~/.claude/skills). Generated rather than vendored so the
+# Agent Skills: generate from the installed gws binary into ~/.agents/skills
+# (the directory Codex reads) and link each into ~/.claude/skills (Claude Code
+# does not read ~/.agents/skills). Generated rather than vendored so the
 # 95-skill set always matches the installed gws version — a mise bump
 # regenerates them on the next apply. The skills live with gws (not in
 # cookbooks/claude-code) because the tool produces them and pins their version.
 home        = node[:setup][:home]
 gws_bin     = "#{home}/.local/share/mise/shims/gws"
-skills_dir  = "#{home}/.claude/skills"
-sentinel    = "#{skills_dir}/.gws-skills-version"
+agents_dir  = "#{home}/.agents/skills"
+claude_dir  = "#{home}/.claude/skills"
+sentinel    = "#{agents_dir}/.gws-skills-version"
 sync_script = "#{node[:setup][:root]}/gws/sync-skills.sh"
 
 directory node[:setup][:root] do
@@ -46,9 +48,19 @@ remote_file sync_script do
   mode "755"
 end
 
-# Re-run only when the installed gws version differs from the last synced one.
+# Re-run when the installed gws version differs from the last synced one, or
+# when the number of gws-managed links under ~/.claude/skills no longer matches
+# the number of skills under ~/.agents/skills (an auto-update that deletes
+# symlinks leaves the version sentinel intact and would otherwise go unnoticed).
+gws_count = ->(dir, type) {
+  "$(find #{dir} -mindepth 1 -maxdepth 1 -type #{type} " \
+    "\\( -name 'gws-*' -o -name 'persona-*' -o -name 'recipe-*' \\) | wc -l | tr -d ' ')"
+}
 execute "generate + sync gws agent skills" do
-  command "bash #{sync_script} #{skills_dir}"
+  command "bash #{sync_script} #{agents_dir} #{claude_dir}"
   user node[:setup][:user]
-  not_if %{test "$(cat #{sentinel} 2>/dev/null)" = "$(#{gws_bin} --version 2>/dev/null | awk 'NR==1{print $2}')"}
+  not_if [
+    %{test "$(cat #{sentinel} 2>/dev/null)" = "$(#{gws_bin} --version 2>/dev/null | awk 'NR==1{print $2}')"},
+    %{test #{gws_count.call(claude_dir, "l")} = #{gws_count.call(agents_dir, "d")}},
+  ].join(" && ")
 end

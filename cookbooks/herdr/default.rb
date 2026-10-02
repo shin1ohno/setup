@@ -192,40 +192,47 @@ skill_local = File.join(File.dirname(__FILE__), "files", "skill-local.md")
 # skill-local.md regenerate both copies on the next apply.
 skill_body = %({ "#{herdr_path}" --skill; printf "\\n"; cat "#{skill_local}"; })
 
-# Both agents read <name>/SKILL.md from their own skills dir and share the same
-# YAML frontmatter shape, so one composed file serves both. Every entry recipe
-# that includes roles/core (this cookbook) also includes roles/llm (claude-code,
-# codex-cli) — darwin.rb, linux.rb, cookbooks/lxc-dev-workstation — so neither
-# destination lands on a host without the agent that reads it. Codex discovers
-# $CODEX_HOME/skills/<name> (its bundled set lives under skills/.system).
-{
-  ".claude/skills/herdr" => "Claude Code",
-  ".codex/skills/herdr" => "Codex CLI",
-}.each do |rel_dir, agent|
-  skill_dir = "#{node[:setup][:home]}/#{rel_dir}"
+# Both agents read <name>/SKILL.md and share the same YAML frontmatter shape, so
+# one composed file serves both. The real file lives in ~/.agents/skills/herdr,
+# the directory Codex reads; Claude Code does not read it, so
+# ~/.claude/skills/herdr is a symlink to it. Every entry recipe that includes
+# roles/core (this cookbook) also includes roles/llm (claude-code, codex-cli) —
+# darwin.rb, linux.rb, cookbooks/lxc-dev-workstation — so neither agent is
+# missing on a host that has the skill.
+skill_dir = "#{node[:setup][:home]}/.agents/skills/herdr"
 
-  directory skill_dir do
+["#{node[:setup][:home]}/.agents", "#{node[:setup][:home]}/.agents/skills", skill_dir].each do |dir|
+  directory dir do
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "755"
   end
+end
 
-  execute "install herdr agent skill for #{agent}" do
-    user node[:setup][:user]
-    # bash -c for `set -o pipefail` (dash rejects it), same as the install
-    # above. Compose into a temp file and `install` it so a mid-pipeline
-    # failure cannot leave a half-written SKILL.md in place.
-    command <<~SH.strip
-      bash -c '
-        set -euo pipefail
-        tmp="$(mktemp)"
-        trap "rm -f $tmp" EXIT
-        #{skill_body} > "$tmp"
-        install -m 0644 "$tmp" "#{skill_dir}/SKILL.md"
-      '
-    SH
-    not_if "bash -c '#{skill_body}' | cmp -s - #{skill_dir}/SKILL.md"
-  end
+execute "install herdr agent skill" do
+  user node[:setup][:user]
+  # bash -c for `set -o pipefail` (dash rejects it), same as the install
+  # above. Compose into a temp file and `install` it so a mid-pipeline
+  # failure cannot leave a half-written SKILL.md in place.
+  command <<~SH.strip
+    bash -c '
+      set -euo pipefail
+      tmp="$(mktemp)"
+      trap "rm -f $tmp" EXIT
+      #{skill_body} > "$tmp"
+      install -m 0644 "$tmp" "#{skill_dir}/SKILL.md"
+    '
+  SH
+  not_if "bash -c '#{skill_body}' | cmp -s - #{skill_dir}/SKILL.md"
+end
+
+agents_skill_link "herdr"
+
+# Codex used to get its own copy under $CODEX_HOME/skills. It scans both that
+# directory and ~/.agents/skills and dedups by canonical path, so leaving the
+# old copy would list herdr twice.
+directory "#{node[:setup][:home]}/.codex/skills/herdr" do
+  action :delete
 end
 
 # zsh completion. `herdr completion zsh` emits a clap script whose line 1 is
