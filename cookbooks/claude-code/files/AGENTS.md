@@ -116,3 +116,4 @@ These are `docs/` files (not auto-loaded). `Read` the file when the task matches
 | PVE LXC operational gotchas — unprivileged bind-mount UID mapping, `pct exec` non-TTY, Docker-in-LXC design gate | `~/.claude/docs/pve-lxc-detail.md` |
 | fractal node trees + plasma-wiki — agent config home not inherited, cost caps need an explicit model, `--scope` double-nesting, budget shape, wiki lint / naming traps, wave design | `~/.claude/docs/fractal-nodes.md` |
 | GPG secret-subkey distribution to a headless host via a secret store — passphrase stripping via agent keygrip, `--batch` silent-drop detection, per-step checkpoints, rotation | `~/.claude/docs/gpg-key-distribution.md` |
+| Codex に共有 skill を載せる／件数を増やす時の probe — description 切り詰めの検出、prompt-input の JSON parse、`[skills] max_context_tokens` | `~/.claude/docs/codex-skills-probe.md` |
