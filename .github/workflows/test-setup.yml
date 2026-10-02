@@ -577,6 +577,14 @@ jobs:
         # unreachable/lock/mismatch/unverified; verified same-SHA throttled).
         bash cookbooks/auto-mitamae-target/test/run-state-scenarios.sh
 
+    - name: mac-block-tracker scenarios
+      run: |
+        # Runs the PRODUCTION tracker unmodified with dig / ip / aws / ssh
+        # stand-ins: unchanged MAC, rotation (router rewrite + read-back + slot
+        # + mail), router refusing the change, sleep-proxy hardware MAC,
+        # fallback identification, malformed MAC, dry run, ambiguous pi.
+        bash cookbooks/mac-block-tracker/test/run-scenarios.sh
+
     - name: hr shell function regression suite
       run: |
         # cookbooks/herdr/files/hr.sh is the `hr` session launcher deployed to
