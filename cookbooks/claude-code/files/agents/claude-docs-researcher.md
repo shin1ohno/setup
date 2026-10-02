@@ -31,7 +31,7 @@ Key pages to review (filter by topic if specified):
    - `~/.claude/settings.json`
    - `~/.claude/rules/*.md`
    - `~/.claude/agents/*.md`
-   - `~/.claude/skills/*/SKILL.md`
+   - `~/.claude/skills/*/SKILL.md` (shared skills are symlinks to `~/.agents/skills/*/`)
 3. Compare: identify features, options, or patterns in the docs that are not yet adopted
 4. Report findings grouped by category (hooks, skills, agents, rules, settings)
 

@@ -533,9 +533,11 @@ if File.file?(cc_default)
   skills_root = "cookbooks/claude-code/files/skills"
   if File.directory?(skills_root)
     shipped = Set.new
-    # (a) the per-skill loop deploys one SKILL.md per named skill
-    if (skill_list = cc_src[/%w\(([^)]*)\)\.each do \|skill_name\|/, 1])
-      skill_list.split.each { |s| shipped << "#{s}/SKILL.md" }
+    # (a) the per-skill loops deploy one SKILL.md per named skill: the shared
+    # list (`shared_skills = %w(...)`, deployed under ~/.agents/skills) and the
+    # Claude-only `%w(...).each do |skill_name|` list (under ~/.claude/skills)
+    cc_src.scan(/shared_skills = %w\(([^)]*)\)|%w\(([^)]*)\)\.each do \|skill_name\|/) do |shared, only|
+      (shared || only).split.each { |s| shipped << "#{s}/SKILL.md" }
     end
     # (b) %w() lists whose source is files/skills/<prefix>/#{file_name}
     cc_src.scan(
@@ -556,8 +558,9 @@ if File.file?(cc_default)
       lineno = cc_src[0...idx].count("\n") + 1
       add(violations, cc_default, lineno,
           "files/skills/#{rel} exists but no `source \"files/skills/...\"` in " \
-          "the recipe deploys it — it will never reach ~/.claude/skills/. The " \
-          "skill loop ships only SKILL.md, so a helper script or template needs " \
+          "the recipe deploys it — it will never reach ~/.agents/skills/ or " \
+          "~/.claude/skills/. The skill loops ship only SKILL.md, so a helper " \
+          "script or template needs " \
           "its own remote_file. Add one, delete the orphan, or (test-only) " \
           "exempt it in this check's skills_exempt.")
     end

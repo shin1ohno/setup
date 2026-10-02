@@ -288,7 +288,7 @@ end
   end
 end
 
-# Deploy docs (detail files referenced by CLAUDE.md via @import)
+# Deploy docs (detail files referenced by CLAUDE.md and the rules/ files)
 directory "#{node[:setup][:home]}/.claude/docs" do
   owner node[:setup][:user]
   group node[:setup][:group]
@@ -342,8 +342,39 @@ end
   end
 end
 
-# Deploy skills
-%w(writing interview verify retro research research-domains load-test check-services security-review feature-parity verify-mise-backend bootstrap-docs-hub pr-ci-medic morning-triage self-heal-create self-heal-resolve network-log-audit mcp-auth web-crawl setup-release-plz todo-reconcile todo-collect todo-approve linear-resolve).each do |skill_name|
+# Deploy skills. Shared skills keep their real files in ~/.agents/skills (the
+# directory Codex reads) and are linked into ~/.claude/skills once their helper
+# files are in place (agents_skill_link below). Claude-only skills depend on
+# Claude Code's own state or tools and stay in ~/.claude/skills.
+%w(.agents .agents/skills).each do |dir_name|
+  directory "#{node[:setup][:home]}/#{dir_name}" do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
+end
+
+shared_skills = %w(writing interview verify research research-domains load-test check-services security-review feature-parity verify-mise-backend pr-ci-medic morning-triage self-heal-create self-heal-resolve network-log-audit web-crawl setup-release-plz)
+
+shared_skills.each do |skill_name|
+  directory "#{node[:setup][:home]}/.agents/skills/#{skill_name}" do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
+
+  remote_file "#{node[:setup][:home]}/.agents/skills/#{skill_name}/SKILL.md" do
+    source "files/skills/#{skill_name}/SKILL.md"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+%w(retro bootstrap-docs-hub mcp-auth todo-reconcile todo-collect todo-approve linear-resolve).each do |skill_name|
   directory "#{node[:setup][:home]}/.claude/skills/#{skill_name}" do
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -398,7 +429,7 @@ end
 # point + the comparison discipline); the bulk — ES catalog, retention limits,
 # read-only device probes, known traps — lives here so it is loaded only when a
 # network investigation actually needs it.
-directory "#{node[:setup][:home]}/.claude/skills/network-log-audit/references" do
+directory "#{node[:setup][:home]}/.agents/skills/network-log-audit/references" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
@@ -406,7 +437,7 @@ directory "#{node[:setup][:home]}/.claude/skills/network-log-audit/references" d
 end
 
 %w(es-catalog.md retention.md probes.md pitfalls.md).each do |file_name|
-  remote_file "#{node[:setup][:home]}/.claude/skills/network-log-audit/references/#{file_name}" do
+  remote_file "#{node[:setup][:home]}/.agents/skills/network-log-audit/references/#{file_name}" do
     source "files/skills/network-log-audit/references/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -416,7 +447,7 @@ end
 end
 
 # Deploy writing skill templates
-directory "#{node[:setup][:home]}/.claude/skills/writing/templates" do
+directory "#{node[:setup][:home]}/.agents/skills/writing/templates" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
@@ -424,7 +455,7 @@ directory "#{node[:setup][:home]}/.claude/skills/writing/templates" do
 end
 
 %w(dvq.md rfc.md).each do |file_name|
-  remote_file "#{node[:setup][:home]}/.claude/skills/writing/templates/#{file_name}" do
+  remote_file "#{node[:setup][:home]}/.agents/skills/writing/templates/#{file_name}" do
     source "files/skills/writing/templates/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -434,7 +465,7 @@ end
 end
 
 # Deploy writing skill personas
-directory "#{node[:setup][:home]}/.claude/skills/writing/personas" do
+directory "#{node[:setup][:home]}/.agents/skills/writing/personas" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
@@ -442,7 +473,7 @@ directory "#{node[:setup][:home]}/.claude/skills/writing/personas" do
 end
 
 %w(document-writer.md marginal-utility-editor.md).each do |file_name|
-  remote_file "#{node[:setup][:home]}/.claude/skills/writing/personas/#{file_name}" do
+  remote_file "#{node[:setup][:home]}/.agents/skills/writing/personas/#{file_name}" do
     source "files/skills/writing/personas/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
@@ -453,7 +484,7 @@ end
 
 # Deploy writing skill references (Japanese AI-slop removal)
 # Only the 3 reference files ship; references/fixtures/ is test-only and intentionally excluded.
-directory "#{node[:setup][:home]}/.claude/skills/writing/references" do
+directory "#{node[:setup][:home]}/.agents/skills/writing/references" do
   owner node[:setup][:user]
   group node[:setup][:group]
   mode "755"
@@ -461,13 +492,19 @@ directory "#{node[:setup][:home]}/.claude/skills/writing/references" do
 end
 
 %w(phrases.md structures.md examples.md).each do |file_name|
-  remote_file "#{node[:setup][:home]}/.claude/skills/writing/references/#{file_name}" do
+  remote_file "#{node[:setup][:home]}/.agents/skills/writing/references/#{file_name}" do
     source "files/skills/writing/references/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
     action :create
   end
+end
+
+# Claude Code does not read ~/.agents/skills, so each shared skill gets a symlink
+# in ~/.claude/skills. Runs after every helper file above is in place.
+shared_skills.each do |skill_name|
+  agents_skill_link skill_name
 end
 
 # Deploy bootstrap-docs-hub skill templates

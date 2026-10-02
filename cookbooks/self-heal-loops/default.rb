@@ -95,8 +95,9 @@ execute "sync loop skills into #{loop_user} ~/.claude/skills" do
   command <<~SH.strip
     set -e
     for s in #{loop_skills.join(' ')}; do
-      cp -r #{skills_src}/$s/. #{loop_home}/.claude/skills/$s/
-      chown -R #{loop_user}:#{loop_user} #{loop_home}/.claude/skills/$s
+      d=$(readlink -f #{loop_home}/.claude/skills/$s)
+      cp -r #{skills_src}/$s/. "$d"/
+      chown -R #{loop_user}:#{loop_user} "$d"
     done
   SH
   user node[:setup][:user]
@@ -104,6 +105,11 @@ execute "sync loop skills into #{loop_user} ~/.claude/skills" do
   # cp -r, not cp -a: -a preserves ownership, which a non-root run cannot do,
   # and `set -e` would turn that refusal into an aborted mitamae run. The
   # chown -R that follows is what actually establishes ownership.
+  #
+  # readlink -f: once the claude-code cookbook has run for the loop user,
+  # ~/.claude/skills/<skill> is a symlink into ~/.agents/skills, and
+  # `chown -R` on a symlink operand changes only the link. Resolve first so the
+  # copy and the chown both act on the real directory.
   #
   # diff -r so a changed reference file under network-log-audit/references/
   # re-syncs too; SKILL.md-only comparison would call the skill up to date
