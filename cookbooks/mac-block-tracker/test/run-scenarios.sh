@@ -129,7 +129,9 @@ while IFS= read -r -d $'\r' line; do
       elif [[ "${ROUTER_MODE:-accept}" == accept ]]; then
         n=$(cut -d' ' -f3 <<<"$line")
         grep -v "^ethernet filter $n " "$run" >"$run.new"; mv "$run.new" "$run"
-        printf '%s \n' "$line" >>"$run"
+        # rtx-hnd prints a wildcard MAC as *:*:*:*:*:* (observed in
+        # /system/config0, 2026-10-03), whatever form was typed
+        sed -E 's/(^| )\*( |$)/\1*:*:*:*:*:*\2/g; s/(^| )\*( |$)/\1*:*:*:*:*:*\2/g; s/$/ /' <<<"$line" >>"$run"
       fi ;;
     "show config | grep"*)
       [[ $mode == admin ]] && grep '^ethernet filter' "$run" | sed 's/$/\r/' ;;
@@ -166,12 +168,12 @@ chmod +x "$BIN"/*
 # --- scenario plumbing --------------------------------------------------------
 router_config() { # mac-for-17/18 -> both running and saved
   {
-    echo "ethernet filter 1 reject-log bc:5c:17:05:59:3a *"
-    echo "ethernet filter 15 reject-log $OLD *"
-    echo "ethernet filter 16 reject-log * $OLD"
-    echo "ethernet filter 17 reject-log $1 *"
-    echo "ethernet filter 18 reject-log * $1"
-    echo "ethernet filter 100 pass-nolog * *"
+    echo "ethernet filter 1 reject-log bc:5c:17:05:59:3a *:*:*:*:*:* "
+    echo "ethernet filter 15 reject-log $OLD *:*:*:*:*:* "
+    echo "ethernet filter 16 reject-log *:*:*:*:*:* $OLD "
+    echo "ethernet filter 17 reject-log $1 *:*:*:*:*:* "
+    echo "ethernet filter 18 reject-log *:*:*:*:*:* $1 "
+    echo "ethernet filter 100 pass-nolog *:*:*:*:*:* *:*:*:*:*:* "
   } >"$T/router-running"
   cp "$T/router-running" "$T/router-saved"
 }
@@ -211,7 +213,7 @@ run() { # env assignments...
 }
 
 slot() { cat "$FIX/ssm/_home-monitor_mac-blocks_ann_slot"; }
-saved_17() { grep '^ethernet filter 17 ' "$T/router-saved" | sed 's/[[:space:]]*$//'; }
+saved_17() { grep '^ethernet filter 17 ' "$T/router-saved" | sed -e 's/[[:space:]]*$//' -e 's/\*:\*:\*:\*:\*:\*/*/g'; }
 
 # --- scenarios ----------------------------------------------------------------
 
@@ -322,7 +324,7 @@ reset_fixture
 host 192.168.1.68 "$PI_ANN" Mac15,12 "$NEW"
 dhcp 192.168.1.68 "$NEW"
 printf '%s' "$NEW" >"$T/state/pending"
-sed -i 's/^ethernet filter 17 .*/ethernet filter 17 pass-log * */' "$T/router-running" "$T/router-saved"
+sed -i 's/^ethernet filter 17 .*/ethernet filter 17 pass-log *:*:*:*:*:* *:*:*:*:*:* /' "$T/router-running" "$T/router-saved"
 run
 assert_eq "exit 1" 1 "$rc"
 assert_absent "no filter line typed" "ethernet filter 17 reject-log $NEW" "$T/ssh-input.log"
