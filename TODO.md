@@ -817,6 +817,16 @@ serving interface in between and ITM's RTX830 does not:
 Status 2026-09-06: unchanged. No commit since #916 touches the lease parser; #962
 (today) rewrote parts of `vector.toml` for wlx313's syslog mapping only.
 
+Status 2026-10-02: the verb list is wrong as well, so the first step above is not
+enough on its own. The routers log `Allocates` and `Released`, not `Assigns` /
+`Releases`: over 2026-09-25 → 10-02, hnd had 3,776 `[DHCPD]` documents (207
+Allocates, 3,568 Extends, 1 Released) with 0 parsed, and itm had 304 (97
+Allocates, 207 Extends) with exactly the 207 Extends parsed. New leases — the
+event that shows a rotated Private Wi-Fi Address — are therefore unparsed on
+both routers. Use `(?P<dhcp_event>Allocates|Extends|Released|Assigns|Releases)`
+together with the optional interface token. Found while tracing ann's Mac's MAC
+rotation (cookbooks/mac-block-tracker).
+
 ## pve-host holds the ULA /64 on both bridges, so v6 source selection is asymmetric (Low)
 
 `cookbooks/pve-host` now pins `fd97:b085:767d::10/64` on vmbr0 so that
