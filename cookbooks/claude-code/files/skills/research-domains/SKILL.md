@@ -9,11 +9,11 @@ argument-hint: "[domain or 'all']"
 
 ## Purpose
 
-Systematically research best practices across multiple domains and propose concrete improvements to the repository's skills, agents, rules, and cookbooks.
+Systematically research best practices across multiple domains and propose concrete improvements to the repository's skills, agents, rules, and cookbooks (in general: the target repo / environment configuration — Claude Code: rules and skills under ~/.claude; Codex: AGENTS.md and ~/.agents/skills).
 
 ## Argument Parsing
 
-`$ARGUMENTS` specifies the domain(s) to research:
+The invocation arguments (the user's request text) specify the domain(s) to research:
 - `software` / `management` / `investment` / `hobbies` — single domain
 - `all` or omitted — all domains
 
@@ -27,32 +27,32 @@ In addition to general engineering management practices, prioritize organization
 - Culture of writing and documentation (RFCs, design docs)
 - Leadership principles and values frameworks
 
-Launch a dedicated sub-agent for AI company organizational research alongside the general management researcher.
+Delegate AI company organizational research to a dedicated sub-agent alongside the general management researcher if sub-agents are available; otherwise research both in this session in turn.
 
 ## Workflow
 
 ### Step 0: Load Previous Audit Proposals
 
-Before launching new research, search the memory MCP for proposals saved by the quarterly-audit remote trigger:
+Before launching new research, if the memory MCP is available, search it for proposals saved by the quarterly-audit remote trigger:
 
-1. Search the memory MCP via `recall` with query `"Quarterly Audit Proposal"` and `top_k: 10`
+1. Search the memory MCP (`recall`) with query `"Quarterly Audit Proposal"` and `top_k: 10`
 2. If results exist, include them as **Prior Proposals** in Step 2's output — these are pre-researched improvement suggestions that the user has not yet reviewed
-3. If no results, skip this step silently
+3. If no results (or the memory MCP is not available), skip this step silently
 
 ### Step 1: Launch Domain Research
 
-Launch the `domain-researcher` agent in the background via the Agent tool:
+Delegate to a domain-research sub-agent in the background if sub-agents are available, otherwise research in this session (Claude Code: `domain-researcher` agent in the background via the Agent tool):
 
-- Pass the target domain(s) from `$ARGUMENTS`
-- The agent will query the memory MCP for user context and existing knowledge, and the web for current best practices
+- Pass the target domain(s) from the invocation arguments
+- The agent will query the memory MCP (if available) for user context and existing knowledge, and the web for current best practices
 
 ### Step 2: Present Findings
 
-When the agent returns, present findings in two sections:
+When the agent returns (or the in-session research completes), present findings in two sections:
 
 **Section A: Domain Summaries** — key findings per domain, with source credibility tags
 
-**Section B: Improvement Proposals** — numbered list of concrete changes to this repository. Each proposal includes:
+**Section B: Improvement Proposals** — numbered list of concrete changes to this repository (or the target environment configuration — Claude Code: rules and skills under ~/.claude; Codex: AGENTS.md). Each proposal includes:
 
 1. **What**: the specific change (new skill, agent, rule, hook, or cookbook)
 2. **Where**: target file path
@@ -61,12 +61,12 @@ When the agent returns, present findings in two sections:
 
 ### Step 3: User Selection
 
-Use AskUserQuestion (multiSelect) to let the user choose which proposals to implement.
+Ask the user to choose which proposals to implement, allowing multiple selections (use a question tool with multi-select if available, otherwise write numbered options in the body; Claude Code: AskUserQuestion multiSelect / Codex: request_user_input).
 
 ### Step 4: Plan and Implement
 
 For each selected proposal:
-1. Enter plan mode if the combined changes are non-trivial (2+ files)
-2. Implement following existing patterns (skills in `cookbooks/claude-code/files/skills/`, agents in `agents/`, etc.)
-3. Run `./bin/mitamae local linux.rb --dry-run` to verify
+1. Present the plan first and get approval if the combined changes are non-trivial (2+ files) (Claude Code: plan mode)
+2. Implement following existing patterns (skills in `cookbooks/claude-code/files/skills/`, agents in `agents/`, etc.; in another repo or environment, follow its own configuration layout — Claude Code: ~/.claude rules and skills; Codex: AGENTS.md and ~/.agents/skills)
+3. Run `./bin/mitamae local linux.rb --dry-run` to verify (when the target is this repo; otherwise the target's own checks)
 4. Commit with descriptive message

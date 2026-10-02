@@ -22,7 +22,7 @@ const SETUP_REPO = ARGS.setupRepo || '~/ManagedProjects/setup'
 const CTX = `
 ## 背景（自己完結コンテキスト）
 このマシンの現行ユーザーの Claude Code グローバル設定の定期改善監査タスクの一部です。パス中の ~ はあなた自身のシェルで解決してください（必要なら echo $HOME で確認）。/Users/<name> のようなユーザー名前提のパスは書かないこと。
-- 設定の source of truth: ${SETUP_REPO}/cookbooks/claude-code/files/ （CLAUDE.md, rules/, docs/, hooks/, skills/, agents/, settings.json）。~/.claude/ へは mitamae でデプロイされる。デプロイ対象は default.rb 内の明示 %w() リストで管理（files/ に置くだけでは配線されない）。
+- 設定の source of truth: ${SETUP_REPO}/cookbooks/claude-code/files/ （CLAUDE.md, AGENTS.md, rules/, docs/, hooks/, skills/, agents/, settings.json）。~/.claude/ へ mitamae でデプロイされる（AGENTS.md は ~/.agents/AGENTS.md へ。Claude と Codex の共通層で、CLAUDE.md が @-import し、~/.codex/AGENTS.md はそこへの link）。デプロイ対象は default.rb 内の明示 %w() リストで管理（files/ に置くだけでは配線されない）。
 - ~/.claude/rules/*.md は Claude Code が全ファイル毎セッション自動ロードする（要再確認: バージョンで変わりうる。ls と現セッションのロード状況から確認せよ）。on-demand 置き場は ~/.claude/docs/（@-import した分のみロード）。
 - セッション transcripts: ~/.claude/projects/<project-dir>/<uuid>.jsonl（JSONL、1行1メッセージ）。subagents/ サブディレクトリはサブエージェントログなので対象外。
 - ユーザーは主に日本語でやりとりする。
@@ -76,7 +76,7 @@ const EXTRACT = {
           category: { type: 'string', enum: ['correction', 'repeated-instruction', 'friction', 'preference', 'rule-violation', 'new-gotcha'] },
           evidence: { type: 'array', minItems: 1, items: { type: 'object', additionalProperties: false, properties: { session: { type: 'string' }, quote: { type: 'string', maxLength: 300 } }, required: ['session', 'quote'] } },
           proposed_rule: { type: 'string', description: 'CLAUDE.md/rules に足すべきルールの具体的文面案' },
-          target: { type: 'string', description: '追加先: CLAUDE.md | rules/<file>.md | docs/<file>.md | new:<name>.md | hook | skill' },
+          target: { type: 'string', description: '追加先: CLAUDE.md | AGENTS.md（Claude/Codex 共通） | rules/<file>.md | docs/<file>.md | new:<name>.md | hook | skill' },
           already_covered_by: { type: 'string', description: '既存ルールで部分的にカバーされている場合その場所' },
           confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
@@ -178,7 +178,7 @@ function discoverPrompt() {
    - このワークフロー自身が動いている現在進行中のセッション（数分以内に更新され続けている巨大ファイルで、内容が「CLAUDE.md 監査」のワークフロー起動そのもの）は head で冒頭を確認して除外してよい。
    - 1KB 未満の空セッション（/clear のみ等）は除外。
 2. バッチ構成: プロジェクト×時期でグループ化。1 バッチ = 最大 8 ファイルかつ合計 ~4MB 目安。3MB 超の巨大ファイルは単独バッチ。バッチ名は "<project>-<period>" 形式。
-3. ルールファイルの列挙: ~/.claude/CLAUDE.md、~/.claude/rules/*.md、~/.claude/docs/*.md、および cookbook のみに存在するファイル（diff -rq ${SETUP_REPO}/cookbooks/claude-code/files/rules/ ~/.claude/rules/ で検出。cookbook 側は $HOME 展開済みの絶対パスで含める）。
+3. ルールファイルの列挙: ~/.claude/CLAUDE.md、~/.agents/AGENTS.md、~/.claude/rules/*.md、~/.claude/docs/*.md、および cookbook のみに存在するファイル（diff -rq ${SETUP_REPO}/cookbooks/claude-code/files/rules/ ~/.claude/rules/ で検出。cookbook 側は $HOME 展開済みの絶対パスで含める）。
 4. 監査グループ構成: 意味的に近いファイルを 3〜6 個ずつのグループに（例: core-behavioral / workflow / infra / containers / devstack / tools-misc）。CLAUDE.md と docs/ の常時ロードファイルは core グループへ。
 5. all_rule_files にファイル名（basename）の全一覧を入れる。
 出力はスキーマ通り。ファイル編集禁止。`
@@ -202,13 +202,13 @@ ${b.files.map(f => '- ' + f).join('\n')}
    b. repeated-instruction: 同じ種類の指示が2回以上（デフォルト化候補）
    c. friction: ユーザーが情報を再説明させられている、Claude が probe すべき値を訊いている
    d. preference: スタイル・進め方の好みの表明
-   e. rule-violation: 既存ルール（~/.claude/CLAUDE.md, ~/.claude/rules/*.md — 読んで確認してよい）に反する行動が実際に起き、ユーザーが指摘した形跡
+   e. rule-violation: 既存ルール（~/.claude/CLAUDE.md, ~/.agents/AGENTS.md, ~/.claude/rules/*.md — 読んで確認してよい）に反する行動が実際に起き、ユーザーが指摘した形跡
    f. new-gotcha: 長時間のデバッグの末に判明した技術的知見で、既存 rules に未記載のもの（既存 rules の 'Origin:' 付きルールと同じ性質のもの）
 3. correction を見つけたら、直前の assistant の行動も確認して文脈を把握する:
    jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text' FILE | grep -B2 -A2 'キーワード'
 4. タスクの内容そのもの（何を作ったか）は対象外。「Claude にどう働いてほしいか」のシグナルだけを report する。
 5. 各 finding には transcript からの実引用（quote, 300字以内）とセッションファイル名を必ず付ける。引用のないものは report しない。
-6. 既存ルールでカバー済みかを ~/.claude/CLAUDE.md と ~/.claude/rules/ を grep して確認し、already_covered_by に記入（新規性が無ければ finding 自体を落としてよいが、「ルールがあるのに違反が起きた」は rule-violation として価値があるので残す）。
+6. 既存ルールでカバー済みかを ~/.claude/CLAUDE.md・~/.agents/AGENTS.md・~/.claude/rules/ を grep して確認し、already_covered_by に記入（新規性が無ければ finding 自体を落としてよいが、「ルールがあるのに違反が起きた」は rule-violation として価値があるので残す）。
 最大12件、確度の高い順。何も無ければ findings は空配列でよい（無理に作らない）。`
 }
 
@@ -244,8 +244,8 @@ function investigatorPrompt() {
 ## あなたのタスク: デプロイ機構と drift の調査
 1. ${SETUP_REPO}/cookbooks/claude-code/default.rb を読み、rules/docs/hooks/skills/agents/workflows がどうやってデプロイされるか特定する（明示リストか Dir.glob か）。
 2. diff -rq で cookbook files/ とローカル ~/.claude/ の drift を検出し、方向（どちらが新しいか）を git log と stat で判定。settings.json の差分も確認。
-3. 壊れたポインタの列挙: ~/.claude/rules/*.md・~/.claude/docs/*.md・~/.claude/CLAUDE.md の中で、ローカルに存在しないファイルを Read しろと指示している箇所を grep で洗い出して実在確認。
-4. ~/.claude/docs/ の中身を ls し、CLAUDE.md からの @-import 状況を確認。
+3. 壊れたポインタの列挙: ~/.claude/rules/*.md・~/.claude/docs/*.md・~/.claude/CLAUDE.md・~/.agents/AGENTS.md の中で、ローカルに存在しないファイルを Read しろと指示している箇所を grep で洗い出して実在確認。
+4. ~/.claude/docs/ の中身を ls し、CLAUDE.md からの @-import 状況（docs/knowledge-persistence.md と ~/.agents/AGENTS.md）を確認。
 5. cookbook の hooks/, skills/, agents/ の一覧を ls し、CLAUDE.md のルールと機能が重複するもの（ルールで縛っている行動を hook で機械的に強制できるもの）を列挙。
 ファイル編集禁止。分析のみ。`
 }
@@ -272,9 +272,9 @@ function coverageLensPrompt(c) {
 候補: ${JSON.stringify(c, null, 2)}
 
 検証項目:
-1. 既存カバー: ~/.claude/CLAUDE.md と ~/.claude/rules/*.md を grep/Read し、この候補が既にカバーされているか確認。カバー済みなら REJECTED（どのセクションかを reasoning に）
+1. 既存カバー: ~/.claude/CLAUDE.md・~/.agents/AGENTS.md・~/.claude/rules/*.md を grep/Read し、この候補が既にカバーされているか確認。カバー済みなら REJECTED（どのセクションかを reasoning に）
 2. ただし既存ルールがあるのに違反が繰り返されている場合は、「ルールの書き方・配置の問題」として MODIFIED（強化案・hook 化案を modified_proposal に）
-3. 実装先の妥当性: CLAUDE.md 本文（常時ロード・簡潔ルール向き）か rules ファイルか、それとも hook（機械的強制が可能なら hook が優る）か skill か。より良い置き場があれば MODIFIED
+3. 実装先の妥当性: CLAUDE.md 本文（Claude 専用・常時ロード・簡潔ルール向き）か、Claude と Codex の両方に効く AGENTS.md（permission 境界の文言は CLAUDE.md / rules に原文のまま残す）か、rules ファイルか、それとも hook（機械的強制が可能なら hook が優る）か skill か。より良い置き場があれば MODIFIED
 4. 一般性: このルールは今後のセッションでも繰り返し発火するか。プロジェクト固有なら該当リポジトリの CLAUDE.md に置くべきで、グローバルには REJECTED
 確信が持てない場合は REJECTED に倒す。`
 }

@@ -74,7 +74,7 @@ Look for these patterns in the conversation:
 ## Reading Existing Configuration
 
 Before proposing changes, read these files to understand what already exists:
-- `~/.claude/CLAUDE.md` — current global rules
+- `~/.claude/CLAUDE.md` and `~/.agents/AGENTS.md` — current global rules (AGENTS.md is the tool-agnostic layer CLAUDE.md imports and Codex also reads)
 - `~/.claude/rules/` — current rule files (glob for *.md)
 - `~/.claude/agents/` — current agent definitions
 - `~/.claude/skills/` and `~/.agents/skills/` — current skill definitions (shared skills live in `~/.agents/skills/`; `~/.claude/skills/<name>` is a symlink to them)

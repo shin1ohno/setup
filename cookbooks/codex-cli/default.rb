@@ -22,6 +22,21 @@ directory "#{node[:setup][:home]}/.codex" do
   action :create
 end
 
+# Codex reads its global instructions from $CODEX_HOME/AGENTS.md only, not from
+# ~/.agents/AGENTS.md. The claude-code cookbook deploys the shared layer to
+# ~/.agents/AGENTS.md; link it here so both agents load the same text. The link
+# is created even if the target does not exist yet, so cookbook order does not
+# matter. A hand-written regular file is moved aside once, never overwritten.
+execute "preserve existing ~/.codex/AGENTS.md before linking" do
+  command "mv #{node[:setup][:home]}/.codex/AGENTS.md #{node[:setup][:home]}/.codex/AGENTS.md.pre-agents-link"
+  only_if "test -f #{node[:setup][:home]}/.codex/AGENTS.md && ! test -L #{node[:setup][:home]}/.codex/AGENTS.md"
+end
+
+link "#{node[:setup][:home]}/.codex/AGENTS.md" do
+  to "#{node[:setup][:home]}/.agents/AGENTS.md"
+  user node[:setup][:user]
+end
+
 # Create generated directory for temporary files
 generated_dir = "#{node[:setup][:root]}/generated"
 directory generated_dir do

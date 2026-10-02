@@ -98,6 +98,7 @@ For each approved proposal, implement the change. Follow existing patterns:
 - Agents: Markdown files in `cookbooks/claude-code/files/agents/`
 - Skills: `SKILL.md` in `cookbooks/claude-code/files/skills/<name>/`
 - CLAUDE.md: edit source of truth at `cookbooks/claude-code/files/CLAUDE.md`
+- Tool-agnostic rules (read by Claude and Codex): edit `cookbooks/claude-code/files/AGENTS.md` (deploys to `~/.agents/AGENTS.md`; CLAUDE.md imports it). Claude-only rules stay in CLAUDE.md or `rules/`; permission-boundary wording stays verbatim in CLAUDE.md / `rules/`
 
 After implementation, sync deploy targets and commit.
 

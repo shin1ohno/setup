@@ -13,7 +13,7 @@ Systematically identify performance limits of a Docker-based service, find the b
 
 ## Argument Parsing
 
-`$ARGUMENTS` identifies the target service. Accepted formats:
+The invocation arguments (the user's request text; Claude Code: `$ARGUMENTS`) identify the target service. Accepted formats:
 
 | Format | Example | Interpretation |
 |--------|---------|----------------|
@@ -21,7 +21,7 @@ Systematically identify performance limits of a Docker-based service, find the b
 | URL | `http://localhost:8001/api/v1/datasets` | Direct endpoint |
 | Docker container | `docker:my-container-1` | Container name for log/stats analysis |
 
-If `$ARGUMENTS` is empty, use AskUserQuestion to ask which service to test.
+If no arguments were given, ask the user which service to test (use the question tool if available, otherwise write numbered options in the message body; Claude Code: AskUserQuestion / Codex: request_user_input).
 
 ## Workflow
 
@@ -38,13 +38,13 @@ Auto-detection:
 - Check for health endpoints (`/health`, `/api/v1/health`)
 - If authentication is needed, check for login endpoints or env vars
 
-Use AskUserQuestion if the target is ambiguous or authentication cannot be auto-detected.
+Ask the user (question tool) if the target is ambiguous or authentication cannot be auto-detected.
 
 ### Step 2: Hard Constraint Discovery (CRITICAL)
 
 **Before any load testing**, identify immutable upper bounds. This step prevents tuning parameters beyond what the infrastructure can support.
 
-Launch up to 3 sub-agents in parallel:
+Delegate to up to 3 sub-agents in parallel if sub-agents are available (otherwise run the three checks one after another in this session; Claude Code: Agent tool):
 
 **Agent 1 — Infrastructure limits:**
 ```
@@ -146,7 +146,7 @@ This information is critical for operational planning — a service that doesn't
 
 ### Step 5: Bottleneck Analysis
 
-When failures are found, launch 3 sub-agents in parallel:
+When failures are found, delegate to 3 sub-agents in parallel if sub-agents are available (otherwise run the three analyses one after another in this session; Claude Code: Agent tool):
 
 | Agent | Task |
 |-------|------|
@@ -163,7 +163,7 @@ Tunable parameters: [what can be changed within the constraint]
 
 ### Step 6: Tuning Proposal
 
-Enter plan mode (EnterPlanMode) with a tuning plan that:
+Present a tuning plan for approval before applying any change (Claude Code: enter plan mode with EnterPlanMode), where the plan:
 
 1. **Respects all hard constraints** from Step 2
 2. Lists specific parameter changes with before/after values
@@ -201,7 +201,7 @@ When the user requests extended stability validation, run intermittent load burs
    - Memory usage trend (detect leaks: >20% growth over test duration is a flag)
    - Container restart count
    - Error log analysis
-5. **The agent must own the loop** — do not launch a bash script in the background and terminate. The agent iterates over cycles directly, sleeping between them
+5. **The agent running the test must own the loop** (the current session, or the sub-agent it delegated to) — do not launch a bash script in the background and terminate. The agent iterates over cycles directly, sleeping between them
 6. **Report**: cycle-by-cycle table with throughput, memory, and success rate. Final verdict: stable / degrading / unstable
 
 ```

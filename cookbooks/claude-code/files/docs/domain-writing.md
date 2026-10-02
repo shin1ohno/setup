@@ -2,7 +2,7 @@ Load when editing domain-heavy reports or performing bulk terminology normalizat
 
 # Domain Terminology Normalization
 
-Before bulk terminology normalization in a domain document, first apply CLAUDE.md's **Domain term verification before propagation** rule to any imported definitions, then build a short glossary from canonical sources (code, data dictionaries, or approved documents). This editing-time gate also protects already-established domain terms: do not replace one merely because it looks technical or unfamiliar; have the user or designated Crit review ambiguous changes.
+Before bulk terminology normalization in a domain document, first apply the **Domain term verification before propagation** rule in `~/.agents/AGENTS.md` to any imported definitions, then build a short glossary from canonical sources (code, data dictionaries, or approved documents). This editing-time gate also protects already-established domain terms: do not replace one merely because it looks technical or unfamiliar; have the user or designated Crit review ambiguous changes.
 
 Origin: 2026-07-29 transcript — an acronym's meaning was misread; the user required a glossary and Crit review.
 

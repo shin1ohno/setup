@@ -119,6 +119,23 @@ remote_file "#{node[:setup][:home]}/.claude/CLAUDE.md" do
   action :create
 end
 
+# Shared instruction layer read by both agents: CLAUDE.md imports it with
+# `@~/.agents/AGENTS.md`, and the codex-cli cookbook links ~/.codex/AGENTS.md to it.
+directory "#{node[:setup][:home]}/.agents" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+remote_file "#{node[:setup][:home]}/.agents/AGENTS.md" do
+  source "files/AGENTS.md"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+  action :create
+end
+
 # Status line: coralline (Powerlevel10k-inspired). Vendored + pinned to commit
 # 04808390 (2026-06-14). Local-only renderer (jq + git), no network/API.
 # Layout: statusline.sh + themes/<name>.conf under ~/.claude/coralline/, with the
@@ -278,7 +295,7 @@ directory "#{node[:setup][:home]}/.claude/rules" do
   action :create
 end
 
-%w(ask-user-question.md japanese-output.md sub-agents.md git-commit.md mcp-config.md debugging.md editing.md planning.md adversarial-review.md).each do |file_name|
+%w(ask-user-question.md sub-agents.md git-commit.md mcp-config.md debugging.md editing.md planning.md adversarial-review.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/rules/#{file_name}" do
     source "files/rules/#{file_name}"
     owner node[:setup][:user]
@@ -634,21 +651,26 @@ end
 # Clean up rules/ files moved to docs/ (or inlined into CLAUDE.md) by #638/#639,
 # the rules-diet round 2 (ffi-audit / claude-code-plugins / pve-lxc demoted to
 # docs/), and round 3 (rust / docker-compose demoted — 2026-07 claude-md-audit:
-# 1/240 sessions fired rust.md; frontmatter globs never gated loading). mitamae
+# 1/240 sessions fired rust.md; frontmatter globs never gated loading), plus
+# japanese-output.md (body now in the shared ~/.agents/AGENTS.md) and the
+# claude-cli-headless.md / elasticsearch.md copies deployed earlier. mitamae
 # only creates files from the deploy lists above — it never prunes entries
 # removed from those lists, so every deployed host keeps loading the stale
 # rules/ copies until they are deleted explicitly.
 %w(
   architecture.md
   aws-iam.md
+  claude-cli-headless.md
   claude-code-plugins.md
   cookbook-prs.md
   data-collection.md
   docker-compose.md
+  elasticsearch.md
   ffi-audit.md
   frontend-dev.md
   infrastructure.md
   ios-build.md
+  japanese-output.md
   kibana-lens.md
   mise-migration.md
   pve-lxc.md

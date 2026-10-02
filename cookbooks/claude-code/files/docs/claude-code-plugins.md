@@ -19,7 +19,7 @@ Applies equally to commands and agents from plugins. Built-in Claude Code slash 
 
 Applies equally to **MCP tools / tool-groups the user explicitly asked for** (e.g. a browser-operation request → `mcp__claude-in-chrome__*`). If a `ToolSearch` probe (see `~/.claude/rules/sub-agents.md`) also shows the tool absent, state the absence in one line, then AskUserQuestion offering: (a) proceed with a degraded substitute (e.g. `open <url>` — note click / form-input is unavailable), or (b) re-enable and do the intended operation (check `/mcp`, run the `mcp-auth` skill, reconnect the extension) before proceeding. Running a degraded substitute without consent is the same opaque-substitution violation. Origin: 2026-06 sage 635f5a9c — declared the tool absent, then ran an `open` substitute without consent and offered no re-enable path.
 
-**Absence triage — ToolSearch 0 件 ≠ 不在**（CLAUDE.md「Negative search is not evidence of absence」の ToolSearch 特化形）: claude.ai 系コネクタは切断/認証失効中はツールカタログに注入されず、再認証すれば注入される — 未注入は状態シグナルであって恒常仕様ではない。「不在」と断定する前に 3 手で triage する:
+**Absence triage — ToolSearch 0 件 ≠ 不在**（`~/.agents/AGENTS.md`「Negative search is not evidence of absence」の ToolSearch 特化形）: claude.ai 系コネクタは切断/認証失効中はツールカタログに注入されず、再認証すれば注入される — 未注入は状態シグナルであって恒常仕様ではない。「不在」と断定する前に 3 手で triage する:
 
 1. **Positive control** — 動作中コネクタの既知ツール名（例 `select:mcp__memory-work__recall`）で ToolSearch が schema を返すことを確認し、索引自体の生死と切り分ける。
 2. **`claude mcp get "<exact name>"` で Scope 確認** — `Scope: claude.ai config` のコネクタは `claude mcp list` が Connected 表示でも当該 CLI セッションに未注入のことがある。この場合の第一仮説は「切断/認証失効」で、対処は上記 (b) の re-enable path（/mcp・mcp-auth）。
@@ -61,7 +61,7 @@ These plugins self-advertise their own triggers via frontmatter — Claude auto-
 
 For capturing session learnings into CLAUDE.md, the `claude-md-management` plugin provides `/revise-claude-md` (command) and `claude-md-improver` (skill). Use `claude-md-improver` for multi-CLAUDE.md audit across a repo; use `/revise-claude-md` for single-session additions.
 
-In this repo, the source of truth for the global CLAUDE.md is `cookbooks/claude-code/files/CLAUDE.md`. When `claude-md-management` modifies `~/.claude/CLAUDE.md`, mirror the change to the cookbook source and `diff` to verify.
+In this repo, the source of truth for the global CLAUDE.md is `cookbooks/claude-code/files/CLAUDE.md`, and for the shared instruction layer both agents read it is `cookbooks/claude-code/files/AGENTS.md` (deployed to `~/.agents/AGENTS.md`). When `claude-md-management` modifies `~/.claude/CLAUDE.md` or `~/.agents/AGENTS.md`, mirror the change to the cookbook source and `diff` to verify.
 
 ## Commit / Push / PR Workflow
 

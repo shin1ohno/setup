@@ -27,7 +27,7 @@ Key pages to review (filter by topic if specified):
 
 1. Fetch the requested documentation pages using WebFetch
 2. Read the user's current configuration files:
-   - `~/.claude/CLAUDE.md`
+   - `~/.claude/CLAUDE.md` and `~/.agents/AGENTS.md` (the shared layer it imports)
    - `~/.claude/settings.json`
    - `~/.claude/rules/*.md`
    - `~/.claude/agents/*.md`
