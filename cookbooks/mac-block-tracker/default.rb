@@ -76,6 +76,27 @@ execute "install mac-block-tracker.sh" do
   not_if "diff -q #{script_staged} #{libexec_dir}/mac-block-tracker.sh 2>/dev/null"
 end
 
+# --- router host key ------------------------------------------------------------
+
+# The tracker connects with StrictHostKeyChecking=yes against this file only,
+# so a first connection cannot be steered to an impostor. The key is the RSA
+# host key whose fingerprint home-monitor's rtx_sshd_host_key.main records in
+# state (SHA256:IG5wh++ETKZvhr6PgG3yYoJM89ks24ppHdTC5D1uhaI, checked
+# 2026-10-02). If the router's host key is ever regenerated, the tracker fails
+# and mails until this file is updated.
+known_hosts_staged = "#{staging_dir}/rtx-hnd.known_hosts"
+remote_file known_hosts_staged do
+  source "files/rtx-hnd.known_hosts"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+end
+
+execute "install #{etc_dir}/known_hosts" do
+  command "sudo install -m 0644 -o root -g root #{known_hosts_staged} #{etc_dir}/known_hosts"
+  not_if "diff -q #{known_hosts_staged} #{etc_dir}/known_hosts 2>/dev/null"
+end
+
 # --- credential -----------------------------------------------------------------
 
 # Content-aware skip: both keys present. The file is 0640 root:#{tracker_user},

@@ -8,22 +8,30 @@
 # mac-block-tracker.timer:
 #
 #   1. ask every address in the DHCP pools for its AirPlay record over unicast
-#      mDNS (dig -p 5353 @<ip>), and pick the host whose `pi` is ann's
-#      (fallback when no `pi` matches: model + locally administered MAC + no
-#      DHCP host name, and only when exactly one host fits)
-#   2. read that host's MAC from the neighbour table
+#      mDNS (dig -p 5353 @<ip>) and pick the host whose `pi` is ann's
+#   2. read that host's MAC from the neighbour table; only a locally
+#      administered (private) MAC is ever acted on
 #   3. compare it with the SSM slot that home-monitor builds filters 17/18 from
-#   4. if it differs: rewrite filters 17/18 on the router, read them back,
-#      store the MAC in the slot, and mail home-monitoring-alerts
+#   4. when it differs on two consecutive runs: in one admin session, confirm
+#      the ip/MAC pair in the router's DHCP table, confirm 17/18 currently are
+#      a reject pair for a single MAC, rewrite them, read them back and save;
+#      then confirm the saved config over SFTP, store the MAC in the slot and
+#      mail home-monitoring-alerts
+#   5. when it is unchanged, once an hour read the saved config over SFTP and
+#      put 17/18 back on the slot MAC if something else moved them
 #
-# The router sees a fixed list of lines with one variable, the MAC, and the
-# MAC must match ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ (and be unicast) before any
-# line is sent. The admin password is read from SSM into a shell variable and
-# written to the ssh pipe with the printf builtin; it never appears in argv or
-# on disk.
+# Guard rails: at most MAX_MOVES_PER_DAY rewrites a day; when the pi does not
+# answer, a host with the same model is only reported, never written; a pass
+# that sees no AirPlay host at all fails instead of looking like "Mac away".
+#
+# Secrets: the router key lives in the runtime directory for one run. The
+# admin password is held in a shell variable and written to the ssh coprocess
+# by the printf builtin, and only after the router has printed "Password:".
+# The router host key is pinned (StrictHostKeyChecking=yes). Router output is
+# never logged wholesale; failures name the step and show only filter lines.
 #
 # Usage: mac-block-tracker.sh            one pass
-#        DRY_RUN=1 mac-block-tracker.sh  find and compare, change nothing
+#        DRY_RUN=1 mac-block-tracker.sh  find and compare; no router, no SSM write, no mail
 #        mac-block-tracker.sh --probe IP (internal) print "ip<TAB>pi<TAB>model"
 set -euo pipefail
 
@@ -35,33 +43,42 @@ RTX_HOST="${RTX_HOST:-192.168.1.253}"
 RTX_KEY_PARAM="${RTX_KEY_PARAM:-/rtx-routers/hnd/ssh/private_key}"
 RTX_USER_PARAM="${RTX_USER_PARAM:-/rtx-routers/hnd/sftp/username}"
 RTX_ADMIN_PARAM="${RTX_ADMIN_PARAM:-/rtx-routers/hnd/admin_password}"
-RTX_BANNER_WAIT="${RTX_BANNER_WAIT:-3}"
-RTX_STEP_WAIT="${RTX_STEP_WAIT:-2}"
-RTX_TIMEOUT="${RTX_TIMEOUT:-90}"
+RTX_SAVED_CONFIG="${RTX_SAVED_CONFIG:-/system/config0}"
+RTX_STEP_TIMEOUT="${RTX_STEP_TIMEOUT:-20}"
+RTX_SAVE_TIMEOUT="${RTX_SAVE_TIMEOUT:-60}"
+KNOWN_HOSTS="${KNOWN_HOSTS:-/etc/mac-block-tracker/known_hosts}"
 SCAN_PREFIX="${SCAN_PREFIX:-192.168.1}"
 SCAN_RANGES="${SCAN_RANGES:-20-99 150-199}"
 SCAN_PARALLEL="${SCAN_PARALLEL:-32}"
 SNS_TOPIC_NAME="${SNS_TOPIC_NAME:-home-monitoring-alerts}"
 STATE_DIR="${STATE_DIR:-/var/lib/mac-block-tracker}"
+MAX_MOVES_PER_DAY="${MAX_MOVES_PER_DAY:-3}"
+VERIFY_INTERVAL="${VERIFY_INTERVAL:-3600}"
+UNSEEN_ALERT_SECS="${UNSEEN_ALERT_SECS:-86400}"
+NOTIFY_REPEAT_SECS="${NOTIFY_REPEAT_SECS:-21600}"
 DRY_RUN="${DRY_RUN:-0}"
 export AWS_REGION="${AWS_REGION:-ap-northeast-1}"
 export AWS_PAGER=""
 
 MAC_RE='^([0-9a-f]{2}:){5}[0-9a-f]{2}$'
+USER_PROMPT='> ?$'
+ADMIN_PROMPT='# ?$'
+PASSWORD_PROMPT='[Pp]assword: ?$'
 
 log() { printf 'mac-block-tracker: %s\n' "$*"; }
 
 # --- mDNS ---------------------------------------------------------------------
 
 # Print "ip<TAB>pi<TAB>model" for a host that answers _airplay._tcp, nothing
-# otherwise. Unicast queries to port 5353 are answered by mDNSResponder, so no
-# multicast socket is needed.
+# otherwise. The PTR answer comes from the LAN, so it must look like an
+# instance name before it is passed on, and goes to dig as -q, never as a
+# bare argument dig could read as an option.
 probe_one() {
   local ip=$1 inst txt pi model
-  inst=$(dig +time=1 +tries=1 +short -p 5353 "@$ip" _airplay._tcp.local PTR 2>/dev/null \
+  inst=$(dig +time=1 +tries=1 +short -p 5353 "@$ip" -q _airplay._tcp.local -t PTR 2>/dev/null \
     | grep -v '^;' | head -n 1) || true
-  [[ -n "$inst" ]] || return 0
-  txt=$(dig +time=1 +tries=1 +short -p 5353 "@$ip" "$inst" TXT 2>/dev/null | grep -v '^;') || true
+  [[ "$inst" =~ ^[^-+@[:space:]][^[:space:]]*\._airplay\._tcp\.local\.$ ]] || return 0
+  txt=$(dig +time=1 +tries=1 +short -p 5353 "@$ip" -q "$inst" -t TXT 2>/dev/null | grep -v '^;') || true
   pi=$(grep -o '"pi=[^"]*"' <<<"$txt" | head -n 1 | sed -e 's/^"pi=//' -e 's/"$//') || true
   model=$(grep -o '"model=[^"]*"' <<<"$txt" | head -n 1 | sed -e 's/^"model=//' -e 's/"$//') || true
   printf '%s\t%s\t%s\n' "$ip" "$pi" "$model"
@@ -73,6 +90,7 @@ if [[ "${1:-}" == "--probe" ]]; then
 fi
 
 : "${TRACKER_PI:?TRACKER_PI is required: the AirPlay pi of the tracked Mac}"
+[[ "$FILTER_SRC" =~ ^[0-9]+$ && "$FILTER_DST" =~ ^[0-9]+$ ]] || { log "FILTER_SRC/FILTER_DST must be numbers"; exit 2; }
 
 scan_targets() {
   local range lo hi i
@@ -88,6 +106,7 @@ scan_targets() {
 # --- helpers ------------------------------------------------------------------
 
 lower() { tr '[:upper:]' '[:lower:]'; }
+now() { date +%s; }
 
 valid_mac() {
   [[ "$1" =~ $MAC_RE ]] || return 1
@@ -106,113 +125,218 @@ mac_of() {
 ssm_get() { aws ssm get-parameter --name "$1" --query Parameter.Value --output text; }
 ssm_get_secret() { aws ssm get-parameter --name "$1" --with-decryption --query Parameter.Value --output text; }
 
-sns_topic_arn() {
-  local account
-  account=$(aws sts get-caller-identity --query Account --output text)
-  printf 'arn:aws:sns:%s:%s:%s' "$AWS_REGION" "$account" "$SNS_TOPIC_NAME"
-}
-
 notify() { # subject body
-  aws sns publish --topic-arn "$(sns_topic_arn)" --subject "$1" --message "$2" >/dev/null
+  local account
+  account=$(aws sts get-caller-identity --query Account --output text) || return 1
+  aws sns publish --topic-arn "arn:aws:sns:$AWS_REGION:$account:$SNS_TOPIC_NAME" \
+    --subject "$1" --message "$2" >/dev/null
 }
 
-# Report a failure once per distinct message, so a stuck condition does not
-# mail every five minutes. A later success clears the record.
-fail() {
-  local msg=$1 last=""
-  log "FAIL: $msg"
-  [[ -f "$STATE_DIR/last-failure" ]] && last=$(cat "$STATE_DIR/last-failure")
-  if [[ "$msg" != "$last" && "$DRY_RUN" != 1 ]]; then
-    notify "mac-block-tracker: failed" "mac-block-tracker が失敗しました（ann の Mac の遮断が今の MAC に追従していない可能性があります）。
+# Mail once per distinct message per NOTIFY_REPEAT_SECS. The record is written
+# only after SNS accepted the message, so an SNS outage does not swallow it.
+notify_once() { # key subject body
+  local f="$STATE_DIR/notified-$1" sig osig ots
+  sig=$(printf '%s\n%s' "$2" "$3" | sha256sum | cut -c1-16)
+  if [[ -f "$f" ]] && read -r osig ots <"$f" \
+    && [[ "$osig" == "$sig" ]] && (( $(now) - ots < NOTIFY_REPEAT_SECS )); then
+    return 0
+  fi
+  notify "$2" "$3" || return 1
+  printf '%s %s\n' "$sig" "$(now)" >"$f"
+}
 
-$msg
+HANDLED=0
+fail() {
+  log "FAIL: $1"
+  HANDLED=1
+  if [[ "$DRY_RUN" != 1 ]]; then
+    notify_once failure "mac-block-tracker: failed" "mac-block-tracker が失敗しました（ann の Mac の遮断が今の MAC に追従していない可能性があります）。
+
+$1
 
 ログ: pro-dev で journalctl -u mac-block-tracker.service" || log "notify failed"
-    printf '%s' "$msg" >"$STATE_DIR/last-failure"
   fi
   exit 1
 }
 
+WORK=""
+OWN_WORK=0
+on_exit() {
+  local rc=$?
+  [[ -n "$WORK" && -f "$WORK/rtx-key" ]] && rm -f "$WORK/rtx-key"
+  ((OWN_WORK == 1)) && rm -rf "$WORK"
+  if ((rc != 0 && HANDLED == 0)) && [[ "$DRY_RUN" != 1 ]]; then
+    notify_once failure "mac-block-tracker: failed" "mac-block-tracker が想定外の終了をしました（exit $rc）。ログ: pro-dev で journalctl -u mac-block-tracker.service" || true
+  fi
+  return "$rc"
+}
+trap on_exit EXIT
+
 # --- router -------------------------------------------------------------------
 
-RTX_KEY_FILE=""
-cleanup() { [[ -n "$RTX_KEY_FILE" ]] && rm -f "$RTX_KEY_FILE"; return 0; }
-trap cleanup EXIT
-
-# Fetch the router key into the runtime directory. Call it in the main shell,
-# before any $(rtx_session ...): a key file created inside the command
-# substitution would be invisible to the EXIT trap and outlive the run.
-ensure_rtx_key() {
-  [[ -n "$RTX_KEY_FILE" ]] && return 0
-  RTX_KEY_FILE=$(mktemp "${RUNTIME_DIRECTORY:-/tmp}/rtx-key.XXXXXX")
-  chmod 600 "$RTX_KEY_FILE"
-  ssm_get_secret "$RTX_KEY_PARAM" >"$RTX_KEY_FILE"
+RTX_USER=""
+# Fetch the router user and key into the private work directory. Called in the
+# main shell so the EXIT trap sees the key file.
+ensure_rtx_access() {
+  [[ -n "$RTX_USER" ]] && return 0
+  RTX_USER=$(ssm_get_secret "$RTX_USER_PARAM") || return 1
+  [[ "$RTX_USER" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || { log "unexpected router user name"; return 1; }
+  ( umask 077 && ssm_get_secret "$RTX_KEY_PARAM" >"$WORK/rtx-key" ) || return 1
 }
 
-# Send each argument as one line (CR-terminated) to an interactive RTX session
-# and print the transcript with CRs stripped. The blank line after the banner
-# absorbs the router's habit of dropping the first line typed.
-rtx_session() {
-  local user line
-  user=$(ssm_get_secret "$RTX_USER_PARAM")
-  {
-    sleep "$RTX_BANNER_WAIT"
-    printf '\r'
-    sleep 1
-    for line in "$@"; do
-      printf '%s\r' "$line"
-      sleep "$RTX_STEP_WAIT"
-    done
-    printf 'exit\r'
-    sleep 1
-    printf 'exit\r'
-    sleep 1
-  } 2>/dev/null | timeout "$RTX_TIMEOUT" ssh -tt -i "$RTX_KEY_FILE" \
-    -o BatchMode=yes -o ConnectTimeout=10 \
-    -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STATE_DIR/known_hosts" \
-    -o PubkeyAcceptedKeyTypes=+ssh-rsa -o HostKeyAlgorithms=+ssh-rsa \
-    "$user@$RTX_HOST" 2>&1 | tr -d '\r' || true
+SSH_OPTS=(-i "" -o BatchMode=yes -o ConnectTimeout=10
+  -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null
+  -o PubkeyAcceptedKeyTypes=+ssh-rsa -o HostKeyAlgorithms=+ssh-rsa)
+ssh_opts() { SSH_OPTS[1]="$WORK/rtx-key"; printf '%s\0' "${SSH_OPTS[@]}" -o "UserKnownHostsFile=$KNOWN_HOSTS"; }
+
+RTX_LAST=""
+rtx_open() {
+  local opts
+  mapfile -d '' -t opts < <(ssh_opts)
+  coproc RTX { exec ssh -tt "${opts[@]}" -l "$RTX_USER" -- "$RTX_HOST" 2>&1; }
+  # bash unsets RTX_PID as soon as the coprocess exits; keep our own copy.
+  RTX_CHILD=$RTX_PID
+  RTX_LAST=""
+  rtx_expect "$USER_PROMPT" "$RTX_STEP_TIMEOUT" || return 1
+  # The router can drop the first line typed after the banner; a blank line
+  # takes that slot and must come back as a fresh prompt.
+  rtx_cmd "" "$USER_PROMPT"
 }
 
-# The DHCP host name the router recorded for ip/mac ("" when none was sent).
-dhcp_hostname() {
-  local ip=$1 mac=$2 out line
-  ensure_rtx_key
-  out=$(rtx_session "console lines infinity" "show status dhcp summary")
-  line=$(grep -F "$ip:" <<<"$out" | grep -F "$mac" | head -n 1) || true
-  [[ -n "$line" ]] || { printf '%s' "?"; return 0; }
-  if [[ "$line" == *", "* ]]; then
-    printf '%s' "${line#*, }"
+# Read router output into RTX_LAST until it matches $1 or $2 seconds pass.
+rtx_expect() {
+  local re=$1 limit=$2 start=$SECONDS chunk rc
+  while ((SECONDS - start < limit)); do
+    [[ -n "${RTX[0]:-}" ]] || return 1
+    chunk="" rc=0
+    IFS= read -r -t 0.5 -N 4096 -u "${RTX[0]}" chunk || rc=$?
+    RTX_LAST+=${chunk//$'\r'/}
+    [[ "$RTX_LAST" =~ $re ]] && return 0
+    ((rc == 0 || rc > 128)) || return 1 # EOF: the session ended
+  done
+  return 1
+}
+
+rtx_send() {
+  [[ -n "${RTX[1]:-}" ]] || return 1 # the session already ended
+  printf '%s\r' "$1" >&"${RTX[1]}"
+}
+
+rtx_cmd() { # line expect-regex [timeout]
+  RTX_LAST=""
+  rtx_send "$1"
+  rtx_expect "$2" "${3:-$RTX_STEP_TIMEOUT}"
+}
+
+# What a command printed: drop the echoed command line and the final prompt.
+rtx_body() { sed -e '1d' -e '$d' <<<"$RTX_LAST" | sed -e 's/[[:space:]]*$//' | grep -v '^$' || true; }
+
+RTX_CHILD=""
+rtx_close() {
+  if [[ -n "$RTX_CHILD" ]]; then
+    { [[ -n "${RTX[1]:-}" ]] && rtx_send "exit"; } 2>/dev/null || true
+    sleep 1
+    kill "$RTX_CHILD" 2>/dev/null || true
+    wait "$RTX_CHILD" 2>/dev/null || true
+    RTX_CHILD=""
   fi
+  return 0
 }
 
-write_filters() { # mac -> 0 when the read-back shows both filters on mac
-  local mac=$1 pw out src dst readback
+# Leave admin mode without saving anything that was not already saved.
+rtx_leave_admin() {
+  rtx_cmd "exit" "($USER_PROMPT|\\(Y/N\\) ?$)" || return 0
+  if [[ "$RTX_LAST" =~ \(Y/N\)\ ?$ ]]; then rtx_cmd "N" "$USER_PROMPT" || true; fi
+}
+
+filter_line() { # text n -> the "ethernet filter n ..." line, trailing space trimmed
+  sed -e 's/[[:space:]]*$//' <<<"$1" | grep -E "^ethernet filter $2 " | head -n 1 || true
+}
+
+# 17/18 must currently be "reject-log M *" / "reject-log * M" for one MAC M:
+# anything else means the numbers were reused and must not be overwritten.
+reject_pair_mac() { # text -> M, or nothing
+  local s d ms md
+  s=$(filter_line "$1" "$FILTER_SRC")
+  d=$(filter_line "$1" "$FILTER_DST")
+  [[ "$s" =~ ^ethernet\ filter\ $FILTER_SRC\ reject-log\ (([0-9a-f]{2}:){5}[0-9a-f]{2})\ \*$ ]] || return 0
+  ms=${BASH_REMATCH[1]}
+  [[ "$d" =~ ^ethernet\ filter\ $FILTER_DST\ reject-log\ \*\ (([0-9a-f]{2}:){5}[0-9a-f]{2})$ ]] || return 0
+  md=${BASH_REMATCH[1]}
+  [[ "$ms" == "$md" ]] && printf '%s' "$ms"
+  return 0
+}
+
+saved_config() { # -> contents of the saved config over SFTP
+  local opts
+  mapfile -d '' -t opts < <(ssh_opts)
+  rm -f "$WORK/saved-config"
+  printf 'get %s %s\n' "$RTX_SAVED_CONFIG" "$WORK/saved-config" >"$WORK/sftp-batch"
+  sftp -q -b "$WORK/sftp-batch" "${opts[@]}" "$RTX_USER@$RTX_HOST" >/dev/null 2>&1 || return 1
+  cat "$WORK/saved-config"
+}
+
+WF_ERR=""
+# Rewrite 17/18 to $1. $2 (optional) is the IP the MAC was seen at; when set,
+# the router's DHCP table must show that pair. Sets WF_ERR on failure.
+write_filters() {
+  local mac=$1 ip=${2:-} pw src dst current saved
   src="ethernet filter $FILTER_SRC reject-log $mac *"
   dst="ethernet filter $FILTER_DST reject-log * $mac"
-  ensure_rtx_key
-  pw=$(ssm_get_secret "$RTX_ADMIN_PARAM")
-  out=$(rtx_session \
-    "console lines infinity" \
-    "administrator" \
-    "$pw" \
-    "$src" \
-    "$dst" \
-    "save" \
-    'show config | grep "ethernet filter 1"')
-  out="${out//"$pw"/[redacted]}"
+  ensure_rtx_access || { WF_ERR="SSM からルーターの接続情報を取れませんでした"; return 1; }
+  pw=$(ssm_get_secret "$RTX_ADMIN_PARAM") || { WF_ERR="SSM から管理者パスワードを取れませんでした"; return 1; }
+  rtx_open || { pw=""; WF_ERR="ルーターに SSH できませんでした（ホスト鍵の不一致を含む）"; rtx_close; return 1; }
+  rtx_cmd "console lines infinity" "$USER_PROMPT" \
+    || { pw=""; WF_ERR="console lines infinity が通りませんでした"; rtx_close; return 1; }
+  rtx_cmd "administrator" "$PASSWORD_PROMPT" \
+    || { pw=""; WF_ERR="administrator の後に Password: が出ませんでした（パスワードは送っていません）"; rtx_close; return 1; }
+  RTX_LAST=""
+  rtx_send "$pw"
   pw=""
-  # Judge only what `show config` printed: everything after the echo of that
-  # command, compared as whole fixed-string lines (the filter text ends in a
-  # literal `*`). The echoes of the typed filter lines sit before it and carry
-  # the "# " prompt anyway.
-  readback=$(sed -n '/show config | grep/,$p' <<<"$out" | sed -e '1d' -e 's/[[:space:]]*$//')
-  if grep -qxF -- "$src" <<<"$readback" && grep -qxF -- "$dst" <<<"$readback"; then
-    return 0
+  rtx_expect "$ADMIN_PROMPT" "$RTX_STEP_TIMEOUT" \
+    || { WF_ERR="管理者モードに入れませんでした"; rtx_close; return 1; }
+
+  if [[ -n "$ip" ]]; then
+    rtx_cmd "show status dhcp summary" "$ADMIN_PROMPT" \
+      || { WF_ERR="DHCP 表を読めませんでした"; rtx_leave_admin; rtx_close; return 1; }
+    if ! rtx_body | grep -F "$ip:" | grep -qF "$mac"; then
+      WF_ERR="ルーターの DHCP 表に $ip / $mac の組がありません（ARP の偽装を含め、近隣表の値を信用しません）"
+      rtx_leave_admin; rtx_close; return 1
+    fi
   fi
-  log "router transcript (read-back did not match):"
-  printf '%s\n' "$out" | sed -e 's/^/  | /'
-  return 1
+
+  rtx_cmd 'show config | grep "ethernet filter"' "$ADMIN_PROMPT" \
+    || { WF_ERR="現在のフィルタを読めませんでした"; rtx_leave_admin; rtx_close; return 1; }
+  current=$(reject_pair_mac "$(rtx_body)")
+  if [[ -z "$current" ]]; then
+    WF_ERR="フィルタ $FILTER_SRC/$FILTER_DST が 1 つの MAC の reject 対になっていないため書き換えません: $(filter_line "$(rtx_body)" "$FILTER_SRC") / $(filter_line "$(rtx_body)" "$FILTER_DST")"
+    rtx_leave_admin; rtx_close; return 1
+  fi
+
+  local line
+  for line in "$src" "$dst"; do
+    rtx_cmd "$line" "$ADMIN_PROMPT" && [[ -z "$(rtx_body)" ]] \
+      || { WF_ERR="ルーターが '$line' を受け付けませんでした: $(rtx_body | head -n 3)"; rtx_leave_admin; rtx_close; return 1; }
+  done
+
+  rtx_cmd 'show config | grep "ethernet filter"' "$ADMIN_PROMPT" \
+    || { WF_ERR="書き換え後のフィルタを読めませんでした"; rtx_leave_admin; rtx_close; return 1; }
+  if [[ "$(filter_line "$(rtx_body)" "$FILTER_SRC")" != "$src" || "$(filter_line "$(rtx_body)" "$FILTER_DST")" != "$dst" ]]; then
+    WF_ERR="読み戻しが一致しません: $(filter_line "$(rtx_body)" "$FILTER_SRC") / $(filter_line "$(rtx_body)" "$FILTER_DST")"
+    rtx_leave_admin; rtx_close; return 1
+  fi
+
+  rtx_cmd "save" "$ADMIN_PROMPT" "$RTX_SAVE_TIMEOUT" \
+    || { WF_ERR="save が終わりませんでした"; rtx_leave_admin; rtx_close; return 1; }
+  rtx_leave_admin
+  rtx_close
+
+  saved=$(saved_config) || { WF_ERR="保存済み設定（$RTX_SAVED_CONFIG）を SFTP で読めませんでした"; return 1; }
+  if [[ "$(filter_line "$saved" "$FILTER_SRC")" != "$src" || "$(filter_line "$saved" "$FILTER_DST")" != "$dst" ]]; then
+    WF_ERR="稼働中の設定は書き換わりましたが、保存済み設定に反映されていません"
+    return 1
+  fi
+  return 0
 }
 
 # --- main ---------------------------------------------------------------------
@@ -221,25 +345,31 @@ mkdir -p "$STATE_DIR"
 exec 9>"$STATE_DIR/lock"
 flock -n 9 || { log "another run holds the lock; skipping"; exit 0; }
 
-self=$(readlink -f "$0")
-scan=$(scan_targets | xargs -P "$SCAN_PARALLEL" -n 1 "$self" --probe)
-
-method="pi"
-mapfile -t hits < <(awk -F'\t' -v pi="$TRACKER_PI" '$2 == pi { print $1 }' <<<"$scan")
+if [[ -n "${RUNTIME_DIRECTORY:-}" ]]; then
+  WORK=$RUNTIME_DIRECTORY
+else
+  WORK=$(mktemp -d)
+  OWN_WORK=1
+fi
 
 slot=$(ssm_get "$SLOT_PARAM") || fail "SSM $SLOT_PARAM を読めませんでした"
-slot=$(lower <<<"$slot")
+valid_mac "$slot" || fail "SSM $SLOT_PARAM の値が MAC ではありません: '$slot'（home-monitor の plan も precondition で止まります）"
 
-# Only a locally administered (private) MAC is ever written. While the Mac
-# sleeps, a Bonjour Sleep Proxy (HomePod, Apple TV) can answer for its records
-# and its IP, so the neighbour table may show the proxy's hardware MAC under a
-# matching pi. ann's hardware MAC is blocked statically in home-monitor, so
-# nothing is lost by refusing hardware MACs here.
+self=$(readlink -f "$0")
+scan=$(scan_targets | xargs -P "$SCAN_PARALLEL" -n 1 "$self" --probe)
+hosts=$(grep -c . <<<"$scan" || true)
+((hosts > 0)) || fail "mDNS に応答した AirPlay 端末が 0 台でした（LAN か dig の不具合。ann の Mac が不在なだけなら HomePod などは応答します）"
+
+mapfile -t hits < <(awk -F'\t' -v pi="$TRACKER_PI" '$2 == pi { print $1 }' <<<"$scan")
+
+# A hardware MAC under the pi is a Bonjour Sleep Proxy answering for the
+# sleeping Mac (or private addressing turned off — ann's hardware MAC is
+# blocked statically in home-monitor). Neither is written.
 candidates=()
 for ip in "${hits[@]}"; do
   mac=$(mac_of "$ip")
-  valid_mac "$mac" || { log "pi matched at $ip but its MAC is unknown ('$mac')"; continue; }
-  if [[ "$mac" != "$slot" ]] && ! locally_administered "$mac"; then
+  valid_mac "$mac" || { log "pi matched at $ip but its MAC is unknown"; continue; }
+  if ! locally_administered "$mac"; then
     log "pi matched at $ip but $mac is a hardware MAC (sleep proxy or private address off); ignoring"
     continue
   fi
@@ -247,70 +377,101 @@ for ip in "${hits[@]}"; do
 done
 
 if ((${#candidates[@]} == 0)); then
-  # Fallback: the pi did not answer. Accept the single host that has the
-  # model, a locally administered MAC and no DHCP host name — the footprint
-  # ann's Mac showed on 2026-10-02 — and only when it is the only one.
+  last_seen=$(cat "$STATE_DIR/last-seen" 2>/dev/null || now)
+  [[ -f "$STATE_DIR/last-seen" ]] || now >"$STATE_DIR/last-seen"
+  if (( $(now) - last_seen > UNSEEN_ALERT_SECS )) && [[ "$DRY_RUN" != 1 ]]; then
+    notify_once unseen "mac-block-tracker: ann's Mac not seen" "ann の Mac（pi $TRACKER_PI）を $(( ($(now) - last_seen) / 3600 )) 時間見ていません。電源が切れているだけなら問題ありません。AirPlay 受信を切った場合、MAC が変わっても追従できません。" \
+      || log "notify failed"
+  fi
+  # The pi did not answer. A host with the same model and a private MAC is
+  # reported, never written: a guest's MacBook Air would look the same.
   mapfile -t model_hits < <(awk -F'\t' -v m="$TRACKER_MODEL" '$3 == m { print $1 }' <<<"$scan")
-  fallback=()
   for ip in "${model_hits[@]}"; do
     mac=$(mac_of "$ip")
-    valid_mac "$mac" && locally_administered "$mac" || continue
-    [[ "$mac" == "$slot" ]] && { log "ann's Mac not identified by pi, but $ip ($mac) is already the slot"; exit 0; }
-    host=$(dhcp_hostname "$ip" "$mac")
-    [[ -z "$host" ]] && fallback+=("$ip $mac")
+    valid_mac "$mac" && locally_administered "$mac" && [[ "$mac" != "$slot" ]] || continue
+    log "pi not seen, but $ip ($mac) is a $TRACKER_MODEL with a private MAC; reporting only"
+    [[ "$DRY_RUN" == 1 ]] || notify_once "model-$mac" "mac-block-tracker: unknown $TRACKER_MODEL at $ip" "ann の Mac の pi は見えませんでしたが、同じ機種（$TRACKER_MODEL）の端末が $ip（$mac）にいます。ann の Mac なら手で遮断してください:
+aws ssm put-parameter --name $SLOT_PARAM --value $mac --overwrite --profile sh1admn --region $AWS_REGION
+の後に home-monitor で block_mac を targeted apply します。" || log "notify failed"
   done
-  if ((${#fallback[@]} == 1)); then
-    method="fallback"
-    candidates=("${fallback[0]}")
-  elif ((${#fallback[@]} > 1)); then
-    fail "pi が見つからず、予備条件に一致する端末が ${#fallback[@]} 台あります: ${fallback[*]}"
-  else
-    log "ann's Mac is not on the network (no pi match among $(grep -c . <<<"$scan" || true) AirPlay hosts)"
-    exit 0
-  fi
-fi
-
-for c in "${candidates[@]}"; do
-  if [[ "${c#* }" == "$slot" ]]; then
-    log "unchanged: ${c% *} has $slot (by $method)"
-    rm -f "$STATE_DIR/last-failure"
-    exit 0
-  fi
-done
-
-((${#candidates[@]} == 1)) \
-  || fail "ann の Mac が複数の MAC で見えていて、どれを遮断するか決められません: ${candidates[*]}"
-
-ip=${candidates[0]% *}
-mac=${candidates[0]#* }
-valid_mac "$mac" || fail "不正な MAC です: '$mac'"
-
-if [[ "$DRY_RUN" == 1 ]]; then
-  log "DRY_RUN: would move filters $FILTER_SRC/$FILTER_DST from $slot to $mac ($ip, by $method)"
+  log "ann's Mac is not on the network (no pi match among $hosts AirPlay hosts)"
   exit 0
 fi
 
-log "ann's Mac is at $ip with $mac (by $method); slot holds $slot — rewriting filters $FILTER_SRC/$FILTER_DST"
-write_filters "$mac" || fail "RTX のフィルタ $FILTER_SRC/$FILTER_DST を $mac に書き換えられませんでした（読み戻しが一致しません）。スロットは $slot のままです"
+now >"$STATE_DIR/last-seen"
+rm -f "$STATE_DIR/notified-unseen"
+
+# More than one private MAC for the pi is someone else claiming it: refuse,
+# even when one of them already holds the slot.
+((${#candidates[@]} == 1)) \
+  || fail "ann の pi が複数の端末から返っています（なりすましの可能性）: ${candidates[*]}"
+
+ip=${candidates[0]% *}
+mac=${candidates[0]#* }
+
+if [[ "$mac" == "$slot" ]]; then
+  rm -f "$STATE_DIR/pending"
+  last_verify=$(cat "$STATE_DIR/last-verify" 2>/dev/null || echo 0)
+  if [[ "$DRY_RUN" == 1 ]] || (( $(now) - last_verify < VERIFY_INTERVAL )); then
+    log "unchanged: $ip has $slot"
+    exit 0
+  fi
+  ensure_rtx_access || fail "SSM からルーターの接続情報を取れませんでした"
+  saved=$(saved_config) || fail "保存済み設定（$RTX_SAVED_CONFIG）を SFTP で読めませんでした"
+  on_router=$(reject_pair_mac "$saved")
+  if [[ "$on_router" == "$slot" ]]; then
+    now >"$STATE_DIR/last-verify"
+    rm -f "$STATE_DIR/notified-failure"
+    log "unchanged: $ip has $slot; router filters $FILTER_SRC/$FILTER_DST agree"
+    exit 0
+  fi
+  [[ -n "$on_router" ]] || fail "ルーターのフィルタ $FILTER_SRC/$FILTER_DST が reject 対になっていません（home-monitor の apply 前か、番号が別用途）"
+  log "drift: router filters hold $on_router but the slot holds $slot — putting the slot back"
+  write_filters "$slot" || fail "ずれの修正に失敗しました: $WF_ERR"
+  now >"$STATE_DIR/last-verify"
+  notify "mac-block-tracker: router filters restored to $slot" "ルーターのフィルタ $FILTER_SRC/$FILTER_DST が $on_router になっていたため、スロットの値 $slot に戻しました（terraform apply の競合、手動変更、未保存のまま再起動などで起きます）。" \
+    || { HANDLED=1; log "notify failed"; exit 1; }
+  exit 0
+fi
+
+# A new private MAC: act only when the same MAC is seen on two consecutive
+# runs, so a one-off answer does not move the block.
+pending=$(cat "$STATE_DIR/pending" 2>/dev/null || true)
+if [[ "$pending" != "$mac" ]]; then
+  printf '%s' "$mac" >"$STATE_DIR/pending"
+  log "first sighting of $mac at $ip (slot holds $slot); confirming on the next run"
+  exit 0
+fi
+
+touch "$STATE_DIR/moves"
+moves=$(awk -v cut=$(( $(now) - 86400 )) '$1 > cut' "$STATE_DIR/moves" | wc -l)
+((moves < MAX_MOVES_PER_DAY)) \
+  || fail "24 時間で $moves 回書き換えたため止めています（上限 $MAX_MOVES_PER_DAY）。最新の候補は $ip / $mac です"
+
+if [[ "$DRY_RUN" == 1 ]]; then
+  log "DRY_RUN: would move filters $FILTER_SRC/$FILTER_DST from $slot to $mac ($ip)"
+  exit 0
+fi
+
+log "ann's Mac is at $ip with $mac; slot holds $slot — rewriting filters $FILTER_SRC/$FILTER_DST"
+write_filters "$mac" "$ip" || fail "RTX のフィルタ $FILTER_SRC/$FILTER_DST を $mac に書き換えられませんでした: $WF_ERR（スロットは $slot のまま）"
+now >>"$STATE_DIR/moves"
 aws ssm put-parameter --name "$SLOT_PARAM" --value "$mac" --overwrite >/dev/null \
   || fail "RTX は $mac に書き換えましたが、SSM $SLOT_PARAM を更新できませんでした。次の terraform apply で $slot に戻ります"
-rm -f "$STATE_DIR/last-failure"
-
-note=""
-[[ "$method" == fallback ]] && note="
-※ AirPlay の pi が一致しなかったため、予備条件（機種 $TRACKER_MODEL・ランダム MAC・DHCP ホスト名なし）で判定しました。"
+rm -f "$STATE_DIR/pending" "$STATE_DIR/notified-failure"
+now >"$STATE_DIR/last-verify"
 
 notify "mac-block-tracker: ann's Mac moved to $mac" "ann の Mac の MAC が変わったため、遮断対象を更新しました。
 
 旧 MAC: $slot
-新 MAC: $mac（$ip）
-判定: $method$note
-RTX: ethernet filter $FILTER_SRC / $FILTER_DST を書き換えて save 済み（読み戻しで一致を確認）
+新 MAC: $mac（$ip、5 分おき 2 回の観測で一致）
+RTX: ethernet filter $FILTER_SRC / $FILTER_DST を書き換えて save 済み（稼働中と保存済みの両方を読み戻して一致を確認）
 SSM: $SLOT_PARAM を更新済み
 
 別の端末だった場合の戻し方:
 1. pro-dev で止める: sudo systemctl disable --now mac-block-tracker.timer
 2. スロットを戻す: aws ssm put-parameter --name $SLOT_PARAM --value $slot --overwrite --profile sh1admn --region $AWS_REGION
-3. home-monitor で block_mac を targeted apply してフィルタ $FILTER_SRC/$FILTER_DST を戻す" || log "notify failed (the block itself is in place)"
+3. home-monitor で block_mac を targeted apply してフィルタ $FILTER_SRC/$FILTER_DST を戻す" \
+  || { HANDLED=1; log "notify failed (the block itself is in place)"; exit 1; }
 
 log "done: filters $FILTER_SRC/$FILTER_DST and $SLOT_PARAM now hold $mac"
