@@ -155,6 +155,7 @@ Probe-before-execute pairs:
 - "roll back to version X" → confirm the tag / artifact exists before the rollback
 - "reassign to user/role Y" → confirm Y exists with the needed grant before the change
 - "share one subscription/login across two hosts" → inspect the credential file's token structure (`accessToken`/`refreshToken`/`expiresAt`) for rotating-refresh-token semantics BEFORE copying it — a shared rotating token invalidates whichever host refreshes second; use an independent login per host (see `~/.claude/docs/claude-cli-headless.md`)
+- "block / restrict a device" identified from a rotating or shared signal (a private MAC, a DHCP host name, an mDNS name) → confirm WHICH device it is with a per-device identifier (the AirPlay TXT `pi` over unicast mDNS, the model, or the owner's own confirmation) BEFORE merging or applying the block, not after. A MAC that appeared right after the old one vanished is a hypothesis; household Macs often share one name. Origin: 2026-10-03 home-monitor #170 blocked `.68` before the mDNS probe showed `Shinichi-Ohnos-MacBook-Air.local`, the same name as the operator's own Mac; the owner confirmed it was ann's Mac only afterwards.
 
 If the precondition is absent, do NOT run the doomed command (it fails with a misleading error — "snapshot not found", "bad revision"). Return to the user with the corrected, actually-feasible options.
 
