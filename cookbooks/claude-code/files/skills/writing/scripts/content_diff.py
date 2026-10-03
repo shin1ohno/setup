@@ -341,7 +341,8 @@ def render_text(result):
 
 def _read(path):
     if path == "-":
-        return sys.stdin.read()
+        # UTF-8 regardless of the locale, same as slop_scan.py.
+        return sys.stdin.buffer.read().decode("utf-8")
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
@@ -360,7 +361,11 @@ def main(argv=None):
     except (OSError, UnicodeDecodeError) as e:
         print("content_diff: %s" % e, file=sys.stderr)
         return 2
-    result = diff(before, after)
+    try:
+        result = diff(before, after)
+    except Exception as e:  # noqa: BLE001 — an uncaught crash exits 1, which reads as numbers_added
+        print("content_diff: internal error: %r" % (e,), file=sys.stderr)
+        return 2
     # Japanese output on an ASCII-only stdout must not crash into exit 1,
     # which callers would read as the numbers_added verdict.
     try:

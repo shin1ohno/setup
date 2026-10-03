@@ -27,7 +27,7 @@
 
 ## 検証手順
 
-スクリプトは `cookbooks/claude-code/files/skills/writing/scripts/`（配備後は `~/.claude/skills/writing/scripts/`）にある。書き直しの入出力は session の scratchpad か `$TMPDIR` に置き、repo には置かない。
+スクリプトは `cookbooks/claude-code/files/skills/writing/scripts/`（配備後は `~/.agents/skills/writing/scripts/`。`~/.claude/skills/writing` はその symlink）にある。書き直しの入出力は session の scratchpad か `$TMPDIR` に置き、repo には置かない。
 
 1. writing skill を Edit モードで各 `slop-N.md` に適用する。
 2. 合格条件:

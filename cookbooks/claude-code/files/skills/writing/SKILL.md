@@ -96,7 +96,7 @@ Maximum 3 cycles. Upon reaching 3 cycles, take the best draft at that point into
 Run once on the draft that leaves the Step 3 loop. The orchestrator does this itself (not a sub-agent):
 
 1. Save two files to the session scratchpad (or `$TMPDIR` when there is none) — never inside a repository:
-   - `<before>`: the Step 3 input — in proofreading mode the original text, in new creation the Step 2 draft
+   - `<before>`: in proofreading mode the original text; in new creation the user's request concatenated with every material or source the user supplied (not the Step 2 draft — a figure the writer invented would sit in both files and never show up as added)
    - `<after>`: the edited draft
 2. Run:
 
@@ -109,7 +109,7 @@ Run once on the draft that leaves the Step 3 loop. The orchestrator does this it
 3. Read the results:
    - `content_diff.py` exits 1 when `added_numbers` or `changed_numbers` is non-empty — the rewrite introduced or altered a figure. Exit 0 with `added_terms` / `dropped_terms` is advisory: check whether each added term is a fact the source lacked. Numbers are compared as a multiset: a value moved from one subject to another (「A は 3 件、B は 5 件」→「A は 5 件、B は 3 件」) passes with exit 0, so the editor still checks which number belongs to which subject
    - `slop_scan.py` always exits 0. Group its `findings` by `pathology` (`"1"` 病理① — `metaphor_verb`, `slop_vocabulary`, `inanimate_agency`; `"2"` 病理② — `nominal_chain`, `taigen_run`; `"3"` 病理③ — `negative_parallelism`, `excess_bold`, `excess_list`, `emoji_prohibited`; null → phrases.md 3/5/8). If `vendor_ok` is false, the vendor rules did not run; note that and continue with the results of the rules that did
-   - **The check did not run** when `content_diff.py` exits 2 (input/output error), when `slop_scan.py` prints nothing to stdout (it could not read the file — it reports to stderr and still exits 0), or when its JSON does not parse. Never read an empty or missing result as "no findings": say in the Final Output which check did not run
+   - **The check did not run** when `content_diff.py` exits 2 (input/output or internal error) or its stdout is empty or not JSON, when `slop_scan.py` prints nothing to stdout (it could not read the file — it reports to stderr and still exits 0), or when either script's JSON does not parse. An exit 1 counts as `numbers_added` only when the JSON parses and says so. Never read an empty or missing result as "no findings": say in the Final Output which check did not run
 4. If content_diff exited 1, or any finding in 病理①②③ is present, re-run Step 3 **once** with the editor persona (and the references, for Japanese) plus one message that lists the content_diff tokens and the slop_scan findings grouped by pathology with line numbers. The editor removes each added or changed number/term or moves it to 「書き手に確かめたい点」, and for each finding either repairs it or records the reason it was kept under 「残した AI っぽいところ」. This re-run is not a Step 3 Decision cycle and does not count toward the 3-cycle limit
 5. Re-run both scripts on the new draft. Do not loop a third time — whatever still remains goes into the Final Output disclosure
 
@@ -119,7 +119,7 @@ Present the editor-approved draft (or the best draft upon reaching 3 cycles, aft
 
 - 「書き手に確かめたい点」 (max 3, omit when empty)
 - 「残した AI っぽいところ」 (omit when empty)
-- **Machine-check disclosure**: when content_diff still exits 1 after the Step 3b re-run, list the remaining added/changed numbers explicitly and say they are not in the source. When slop_scan findings remain without a recorded reason, list them by pathology. When `vendor_ok` was false, say the vendor rules (病理①の `metaphor_verb`・`slop_vocabulary`, 病理③ all) did not run. When a check did not run at all (content_diff exit 2, slop_scan empty stdout or unparsable JSON), say so by name — 「content_diff は実行できなかった（機械検査なし）」 — instead of the pass line. When everything passed, one line: 「content_diff: 数値の追加・変更なし／slop_scan: 病理①②③ 残存なし」
+- **Machine-check disclosure**: when content_diff still exits 1 after the Step 3b re-run, list the remaining added/changed numbers explicitly and say they are not in the source. When slop_scan findings remain without a recorded reason, list them by pathology. When `vendor_ok` was false, say the vendor rules (病理①の `metaphor_verb`・`slop_vocabulary`, 病理③ all, `meta_filler`) did not run; 病理①の `inanimate_agency` and 病理② still ran. When a check did not run at all (content_diff exit 2, slop_scan empty stdout or unparsable JSON), say so by name — 「content_diff は実行できなかった（機械検査なし）」 — instead of the pass line. When everything passed, one line: 「content_diff: 数値の追加・変更なし／slop_scan: 病理①②③ 残存なし」
 
 ---
 

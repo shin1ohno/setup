@@ -177,6 +177,18 @@ class VerifyRegressionTest(unittest.TestCase):
         r = content_diff.diff("重点は三つ。", "重点は四つ。一つ目は速度。")
         self.assertEqual(r["verdict"], "numbers_added")
 
+    def test_internal_error_exits_2_not_1(self):
+        original = content_diff.diff
+        content_diff.diff = lambda b, a: (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                p = os.path.join(d, "x.md")
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write("3 件")
+                self.assertEqual(content_diff.main([p, p, "--json"]), 2)
+        finally:
+            content_diff.diff = original
+
     def test_ascii_stdout_does_not_crash(self):
         env = dict(os.environ, PYTHONIOENCODING="ascii")
         with tempfile.TemporaryDirectory() as d:

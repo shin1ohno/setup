@@ -452,7 +452,9 @@ def render_text(result):
         by["1"], by["2"], by["3"], by["other"]))
     out.append("注: 病理①は動詞・語彙のリストに載った形だけを検出する。0 件でも病理①がないとは限らない。")
     if not result["vendor_ok"]:
-        out.append("注意: vendor/yomiyasu_lint.py を実行できなかったため、病理①③の検出は空です。")
+        out.append("注意: vendor/yomiyasu_lint.py を実行できなかったため、vendor 由来の規則"
+                   "（metaphor_verb・slop_vocabulary・病理③全部・meta_filler）は実行されていない。"
+                   "病理①の inanimate_agency と病理②は実行済み。")
     for key, label in LABELS:
         items = [f for f in result["findings"] if f["pathology"] == key]
         if not items:
