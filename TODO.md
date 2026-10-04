@@ -758,61 +758,6 @@ source. With a 3-resource blast radius, option (a) (drop `owner`/`group` under
 apply comes mostly from the public `setup` cookbooks, which also run on this host,
 so re-scope the count there before choosing.
 
-## herdr — bump past 0.8.0 once a stable ships the oversized-frame render fix (Low)
-
-herdr 0.8.0 (pinned in `cookbooks/herdr/default.rb`) silently stops rendering an
-attached client when the terminal reports a large size: the SemanticFrame render
-exceeds the server's hardcoded 2MB frame cap and the server drops every frame
-(`WARN herdr::server::headless: skipping oversized frame … claimed=3494423
-max=2097152`), so `hr` looks dead while the handshake, input events, and sound
-notifications all still flow. Observed on sh1-cloud 2026-08-18T01:31Z when a
-mosh client reported 1300×383 cells; rendering resumed by itself once the size
-dropped back to 185×63. Upstream: herdrdev/herdr#2670 (closed), fixed by #2675
-"compact large terminal redraws" (plus #2829, which makes the headless terminal
-size configurable) — both in preview-2026-08-17, neither in any stable (latest
-stable = v0.8.0, the pinned version).
-
-- Reason deferred: the fix exists only in a preview build. The cookbook pins
-  stable releases by sha256, and swapping the server binary kills every running
-  pane (agents included), so waiting for the next stable is the right trade.
-  Workaround when it recurs: resize the terminal / reset font zoom back to
-  normal — frames resume immediately; do NOT restart the server.
-- First step: when a stable newer than 0.8.0 appears
-  (`gh api repos/ogulcancelik/herdr/releases/latest --jq .tag_name`), confirm
-  its notes include #2675, recompute the per-target sha256s per the comment in
-  `cookbooks/herdr/default.rb`, bump `herdr_version`, and restart the server at
-  a moment when no agent panes are active. Delete this entry in the resolving
-  commit.
-
-Status 2026-09-06: probe unavailable from sh1-cloud — `gh release list -R
-shin1ohno/herdr` answers "Could not resolve to a Repository", so whether a stable
-past 0.8.0 shipped cannot be decided from here; `cookbooks/herdr/default.rb:20` still
-pins 0.8.0. Next cycle needs the correct repo path for this probe.
-
-Status 2026-09-09: **the trigger condition is met and the fix is confirmed shipped
-in a stable.** The 09-06 probe used the wrong repo path — it is
-`ogulcancelik/herdr`, not `shin1ohno/herdr` (the `url =` line in
-`cookbooks/herdr/default.rb:43` already names the right one). With the correct
-path, `gh api repos/ogulcancelik/herdr/releases/latest --jq .tag_name` returns
-**v0.9.0** (2026-09-07), and **v0.8.2**'s (2026-08-19) notes carry this exact bug:
-"Remote clients now continue redrawing at very large terminal sizes instead of
-freezing when a full ANSI frame exceeds the transport limit. (#2670)". So the
-"confirm its notes include the fix" half of the first step is done; what remains
-is recomputing the per-target sha256s, bumping `herdr_version` (0.8.0 -> 0.9.0),
-and restarting the server at a moment when no agent panes are active.
-
-Status 2026-09-13: unchanged and still actionable. `gh release list -R
-herdrdev/herdr` shows **v0.9.0 (2026-09-07) as the latest stable** with no newer
-stable since, and `cookbooks/herdr/default.rb:20` still pins
-`herdr_version = "0.8.0"`. Only the sha256 recompute + version bump + a
-no-active-panes restart remain.
-
-Status 2026-09-20: **the bump target moved again.** `gh release list -R
-herdrdev/herdr` now shows **v0.9.1 (2026-09-16) as Latest**, with v0.9.0
-(09-07) behind it, while `cookbooks/herdr/default.rb:20` still pins
-`herdr_version = "0.8.0"`. Bump to 0.9.1 rather than 0.9.0, and recompute the
-release sha256 values for that tag.
-
 ## Vector drops 94% of RTX DHCP lease events on the floor (Low)
 
 `transforms.parse` Stage 3 in `cookbooks/lxc-monitoring/files/vector.toml` matches
