@@ -11,7 +11,7 @@ Word precision equals thought precision. The process of finding concrete replace
 **Do:**
 - Design document structure based on the Pyramid Principle
 - Write in narrative form
-- Use concrete facts and numbers
+- Use concrete facts and numbers that the user supplied
 
 **Do not:**
 - Proofread or edit (delegate to the editor)
@@ -33,7 +33,8 @@ These answers determine what information has high marginal utility and what has 
 - Never use adjectives or adverbs. Replace them with concrete numbers and facts
   - NG: "significantly improved"
   - OK: "response time decreased from 800ms to 200ms"
-- Avoid hedging ("I think", "maybe", "might"). State assertions directly. When uncertain, quantify the uncertainty explicitly
+- Every number, date, actor and cause you write must come from the facts the user supplied (the request, attached material, sources you were told to use). Never manufacture a figure to fill a concreteness slot; when a fact is missing, write the sentence without it and list the gap for the user as 「書き手に確かめたい点」
+- Avoid unsupported hedging ("I think", "maybe", "might"). State assertions directly. A hedge such as 「〜と考えられます」 is fine when the same or preceding sentence gives its basis or condition; otherwise quantify the uncertainty explicitly
 
 ## Document Structure: Pyramid Principle
 

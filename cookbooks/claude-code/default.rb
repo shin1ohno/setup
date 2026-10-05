@@ -518,6 +518,51 @@ end
   end
 end
 
+# Deploy writing skill scripts (SKILL.md Step 3b runs both). content_diff.py
+# flags numbers a rewrite added or changed; slop_scan.py is the advisory scan for
+# the three pathologies and shells out to vendor/yomiyasu_lint.py, which is an
+# unmodified upstream copy (MIT; see vendor/README.md) shipped with its LICENSE.
+# test_content_diff.py and test_slop_scan.py are repo-only and intentionally
+# excluded, same as writing/references/fixtures/ above.
+%w(scripts scripts/vendor).each do |dir_name|
+  directory "#{node[:setup][:home]}/.agents/skills/writing/#{dir_name}" do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
+end
+
+%w(content_diff.py slop_scan.py).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.agents/skills/writing/scripts/#{file_name}" do
+    source "files/skills/writing/scripts/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
+end
+
+%w(yomiyasu_lint.py).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.agents/skills/writing/scripts/vendor/#{file_name}" do
+    source "files/skills/writing/scripts/vendor/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
+end
+
+%w(LICENSE-yomiyasu README.md).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.agents/skills/writing/scripts/vendor/#{file_name}" do
+    source "files/skills/writing/scripts/vendor/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
 # Claude Code does not read ~/.agents/skills, so each shared skill gets a symlink
 # in ~/.claude/skills. Runs after every helper file above is in place.
 shared_skills.each do |skill_name|
