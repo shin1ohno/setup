@@ -242,7 +242,12 @@ directory es_indices_v2_dir do
   action :create
 end
 
-%w[memory-fact.json memory-knowledge.json memory-episode.json memory-stats.json setup_indices_v2.sh].each do |f|
+# memory-session{,-message}.json: the session search indices (design spec §7.1).
+# setup_indices_v2.sh skips them with a WARN when they are not deployed.
+%w[
+  memory-fact.json memory-knowledge.json memory-episode.json memory-stats.json
+  memory-session.json memory-session-message.json setup_indices_v2.sh
+].each do |f|
   remote_file "#{es_indices_v2_dir}/#{f}" do
     source "files/es-indices-v2/#{f}"
     owner "root"
@@ -259,6 +264,40 @@ end
 generate_env_v2_script = File.join(File.dirname(__FILE__), "files", "generate_env_v2.sh")
 env_v2_temp_path = "#{generated_dir}/memory-v2.env"
 
+# Session search archive writer (design spec §6.5 Storage personal, §10). Its
+# keys live under /es-memory-ct119/session-archive/*, readable ONLY by the
+# es-memory-ct119-bootstrap profile, which the operator places on this CT once
+# (bin/bootstrap-lxc-creds --profile es-memory-ct119-bootstrap) — never by
+# pve-bootstrap-ssm, which the whole fleet shares. Optional: when the profile or
+# the parameters are absent this gate skips with a WARN, the generator below
+# leaves SESSION_ARCHIVE_* out, and the server answers archive:"skipped" while
+# everything else works. The gate reads with the same --profile as the
+# generator (check_command decrypts but prints only the name).
+session_archive_profile = "es-memory-ct119-bootstrap"
+session_archive_ok = false
+require_external_auth(
+  tool_name: "AWS CLI (profile=#{session_archive_profile}) for /es-memory-ct119/session-archive/* (session search archive, optional)",
+  check_command: "aws ssm get-parameter --name /es-memory-ct119/session-archive/secret-access-key " \
+                 "--with-decryption --query Parameter.Name --output text " \
+                 "--profile #{session_archive_profile} --region #{aws_region} " \
+                 "> /dev/null 2>&1",
+  instructions: "Place the '#{session_archive_profile}' profile on this CT " \
+                "(bin/bootstrap-lxc-creds --profile #{session_archive_profile} --stdin <CT_ID>, keys from " \
+                "/home-monitor/iam/#{session_archive_profile}/* via the admin profile), then press Enter. " \
+                "Press s to continue without the session archive.",
+) do
+  session_archive_ok = true
+end
+
+# Content-aware: the env must carry the session-search keys, and the archive
+# keys whenever the archive gate above passed (so placing the profile later
+# regenerates the env on the next apply).
+env_v2_complete = lambda do
+  body = File.exist?(env_path_v2) ? File.read(env_path_v2) : ""
+  body.include?("VOYAGE_API_KEY") && body.include?("SESSION_SCOPE_POLICY") &&
+    (!session_archive_ok || body.include?("SESSION_ARCHIVE_BUCKET"))
+end
+
 require_external_auth(
   tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /monitoring/elastic/* + /memory/voyage-api-key SSM params",
   check_command: "aws ssm get-parameter --name /memory/voyage-api-key " \
@@ -268,10 +307,11 @@ require_external_auth(
                 "/monitoring/elastic/* and /memory/voyage-api-key in #{aws_region}. " \
                 "On a fresh machine: aws configure --profile #{aws_profile}. " \
                 "Then press Enter.",
-  skip_if: -> { File.exist?(env_path_v2) && File.read(env_path_v2).include?("VOYAGE_API_KEY") },
+  skip_if: env_v2_complete,
 ) do
   execute "generate memory-v2 .env" do
     command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+            "SESSION_ARCHIVE_PROFILE=#{session_archive_ok ? session_archive_profile : ''} " \
             "bash #{generate_env_v2_script} #{env_v2_temp_path}"
     user node[:setup][:user]
   end
@@ -296,6 +336,25 @@ end
 file env_v2_temp_path do
   action :delete
   only_if "test -f #{env_v2_temp_path}"
+end
+
+# Proxy shared secret (design spec §6.5 Gate): the proxy sends it as
+# X-Proxy-Secret and the server refuses identity headers without it, so a local
+# process cannot reach 127.0.0.1:8010 and forge X-Verified-*. 32 random bytes,
+# generated ONCE on this box into a root-only file that both units read as an
+# EnvironmentFile — never regenerated while the file is non-empty, never in SSM,
+# never printed (python3 writes it under umask 077; nothing reaches stdout).
+proxy_secret_env = "#{base_dir}/proxy-secret.env"
+execute "generate memory-v2 proxy shared secret" do
+  command <<~SH
+    set -e
+    umask 077
+    python3 -c 'import secrets; print("PROXY_SHARED_SECRET=" + secrets.token_hex(32))' > #{proxy_secret_env}.tmp
+    mv #{proxy_secret_env}.tmp #{proxy_secret_env}
+  SH
+  not_if "test -s #{proxy_secret_env}"
+  notifies :run, "execute[restart memory-mcp-v2]"
+  notifies :run, "execute[restart memory-v2-proxy]"
 end
 
 # v2 systemd units (units_staging is declared above).
@@ -373,6 +432,41 @@ end
 execute "ensure memory-keeper-health.timer active" do
   command "systemctl daemon-reload && systemctl enable --now memory-keeper-health.timer"
   not_if "systemctl is-active memory-keeper-health.timer >/dev/null 2>&1"
+end
+
+# === session search C8 maintenance (design spec §6.9) ===
+#
+# Daily oneshot: 365-day retention, purge-marker sweep, pending-embedding retry,
+# re-mask after a ruleset upgrade, and the memory-stats run record /status
+# reads. Runs app-v2/sessions_maint.py (deployed by the MANIFEST loop above)
+# from the shared venv with the server's own env file. Same service + timer +
+# ensure-active shape as memory-keeper-health above.
+session_maint_svc_staged = "#{units_staging}/memory-session-maint.service"
+remote_file session_maint_svc_staged do
+  source "files/systemd/memory-session-maint.service"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+end
+systemd_unit "memory-session-maint.service" do
+  staging_path session_maint_svc_staged
+  start false
+end
+
+session_maint_timer_staged = "#{units_staging}/memory-session-maint.timer"
+remote_file session_maint_timer_staged do
+  source "files/systemd/memory-session-maint.timer"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "644"
+end
+systemd_unit "memory-session-maint.timer" do
+  staging_path session_maint_timer_staged
+end
+
+execute "ensure memory-session-maint.timer active" do
+  command "systemctl daemon-reload && systemctl enable --now memory-session-maint.timer"
+  not_if "systemctl is-active memory-session-maint.timer >/dev/null 2>&1"
 end
 
 # ==========================================================================

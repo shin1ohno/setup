@@ -32,7 +32,13 @@ Environment=MEMORY_AUDIENCES=https://mcp.ohno.be/memory,memory
 Environment=ALLOWED_SUBS=shin1ohno@gmail.com,sh1@mercari.com
 # Which client_credentials clients may reach the server at all; what each may do
 # there is memory-mcp-v2.service's CLIENT_POLICY, which must list the same ids.
-Environment=ALLOWED_CLIENT_IDS=memory-keeper,monitoring-prober,memory-mirror
+# session-search-<host>: the per-host ccs clients (bin/register-session-search);
+# their sessions scopes are SESSION_SCOPE_POLICY's, not CLIENT_POLICY's.
+Environment=ALLOWED_CLIENT_IDS=memory-keeper,monitoring-prober,memory-mirror,session-search-pro-dev,session-search-mini,session-search-neo
+# PROXY_SHARED_SECRET, sent upstream as X-Proxy-Secret on every proxied request.
+# Same file as memory-mcp-v2.service's, so the two always agree ('-': absent on
+# both sides before the cookbook first generates it).
+EnvironmentFile=-/opt/es-memory/proxy-secret.env
 ExecStart=/opt/es-memory/venv/bin/python proxy.py
 Restart=on-failure
 RestartSec=5
