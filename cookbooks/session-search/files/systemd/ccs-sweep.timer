@@ -1,0 +1,15 @@
+[Unit]
+Description=ccs session-search sweep every 15 minutes
+
+[Timer]
+# Cold boot, a `systemctl --user restart` after a cookbook update, then
+# recurring 15 min after each run finishes. Type=oneshot has a ~zero active
+# window, so OnUnitActiveSec would leave the timer dead; no RemainAfterExit
+# on the service for the same reason (it would park the unit at active).
+OnBootSec=2min
+OnActiveSec=2min
+OnUnitInactiveSec=15min
+Unit=ccs-sweep.service
+
+[Install]
+WantedBy=timers.target
