@@ -670,6 +670,32 @@ jobs:
         # [] and ships inert — reproduced, that state fails 2 of the cases.
         python3 cookbooks/lxc-es-memory/files/memory-keeper/test_merge_rules.py
 
+    - name: session search — redactor, parser, SigV4, scope policy (stdlib suites)
+      run: |
+        # docs/design/claude-session-search.md §6.1 / §6.2 / §6.5 / §7.6. The
+        # redactor is the single masking source for client and server: one
+        # positive and one negative vector per kind, placeholders excluded,
+        # low-entropy kinds untagged, redact(redact(x)) == redact(x) over a
+        # generated corpus, and a 10,000-deep record (iterative walk). The parser
+        # runs synthetic golden JSONL; SigV4 runs the AWS get-vanilla vector; the
+        # scope matrix covers grant x client_id x sub x scope with unset and
+        # malformed SESSION_SCOPE_POLICY = deny-all. All dependency-free.
+        D=cookbooks/lxc-es-memory/files/memory-mcp
+        python3 "$D/test_session_redact.py"
+        python3 "$D/test_sessions_parse.py"
+        python3 "$D/test_sessions_sigv4.py"
+        python3 "$D/test_sessions_scope.py"
+
+    - name: session search — sessions app over TestClient (gate, ingest, archive)
+      run: |
+        # Reuses the venv built by the MANIFEST step (starlette, httpx,
+        # zstandard). ES is an in-memory fake and the archive an in-process
+        # store, so nothing leaves the runner: proxy secret, unknown routes and
+        # memory-mirror are refused, host mismatch is 403, 9 MiB and gzip bombs
+        # are 413, unmasked secrets are 422 with line indexes, and a tampered or
+        # missing archive chunk is 409.
+        /tmp/memory-mcp-venv/bin/python cookbooks/lxc-es-memory/files/memory-mcp/test_sessions_app.py
+
     - name: Background-launch Stop hook regression suite
       run: |
         # hooks/warn-background-launch-no-progress.rb is the mechanical backstop

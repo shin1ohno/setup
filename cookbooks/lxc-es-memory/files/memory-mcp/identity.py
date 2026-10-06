@@ -457,3 +457,117 @@ def audit_policy_deny(tool, client, dataset) -> None:
     dataset only — never the arguments, which may hold the document itself."""
     print(f"AUDIT deny tool={_audit_token(tool)} client={_audit_token(client)}"
           f" dataset={_audit_token(dataset)}", file=sys.stderr, flush=True)
+
+
+# --------------------------------------------------------------------------- #
+# Session-search scope policy (SESSION_SCOPE_POLICY, design spec §7.6)
+# --------------------------------------------------------------------------- #
+# The /memory/sessions/v1 sub-app has its own default-deny gate. CLIENT_POLICY
+# is deliberately NOT extended for it: that parser refuses any tool outside
+# DATASET_SCOPED_TOOLS, and an unknown tool voids the whole policy, which would
+# lock memory-mirror out of the MCP server.
+#
+# Value: JSON {"rules": [{"match": {...}, "host": str|null, "scopes": [...]}]}.
+# `match` keys are optional individually (grant, client_id, sub) and ANDed; an
+# empty match is refused because it would hand its scopes to every identity,
+# memory-mirror included. The FIRST matching rule decides; no match = deny.
+# `host: null` = the identity owns no host (read/purge only; every write that
+# needs a host is 403). Unset, empty, or malformed in any way = deny-all: a
+# typo can only ever narrow what a caller may do.
+SESSION_SCOPE_POLICY_ENV = "SESSION_SCOPE_POLICY"
+SESSION_SCOPES = frozenset({"sessions:ingest", "sessions:read", "sessions:purge"})
+_SESSION_MATCH_KEYS = frozenset({"grant", "client_id", "sub"})
+_SESSION_HOST_RE = re.compile(r"^[a-z0-9-]{1,63}$")
+_KNOWN_GRANTS = frozenset({GRANT_AUTHZ_CODE, GRANT_CLIENT_CREDS})
+
+
+class SessionPolicyError(ValueError):
+    """SESSION_SCOPE_POLICY is malformed."""
+
+
+def parse_session_scope_policy(spec: str) -> tuple:
+    """Parse strictly. Returns a tuple of {"match": dict, "host": str|None,
+    "scopes": frozenset}. Raises SessionPolicyError on anything unexpected."""
+    import json  # noqa: PLC0415 — keeps identity's module-level imports unchanged
+
+    try:
+        data = json.loads(spec)
+    except (TypeError, ValueError) as exc:
+        raise SessionPolicyError(f"not JSON: {exc.__class__.__name__}") from None
+    if not isinstance(data, dict) or set(data) != {"rules"} or not isinstance(data["rules"], list):
+        raise SessionPolicyError('top level must be exactly {"rules": [...]}')
+    rules = []
+    for i, r in enumerate(data["rules"]):
+        if not isinstance(r, dict) or set(r) != {"match", "host", "scopes"}:
+            raise SessionPolicyError(f"rule {i}: keys must be exactly match, host, scopes")
+        m = r["match"]
+        if not isinstance(m, dict) or not m or not set(m) <= _SESSION_MATCH_KEYS:
+            raise SessionPolicyError(f"rule {i}: match must be a non-empty object over grant/client_id/sub")
+        for k, v in m.items():
+            if not isinstance(v, str) or not v:
+                raise SessionPolicyError(f"rule {i}: match.{k} must be a non-empty string")
+        if "grant" in m and m["grant"] not in _KNOWN_GRANTS:
+            raise SessionPolicyError(f"rule {i}: unknown grant")
+        host = r["host"]
+        if host is not None and (not isinstance(host, str) or not _SESSION_HOST_RE.fullmatch(host)):
+            raise SessionPolicyError(f"rule {i}: invalid host")
+        scopes = r["scopes"]
+        if (not isinstance(scopes, list) or not all(isinstance(s, str) for s in scopes)
+                or len(set(scopes)) != len(scopes) or not set(scopes) <= SESSION_SCOPES):
+            raise SessionPolicyError(f"rule {i}: scopes must be distinct values of {sorted(SESSION_SCOPES)}")
+        rules.append({"match": dict(m), "host": host, "scopes": frozenset(scopes)})
+    return tuple(rules)
+
+
+def _load_session_scope_policy(spec):
+    """(rules, error). rules None = deny-all (unset, empty or malformed)."""
+    if spec is None or spec == "":
+        return None, "unset"
+    try:
+        return parse_session_scope_policy(spec), ""
+    except SessionPolicyError as exc:
+        return None, str(exc)
+
+
+_SESSION_SCOPE_POLICY, _SESSION_SCOPE_POLICY_ERROR = _load_session_scope_policy(
+    os.environ.get(SESSION_SCOPE_POLICY_ENV))
+
+
+def _session_rule_matches(match: dict, ident: dict) -> bool:
+    return all((ident or {}).get(k, "") == v for k, v in match.items())
+
+
+def authorize_session_scope(ident: dict, scope: str, policy=_ACTIVE) -> tuple:
+    """(allowed, host) for one sessions route. The first rule whose match fits
+    the verified identity decides; its host is the caller's host (None for a
+    host-less identity). No matching rule, an unknown grant, an unknown scope,
+    or an unusable policy = (False, None)."""
+    rules = _SESSION_SCOPE_POLICY if policy is _ACTIVE else policy
+    if not isinstance(rules, tuple) or scope not in SESSION_SCOPES:
+        return False, None
+    if (ident or {}).get("grant", "") not in _KNOWN_GRANTS:
+        return False, None
+    for r in rules:
+        if _session_rule_matches(r["match"], ident):
+            if scope in r["scopes"]:
+                return True, r["host"]
+            return False, None
+    return False, None
+
+
+def session_scope_policy_lines(policy=_ACTIVE, error=None) -> list:
+    """Startup lines for journald. Deliberately avoids the `POLICY ` token the
+    CLIENT_POLICY lines use, so tooling that counts those is unaffected."""
+    rules = _SESSION_SCOPE_POLICY if policy is _ACTIVE else policy
+    err = _SESSION_SCOPE_POLICY_ERROR if error is None else error
+    if not isinstance(rules, tuple):
+        return [f"SESSIONS scope-policy deny-all reason={_audit_token(err or 'unknown')}"]
+    return [f"SESSIONS scope-rule {i} match={','.join(sorted(r['match']))}"
+            f" host={r['host'] or '-'} scopes={','.join(sorted(r['scopes'])) or '-'}"
+            for i, r in enumerate(rules)] or ["SESSIONS scope-policy (no rules): deny-all"]
+
+
+def proxy_secret_configured() -> bool:
+    """The sessions gate refuses every request unless the proxy shared secret is
+    set: without it any local process could forge the identity headers."""
+    return bool(_PROXY_SHARED_SECRET)
