@@ -121,9 +121,9 @@ class FakeES:
                 return FakeResp(201, {})
             return FakeResp(404, {})
         if len(parts) == 2 and parts[1] == "_delete_by_query":
-            sk = json["query"]["term"]["session_key"]
+            terms = [list(t["term"].items())[0] for t in json["query"]["bool"]["filter"]]
             docs = self._idx(index)
-            gone = [k for k, (s, _) in docs.items() if s.get("session_key") == sk]
+            gone = [k for k, (s, _) in docs.items() if all(s.get(f) == v for f, v in terms)]
             for k in gone:
                 del docs[k]
             return FakeResp(200, {"deleted": len(gone)})
@@ -453,7 +453,7 @@ class Ingest(Base):
         b = segment_body([line("u1", "x")], 0)
         b["segment"]["sha256"] = "0" * 64
         r = self.ingest(b)
-        self.assertEqual((r.status_code, r.json()["error"]), (400, "sha256_mismatch"))
+        self.assertEqual((r.status_code, r.json()["error"]), (422, "sha256_mismatch"))
 
     def test_offsets_and_retries(self):
         b1 = segment_body([line("u1", "one")], 0)
@@ -487,19 +487,95 @@ class Ingest(Base):
         dl = self.c.get(PREFIX + "/archive", params={"session_key": sk}, headers=PRO_DEV)
         self.assertEqual(dl.text, line("u9", "new") + "\n")
 
-    def test_subagent_has_own_key_and_flags_parent(self):
+    def sub(self, uuid, text, offset, agent="a1b2", generation=0):
+        return segment_body([line(uuid, text, isSidechain=True)], offset, kind="subagent",
+                            parent_session_id=SID, agent_id=agent, generation=generation)
+
+    def msgs(self):
+        return {s["uuid"]: s for s, _ in FAKE.indices["memory-session-message"].values()}
+
+    def test_subagent_goes_into_the_parent_session_unarchived(self):
         main = self.ingest(segment_body([line("u1", "parent")], 0)).json()
-        r = self.ingest(segment_body([line("s1", "child", isSidechain=True)], 0, kind="subagent",
-                                     parent_session_id=SID, agent_id="a1b2"))
+        objects_before = dict(self.store.objects)
+        r = self.ingest(self.sub("s1", "child", 0))
         self.assertEqual(r.status_code, 200, r.text)
         out = r.json()
-        self.assertNotEqual(out["session_key"], main["session_key"])
+        self.assertEqual(out["session_key"], main["session_key"])
         self.assertEqual(out["archive"], "skipped")
-        self.assertTrue(self.session(main["session_key"])["has_subagents"])
-        sub = self.session(out["session_key"])
-        self.assertFalse(sub["archived"])
-        child = [s for s, _ in FAKE.indices["memory-session-message"].values() if s["uuid"] == "s1"]
-        self.assertTrue(child[0]["is_sidechain"])
+        self.assertEqual(self.store.objects, objects_before)
+        s = self.session(main["session_key"])
+        self.assertTrue(s["has_subagents"])
+        self.assertTrue(s["archived"] and s["archive_complete"])
+        self.assertEqual(s["message_count"], 1)
+        child = self.msgs()["s1"]
+        self.assertTrue(child["is_sidechain"])
+        self.assertEqual((child["agent_id"], child["session_key"]), ("a1b2", main["session_key"]))
+        # the main archive is untouched by the subagent stream
+        dl = self.c.get(PREFIX + "/archive", params={"session_key": main["session_key"]},
+                        headers=PRO_DEV)
+        self.assertEqual(dl.text, line("u1", "parent") + "\n")
+
+    def test_subagent_cursor_is_per_agent(self):
+        sk = self.ingest(segment_body([line("u1", "parent")], 0)).json()["session_key"]
+        r1 = self.ingest(self.sub("s1", "child", 0)).json()
+        r = self.ingest(self.sub("s2", "next", r1["next_offset"] + 5))
+        self.assertEqual((r.status_code, r.json()["expected_offset"]), (409, r1["next_offset"]))
+        self.assertEqual(self.ingest(self.sub("t1", "other agent", 0, agent="zz9")).status_code, 200)
+        # main continues from its own offset, unaffected by subagent offsets
+        main_next = [c for c in self.session(sk)["archive_chunks"] if "agent_id" not in c][0]["end_offset"]
+        self.assertEqual(self.ingest(segment_body([line("u2", "more")], main_next)).status_code, 200)
+
+    def test_generation_bumps_are_per_stream(self):
+        sk = self.ingest(segment_body([line("u1", "parent")], 0)).json()["session_key"]
+        self.ingest(self.sub("s1", "child", 0))
+        self.ingest(self.sub("t1", "other", 0, agent="zz9"))
+        self.assertEqual(self.ingest(self.sub("s9", "rewritten", 0, generation=1)).status_code, 200)
+        self.assertEqual(set(self.msgs()), {"u1", "s9", "t1"})
+        self.assertEqual(self.ingest(segment_body([line("u9", "new main")], 0, generation=1)).status_code, 200)
+        self.assertEqual(set(self.msgs()), {"u9", "s9", "t1"})
+        self.assertEqual(self.session(sk)["archive_generation"], 1)
+
+    def test_subagent_before_main(self):
+        r = self.ingest(self.sub("s1", "child", 0))
+        self.assertEqual(r.status_code, 200, r.text)
+        sk = r.json()["session_key"]
+        self.assertFalse(self.session(sk)["archived"])
+        r = self.ingest(segment_body([line("u1", "parent")], 0))
+        self.assertEqual(r.status_code, 200, r.text)
+        s = self.session(sk)
+        self.assertTrue(s["has_subagents"] and s["archived"] and s["archive_complete"])
+        self.assertEqual(s["cwd"], "/home/dev/proj")
+
+    def test_subagent_must_name_the_parent(self):
+        b = self.sub("s1", "child", 0)
+        b["file"]["parent_session_id"] = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
+        self.assertEqual(self.ingest(b).status_code, 400)
+        b = self.sub("s1", "child", 0)
+        del b["file"]["agent_id"]
+        self.assertEqual(self.ingest(b).status_code, 400)
+
+    def test_unknown_body_keys_are_ignored(self):
+        b = segment_body([line("u1", "x")], 0)
+        b["client"]["future_field"] = 1
+        b["file"]["mtime"] = 123
+        b["segment"]["compression"] = "none"
+        b["extra"] = {"anything": True}
+        self.assertEqual(self.ingest(b).status_code, 200)
+
+    def test_tombstone_is_archived_and_skipped_by_the_parser(self):
+        for reason in ("unmasked_secret", "too_large"):
+            with self.subTest(reason=reason):
+                FAKE.indices.clear()
+                self.store.objects.clear()
+                tomb = json.dumps({"type": "session-search-tombstone", "reason": reason,
+                                   "kinds": ["jwt"], "line_offset": 4}, separators=(",", ":"))
+                r = self.ingest(segment_body([line("u1", "x"), tomb], 0))
+                self.assertEqual(r.status_code, 200, r.text)
+                self.assertEqual(set(self.msgs()), {"u1"})
+                sk = r.json()["session_key"]
+                self.assertFalse(self.session(sk)["archive_complete"])
+                stored = arc.decompress(next(iter(self.store.objects.values()))).decode()
+                self.assertEqual(stored.splitlines()[1], tomb)
 
     def test_archive_disabled_is_skipped(self):
         sa._ARCHIVE["backend"] = None

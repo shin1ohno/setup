@@ -325,9 +325,17 @@ async def _bulk_index(index: str, docs: list[dict]) -> int:
     return len(docs)
 
 
-async def _delete_messages(session_key: str) -> int:
+async def _delete_messages(session_key: str, agent_id: str | None = None,
+                           main_only: bool = False) -> int:
+    """Delete a session's message docs: all of them, one subagent's
+    (agent_id), or only the main file's (main_only: is_sidechain false)."""
+    filters = [{"term": {"session_key": session_key}}]
+    if agent_id is not None:
+        filters.append({"term": {"agent_id": agent_id}})
+    elif main_only:
+        filters.append({"term": {"is_sidechain": False}})
     r = await _es("POST", f"/{MESSAGE_INDEX}/_delete_by_query?conflicts=proceed",
-                  json={"query": {"term": {"session_key": session_key}}})
+                  json={"query": {"bool": {"filter": filters}}})
     if r.status_code >= 400:
         raise ESUnavailable(f"delete_by_query: {r.status_code}")
     return int(r.json().get("deleted", 0))
@@ -597,7 +605,16 @@ async def _run_bounded(fn, *args, **kw):
 
 
 def _segment_chunks(chunks):
-    return [c for c in chunks or [] if "name" not in c]
+    """The main file's archive chunks (no blobs, no subagent cursors)."""
+    return [c for c in chunks or [] if "name" not in c and "agent_id" not in c]
+
+
+def _stream_chunks(chunks, agent_id):
+    """Cursor entries of one stream: the main file (agent_id None) or one
+    subagent. Subagent entries are cursor bookkeeping only, never archived."""
+    if agent_id is None:
+        return _segment_chunks(chunks)
+    return [c for c in chunks or [] if "name" not in c and c.get("agent_id") == agent_id]
 
 
 def _blob_entries(chunks):
@@ -691,14 +708,16 @@ async def ingest(request: Request, caller: dict):
     kind = f.get("kind")
     if kind not in ("main", "subagent"):
         raise HTTPError(400, "invalid_request", field="file.kind")
-    agent_id = parent_sid = None
-    key_sid = session_id
+    agent_id = None
     if kind == "subagent":
+        # Client contract (S3): a subagent file carries the PARENT's session id
+        # in both session_id and parent_session_id, plus its own agent_id. Its
+        # messages go into the parent's session (is_sidechain, agent_id); it is
+        # never archived, and its cursor is tracked separately per agent_id.
         agent_id = _str(f.get("agent_id"), "file.agent_id", AGENT_ID_RE)
         parent_sid = _str(f.get("parent_session_id"), "file.parent_session_id", SESSION_ID_RE)
-        # A subagent transcript is its own session doc; its key must never
-        # collide with the parent's, whichever id the client sends as session_id.
-        key_sid = f"{session_id}\0agent:{agent_id}"
+        if parent_sid != session_id:
+            raise HTTPError(400, "invalid_request", field="file.parent_session_id")
     generation = _int(seg.get("generation"), "segment.generation")
     offset = _int(seg.get("offset"), "segment.offset")
     end_offset = _int(seg.get("end_offset"), "segment.end_offset", offset + 1)
@@ -717,10 +736,11 @@ async def ingest(request: Request, caller: dict):
         raise HTTPError(422, scan["error"], lines=scan["bad_lines"], kinds=scan["kinds"])
     if session_redact.detect_text(jsonl_path, version) or not _PRINTABLE_PATH_RE.fullmatch(jsonl_path):
         raise HTTPError(400, "invalid_request", field="file.jsonl_path")
-    # The client's checksum covers the lines it sent (transport integrity).
+    # segment.sha256 = sha256 of the masked lines, each followed by "\n" (client
+    # contract): transport integrity of what the client sent.
     sent = "".join(line + "\n" for line in lines).encode("utf-8", "surrogatepass")
     if hashlib.sha256(sent).hexdigest() != seg_sha:
-        raise HTTPError(400, "sha256_mismatch")
+        raise HTTPError(422, "sha256_mismatch")
     # What is archived and parsed is the canonical serialisation of exactly the
     # records the detector scanned (see _scan_segment), never the raw lines.
     canonical = scan["canonical"]
@@ -729,15 +749,19 @@ async def ingest(request: Request, caller: dict):
         raise HTTPError(413, "too_large")
     sha = hashlib.sha256(payload).hexdigest()
 
-    session_key = make_session_key(host, project_dir, key_sid)
+    session_key = make_session_key(host, project_dir, session_id)
     got = await _get_session(session_key)
     existing, seq, term = got if got else (None, None, None)
     if existing and existing.get("host") != host:
         raise HTTPError(403, "host_mismatch")
     chunks = list((existing or {}).get("archive_chunks") or [])
-    cur_gen = (existing or {}).get("archive_generation")
-    cur_gen = -1 if cur_gen is None else cur_gen
-    seg_chunks = [c for c in _segment_chunks(chunks) if c.get("generation") == cur_gen]
+    stream = _stream_chunks(chunks, agent_id)
+    if agent_id is None:
+        cur_gen = (existing or {}).get("archive_generation")
+        cur_gen = -1 if cur_gen is None else cur_gen
+    else:
+        cur_gen = max((c["generation"] for c in stream), default=-1)
+    seg_chunks = [c for c in stream if c.get("generation") == cur_gen]
     next_expected = max((c["end_offset"] for c in seg_chunks), default=0)
     new_generation = False
     if generation < cur_gen:
@@ -778,56 +802,65 @@ async def ingest(request: Request, caller: dict):
             archived_chunk = True
 
     if new_generation and existing is not None:
-        # A rewritten or truncated JSONL starts over (§8 row 5).
-        await _delete_messages(session_key)
+        # A rewritten or truncated JSONL starts over (§8 row 5) — only this
+        # stream's docs: the main file's, or one subagent's.
+        await _delete_messages(session_key, agent_id=agent_id, main_only=agent_id is None)
     # Step 5: bulk index, no refresh.
     await _bulk_index(MESSAGE_INDEX, parsed["docs"])
 
     delta = parsed["delta"]
-    seg_chunks.append({
+    entry = {
         "generation": generation, "offset": offset, "end_offset": end_offset,
         "sha256": sha, "bytes": len(payload), "archived": archived_chunk,
         "messages": delta["message_count"], "text_messages": delta["text_message_count"],
         "tombstones": delta["tombstones"],
-    })
+    }
+    if agent_id is not None:
+        entry["agent_id"] = agent_id
+    seg_chunks.append(entry)
     seg_chunks.sort(key=lambda c: c["offset"])
-    blobs = [] if new_generation else _blob_entries(chunks)
-    doc = sessions_parse.merge_session(None if new_generation else existing, delta,
-                                       project_dir=project_dir)
-    is_main = kind == "main"
-    all_archived = is_main and all(c.get("archived") for c in seg_chunks)
-    doc.update({
-        "session_key": session_key, "session_id": session_id, "host": host,
-        "project_dir": project_dir, "jsonl_path": jsonl_path,
-        "jsonl_exists": True, "jsonl_checked_at": _now_iso(),
-        "message_count": sum(c["messages"] for c in seg_chunks),
-        "text_message_count": sum(c["text_messages"] for c in seg_chunks),
-        "has_subagents": bool((existing or {}).get("has_subagents")),
-        "archived": all_archived,
-        "archive_complete": all_archived and not any(c["tombstones"] for c in seg_chunks),
-        "archive_generation": generation,
-        "archive_bytes": sum(c["bytes"] for c in seg_chunks if c.get("archived")),
-        "archive_chunks": seg_chunks + blobs,
-        "redact_version": version,
-    })
-    if not doc.get("updated_at"):
-        doc["updated_at"] = _now_iso()
-    if existing and existing.get("restored_from"):
-        doc["restored_from"] = existing["restored_from"]
-    await _put_session(session_key, doc, seq, term)
+    others = [c for c in chunks if c not in stream]  # blobs and the other streams
 
-    if kind == "subagent":
-        parent_key = make_session_key(host, project_dir, parent_sid)
-        await _update_session(parent_key, {"has_subagents": True}, upsert={
-            "session_key": parent_key, "session_id": parent_sid, "host": host,
-            "project_dir": project_dir, "has_subagents": True})
+    if agent_id is not None:
+        doc = dict(existing or {
+            "session_key": session_key, "session_id": session_id, "host": host,
+            "project_dir": project_dir, "archived": False, "archive_complete": False})
+        doc["has_subagents"] = True
+        doc["archive_chunks"] = others + seg_chunks
+        if delta.get("updated_at") and delta["updated_at"] > (doc.get("updated_at") or ""):
+            doc["updated_at"] = delta["updated_at"]
+        doc.setdefault("updated_at", _now_iso())
+    else:
+        if new_generation:
+            others = [c for c in others if "agent_id" in c or "name" in c]
+        doc = sessions_parse.merge_session(None if new_generation else existing, delta,
+                                           project_dir=project_dir)
+        all_archived = all(c.get("archived") for c in seg_chunks)
+        doc.update({
+            "session_key": session_key, "session_id": session_id, "host": host,
+            "project_dir": project_dir, "jsonl_path": jsonl_path,
+            "jsonl_exists": True, "jsonl_checked_at": _now_iso(),
+            "message_count": sum(c["messages"] for c in seg_chunks),
+            "text_message_count": sum(c["text_messages"] for c in seg_chunks),
+            "has_subagents": bool((existing or {}).get("has_subagents")),
+            "archived": all_archived,
+            "archive_complete": all_archived and not any(c["tombstones"] for c in seg_chunks),
+            "archive_generation": generation,
+            "archive_bytes": sum(c["bytes"] for c in seg_chunks if c.get("archived")),
+            "archive_chunks": seg_chunks + others,
+            "redact_version": version,
+        })
+        if not doc.get("updated_at"):
+            doc["updated_at"] = _now_iso()
+        if existing and existing.get("restored_from"):
+            doc["restored_from"] = existing["restored_from"]
+    await _put_session(session_key, doc, seq, term)
 
     _COUNTERS["ingested_segments"] += 1
     # Step 7: embeddings in the background.
     EMBED_SCHEDULER([d for d in parsed["docs"] if d.get("text")])
     return JSONResponse({"session_key": session_key, "indexed": len(parsed["docs"]),
                          "next_offset": end_offset, "archive": archive_state})
-
 
 async def blob(request: Request, caller: dict):
     body = await _json_body(request)
