@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import re
 import shlex
@@ -162,14 +163,66 @@ def find_local_jsonl(sid: str, hint=None):
     return None
 
 
-def local_resume_cwd(path: str) -> str:
-    """The recorded cwd whose encoding names the JSONL's directory and that exists here."""
-    project_dir = os.path.basename(os.path.dirname(os.path.abspath(path)))
+def _restored_key(project_dir: str, sid: str) -> str:
+    return "%s/%s" % (project_dir, sid)
+
+
+def load_restored() -> dict:
+    d = util.read_json(util.restored_path(), {})
+    if not isinstance(d, dict) or d.get("version") != 1 or not isinstance(d.get("sessions"), dict):
+        return {"version": 1, "sessions": {}}
+    return d
+
+
+def record_restore(sid: str, project_dir: str, cwd: str) -> None:
+    """Remember where a restored session was placed; later resumes use only this cwd."""
+    d = load_restored()
+    d["sessions"][_restored_key(project_dir, sid)] = {
+        "session_id": sid, "project_dir": project_dir, "cwd": os.path.realpath(cwd),
+        "restored_at": util.iso(util.now_utc()),
+    }
+    util.atomic_write(util.restored_path(), json.dumps(d, sort_keys=True, indent=1), mode=0o600)
+
+
+def local_resume_cwd(path: str, to_dir=None) -> str:
+    """Where a local JSONL resumes.
+
+    - A session this client restored resumes ONLY in the cwd recorded at restore
+      time; the cwd fields inside a restored JSONL came from the server.
+    - --to DIR is accepted when its realpath encodes to the JSONL's directory.
+    - Otherwise the recorded cwd / relocatedCwd values are candidates. Encoding is
+      lossy (/a/b and /a-b both become -a-b), so a candidate must also exist, be
+      its own realpath (no symlink components) and be the only one that matches;
+      two or more matches are refused.
+    """
+    abspath = os.path.abspath(path)
+    project_dir = os.path.basename(os.path.dirname(abspath))
+    sid = os.path.basename(abspath)[:-len(".jsonl")]
+    rec = load_restored()["sessions"].get(_restored_key(project_dir, sid))
+    if isinstance(rec, dict):
+        cwd = rec.get("cwd")
+        if not (isinstance(cwd, str) and cwd.startswith("/") and os.path.isdir(cwd)
+                and util.encode_cwd(cwd) == project_dir):
+            raise ResumeError("restored session %s was placed in %r, which is gone; pass --to DIR" % (sid, cwd))
+        return cwd
+    if to_dir:
+        d = os.path.realpath(os.path.expanduser(to_dir))
+        if not os.path.isdir(d) or util.encode_cwd(d) != project_dir:
+            raise ResumeError("--to %s does not encode to %s, the directory this transcript lives in"
+                              % (to_dir, project_dir))
+        return d
+    found = []
     for c in extract.scan(path).cwd_candidates:
-        if isinstance(c, str) and c.startswith("/") and util.encode_cwd(c) == project_dir and os.path.isdir(c):
-            return c
-    raise ResumeError("no cwd recorded in %s encodes to %s and exists on this host; not resuming from a "
-                      "guessed directory" % (path, project_dir))
+        if (isinstance(c, str) and c.startswith("/") and util.encode_cwd(c) == project_dir
+                and os.path.isdir(c) and os.path.realpath(c) == c and c not in found):
+            found.append(c)
+    if len(found) == 1:
+        return found[0]
+    if len(found) > 1:
+        raise ResumeError("%d recorded directories match %s (%s); pass --to DIR to choose"
+                          % (len(found), project_dir, ", ".join(found)))
+    raise ResumeError("no cwd recorded in %s encodes to %s and exists on this host as a real path; not "
+                      "resuming from a guessed directory (pass --to DIR)" % (path, project_dir))
 
 
 def choose_restore_cwd(meta: dict, to_dir, do_print: bool, ask=input, isatty=None, err=None) -> str:
@@ -184,7 +237,7 @@ def choose_restore_cwd(meta: dict, to_dir, do_print: bool, ask=input, isatty=Non
     if do_print or not tty:
         raise ResumeError("this session must be restored from the archive; pass --to DIR to choose where it "
                           "resumes (required with --print or without a terminal)")
-    here = os.getcwd()
+    here = os.path.realpath(os.getcwd())
     rc = meta.get("resume_cwd")
     if isinstance(rc, str) and rc.startswith("/") and os.path.isdir(rc):
         err.write("The session's original directory exists on this host:\n  %s\n"
@@ -246,6 +299,7 @@ def restore(api, meta: dict, local_cwd: str, force: bool, session_key: str, out=
     finally:
         if os.path.lexists(tmp):
             os.unlink(tmp)
+    record_restore(sid, proj, local_cwd)
     out.write(RESTORED_NOTE + "\n")
     return sid
 
@@ -262,7 +316,7 @@ def resume(session_key: str, do_print: bool = False, fork: bool = False, to_dir:
             if not local_jsonl_ok(path, sid):
                 raise ResumeError("local transcript %s no longer exists or is not a plain file under %s"
                                   % (path, util.projects_dir()))
-            return exec_claude(local_resume_cwd(path), sid, fork, do_print, execvp, chdir, out)
+            return exec_claude(local_resume_cwd(path, to_dir), sid, fork, do_print, execvp, chdir, out)
         try:
             cfg = config_mod.load()
         except config_mod.ConfigError as e:
@@ -284,7 +338,7 @@ def resume(session_key: str, do_print: bool = False, fork: bool = False, to_dir:
         if meta.get("host") == cfg.host_label:
             local = find_local_jsonl(sid, hint=meta.get("jsonl_path"))
             if local:
-                return exec_claude(local_resume_cwd(local), sid, fork, do_print, execvp, chdir, out)
+                return exec_claude(local_resume_cwd(local, to_dir), sid, fork, do_print, execvp, chdir, out)
         if meta.get("archived") and meta.get("archive_complete"):
             local_cwd = choose_restore_cwd(meta, to_dir, do_print, ask=ask, isatty=isatty)
             try:

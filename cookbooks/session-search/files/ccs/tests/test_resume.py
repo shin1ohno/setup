@@ -64,9 +64,10 @@ class Restore(HomeCase):
         return 404, {}, {}
 
     def go(self, **kw):
+        kw.setdefault("to_dir", self.cwd)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            code = resume.resume("sk_r", to_dir=self.cwd, execvp=lambda f, a: self.execs.append(a),
+            code = resume.resume("sk_r", execvp=lambda f, a: self.execs.append(a),
                                  chdir=lambda d: self.execs.append(("chdir", d)), out=io.StringIO(), **kw)
         return code, err.getvalue()
 
@@ -150,7 +151,7 @@ class Restore(HomeCase):
     def test_local_session_exec_uses_cwd_from_the_jsonl(self):
         p = self.transcript([user("x", cwd=self.cwd)], cwd=self.cwd)
         self.meta.update(host="pro-dev", jsonl_path=p, resume_cwd=self.cwd)
-        self.assertEqual(self.go(fork=True)[0], 0)
+        self.assertEqual(self.go(fork=True, to_dir=None)[0], 0)
         self.assertEqual(self.execs, [("chdir", self.cwd), ["claude", "--resume", SID, "--fork-session"]])
 
     def test_local_session_with_vanished_cwd_fails(self):
@@ -159,7 +160,7 @@ class Restore(HomeCase):
         self.transcript([user("x", cwd=gone)], cwd=gone)
         os.rmdir(gone)
         self.meta.update(host="pro-dev", jsonl_path=None, archived=False)
-        code, err = self.go()
+        code, err = self.go(to_dir=None)
         self.assertEqual(code, util.EXIT_RESUME)
         self.assertIn("exists on this host", err)
         self.assertEqual(self.execs, [])
@@ -194,7 +195,7 @@ class UntrustedCwd(Restore):
     def test_local_resume_ignores_server_resume_cwd(self):
         p = self.transcript([user("x", cwd=self.cwd)], cwd=self.cwd)
         self.meta.update(host="pro-dev", jsonl_path=p, resume_cwd=self.planted())
-        self.assertEqual(self.go()[0], 0)
+        self.assertEqual(self.go(to_dir=None)[0], 0)
         self.assertEqual(self.execs[0], ("chdir", self.cwd))
 
     def test_jsonl_recorded_cwd_must_encode_to_its_directory(self):
@@ -203,7 +204,7 @@ class UntrustedCwd(Restore):
         with open(os.path.join(d, SID + ".jsonl"), "w") as fh:
             fh.write(json.dumps(user("x", cwd=planted)) + "\n")
         self.meta.update(host="pro-dev", jsonl_path=os.path.join(d, SID + ".jsonl"), archived=False)
-        code, err = self.go()
+        code, err = self.go(to_dir=None)
         self.assertEqual(code, util.EXIT_RESUME)
         self.assertEqual(self.execs, [])
 
@@ -219,7 +220,7 @@ class UntrustedCwd(Restore):
         for hint in (evil, os.path.join(self.projects, "..", "outside", SID + ".jsonl"), link):
             self.assertFalse(resume.local_jsonl_ok(hint, SID), hint)
             self.meta.update(host="pro-dev", jsonl_path=hint, archived=False)
-            code, _ = self.go()
+            code, _ = self.go(to_dir=None)
             self.assertEqual(code, util.EXIT_RESUME, hint)
         self.assertEqual(self.execs, [])
         self.assertEqual(self.go_local(link)[0], util.EXIT_RESUME)
@@ -266,6 +267,79 @@ class UntrustedCwd(Restore):
         code, asked, err = self.restore_with(["y"])  # explicit confirmation
         self.assertEqual(code, 0, err)
         self.assertEqual(self.execs[0], ("chdir", os.path.realpath(planted)))
+
+
+class LossyEncoding(Restore):
+    """encode() is lossy (/a/b and /a-b both give -a-b): a matching name proves nothing alone."""
+
+    def colliding_dirs(self):
+        # self.cwd = <tmp>/work/demo ; <tmp>/work-demo encodes to the same project dir
+        other = os.path.join(self.tmp, "work-demo")
+        os.makedirs(other)
+        self.assertEqual(util.encode_cwd(other), util.encode_cwd(self.cwd))
+        return other
+
+    def test_restored_session_resumes_only_in_the_recorded_dir(self):
+        other = self.colliding_dirs()
+        # The archive (server-controlled) claims the colliding directory as its cwd.
+        self.archive = (json.dumps(user("hi", cwd=other)) + "\n").encode()
+        self.sha = hashlib.sha256(self.archive).hexdigest()
+        self.assertEqual(self.go()[0], 0)
+        self.assertEqual(self.execs[0], ("chdir", self.cwd))
+        rec = json.loads(support.read(util.restored_path()))
+        entry = rec["sessions"]["%s/%s" % (util.encode_cwd(self.cwd), SID)]
+        self.assertEqual(entry["cwd"], self.cwd)
+        self.assertEqual(oct(os.stat(util.restored_path()).st_mode & 0o777), "0o600")
+        # Later resume of the now-local copy: the JSONL's cwd fields are ignored.
+        self.execs.clear()
+        self.meta.update(host="pro-dev", jsonl_path=self.target())
+        self.assertEqual(self.go(to_dir=None)[0], 0)
+        self.assertEqual(self.execs[0], ("chdir", self.cwd))
+        self.execs.clear()
+        code, _ = self.go_local_key(self.target())
+        self.assertEqual(code, 0)
+        self.assertEqual(self.execs[0], ("chdir", self.cwd))
+
+    def go_local_key(self, path):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = resume.resume("local:" + path, execvp=lambda f, a: self.execs.append(a),
+                                 chdir=lambda d: self.execs.append(("chdir", d)), out=io.StringIO())
+        return code, err.getvalue()
+
+    def test_two_colliding_local_candidates_are_refused(self):
+        other = self.colliding_dirs()
+        p = self.transcript([user("x", cwd=self.cwd, relocatedCwd=other)], cwd=self.cwd)
+        self.meta.update(host="pro-dev", jsonl_path=p, archived=False)
+        code, err = self.go(to_dir=None)
+        self.assertEqual(code, util.EXIT_RESUME)
+        self.assertIn("--to DIR", err)
+        self.assertEqual(self.execs, [])
+        # --to settles it when it encodes to the transcript's directory
+        self.assertEqual(self.go(to_dir=other)[0], 0)
+        self.assertEqual(self.execs[0], ("chdir", other))
+        self.execs.clear()
+        self.assertEqual(self.go(to_dir=self.tmp)[0], util.EXIT_RESUME)
+        self.assertEqual(self.execs, [])
+
+    def test_symlinked_candidate_is_not_its_own_realpath(self):
+        real = os.path.join(self.tmp, "real-target")
+        os.makedirs(real)
+        linkdir = os.path.join(self.tmp, "lnk")
+        os.symlink(real, linkdir)
+        p = self.transcript([user("x", cwd=linkdir)], cwd=linkdir)
+        self.meta.update(host="pro-dev", jsonl_path=p, archived=False)
+        self.assertEqual(self.go(to_dir=None)[0], util.EXIT_RESUME)
+        self.assertEqual(self.execs, [])
+
+    def test_duplicate_keys_make_the_record_unreadable(self):
+        d = self.project(self.cwd)
+        p = os.path.join(d, SID + ".jsonl")
+        with open(p, "w") as fh:
+            fh.write('{"type":"user","cwd":"%s","cwd":"/elsewhere","message":{"content":"x"}}\n' % self.cwd)
+        self.meta.update(host="pro-dev", jsonl_path=p, archived=False)
+        self.assertEqual(self.go(to_dir=None)[0], util.EXIT_RESUME)
+        self.assertEqual(self.execs, [])
 
 
 class RestoreWithoutDataFilter(Restore):

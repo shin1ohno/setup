@@ -51,6 +51,10 @@ def lock_path() -> str:
     return os.path.join(state_dir(), "lock")
 
 
+def restored_path() -> str:
+    return os.path.join(state_dir(), "restored.json")
+
+
 def breaker_path() -> str:
     return os.path.join(state_dir(), "breaker.json")
 

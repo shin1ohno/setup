@@ -53,6 +53,28 @@ def record_text(rec) -> str:
     return strip_leading_blocks("\n".join(p for p in (strip_leading_blocks(x) for x in parts) if p))
 
 
+class DuplicateKey(ValueError):
+    pass
+
+
+def _no_duplicates(pairs):
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise DuplicateKey(k)
+        out[k] = v
+    return out
+
+
+def loads_strict(text: str):
+    """json.loads that rejects duplicate object keys.
+
+    With duplicates, which value "the" cwd is depends on the parser (Python keeps
+    the last one); a record that is ambiguous that way is dropped instead.
+    """
+    return json.loads(text, object_pairs_hook=_no_duplicates)
+
+
 def iter_records(path: str):
     """Yield parsed records; skips unparsable lines and the partial trailing line.
 
@@ -68,7 +90,7 @@ def iter_records(path: str):
             if not raw.endswith(b"\n"):
                 break
             try:
-                rec = json.loads(raw.decode("utf-8", "replace"))
+                rec = loads_strict(raw.decode("utf-8", "replace"))
             except ValueError:
                 continue
             if isinstance(rec, dict):

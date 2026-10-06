@@ -145,7 +145,7 @@ class HomeCase(unittest.TestCase):
     """Each test runs with HOME pointing at a fresh temp dir."""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="ccs-test-")
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="ccs-test-"))
         self._env = dict(os.environ)
         os.environ["HOME"] = self.tmp
         for k in ("CCS_CONFIG", "FZF_PROMPT", "FZF_PORT", "CCS_PICK", "CCS_PICK_STATE", "CLAUDE_CODE_SESSION_ID"):
