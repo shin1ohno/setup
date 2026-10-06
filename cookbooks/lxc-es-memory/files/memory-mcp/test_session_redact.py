@@ -148,6 +148,22 @@ class FixedPoint(unittest.TestCase):
             self.assertEqual(redact(once), once, repr(s))
             self.assertEqual(sr.detect_record({"t": once}), [], repr(s))
 
+    def test_prefilter_is_exact(self):
+        """The anchor prefilter may only skip strings no rule can change."""
+        for kind, (pos, _neg) in VECTORS.items():
+            self.assertTrue(sr._ANCHOR_RE.search(pos), kind)
+        rnd = random.Random(7)
+        alphabet = list("abcAKISgh_pusr-kxoIzlteyJ:/=@ \"'.BEGN") + ["-----BEGIN ", "Bearer "]
+        skipped = 0
+        for _ in range(20000):
+            s = "".join(rnd.choice(alphabet) for _ in range(rnd.randint(1, 40)))
+            if not sr._ANCHOR_RE.search(s):
+                skipped += 1
+                counts = {}
+                self.assertEqual(sr._one_pass(s, KEY, counts), s, repr(s))
+                self.assertEqual(counts, {}, repr(s))
+        self.assertGreater(skipped, 1000)
+
     def test_detector_ignores_placeholders(self):
         for s in ("Authorization: Bearer [REDACTED:bearer]",
                   "[REDACTED:github-token:0123abcd]",

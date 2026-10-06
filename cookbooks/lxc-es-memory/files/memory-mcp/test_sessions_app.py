@@ -612,12 +612,53 @@ class Hostile(Base):
                 res = await slow
                 return res, st, status_latency, done_before, _t.monotonic() - t0
 
-        res, st, status_latency, done_before, total = asyncio.run(run())
+        # A low budget keeps the test independent of runner speed: the segment
+        # costs ~1.5-4 s of CPU (measured on CI and pro-dev), far above 0.6 s.
+        saved = sa.SEGMENT_BUDGET_S
+        sa.SEGMENT_BUDGET_S = 0.6
+        try:
+            res, st, status_latency, done_before, total = asyncio.run(run())
+        finally:
+            sa.SEGMENT_BUDGET_S = saved
         self.assertEqual(st.status_code, 200)
         self.assertFalse(done_before, "the hostile segment should still be running")
-        self.assertLess(status_latency, 1.0)
+        self.assertLess(status_latency, 0.5)
         self.assertEqual((res.status_code, res.json()["error"]), (413, "too_expensive"))
-        self.assertLess(total, sa.SEGMENT_BUDGET_S + 3.0)
+        self.assertLess(total, 0.6 + 2.0)
+
+    def test_value_past_the_cap_is_rejected_not_truncated(self):
+        cap = sa.session_redact.MAX_VALUE_CHARS
+        tok = "ghp_" + "A" * 36
+        for value in ("x" * cap + " " + tok,            # token after the cap boundary
+                      "x" * (cap - 10) + " " + tok):     # token straddling it
+            with self.subTest(at=len(value)):
+                bad = json.dumps({"type": "user", "uuid": "o", "message": {"content": value}})
+                r = self.ingest(segment_body([bad], 0))
+                self.assertEqual(r.status_code, 422, r.text)
+                self.assertEqual(r.json()["lines"], [0])
+                self.assertEqual(r.json()["kinds"], ["oversize"])
+        self.assertFalse(FAKE.indices.get("memory-session-message"))
+        self.assertEqual(self.store.objects, {})
+
+    def test_segment_totals(self):
+        r = self.ingest(segment_body(["{}"] * (sa.SEGMENT_MAX_LINES + 1), 0))
+        self.assertEqual((r.status_code, r.json()["error"]), (413, "too_many_lines"))
+        per_line = 25_000
+        lines = [json.dumps({"type": "user", "uuid": f"v{i}", "x": ["a"] * per_line})
+                 for i in range(sa.SEGMENT_MAX_STRINGS // per_line + 1)]
+        r = self.ingest(segment_body(lines, 0))
+        self.assertEqual((r.status_code, r.json()["error"]), (413, "too_many_values"))
+        self.assertFalse(FAKE.indices.get("memory-session-message"))
+        # positive control: just under the cap is accepted inside the default budget
+        under = [json.dumps({"type": "user", "uuid": f"w{i}", "x": ["a"] * per_line})
+                 for i in range(sa.SEGMENT_MAX_STRINGS // per_line - 1)]
+        r = self.ingest(segment_body(under, 0))
+        self.assertEqual(r.status_code, 200, r.text)
+        deep = '{"a":' * (sa.MAX_RECORD_DEPTH + 1) + "1" + "}" * (sa.MAX_RECORD_DEPTH + 1)
+        ok_depth = '{"a":' * (sa.MAX_RECORD_DEPTH - 1) + "1" + "}" * (sa.MAX_RECORD_DEPTH - 1)
+        r = self.ingest(segment_body([ok_depth, deep], 0))
+        self.assertEqual((r.status_code, r.json()["lines"], r.json()["kinds"]),
+                         (422, [1], ["too-deep"]))
 
 
 class Archive(Base):

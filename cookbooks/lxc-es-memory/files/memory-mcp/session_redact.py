@@ -206,12 +206,26 @@ def _one_pass(text: str, key: bytes, counts: dict) -> str:
 
 _MAX_PASSES = 8
 
+# Exact prefilter: every rule above needs at least one of these literals to
+# match (private-key "-----BEGIN", aws AKIA/ASIA, github gh?_ / github_pat_,
+# anthropic/openai "sk-", slack "xox?-", google "AIza", gitlab "glpat-", jwt
+# "eyJ", bearer "authorization", url-credential "://", config-secret its key
+# words). A string with none of them cannot change, so it skips the rule chain;
+# that keeps the per-string cost of the common short values (uuids, timestamps)
+# to one linear scan. Keep this in step with the rules: test_session_redact.py
+# asserts every positive vector passes the prefilter.
+_ANCHOR_RE = re.compile(
+    r"-----BEGIN|AKIA|ASIA|gh[pousr]_|github_pat_|sk-|xox[abprs]-|AIza|glpat-|eyJ|://"
+    r"|(?i:authorization|secret|token|passw|api[_-]?key|credential|private)")
+
 
 def _mask_text(text: str, key: bytes, counts: dict, max_chars: int = MAX_VALUE_CHARS) -> str:
     """The capped fixed-point loop shared by redaction and detection."""
     if len(text) > max_chars:
         counts["oversize"] = counts.get("oversize", 0) + 1
         return OVERSIZE
+    if not _ANCHOR_RE.search(text):
+        return text
     for _ in range(_MAX_PASSES):
         new = _one_pass(text, key, counts)
         if new == text:
@@ -293,10 +307,12 @@ class _Budget:
         return self.used <= MAX_RECORD_CHARS
 
 
-def _record_pass(record, key: bytes, counts: dict):
+def _record_pass(record, key: bytes, counts: dict, check=None):
     budget = _Budget()
 
     def text(value):
+        if check is not None:
+            check()
         if not budget.take(len(value)):
             counts["oversize"] = counts.get("oversize", 0) + 1
             return OVERSIZE
@@ -324,14 +340,16 @@ def redact_record(record, key: bytes, version: str = RULESET_VERSION) -> tuple[o
     return _record_pass(record, key, counts), counts
 
 
-def detect_record(record, version: str = RULESET_VERSION) -> list[str]:
+def detect_record(record, version: str = RULESET_VERSION, _check=None) -> list[str]:
     """Kinds of secrets still present (unmasked) anywhere in the record —
     values and dict keys — sorted. Placeholders are ignored. `oversize` means a
     string or the record exceeds the caps and was not scanned, which the server
     rejects like a hit. Kind names only, never values."""
     _check_version(version)
     counts: dict[str, int] = {}
-    _record_pass(record, _DETECT_KEY, counts)
+    # _check (server only): called before each string is scanned, so a caller's
+    # wall-clock budget can stop a record mid-way; it raises to abort.
+    _record_pass(record, _DETECT_KEY, counts, _check)
     return sorted(counts)
 
 

@@ -435,6 +435,11 @@ async def _owned_session(session_key: str, caller, *, allow_hostless=False):
 SEGMENT_BUDGET_S = float(os.environ.get("SESSION_SEGMENT_BUDGET_S", "2.0"))
 SEGMENT_CONCURRENCY = 2
 MAX_RECORD_DEPTH = 64
+# Per-segment totals, so per-value caps cannot be defeated by volume. Over any
+# of them the whole segment is refused (413; the client halves it) — never
+# partially accepted. Total characters are bounded by DECOMPRESSED_MAX.
+SEGMENT_MAX_LINES = 50_000
+SEGMENT_MAX_STRINGS = 200_000
 BLOB_MAX_CHARS = DECOMPRESSED_MAX
 ARCHIVE_DOWNLOAD_MAX = 512 * 1024 * 1024
 TOOL_RESULTS_MAX_BYTES = 256 * 1024 * 1024
@@ -444,7 +449,9 @@ _PRINTABLE_PATH_RE = re.compile("[^\x00-\x1f\x7f\ud800-\udfff]{1,4096}")
 
 
 class _OverBudget(Exception):
-    pass
+    def __init__(self, code="too_expensive"):
+        super().__init__(code)
+        self.code = code
 
 
 class _BadLine(ValueError):
@@ -467,7 +474,8 @@ def _reject_constant(name):
 
 
 def strict_load(line: str):
-    """Parse one JSONL line strictly. Returns the record or raises _BadLine."""
+    """Parse one JSONL line strictly. Returns (record, number of strings —
+    keys and values) or raises _BadLine."""
     try:
         rec = json.loads(line, object_pairs_hook=_no_duplicate_keys,
                          parse_constant=_reject_constant)
@@ -478,20 +486,24 @@ def strict_load(line: str):
     if not isinstance(rec, dict):
         raise _BadLine("not-an-object")
     stack = [(rec, 1)]
+    strings = 0
     while stack:
         v, depth = stack.pop()
         if depth > MAX_RECORD_DEPTH:
             raise _BadLine("too-deep")
         if isinstance(v, dict):
             for k, cv in v.items():
+                strings += 1
                 if _SURROGATE_RE.search(k):
                     raise _BadLine("surrogate")
                 stack.append((cv, depth + 1))
         elif isinstance(v, list):
             stack.extend((cv, depth + 1) for cv in v)
-        elif isinstance(v, str) and _SURROGATE_RE.search(v):
-            raise _BadLine("surrogate")
-    return rec
+        elif isinstance(v, str):
+            strings += 1
+            if _SURROGATE_RE.search(v):
+                raise _BadLine("surrogate")
+    return rec, strings
 
 
 def canonical_line(rec) -> str:
@@ -511,12 +523,35 @@ def _scan_segment(lines: list, version: str, deadline: float | None = None) -> d
     regex call inside is bounded by session_redact's caps."""
     bad, kinds, canonical = [], set(), []
     secret = False
-    for i, line in enumerate(lines):
+    if len(lines) > SEGMENT_MAX_LINES:
+        raise _OverBudget("too_many_lines")
+    strings = 0
+
+    def check_deadline():
         if deadline is not None and time.monotonic() > deadline:
             raise _OverBudget()
+
+    # Pass 1: strict load of every line and the segment totals, BEFORE any
+    # regex runs (json.loads and the walk are linear C/Python work).
+    loaded = []
+    for i, line in enumerate(lines):
+        check_deadline()
         try:
-            rec = strict_load(line)
-            hit = session_redact.detect_record(rec, version)
+            rec, n = strict_load(line)
+        except _BadLine as exc:
+            loaded.append(exc)
+            continue
+        strings += n
+        if strings > SEGMENT_MAX_STRINGS:
+            raise _OverBudget("too_many_values")
+        loaded.append(rec)
+    # Pass 2: detect + canonicalise.
+    for i, rec in enumerate(loaded):
+        check_deadline()
+        try:
+            if isinstance(rec, _BadLine):
+                raise rec
+            hit = session_redact.detect_record(rec, version, _check=check_deadline)
             if hit:
                 bad.append(i)
                 kinds.update(hit)
@@ -553,7 +588,10 @@ async def _run_bounded(fn, *args, **kw):
         kw["deadline"] = time.monotonic() + budget
     try:
         return await asyncio.wait_for(asyncio.to_thread(fn, *args, **kw), timeout=budget + 1.0)
-    except (_OverBudget, asyncio.TimeoutError):
+    except _OverBudget as exc:
+        _log(f"segment refused fn={fn.__name__} reason={exc.code} budget_s={budget}")
+        raise HTTPError(413, exc.code) from None
+    except asyncio.TimeoutError:
         _log(f"segment over budget fn={fn.__name__} budget_s={budget}")
         raise HTTPError(413, "too_expensive") from None
 
