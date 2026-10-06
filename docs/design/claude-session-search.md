@@ -77,7 +77,7 @@ Measured on ES 9.4.2 with kuromoji, `best_compression`, one shard, no replica, a
 
 The share of tool_results truncated by the cap is 58% at 1 KB, 46% at 2 KB and 32% at 4 KB.
 
-**Decision: N = 2 KB, split as the first 1,536 B plus the last 512 B of each tool_result.** The same cap applies to each serialized tool_use input. Going from 1 KB to 2 KB costs 12.6 MB per 33 days and fully covers 12 more points of results. Going from 2 KB to 4 KB costs 18.2 MB for 14 more points. Errors such as stack traces, test failures and exit codes tend to sit at the end of the output, which is why the tail is kept.
+**Decision: N = 2 KB, split as the first 1,536 B plus the last 512 B of each tool_result.** The same cap applies to each serialized tool_use input. Going from 1 KB to 2 KB costs 12.6 MB per 33 days and fully covers 12 more percentage points of results. Going from 2 KB to 4 KB costs 18.2 MB for 14 more percentage points. Errors such as stack traces, test failures and exit codes tend to sit at the end of the output, which is why the tail is kept.
 
 The bigram subfield is not in v1: it adds 26% to the index and 39% to p95 (§3.3).
 
@@ -152,11 +152,9 @@ Standard-mechanism check:
 
 ## 6. Components
 
-Each component is described with the same four headings: responsibility, inputs and outputs, and how it relates to existing modules.
-
 ### 6.1 C1 `sessions.parse` — transcript parser (server, Python)
 
-- **Responsibility**: turn raw masked JSONL lines into message docs and a session-doc delta. It is lenient by design: an unknown record or block type is counted and skipped, never raised.
+- **Responsibility**: turn raw masked JSONL lines into message docs and a session-doc delta. It is lenient: an unknown record or block type is counted and skipped, never raised.
 - **Input**: `(session_key, kind, lines[], start_offset)`.
 - **Output**: a list of message docs (§7.1.2), a session update (§7.1.1), and counters such as `unknown_types{}` and `skipped_noise`.
 - **Rules**:
@@ -197,7 +195,7 @@ Each component is described with the same four headings: responsibility, inputs 
 
 - **Replacement**: `[REDACTED:<kind>:<hex8>]`, where `hex8` is the first 8 hex characters of `HMAC-SHA256(key, matched_value)`. The same secret produces the same tag across sessions, so a leak can be traced; the original cannot be recovered. Rotating the key changes every tag from then on, and that is acceptable.
 - **Fail-closed**: with no key or an unreadable key, nothing is shipped and the cursor does not move. The error shows in `ccs status`.
-- **Relation to existing code**: new. Neither repository has any redaction today. One file, `session_search/redact.py`, is vendored into the client package and the server package from the same source; the MANIFEST check (`bin/check-memory-v2-manifest`) asserts that the two copies are byte-identical.
+- **Relation to existing code**: new; neither repository has any redaction today. One file, `session_search/redact.py`, is vendored into the client package and the server package from the same source; the MANIFEST check (`bin/check-memory-v2-manifest`) asserts that the two copies are byte-identical.
 
 ### 6.3 C3 `ccs ingest` — client shipper (every host, Python stdlib)
 
@@ -305,11 +303,10 @@ Each component is described with the same four headings: responsibility, inputs 
 
 ### 6.9 C8 retention and maintenance timer (ES host)
 
-- **Responsibility**:
+- **Responsibility** (runs daily):
   - delete each session whose `updated_at < now − 365d`: the session doc, its message docs (`delete_by_query` on `session_key`) and its archive prefix;
   - retry `embedding_status=pending` docs;
   - re-scan for masking-rule upgrades (§8, row 8).
-  - It runs daily.
 - **Backstop**: a lifecycle rule on the archive prefix at 395 days (GCS and S3 both have this built in), in case the job dies.
 - **Relation to existing code**: work has no keeper today, so the work overlay adds a systemd timer. Personal adds a timer next to the keeper timers on CT 119.
 
@@ -317,7 +314,7 @@ Each component is described with the same four headings: responsibility, inputs 
 
 ### 7.1 Index mappings
 
-Index names: `memory-session` and `memory-session-message`, each with 1 shard and 1 replica on personal (single node, so 0 replicas, on work). Neither is added to `memory-all`.
+Index names: `memory-session` and `memory-session-message`, each with 1 shard; 1 replica on personal, 0 replicas on work (single node). Neither is added to `memory-all`.
 
 - Work SLM uses the `memory-*` pattern, so both indices are covered as they are.
 - Personal SLM lists indices explicitly, so both names must be added. Its drift guard only looks for `memory-fact`, so it has to be extended at the same time.
@@ -410,7 +407,7 @@ Index names: `memory-session` and `memory-session-message`, each with 1 shard an
 
 The §3.2 size measurement used the `standard` analyzer for `tool_text`. Switching it to `ja_en_hybrid` (so that Japanese tool output, such as fetched documents, is searchable) has to be re-measured in phase 1. If the store grows by more than 20%, the fallback is `standard`.
 
-Embeddings are excluded from `_source`. Otherwise each doc would carry about 10 KB of float JSON, roughly 73 MB per 33 days. The estimated vector cost with int8 HNSW is about 7,300 vectors × ~1.1 KB ≈ 8 MB per 33 days. This is not measured yet.
+Embeddings are excluded from `_source`; otherwise each doc would carry about 10 KB of float JSON, roughly 73 MB per 33 days. The estimated vector cost with int8 HNSW is about 7,300 vectors × ~1.1 KB ≈ 8 MB per 33 days. This is not measured yet.
 
 ### 7.2 HTTP API (`/memory/sessions/v1`, JSON unless stated)
 
@@ -527,7 +524,7 @@ Exit codes: 0 for success or a cancelled picker, 2 for a usage error, 3 when the
 | Personal: Hydra client, SSM HMAC key, S3 bucket/prefix + IAM, SLM index list | setup (`lxc-es-memory`, `lxc-elasticsearch`) + home-monitor terraform | unchanged |
 | Work: roles.json, Secret Manager key, GCS prefix + SA grant, retention timer, host config for air/sh1-cloud | zp-SHIN `projects/mercari-setup/cookbooks/gcp-es-memory` | unchanged |
 
-Personal archive writes need a new AWS principal on CT 119, scoped to the archive prefix. That is a credential added to a host and so triggers the adversarial-review gate. It also meets ADR 0013 Decision 3 ("no new credentials on CT 119", written for GitHub access), so it must be ruled on explicitly and cannot be implied from this spec.
+Personal archive writes need a new AWS principal on CT 119, scoped to the archive prefix. That is a credential added to a host and so triggers the adversarial-review gate. It also conflicts with ADR 0013 Decision 3 ("no new credentials on CT 119", written for GitHub access), so it must be ruled on explicitly and cannot be implied from this spec.
 
 No new external service is introduced. GCS, S3, LiteLLM, Voyage, fzf and ripgrep are all already in use.
 
