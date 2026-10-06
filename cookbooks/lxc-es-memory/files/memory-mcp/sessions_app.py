@@ -166,6 +166,8 @@ def index_definitions(analysis=None, replicas: int | None = None) -> dict:
                 "archive_generation": {"type": "integer"}, "archive_bytes": {"type": "long"},
                 "archive_chunks": {"type": "object", "enabled": False},
                 "restored_from": kw, "redact_version": kw, "parser_version": kw,
+                # purge tombstone (the only fields a purged session keeps)
+                "purged_at": {"type": "date"}, "purged_by": kw,
             },
         },
     }
@@ -277,10 +279,20 @@ async def _get_session(session_key: str):
         return None
     if r.status_code != 200:
         raise ESUnavailable(f"get session: {r.status_code}")
-    data = r.json()
+    # Fail closed: an unparseable or malformed answer is "unknown", never
+    # "not purged" (every caller turns ESUnavailable into 503).
+    try:
+        data = r.json()
+    except ValueError:
+        raise ESUnavailable("get session: unparseable response") from None
+    if not isinstance(data, dict):
+        raise ESUnavailable("get session: malformed response")
     if not data.get("found"):
         return None
-    return data["_source"], data.get("_seq_no"), data.get("_primary_term")
+    src, seq, term = data.get("_source"), data.get("_seq_no"), data.get("_primary_term")
+    if not isinstance(src, dict) or not isinstance(seq, int) or not isinstance(term, int):
+        raise ESUnavailable("get session: malformed response")
+    return src, seq, term
 
 
 class _Conflict(Exception):
@@ -375,7 +387,9 @@ async def _bulk_embed_updates(updates: list) -> dict:
 # Three layers, so that no check-then-write window survives:
 #
 # 1. The session doc IS the tombstone. DELETE /session first flips it, with a
-#    seq-guarded write, to a purged form (title_source "purged", mapped fields
+#    seq-guarded write, to a purged form ({session_key, host, purged_at,
+#    purged_by} only — nothing transcript-derived survives; C8 deletes the
+#    marker 30 days after purged_at; mapped fields
 #    only); only then are messages and objects deleted. The doc stays purged
 #    until the operator clears it (DELETE /purged); ingest answers 409 purged.
 # 2. Every writer read the session doc's _seq_no/_primary_term before writing,
@@ -393,7 +407,6 @@ async def _bulk_embed_updates(updates: list) -> dict:
 # Within one process a per-session asyncio lock also serializes ingest, blob,
 # state and purge for the same key, so layers 2 and 3 only ever fire across
 # processes or restarts.
-PURGED_SOURCE = "purged"
 _PURGED: set = set()
 _LOCKS: "weakref.WeakValueDictionary" = weakref.WeakValueDictionary()
 
@@ -408,14 +421,20 @@ def _session_lock(session_key: str) -> asyncio.Lock:
 
 
 def _is_purged_doc(src) -> bool:
-    return isinstance(src, dict) and src.get("title_source") == PURGED_SOURCE
+    return isinstance(src, dict) and src.get("purged_at") is not None
 
 
-async def _purged_now(session_key: str) -> bool:
+async def _purged_now(session_key: str, expect_exists: bool = True) -> bool:
     """Authoritative re-read (no cache): used after every object PUT and after
-    a lost conditional write."""
+    a lost conditional write. Raises ESUnavailable when the state cannot be
+    established — including a session doc that is missing although the writer
+    read it earlier (expect_exists) — so callers fail closed."""
     got = await _get_session(session_key)
-    if got is not None and _is_purged_doc(got[0]):
+    if got is None:
+        if expect_exists:
+            raise ESUnavailable("session doc vanished during a write")
+        return False
+    if _is_purged_doc(got[0]):
         _PURGED.add(session_key)
         return True
     return False
@@ -428,30 +447,61 @@ def _refuse_purged_doc(session_key: str, src) -> None:
         raise HTTPError(409, "purged")
 
 
-async def _put_object_verified(backend, session_key: str, name: str, data: bytes) -> None:
-    """Write-then-verify (layer 3)."""
+async def _delete_object_quietly(backend, session_key: str, name: str) -> None:
+    try:
+        await backend.delete(name)
+    except sessions_archive.ArchiveError:
+        _log(f"straggler object left for C8 session={session_key}")
+
+
+async def _put_object_verified(backend, session_key: str, name: str, data: bytes,
+                               expect_exists: bool = True) -> None:
+    """Write-then-verify (layer 3). Purged -> delete the object, 409. The
+    purge state cannot be read -> delete the object too, 503 (fail closed)."""
     try:
         await backend.put(name, data)
     except sessions_archive.ArchiveError:
         raise HTTPError(503, "archive_unavailable") from None
-    if await _purged_now(session_key):
-        try:
-            await backend.delete(name)
-        except sessions_archive.ArchiveError:
-            _log(f"purged-session straggler left for C8 session={session_key}")
+    try:
+        purged = await _purged_now(session_key, expect_exists)
+    except ESUnavailable:
+        await _delete_object_quietly(backend, session_key, name)
+        raise HTTPError(503, "es_unavailable") from None
+    if purged:
+        await _delete_object_quietly(backend, session_key, name)
         raise HTTPError(409, "purged")
 
 
+async def _discard_quietly(discard, session_key: str) -> None:
+    try:
+        await discard()
+    except (ESUnavailable, sessions_archive.ArchiveError):
+        _log(f"discard incomplete, left for C8 session={session_key}")
+
+
 async def _guarded_put_session(session_key: str, doc: dict, seq, term, discard) -> None:
-    """Layer 2: the writer's conditional session write; on a lost race against
-    a purge, run `discard` (undo this writer's own writes) and answer 409."""
+    """Layer 2: the writer's conditional session write. Lost to a purge ->
+    discard this writer's own writes, 409. Lost to anything else -> 503 busy
+    (the writes are idempotent and the client retries). The write or the
+    follow-up read failing -> discard as well and 503: an unknown state is
+    treated like a purge, never as success."""
     try:
         await _put_session(session_key, doc, seq, term)
+        return
     except _Conflict:
-        if await _purged_now(session_key):
-            await discard()
-            raise HTTPError(409, "purged") from None
-        raise HTTPError(503, "busy") from None
+        pass
+    except ESUnavailable:
+        await _discard_quietly(discard, session_key)
+        raise HTTPError(503, "es_unavailable") from None
+    try:
+        purged = await _purged_now(session_key, expect_exists=seq is not None)
+    except ESUnavailable:
+        await _discard_quietly(discard, session_key)
+        raise HTTPError(503, "es_unavailable") from None
+    if purged:
+        await _discard_quietly(discard, session_key)
+        raise HTTPError(409, "purged")
+    raise HTTPError(503, "busy")
 
 
 async def _delete_message_ids(ids: list) -> None:
@@ -464,14 +514,15 @@ async def _delete_message_ids(ids: list) -> None:
         raise ESUnavailable(f"bulk delete: {r.status_code}")
 
 
-def _purged_form(src: dict) -> dict:
+def _purged_form(src: dict, purged_by: str) -> dict:
+    """The tombstone keeps nothing derived from the transcript: no title,
+    cwd, paths, branch or chunk list — only what is needed to refuse writes,
+    check the host, and let C8 expire the marker after 30 days."""
     return {"session_key": src["session_key"], "host": src["host"],
-            "project_dir": src.get("project_dir"), "session_id": src.get("session_id"),
-            "title_source": PURGED_SOURCE, "updated_at": _now_iso(), "interactive": False,
-            "archived": False, "archive_complete": False, "jsonl_exists": False}
+            "purged_at": _now_iso(), "purged_by": purged_by}
 
 
-async def _flip_purged(session_key: str) -> dict:
+async def _flip_purged(session_key: str, purged_by: str = "") -> dict:
     """Layer 1: seq-guarded flip of the session doc to its purged form.
     Retries a lost race against a writer (which then sees the new seq and
     fails its own conditional write). Returns the purged doc."""
@@ -483,7 +534,7 @@ async def _flip_purged(session_key: str) -> dict:
         if _is_purged_doc(src):
             _PURGED.add(session_key)
             return src
-        purged = _purged_form(src)
+        purged = _purged_form(src, purged_by)
         try:
             await _put_session(session_key, purged, seq, term)
         except _Conflict:
@@ -985,8 +1036,9 @@ async def ingest(request: Request, caller: dict):
 
     session_key = make_session_key(host, project_dir, session_id)
     # The whole write phase runs under the session's lock, so a concurrent
-    # DELETE /session either waits for it (and then deletes what it wrote) or
-    # has already left the purge marker, which refuses it here.
+    # DELETE /session in this process either waits for it (and then deletes what
+    # it wrote) or has already flipped the session doc, which refuses it here.
+    # Across processes the conditional session write below decides.
     async with _session_lock(session_key):
         if session_key in _PURGED:
             raise HTTPError(409, "purged")
@@ -1054,20 +1106,42 @@ async def ingest(request: Request, caller: dict):
         # Step 6 (main only): the archive chunk.
         archive_state = "skipped"
         archived_chunk = False
+        backend = name = None
+
+        async def discard():
+            # This writer lost to a purge (or cannot tell): undo exactly what it
+            # wrote. The purge already deleted everything that existed when it ran.
+            await _delete_message_ids([d["_id"] for d in parsed["docs"]])
+            if archived_chunk:
+                await _delete_object_quietly(backend, session_key, name)
+
         if kind == "main":
             backend = _archive_backend()
             if backend is not None:
                 name = sessions_archive.object_name(host, session_key, generation=generation, offset=offset)
-                await _put_object_verified(backend, session_key, name, sessions_archive.compress(payload))
+                await _put_object_verified(backend, session_key, name, sessions_archive.compress(payload),
+                                           expect_exists=existing is not None)
                 archive_state = "written"
                 archived_chunk = True
 
-        if new_generation and existing is not None:
-            # A rewritten or truncated JSONL starts over (§8 row 5) — only this
-            # stream's docs: the main file's, or one subagent's.
-            await _delete_messages(session_key, agent_id=agent_id, main_only=agent_id is None)
-        # Step 5: bulk index, no refresh.
-        await _bulk_index(MESSAGE_INDEX, parsed["docs"])
+        try:
+            if new_generation and existing is not None:
+                # A rewritten or truncated JSONL starts over (§8 row 5) — only this
+                # stream's docs: the main file's, or one subagent's.
+                await _delete_messages(session_key, agent_id=agent_id, main_only=agent_id is None)
+            # Step 5: bulk index, no refresh.
+            await _bulk_index(MESSAGE_INDEX, parsed["docs"])
+        except ESUnavailable:
+            # Fail closed: if the session is purged meanwhile, or its state cannot
+            # be read, remove what this writer may already have written. A plain
+            # ES hiccup on a live session leaves idempotent writes for the retry.
+            try:
+                purged = await _purged_now(session_key, expect_exists=existing is not None)
+            except ESUnavailable:
+                purged = True
+            if purged:
+                await _discard_quietly(discard, session_key)
+            raise
 
         delta = parsed["delta"]
         entry = {
@@ -1115,16 +1189,6 @@ async def ingest(request: Request, caller: dict):
                 doc["updated_at"] = _now_iso()
             if existing and existing.get("restored_from"):
                 doc["restored_from"] = existing["restored_from"]
-        async def discard():
-            # This writer lost to a purge: undo exactly what it wrote. The purge
-            # already deleted everything that existed when it ran.
-            await _delete_message_ids([d["_id"] for d in parsed["docs"]])
-            if archived_chunk:
-                try:
-                    await backend.delete(name)
-                except sessions_archive.ArchiveError:
-                    _log(f"purged-session straggler left for C8 session={session_key}")
-
         await _guarded_put_session(session_key, doc, seq, term, discard)
 
         _COUNTERS["ingested_segments"] += 1
@@ -1233,7 +1297,17 @@ async def preview(request: Request, caller: dict):
     return await _call_search(sessions_search.preview, be, session_key, q, caller)
 
 
-async def _download_segments(src: dict) -> bytes:
+async def _mark_incomplete(src: dict, seq, term) -> None:
+    """archive_complete=false, conditional on the doc version the download read:
+    a purged (or otherwise rewritten) doc is never touched."""
+    r = await _es("POST", f"/{SESSION_INDEX}/_update/{src['session_key']}"
+                  f"?if_seq_no={seq}&if_primary_term={term}",
+                  json={"doc": {"archive_complete": False}})
+    if r.status_code >= 400 and r.status_code not in (404, 409):
+        raise ESUnavailable(f"mark incomplete: {r.status_code}")
+
+
+async def _download_segments(src: dict, seq=None, term=None) -> bytes:
     """Concatenate the highest generation's chunks in offset order, checking
     contiguity and each chunk's sha256 against ES (§6.5, §8 rows 12 / 19)."""
     if not src.get("archived"):
@@ -1248,7 +1322,7 @@ async def _download_segments(src: dict) -> bytes:
     expected = 0
     for c in segs:
         if c["offset"] != expected or not c.get("archived"):
-            await _update_session(src["session_key"], {"archive_complete": False})
+            await _mark_incomplete(src, seq, term)
             raise HTTPError(409, "archive_incomplete")
         expected = c["end_offset"]
     backend = _archive_backend()
@@ -1261,7 +1335,7 @@ async def _download_segments(src: dict) -> bytes:
         try:
             data = sessions_archive.decompress(await backend.get(name))
         except sessions_archive.ArchiveNotFound:
-            await _update_session(src["session_key"], {"archive_complete": False})
+            await _mark_incomplete(src, seq, term)
             raise HTTPError(409, "archive_incomplete") from None
         except sessions_archive.ArchiveUnavailable:
             raise HTTPError(503, "archive_unavailable") from None
@@ -1279,9 +1353,9 @@ async def _download_segments(src: dict) -> bytes:
 async def archive(request: Request, caller: dict):
     session_key = _session_key_param(request.query_params.get("session_key"))
     got = await _get_session(session_key)
-    if got is None:
+    if got is None or _is_purged_doc(got[0]):
         raise HTTPError(404, "not_found")
-    data = await _download_segments(got[0])
+    data = await _download_segments(*got)
     return Response(data, media_type="application/x-ndjson",
                     headers={"X-Archive-Sha256": hashlib.sha256(data).hexdigest()})
 
@@ -1289,7 +1363,7 @@ async def archive(request: Request, caller: dict):
 async def archive_tool_results(request: Request, caller: dict):
     session_key = _session_key_param(request.query_params.get("session_key"))
     got = await _get_session(session_key)
-    if got is None:
+    if got is None or _is_purged_doc(got[0]):
         raise HTTPError(404, "not_found")
     src = got[0]
     entries = _blob_entries(src.get("archive_chunks"))
@@ -1333,7 +1407,7 @@ async def delete_session(request: Request, caller: dict):
         # Flip FIRST (seq-guarded): from here on every writer's conditional
         # write fails and it discards its batch. A failed purge (503) can be
         # retried; the doc stays purged meanwhile and the deletions re-run.
-        await _flip_purged(session_key)
+        await _flip_purged(session_key, identity._audit_token(caller.get("agent")))
         deleted_objects = 0
         if backend is not None:
             prefix = sessions_archive.object_name(src["host"], session_key)
@@ -1389,7 +1463,9 @@ async def status(request: Request, caller: dict):
         return JSONResponse(out)
     try:
         out["docs"] = await _count(MESSAGE_INDEX)
-        out["sessions"] = await _count(SESSION_INDEX)
+        out["sessions"] = await _count(
+            SESSION_INDEX, {"bool": {"must_not": [{"exists": {"field": "purged_at"}}]}})
+        out["purged_markers"] = await _count(SESSION_INDEX, {"exists": {"field": "purged_at"}})
         out["pending_embeddings"] = await _count(
             MESSAGE_INDEX, {"term": {"embedding_status": "pending"}})
     except ESUnavailable:

@@ -65,7 +65,7 @@ class FakeES:
         self.seq = 0
         self.calls: list = []
         self.created: dict = {}
-        self.fail_put = None
+        self.fail: dict = {}
 
     def _idx(self, name):
         return self.indices.setdefault(name, {})
@@ -73,6 +73,14 @@ class FakeES:
     async def request(self, method, path, json=None, content=None, headers=None):  # noqa: A002
         self.calls.append((method, path))
         base, _, query = path.partition("?")
+        # failure injection: {(method, base path): "5xx" | "garbage"}
+        mode = self.fail.get((method, base))
+        if mode == "5xx":
+            return FakeResp(503, {"error": "injected"})
+        if mode == "garbage":
+            r = FakeResp(200, {})
+            r.json = lambda: (_ for _ in ()).throw(ValueError("not json"))
+            return r
         parts = base.strip("/").split("/")
         if method == "POST" and parts == ["_bulk"]:
             lines = content.strip().split("\n")
@@ -178,6 +186,11 @@ class FakeES:
             if "term" in q:
                 (f, v), = q["term"].items()
                 n = sum(1 for s, _ in docs.values() if s.get(f) == v)
+            elif "exists" in q:
+                n = sum(1 for s, _ in docs.values() if s.get(q["exists"]["field"]) is not None)
+            elif "bool" in q:
+                f = q["bool"]["must_not"][0]["exists"]["field"]
+                n = sum(1 for s, _ in docs.values() if s.get(f) is None)
             else:
                 n = len(docs)
             return FakeResp(200, {"count": n})
@@ -273,6 +286,7 @@ class Base(unittest.TestCase):
     def setUp(self):
         FAKE.indices.clear()
         FAKE.calls.clear()
+        FAKE.fail.clear()
         self.store = arc.MemoryBackend()
         sa._ARCHIVE.clear()
         sa._ARCHIVE["backend"] = self.store
@@ -873,7 +887,7 @@ class Purge(Base):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json(), {"deleted_docs": 1, "deleted_objects": 1})
         self.assertEqual(self.store.objects, {})
-        self.assertEqual(self.session(sk)["title_source"], "purged")
+        self.assertTrue(sa._is_purged_doc(self.session(sk)))
 
     def test_hostless_operator_may_purge_any_host(self):
         sk = self.ingest(segment_body([line("u1", "x")], 0)).json()["session_key"]
@@ -1100,9 +1114,9 @@ class PurgeRace(Base):
         self.assertEqual(dele.status_code, 200, dele.text)
         # nothing the in-flight ingest wrote survived the purge
         self.assertEqual(FAKE.indices["memory-session-message"], {})
-        self.assertEqual(self.session(sk)["title_source"], "purged")
+        self.assertTrue(sa._is_purged_doc(self.session(sk)))
         self.assertEqual(self.store.objects, {})
-        self.assertEqual(set(self.session(sk)) - set(sa._purged_form(self.session(sk))), set())
+        self.assertEqual(set(self.session(sk)), {"session_key", "host", "purged_at", "purged_by"})
 
     def purged_session(self):
         r = self.ingest(segment_body([line("u1", "x")], 0))
@@ -1181,7 +1195,7 @@ class CrossProcessInterleavings(Base):
         # u2 was written after the purge's delete_by_query; only the writer's own
         # discard can have removed it
         self.assertEqual(FAKE.indices["memory-session-message"], {})
-        self.assertEqual(self.session(sk)["title_source"], "purged")
+        self.assertTrue(sa._is_purged_doc(self.session(sk)))
         self.assertEqual(self.store.objects, {})
         self.assertFalse([d for d in self.embedded if d["uuid"] == "u2"], "nothing of a discarded batch is embedded")
 
@@ -1257,7 +1271,7 @@ class CrossProcessInterleavings(Base):
             sa._owned_session = real
         self.assertEqual((r.status_code, r.json()["error"]), (409, "purged"))
         doc = self.session(sk)
-        self.assertEqual(doc["title_source"], "purged")
+        self.assertTrue(sa._is_purged_doc(doc))
         self.assertNotIn("jsonl_checked_at", doc)
 
     def test_two_creators_of_a_new_session(self):
@@ -1286,6 +1300,216 @@ class CrossProcessInterleavings(Base):
         self.assertIn("if_seq_no", body)
         self.assertIn("/_create/", body)
         self.assertNotIn('f"/{SESSION_INDEX}/_doc/{session_key}"\n', body)
+
+
+class FailClosed(Base):
+    """An unreadable purge state aborts the write with 503 and leaves nothing
+    behind; it is never read as "not purged"."""
+
+    def first(self):
+        r = self.ingest(segment_body([line("u1", "first")], 0)).json()
+        return r["session_key"], r["next_offset"]
+
+    def msgs(self):
+        return {s["uuid"] for s, _ in FAKE.indices.get("memory-session-message", {}).values()}
+
+    def test_purge_read_failure_at_ingest_start(self):
+        sk, nxt = self.first()
+        objects = dict(self.store.objects)
+        for mode in ("5xx", "garbage"):
+            with self.subTest(mode=mode):
+                FAKE.fail[("GET", f"/memory-session/_doc/{sk}")] = mode
+                r = self.ingest(segment_body([line("u2", "second")], nxt))
+                self.assertEqual((r.status_code, r.json()["error"]), (503, "es_unavailable"))
+                self.assertEqual(self.msgs(), {"u1"})
+                self.assertEqual(self.store.objects, objects)
+        FAKE.fail.clear()
+        self.assertEqual(self.ingest(segment_body([line("u2", "second")], nxt)).status_code, 200)
+
+    def test_verify_read_failure_deletes_the_object(self):
+        sk, nxt = self.first()
+        real_put = self.store.put
+        written = []
+
+        async def put_then_break(name, data):
+            await real_put(name, data)
+            written.append(name)
+            FAKE.fail[("GET", f"/memory-session/_doc/{sk}")] = "5xx"
+
+        self.store.put = put_then_break
+        try:
+            r = self.ingest(segment_body([line("u2", "second")], nxt))
+        finally:
+            self.store.put = real_put
+        self.assertEqual((r.status_code, r.json()["error"]), (503, "es_unavailable"))
+        self.assertNotIn(written[0], self.store.objects)
+        self.assertEqual(self.msgs(), {"u1"})
+
+    def test_session_doc_missing_where_expected(self):
+        sk, nxt = self.first()
+        real_put = self.store.put
+        written = []
+
+        async def put_then_vanish(name, data):
+            await real_put(name, data)
+            written.append(name)
+            FAKE.indices["memory-session"].pop(sk)
+
+        self.store.put = put_then_vanish
+        try:
+            r = self.ingest(segment_body([line("u2", "second")], nxt))
+        finally:
+            self.store.put = real_put
+        self.assertEqual(r.status_code, 503)
+        self.assertNotIn(written[0], self.store.objects)
+        self.assertEqual(self.msgs(), {"u1"})
+
+    def test_session_write_failure_discards(self):
+        sk, nxt = self.first()
+        FAKE.fail[("PUT", f"/memory-session/_doc/{sk}")] = "5xx"
+        r = self.ingest(segment_body([line("u2", "second")], nxt))
+        self.assertEqual((r.status_code, r.json()["error"]), (503, "es_unavailable"))
+        self.assertEqual(self.msgs(), {"u1"})
+        self.assertEqual(len(self.store.objects), 1, "the u2 chunk was deleted again")
+
+    def test_conflict_with_unreadable_state_discards(self):
+        sk, nxt = self.first()
+        real = sa._bulk_index
+
+        async def bulk_then_bump(index, docs):
+            res = await real(index, docs)
+            if index == sa.MESSAGE_INDEX:
+                src, _ = FAKE.indices["memory-session"][sk]
+                FAKE.seq += 1
+                FAKE.indices["memory-session"][sk] = (dict(src), FAKE.seq)  # someone wrote
+                FAKE.fail[("GET", f"/memory-session/_doc/{sk}")] = "5xx"   # and ES is down
+            return res
+
+        sa._bulk_index = bulk_then_bump
+        try:
+            r = self.ingest(segment_body([line("u2", "second")], nxt))
+        finally:
+            sa._bulk_index = real
+        self.assertEqual(r.status_code, 503)
+        self.assertEqual(self.msgs(), {"u1"})
+
+    def test_blob_verify_failure_deletes_the_object(self):
+        sk, _ = self.first()
+        real_put = self.store.put
+
+        async def put_then_break(name, data):
+            await real_put(name, data)
+            FAKE.fail[("GET", f"/memory-session/_doc/{sk}")] = "5xx"
+
+        self.store.put = put_then_break
+        content = "out"
+        try:
+            r = self.c.post(PREFIX + "/blob", content=gz({
+                "session_key": sk, "name": "b.txt", "content": content,
+                "sha256": hashlib.sha256(content.encode()).hexdigest()}), headers=PRO_DEV)
+        finally:
+            self.store.put = real_put
+        self.assertEqual(r.status_code, 503)
+        self.assertNotIn(f"sessions/pro-dev/{sk}/tool-results/b.txt.zst", self.store.objects)
+
+    def test_bulk_failure_racing_a_purge_discards(self):
+        sk, nxt = self.first()
+        real = sa._bulk_index
+        test = self
+
+        async def purge_then_fail(index, docs):
+            if index == sa.MESSAGE_INDEX:
+                await sa._flip_purged(sk)
+                await sa._delete_messages(sk)
+                raise sa.ESUnavailable("bulk: 503")
+            return await real(index, docs)
+
+        sa._bulk_index = purge_then_fail
+        try:
+            r = self.ingest(segment_body([line("u2", "second")], nxt))
+        finally:
+            sa._bulk_index = real
+        self.assertEqual(r.status_code, 503)
+        u2_chunk = arc.object_name("pro-dev", sk, generation=0, offset=nxt)
+        test.assertNotIn(u2_chunk, self.store.objects)
+
+    def test_bulk_failure_on_a_live_session_is_retryable(self):
+        sk, nxt = self.first()
+        real = sa._bulk_index
+        calls = []
+
+        async def fail_once(index, docs):
+            if index == sa.MESSAGE_INDEX and not calls:
+                calls.append(1)
+                raise sa.ESUnavailable("bulk: 503")
+            return await real(index, docs)
+
+        sa._bulk_index = fail_once
+        try:
+            b = segment_body([line("u2", "second")], nxt)
+            self.assertEqual(self.ingest(b).status_code, 503)
+            self.assertEqual(self.ingest(b).status_code, 200)
+        finally:
+            sa._bulk_index = real
+        self.assertEqual(self.msgs(), {"u1", "u2"})
+        r = self.c.get(PREFIX + "/archive", params={"session_key": sk}, headers=AIR)
+        self.assertEqual(r.status_code, 200)
+
+    def test_incomplete_mark_never_touches_a_purged_marker(self):
+        sk, _ = self.first()
+        src, seq = FAKE.indices["memory-session"][sk]
+        asyncio.run(sa._flip_purged(sk, "operator@example.com"))
+        asyncio.run(sa._mark_incomplete(src, seq, 1))  # stale version: dropped
+        self.assertEqual(set(self.session(sk)), {"session_key", "host", "purged_at", "purged_by"})
+
+    def test_purge_read_failure_aborts_the_purge(self):
+        sk, _ = self.first()
+        FAKE.fail[("GET", f"/memory-session/_doc/{sk}")] = "garbage"
+        r = self.c.delete(PREFIX + "/session", params={"session_key": sk}, headers=OPERATOR)
+        self.assertEqual(r.status_code, 503)
+        FAKE.fail.clear()
+        self.assertFalse(sa._is_purged_doc(self.session(sk)))
+        self.assertEqual(self.msgs(), {"u1"})
+
+
+class PurgedMarker(Base):
+    def test_marker_keeps_nothing_transcript_derived(self):
+        lines = [line("u1", "secret project plans"),
+                 json.dumps({"type": "ai-title", "aiTitle": "Plans for the merger"})]
+        sk = self.ingest(segment_body(lines, 0)).json()["session_key"]
+        content = "tool output"
+        self.c.post(PREFIX + "/blob", content=gz({
+            "session_key": sk, "name": "t.txt", "content": content,
+            "sha256": hashlib.sha256(content.encode()).hexdigest()}), headers=PRO_DEV)
+        before = self.session(sk)
+        self.assertEqual(before["title"], "Plans for the merger")
+        with _StubVoyage():
+            asyncio.run(sa._embed_docs(self.embedded))
+        self.assertTrue(any("embedding" in s for s, _ in FAKE.indices["memory-session-message"].values()))
+        r = self.c.delete(PREFIX + "/session", params={"session_key": sk}, headers=OPERATOR)
+        self.assertEqual(r.status_code, 200)
+        doc = self.session(sk)
+        self.assertEqual(set(doc), {"session_key", "host", "purged_at", "purged_by"})
+        self.assertEqual(doc["purged_by"], "operator@example.com")
+        dumped = json.dumps(doc)
+        for leaked in ("Plans", "secret", "/home/dev", PDIR, SID, "t.txt"):
+            self.assertNotIn(leaked, dumped)
+        # message docs, and their vectors with them, are gone; so are objects
+        self.assertEqual(FAKE.indices["memory-session-message"], {})
+        self.assertEqual(self.store.objects, {})
+        mapping = sa.index_definitions()["memory-session"][0]["mappings"]["properties"]
+        self.assertEqual((mapping["purged_at"]["type"], mapping["purged_by"]["type"]), ("date", "keyword"))
+
+    def test_status_and_downloads_never_expose_a_purged_session(self):
+        sk = self.ingest(segment_body([line("u1", "x")], 0)).json()["session_key"]
+        self.ingest(segment_body([line("u1", "y")], 0, sid="bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"))
+        self.c.delete(PREFIX + "/session", params={"session_key": sk}, headers=OPERATOR)
+        st = self.c.get(PREFIX + "/status", headers=PRO_DEV).json()
+        self.assertEqual((st["sessions"], st["purged_markers"]), (1, 1))
+        self.assertNotIn("title", json.dumps(st))
+        for path in ("/archive", "/archive/tool-results"):
+            r = self.c.get(PREFIX + path, params={"session_key": sk}, headers=AIR)
+            self.assertEqual(r.status_code, 404, path)
 
 
 class Bounds(unittest.TestCase):

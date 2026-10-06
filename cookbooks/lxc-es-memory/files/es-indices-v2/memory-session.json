@@ -122,6 +122,12 @@
       },
       "parser_version": {
         "type": "keyword"
+      },
+      "purged_at": {
+        "type": "date"
+      },
+      "purged_by": {
+        "type": "keyword"
       }
     }
   }
