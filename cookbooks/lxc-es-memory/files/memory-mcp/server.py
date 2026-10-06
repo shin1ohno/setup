@@ -29,6 +29,17 @@ import es_backend as be
 import identity
 
 try:
+    import sessions_app
+except ImportError as _sessions_exc:
+    # The session-search sub-app is additive: a deployment whose file list
+    # predates it keeps serving /memory/mcp. CI imports sessions_app from the
+    # MANIFEST artifact (bin/check-memory-v2-manifest), so a module that is
+    # listed but broken fails there, not silently here.
+    sessions_app = None
+    print(f"SESSIONS disabled: {_sessions_exc.__class__.__name__}: {_sessions_exc}",
+          file=sys.stderr, flush=True)
+
+try:
     from policy_mcp import PolicyFastMCP
     from policy_mcp import request_headers as _headers
 except ImportError:
@@ -314,11 +325,23 @@ if hasattr(mcp, "check_client_policy"):
 # ("session manager not initialized"). Run it from the parent lifespan.
 @asynccontextmanager
 async def lifespan(_app):
+    # Session indices are ensured in a background task (sessions_app retries
+    # until they exist with the expected _meta.schema), so a missing grant on
+    # the session indices never delays or breaks the memory MCP server.
+    if sessions_app is not None:
+        sessions_app.start_background()
     async with mcp.session_manager.run():
         yield
 
 
+# /memory/sessions/v1 is mounted AHEAD of /memory: Starlette matches routes in
+# order, and the /memory mount would otherwise swallow the sessions prefix.
+_routes = []
+if sessions_app is not None:
+    _routes.append(Mount("/memory/sessions/v1", app=sessions_app.app))
+_routes.append(Mount("/memory", app=mcp.streamable_http_app()))
+
 app = Starlette(
-    routes=[Mount("/memory", app=mcp.streamable_http_app())],
+    routes=_routes,
     lifespan=lifespan,
 )

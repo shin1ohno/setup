@@ -8,7 +8,9 @@
 # indices before the plugin is loaded fleet-wide fails with
 # unknown_tokenizer). Then PUTs the 4 indices (treating
 # resource_already_exists_exception as success) and adds the memory-all alias
-# over the 3 content indices (NOT memory-stats). Safe to re-run.
+# over the 3 content indices (NOT memory-stats). Then the two session-search
+# indices (memory-session, memory-session-message), which are never in
+# memory-all. Safe to re-run.
 
 set -euo pipefail
 
@@ -25,6 +27,9 @@ KNOWLEDGE_INDEX="${KNOWLEDGE_INDEX:-memory-knowledge}"
 EPISODE_INDEX="${EPISODE_INDEX:-memory-episode}"
 STATS_INDEX="${STATS_INDEX:-memory-stats}"
 ALL_ALIAS="${ALL_ALIAS:-memory-all}"
+# Session search (design spec §7.1). Deliberately NOT in memory-all.
+SESSION_INDEX="${SESSION_INDEX:-memory-session}"
+SESSION_MESSAGE_INDEX="${SESSION_MESSAGE_INDEX:-memory-session-message}"
 
 es_curl() {
   curl -sk -u "${ES_USER}:${ES_PASSWORD}" "$@"
@@ -105,5 +110,17 @@ create_index "${EPISODE_INDEX}"   "${DIR}/memory-episode.json"
 create_index "${STATS_INDEX}"     "${DIR}/memory-stats.json"
 
 create_alias
+
+# The session indices are optional here: the memory-mcp server also creates them
+# at startup (sessions_app.ensure_session_indices), and a deploy whose file list
+# does not yet carry their JSON must not fail the whole bootstrap.
+for pair in "${SESSION_INDEX}:memory-session.json" "${SESSION_MESSAGE_INDEX}:memory-session-message.json"; do
+  name="${pair%%:*}"; file="${DIR}/${pair#*:}"
+  if [ -f "${file}" ]; then
+    create_index "${name}" "${file}"
+  else
+    echo "WARN: ${file} not deployed — skipping ${name} (the server creates it at startup)" >&2
+  fi
+done
 
 echo "memory-v2 ES index setup complete."
