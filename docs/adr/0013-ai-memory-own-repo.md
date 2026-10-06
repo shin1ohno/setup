@@ -73,6 +73,8 @@ ai-memory は public なので、CT 119 は setup と同じ匿名 HTTPS で取�
 無い（survey `precedents.stream_specific` §5、`auto-mitamae-target/default.rb:50`）。ただしこのプロファイルは
 SSM から account-wide な GitHub 鍵を読める（S1）。本 ADR はこの経路を広げも狭めもせず、修正は別トラックで行う（S1）。
 
+この決定の対象は、コード取得のための GitHub 資格情報である。2026-10-06 のユーザー決定により、session search のアーカイブ書き込みについてだけ例外を置く。CT 119 に専用の取得主体 `es-memory-ct119-bootstrap`（SSM `/es-memory-ct119/*` だけを読める）を置き、そこから S3 の書き込み主体 `memory-session-archive`（`sessions/*` prefix 限定）の鍵を得る。fleet 共有の `pve-bootstrap-ssm` には何も足さない（`docs/design/claude-session-search.md` §10）。
+
 ### 4. IAM 信頼境界は動かさない
 
 IAM・KMS・SSM 書き込みの定義は home-monitor に残り、ai-memory は AWS の principal を持たない（「ADR 0002・0003
