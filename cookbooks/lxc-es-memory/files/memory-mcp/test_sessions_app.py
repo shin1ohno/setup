@@ -638,12 +638,27 @@ class Ingest(Base):
                 stored = arc.decompress(next(iter(self.store.objects.values()))).decode()
                 self.assertEqual(stored.splitlines()[1], tomb)
 
-    def test_archive_disabled_is_skipped(self):
+    def test_archive_explicitly_disabled_is_skipped(self):
         sa._ARCHIVE["backend"] = None
-        r = self.ingest(segment_body([line("u1", "x")], 0))
+        os.environ["SESSION_ARCHIVE_BACKEND"] = "none"
+        try:
+            r = self.ingest(segment_body([line("u1", "x")], 0))
+        finally:
+            os.environ.pop("SESSION_ARCHIVE_BACKEND", None)
         self.assertEqual(r.json()["archive"], "skipped")
         s = self.session(r.json()["session_key"])
         self.assertFalse(s["archived"])
+
+    def test_archive_unconfigured_is_503_and_indexes_nothing(self):
+        # Unset backend is "not ready yet", not "disabled": a main segment
+        # accepted now would never be archived later, so it is refused and the
+        # client keeps its cursor.
+        sa._ARCHIVE["backend"] = None
+        os.environ.pop("SESSION_ARCHIVE_BACKEND", None)
+        r = self.ingest(segment_body([line("u1", "x")], 0))
+        self.assertEqual(r.status_code, 503)
+        self.assertEqual(r.json()["error"], "archive_unavailable")
+        self.assertEqual(len(FAKE.indices.get(sa.MESSAGE_INDEX, {})), 0)
 
     def test_archive_outage_is_503_and_holds_the_cursor(self):
         class Down(arc.MemoryBackend):
