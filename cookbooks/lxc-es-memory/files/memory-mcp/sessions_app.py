@@ -283,13 +283,22 @@ async def _get_session(session_key: str):
     return data["_source"], data.get("_seq_no"), data.get("_primary_term")
 
 
+class _Conflict(Exception):
+    """A conditional session-doc write lost: the doc changed (or appeared)
+    since the writer read it."""
+
+
 async def _put_session(session_key: str, doc: dict, seq=None, term=None) -> None:
-    path = f"/{SESSION_INDEX}/_doc/{session_key}"
+    """Never unconditional: with (seq, term) it is `if_seq_no/if_primary_term`,
+    without them it is `_create` (fails if the doc exists). Either way a purge
+    that flipped the doc in between makes this raise _Conflict."""
     if seq is not None and term is not None:
-        path += f"?if_seq_no={seq}&if_primary_term={term}"
+        path = f"/{SESSION_INDEX}/_doc/{session_key}?if_seq_no={seq}&if_primary_term={term}"
+    else:
+        path = f"/{SESSION_INDEX}/_create/{session_key}"
     r = await _es("PUT", path, json=doc)
     if r.status_code == 409:
-        raise HTTPError(503, "busy")
+        raise _Conflict()
     if r.status_code >= 400:
         raise ESUnavailable(f"put session: {r.status_code}")
 
@@ -361,18 +370,30 @@ async def _bulk_embed_updates(updates: list) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Purge tombstone (security review: a purge must not be undone by work in flight)
+# Purge (security review: a purge must not be undone by work in flight)
 # --------------------------------------------------------------------------- #
-# DELETE /session first writes a durable marker doc (`purge-<session_key>` in the
-# session index; mapped fields only, title_source "purged") and records the key
-# in-process, THEN deletes. Every write path holds the session's lock and checks
-# the marker, so an ingest, blob or state write either completes before the
-# purge starts (and is then deleted by it) or sees the marker and is refused
-# with 409 purged. The background embedding is outside the lock and is guarded
-# twice: it skips purged keys, and its ES write is a conditional `_update`
-# (seq_no / primary_term) that fails on a deleted doc instead of re-creating it.
-# The marker stays until the operator clears it with DELETE /purged.
-PURGE_MARKER_PREFIX = "purge-"
+# Three layers, so that no check-then-write window survives:
+#
+# 1. The session doc IS the tombstone. DELETE /session first flips it, with a
+#    seq-guarded write, to a purged form (title_source "purged", mapped fields
+#    only); only then are messages and objects deleted. The doc stays purged
+#    until the operator clears it (DELETE /purged); ingest answers 409 purged.
+# 2. Every writer read the session doc's _seq_no/_primary_term before writing,
+#    and its own session-doc write is conditional on them (or `_create` for a
+#    new session). A purge that flipped the doc in between makes that write
+#    fail; the writer then re-reads, sees "purged", and DISCARDS what it wrote
+#    (its message docs by id, its archive object). The embedding update is a
+#    seq-guarded `_update` without upsert, so it cannot re-create a doc either.
+# 3. Object storage cannot be conditional on ES, so every archive / blob PUT is
+#    write-then-verify: the session doc is re-read after the PUT and the object
+#    is deleted again when the session is purged. Purge deletes the whole
+#    prefix; a straggler from a writer that died between PUT and verify is
+#    removed by C8's daily re-sweep of purged sessions (bound: one day).
+#
+# Within one process a per-session asyncio lock also serializes ingest, blob,
+# state and purge for the same key, so layers 2 and 3 only ever fire across
+# processes or restarts.
+PURGED_SOURCE = "purged"
 _PURGED: set = set()
 _LOCKS: "weakref.WeakValueDictionary" = weakref.WeakValueDictionary()
 
@@ -386,32 +407,90 @@ def _session_lock(session_key: str) -> asyncio.Lock:
     return lock
 
 
-async def _is_purged(session_key: str) -> bool:
-    if session_key in _PURGED:
-        return True
-    r = await _es("GET", f"/{SESSION_INDEX}/_doc/{PURGE_MARKER_PREFIX}{session_key}")
-    if r.status_code == 404:
-        return False
-    if r.status_code != 200:
-        raise ESUnavailable(f"purge marker: {r.status_code}")
-    if r.json().get("found"):
+def _is_purged_doc(src) -> bool:
+    return isinstance(src, dict) and src.get("title_source") == PURGED_SOURCE
+
+
+async def _purged_now(session_key: str) -> bool:
+    """Authoritative re-read (no cache): used after every object PUT and after
+    a lost conditional write."""
+    got = await _get_session(session_key)
+    if got is not None and _is_purged_doc(got[0]):
         _PURGED.add(session_key)
         return True
     return False
 
 
-async def _refuse_if_purged(session_key: str) -> None:
-    if await _is_purged(session_key):
+def _refuse_purged_doc(session_key: str, src) -> None:
+    if session_key in _PURGED or _is_purged_doc(src):
+        if _is_purged_doc(src):
+            _PURGED.add(session_key)
         raise HTTPError(409, "purged")
 
 
-async def _mark_purged(session_key: str, host: str) -> None:
-    _PURGED.add(session_key)
-    r = await _es("PUT", f"/{SESSION_INDEX}/_doc/{PURGE_MARKER_PREFIX}{session_key}?refresh=wait_for",
-                  json={"session_key": session_key, "host": host, "updated_at": _now_iso(),
-                        "title_source": "purged", "interactive": False, "archived": False})
+async def _put_object_verified(backend, session_key: str, name: str, data: bytes) -> None:
+    """Write-then-verify (layer 3)."""
+    try:
+        await backend.put(name, data)
+    except sessions_archive.ArchiveError:
+        raise HTTPError(503, "archive_unavailable") from None
+    if await _purged_now(session_key):
+        try:
+            await backend.delete(name)
+        except sessions_archive.ArchiveError:
+            _log(f"purged-session straggler left for C8 session={session_key}")
+        raise HTTPError(409, "purged")
+
+
+async def _guarded_put_session(session_key: str, doc: dict, seq, term, discard) -> None:
+    """Layer 2: the writer's conditional session write; on a lost race against
+    a purge, run `discard` (undo this writer's own writes) and answer 409."""
+    try:
+        await _put_session(session_key, doc, seq, term)
+    except _Conflict:
+        if await _purged_now(session_key):
+            await discard()
+            raise HTTPError(409, "purged") from None
+        raise HTTPError(503, "busy") from None
+
+
+async def _delete_message_ids(ids: list) -> None:
+    if not ids:
+        return
+    lines = [json.dumps({"delete": {"_index": MESSAGE_INDEX, "_id": i}}) for i in ids]
+    r = await _es("POST", "/_bulk", content="\n".join(lines) + "\n",
+                  headers={"Content-Type": "application/x-ndjson"})
     if r.status_code >= 400:
-        raise ESUnavailable(f"purge marker write: {r.status_code}")
+        raise ESUnavailable(f"bulk delete: {r.status_code}")
+
+
+def _purged_form(src: dict) -> dict:
+    return {"session_key": src["session_key"], "host": src["host"],
+            "project_dir": src.get("project_dir"), "session_id": src.get("session_id"),
+            "title_source": PURGED_SOURCE, "updated_at": _now_iso(), "interactive": False,
+            "archived": False, "archive_complete": False, "jsonl_exists": False}
+
+
+async def _flip_purged(session_key: str) -> dict:
+    """Layer 1: seq-guarded flip of the session doc to its purged form.
+    Retries a lost race against a writer (which then sees the new seq and
+    fails its own conditional write). Returns the purged doc."""
+    for _ in range(10):
+        got = await _get_session(session_key)
+        if got is None:
+            raise HTTPError(404, "not_found")
+        src, seq, term = got
+        if _is_purged_doc(src):
+            _PURGED.add(session_key)
+            return src
+        purged = _purged_form(src)
+        try:
+            await _put_session(session_key, purged, seq, term)
+        except _Conflict:
+            continue
+        _PURGED.add(session_key)
+        return purged
+    raise HTTPError(503, "busy")
 
 
 async def _delete_messages(session_key: str, agent_id: str | None = None,
@@ -909,7 +988,8 @@ async def ingest(request: Request, caller: dict):
     # DELETE /session either waits for it (and then deletes what it wrote) or
     # has already left the purge marker, which refuses it here.
     async with _session_lock(session_key):
-        await _refuse_if_purged(session_key)
+        if session_key in _PURGED:
+            raise HTTPError(409, "purged")
         # Step 3: strict load + re-scan, off the event loop, under a deadline.
         async with _segment_slot(caller):
             scan = await _run_bounded(_scan_segment, lines, version)
@@ -937,6 +1017,7 @@ async def ingest(request: Request, caller: dict):
         existing, seq, term = got if got else (None, None, None)
         if existing and existing.get("host") != host:
             raise HTTPError(403, "host_mismatch")
+        _refuse_purged_doc(session_key, existing)
         chunks = list((existing or {}).get("archive_chunks") or [])
         stream = _stream_chunks(chunks, agent_id)
         if agent_id is None:
@@ -977,10 +1058,7 @@ async def ingest(request: Request, caller: dict):
             backend = _archive_backend()
             if backend is not None:
                 name = sessions_archive.object_name(host, session_key, generation=generation, offset=offset)
-                try:
-                    await backend.put(name, sessions_archive.compress(payload))
-                except sessions_archive.ArchiveError:
-                    raise HTTPError(503, "archive_unavailable") from None
+                await _put_object_verified(backend, session_key, name, sessions_archive.compress(payload))
                 archive_state = "written"
                 archived_chunk = True
 
@@ -1037,7 +1115,17 @@ async def ingest(request: Request, caller: dict):
                 doc["updated_at"] = _now_iso()
             if existing and existing.get("restored_from"):
                 doc["restored_from"] = existing["restored_from"]
-        await _put_session(session_key, doc, seq, term)
+        async def discard():
+            # This writer lost to a purge: undo exactly what it wrote. The purge
+            # already deleted everything that existed when it ran.
+            await _delete_message_ids([d["_id"] for d in parsed["docs"]])
+            if archived_chunk:
+                try:
+                    await backend.delete(name)
+                except sessions_archive.ArchiveError:
+                    _log(f"purged-session straggler left for C8 session={session_key}")
+
+        await _guarded_put_session(session_key, doc, seq, term, discard)
 
         _COUNTERS["ingested_segments"] += 1
         # Step 7: embeddings in the background.
@@ -1078,18 +1166,22 @@ async def blob(request: Request, caller: dict):
     # Write phase under the session lock, re-reading the session doc: a purge
     # that ran while the content was being scanned leaves the marker (409).
     async with _session_lock(session_key):
-        await _refuse_if_purged(session_key)
         src, seq, term = await _owned_session(session_key, caller)
+        _refuse_purged_doc(session_key, src)
         obj = sessions_archive.object_name(src["host"], session_key, tool_result=name)
-        try:
-            await backend.put(obj, sessions_archive.compress(data))
-        except sessions_archive.ArchiveError:
-            raise HTTPError(503, "archive_unavailable") from None
+        await _put_object_verified(backend, session_key, obj, sessions_archive.compress(data))
         chunks = [c for c in src.get("archive_chunks") or [] if c.get("name") != name]
         chunks.append({"name": name, "sha256": sha, "bytes": len(data)})
         src = dict(src)
         src["archive_chunks"] = chunks
-        await _put_session(session_key, src, seq, term)
+
+        async def discard():
+            try:
+                await backend.delete(obj)
+            except sessions_archive.ArchiveError:
+                _log(f"purged-session straggler left for C8 session={session_key}")
+
+        await _guarded_put_session(session_key, src, seq, term, discard)
     return JSONResponse({"stored": True})
 
 
@@ -1100,9 +1192,17 @@ async def state(request: Request, caller: dict):
     if not isinstance(exists, bool):
         raise HTTPError(400, "invalid_request", field="jsonl_exists")
     async with _session_lock(session_key):
-        await _refuse_if_purged(session_key)
-        await _owned_session(session_key, caller)
-        await _update_session(session_key, {"jsonl_exists": exists, "jsonl_checked_at": _now_iso()})
+        src, seq, term = await _owned_session(session_key, caller)
+        _refuse_purged_doc(session_key, src)
+        r = await _es("POST", f"/{SESSION_INDEX}/_update/{session_key}"
+                      f"?if_seq_no={seq}&if_primary_term={term}",
+                      json={"doc": {"jsonl_exists": exists, "jsonl_checked_at": _now_iso()}})
+        if r.status_code == 409:
+            if await _purged_now(session_key):
+                raise HTTPError(409, "purged")
+            raise HTTPError(503, "busy")
+        if r.status_code >= 400:
+            raise ESUnavailable(f"state update: {r.status_code}")
     return JSONResponse({"ok": True})
 
 
@@ -1230,9 +1330,10 @@ async def delete_session(request: Request, caller: dict):
     async with _session_lock(session_key):
         src, _, _ = await _owned_session(session_key, caller, allow_hostless=True)
         backend = _archive_backend()
-        # Marker FIRST: from here on every write path refuses this key, and a
-        # failed purge (503) can simply be retried — it stays refused meanwhile.
-        await _mark_purged(session_key, src["host"])
+        # Flip FIRST (seq-guarded): from here on every writer's conditional
+        # write fails and it discards its batch. A failed purge (503) can be
+        # retried; the doc stays purged meanwhile and the deletions re-run.
+        await _flip_purged(session_key)
         deleted_objects = 0
         if backend is not None:
             prefix = sessions_archive.object_name(src["host"], session_key)
@@ -1244,10 +1345,6 @@ async def delete_session(request: Request, caller: dict):
             except sessions_archive.ArchiveError:
                 raise HTTPError(503, "archive_unavailable") from None
         deleted_docs = await _delete_messages(session_key)
-        r = await _es("DELETE", f"/{SESSION_INDEX}/_doc/{session_key}")
-        if r.status_code not in (200, 404):
-            raise ESUnavailable(f"delete session: {r.status_code}")
-        deleted_docs += 1 if r.status_code == 200 else 0
     _log(f"purge session={session_key} host={src.get('host')} by={caller.get('agent')}"
          f" docs={deleted_docs} objects={deleted_objects}")
     return JSONResponse({"deleted_docs": deleted_docs, "deleted_objects": deleted_objects})
@@ -1258,19 +1355,19 @@ async def clear_purged(request: Request, caller: dict):
     (e.g. a deliberate re-backfill). Same host rule as DELETE /session."""
     session_key = _session_key_param(request.query_params.get("session_key"))
     async with _session_lock(session_key):
-        marker_id = f"{PURGE_MARKER_PREFIX}{session_key}"
-        r = await _es("GET", f"/{SESSION_INDEX}/_doc/{marker_id}")
-        if r.status_code == 404 or (r.status_code == 200 and not r.json().get("found")):
+        got = await _get_session(session_key)
+        if got is None or not _is_purged_doc(got[0]):
             _PURGED.discard(session_key)
             raise HTTPError(404, "not_purged")
-        if r.status_code != 200:
-            raise ESUnavailable(f"purge marker: {r.status_code}")
-        host = r.json()["_source"].get("host")
-        if caller.get("host") is not None and host != caller["host"]:
+        src, seq, term = got
+        if caller.get("host") is not None and src.get("host") != caller["host"]:
             raise HTTPError(403, "host_mismatch")
-        d = await _es("DELETE", f"/{SESSION_INDEX}/_doc/{marker_id}?refresh=wait_for")
+        d = await _es("DELETE", f"/{SESSION_INDEX}/_doc/{session_key}"
+                      f"?if_seq_no={seq}&if_primary_term={term}")
+        if d.status_code == 409:
+            raise HTTPError(503, "busy")
         if d.status_code not in (200, 404):
-            raise ESUnavailable(f"purge marker delete: {d.status_code}")
+            raise ESUnavailable(f"purged doc delete: {d.status_code}")
         _PURGED.discard(session_key)
     _log(f"purge marker cleared session={session_key} by={caller.get('agent')}")
     return JSONResponse({"cleared": True})

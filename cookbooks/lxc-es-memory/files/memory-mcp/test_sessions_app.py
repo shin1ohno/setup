@@ -78,9 +78,20 @@ class FakeES:
             lines = content.strip().split("\n")
             items = []
             errors = False
-            for meta, src in zip(lines[::2], lines[1::2]):
+            actions = []
+            it = iter(lines)
+            for meta in it:
                 action = __import__("json").loads(meta)
-                body = __import__("json").loads(src)
+                if "delete" in action:
+                    actions.append((action, None))
+                else:
+                    actions.append((action, __import__("json").loads(next(it))))
+            for action, body in actions:
+                if "delete" in action:
+                    m = action["delete"]
+                    found = self._idx(m["_index"]).pop(m["_id"], None) is not None
+                    items.append({"delete": {"_id": m["_id"], "status": 200 if found else 404}})
+                    continue
                 if "update" in action:
                     m = action["update"]
                     docs = self._idx(m["_index"])
@@ -130,9 +141,20 @@ class FakeES:
                     del docs[did]
                     return FakeResp(200, {})
                 return FakeResp(404, {})
+        if len(parts) == 3 and parts[1] == "_create" and method == "PUT":
+            docs = self._idx(index)
+            if parts[2] in docs:
+                return FakeResp(409, {})
+            self.seq += 1
+            docs[parts[2]] = (__import__("copy").deepcopy(json), self.seq)
+            return FakeResp(201, {})
         if len(parts) == 3 and parts[1] == "_update" and method == "POST":
             docs = self._idx(index)
             did = parts[2]
+            if "if_seq_no" in query:
+                want = int(re.search(r"if_seq_no=(\d+)", query).group(1))
+                if did not in docs or docs[did][1] != want:
+                    return FakeResp(409, {})
             self.seq += 1
             if did in docs:
                 src = dict(docs[did][0])
@@ -849,9 +871,9 @@ class Purge(Base):
         sk = r.json()["session_key"]
         r = self.c.delete(PREFIX + "/session", params={"session_key": sk}, headers=AIR)
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json(), {"deleted_docs": 2, "deleted_objects": 1})
+        self.assertEqual(r.json(), {"deleted_docs": 1, "deleted_objects": 1})
         self.assertEqual(self.store.objects, {})
-        self.assertNotIn(sk, FAKE.indices["memory-session"])
+        self.assertEqual(self.session(sk)["title_source"], "purged")
 
     def test_hostless_operator_may_purge_any_host(self):
         sk = self.ingest(segment_body([line("u1", "x")], 0)).json()["session_key"]
@@ -1078,9 +1100,9 @@ class PurgeRace(Base):
         self.assertEqual(dele.status_code, 200, dele.text)
         # nothing the in-flight ingest wrote survived the purge
         self.assertEqual(FAKE.indices["memory-session-message"], {})
-        self.assertNotIn(sk, FAKE.indices["memory-session"])
+        self.assertEqual(self.session(sk)["title_source"], "purged")
         self.assertEqual(self.store.objects, {})
-        self.assertIn(sa.PURGE_MARKER_PREFIX + sk, FAKE.indices["memory-session"])
+        self.assertEqual(set(self.session(sk)) - set(sa._purged_form(self.session(sk))), set())
 
     def purged_session(self):
         r = self.ingest(segment_body([line("u1", "x")], 0))
@@ -1100,7 +1122,7 @@ class PurgeRace(Base):
         r = self.c.post(PREFIX + "/blob", content=gz({
             "session_key": sk, "name": "a.txt", "content": content,
             "sha256": hashlib.sha256(content.encode()).hexdigest()}), headers=PRO_DEV)
-        self.assertEqual(r.status_code, 404)  # the session doc is gone
+        self.assertEqual((r.status_code, r.json()["error"]), (409, "purged"))
         self.assertEqual(self.store.objects, {})
 
     def test_marker_survives_a_restart(self):
@@ -1124,6 +1146,146 @@ class PurgeRace(Base):
         sk = self.purged_session()
         r = self.c.delete(PREFIX + "/purged", params={"session_key": sk}, headers=AIR)
         self.assertEqual((r.status_code, r.json()["error"]), (403, "host_mismatch"))
+
+
+class CrossProcessInterleavings(Base):
+    """The per-session lock only serializes one process. These drive another
+    process's purge (sa._flip_purged + deletions, no lock) into the exact gaps
+    of a writer, and assert the ES / storage guards alone keep the purge final."""
+
+    def other_process_purge(self, sk, delete_objects=True):
+        async def purge():
+            await sa._flip_purged(sk)
+            await sa._delete_messages(sk)
+            if delete_objects:
+                for name in await self.store.list(arc.object_name("pro-dev", sk)):
+                    await self.store.delete(name)
+        return purge()
+
+    def test_purge_between_seq_read_and_write(self):
+        r1 = self.ingest(segment_body([line("u1", "first")], 0)).json()
+        sk = r1["session_key"]
+        real = sa._bulk_index
+
+        async def bulk_after_purge(index, docs):
+            if index == sa.MESSAGE_INDEX and any(d["uuid"] == "u2" for d in docs):
+                await self.other_process_purge(sk)  # flip + delete_by_query BEFORE our bulk
+            return await real(index, docs)
+
+        sa._bulk_index = bulk_after_purge
+        try:
+            r = self.ingest(segment_body([line("u2", "second")], r1["next_offset"]))
+        finally:
+            sa._bulk_index = real
+        self.assertEqual((r.status_code, r.json()["error"]), (409, "purged"))
+        # u2 was written after the purge's delete_by_query; only the writer's own
+        # discard can have removed it
+        self.assertEqual(FAKE.indices["memory-session-message"], {})
+        self.assertEqual(self.session(sk)["title_source"], "purged")
+        self.assertEqual(self.store.objects, {})
+        self.assertFalse([d for d in self.embedded if d["uuid"] == "u2"], "nothing of a discarded batch is embedded")
+
+    def test_purge_between_put_and_verify_ingest(self):
+        r1 = self.ingest(segment_body([line("u1", "first")], 0)).json()
+        sk = r1["session_key"]
+        store, test = self.store, self
+        real_put = store.put
+        written, mark = [], []
+
+        async def put_then_purge(name, data):
+            await real_put(name, data)
+            written.append(name)
+            # the other purge listed the prefix BEFORE this object existed
+            await test.other_process_purge(sk, delete_objects=False)
+            mark.append(len(FAKE.calls))
+
+        store.put = put_then_purge
+        try:
+            r = self.ingest(segment_body([line("u2", "second")], r1["next_offset"]))
+        finally:
+            store.put = real_put
+        self.assertEqual((r.status_code, r.json()["error"]), (409, "purged"))
+        self.assertEqual(len(written), 1)
+        self.assertNotIn(written[0], self.store.objects, "verify deleted the straggler")
+        self.assertFalse(any(s["uuid"] == "u2" for s, _ in
+                             FAKE.indices.get("memory-session-message", {}).values()))
+        # refused AT verify: after the PUT nothing but the verify read reached ES
+        # (no bulk, no conditional session write)
+        after = FAKE.calls[mark[0]:]
+        self.assertEqual([c[:2] for c in after], [("GET", f"/memory-session/_doc/{sk}")])
+
+    def test_purge_between_put_and_verify_blob(self):
+        sk = self.ingest(segment_body([line("u1", "x")], 0)).json()["session_key"]
+        real_put = self.store.put
+        test = self
+
+        mark = []
+
+        async def put_then_purge(name, data):
+            await real_put(name, data)
+            await test.other_process_purge(sk, delete_objects=False)
+            mark.append(len(FAKE.calls))
+
+        self.store.put = put_then_purge
+        content = "tool output"
+        try:
+            r = self.c.post(PREFIX + "/blob", content=gz({
+                "session_key": sk, "name": "t.txt", "content": content,
+                "sha256": hashlib.sha256(content.encode()).hexdigest()}), headers=PRO_DEV)
+        finally:
+            self.store.put = real_put
+        self.assertEqual((r.status_code, r.json()["error"]), (409, "purged"))
+        self.assertNotIn(f"sessions/pro-dev/{sk}/tool-results/t.txt.zst", self.store.objects)
+        self.assertEqual([c[:2] for c in FAKE.calls[mark[0]:]],
+                         [("GET", f"/memory-session/_doc/{sk}")],
+                         "refused at verify, before the conditional session write")
+
+    def test_purge_between_read_and_state_update(self):
+        sk = self.ingest(segment_body([line("u1", "x")], 0)).json()["session_key"]
+        real = sa._owned_session
+
+        async def owned_then_purge(session_key, caller, **kw):
+            got = await real(session_key, caller, **kw)
+            await self.other_process_purge(sk)
+            return got
+
+        sa._owned_session = owned_then_purge
+        try:
+            r = self.c.post(PREFIX + "/state", json={"session_key": sk, "jsonl_exists": False},
+                            headers=PRO_DEV)
+        finally:
+            sa._owned_session = real
+        self.assertEqual((r.status_code, r.json()["error"]), (409, "purged"))
+        doc = self.session(sk)
+        self.assertEqual(doc["title_source"], "purged")
+        self.assertNotIn("jsonl_checked_at", doc)
+
+    def test_two_creators_of_a_new_session(self):
+        real = sa._bulk_index
+        sk = sa.make_session_key("pro-dev", PDIR, SID)
+
+        async def bulk_while_other_creates(index, docs):
+            if index == sa.MESSAGE_INDEX:
+                FAKE.seq += 1
+                FAKE._idx("memory-session")[sk] = ({"session_key": sk, "host": "pro-dev"}, FAKE.seq)
+            return await real(index, docs)
+
+        sa._bulk_index = bulk_while_other_creates
+        try:
+            r = self.ingest(segment_body([line("u1", "x")], 0))
+        finally:
+            sa._bulk_index = real
+        self.assertEqual((r.status_code, r.json()["error"]), (503, "busy"))
+        self.assertEqual(self.session(sk), {"session_key": sk, "host": "pro-dev"},
+                         "the other creator's doc is never overwritten unconditionally")
+
+    def test_session_doc_writes_are_never_unconditional(self):
+        with open(os.path.join(HERE, "sessions_app.py")) as fh:
+            src = fh.read()
+        body = src[src.index("async def _put_session"):src.index("async def _update_session")]
+        self.assertIn("if_seq_no", body)
+        self.assertIn("/_create/", body)
+        self.assertNotIn('f"/{SESSION_INDEX}/_doc/{session_key}"\n', body)
 
 
 class Bounds(unittest.TestCase):
