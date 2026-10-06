@@ -700,6 +700,28 @@ jobs:
           echo "No JSON files found to validate"
         fi
 
+    - name: session-search ccs client suite (runner python3)
+      run: |
+        # cookbooks/session-search/files/ccs is the C3/C7/C9 client (stdlib only).
+        # Hermetic: a fake HTTP server on 127.0.0.1, a fake redactor with the
+        # frozen session_redact API, and a temp $HOME. Covers the diff rule,
+        # segmenting, 409/413/422 handling, tombstones, the breaker, the
+        # offline fallback cap and banner, CLI exit codes, fzf argv, restore
+        # hardening and the /ingest body shape. ripgrep makes the fallback
+        # cases run instead of skip.
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq ripgrep
+        python3 -m unittest discover -s cookbooks/session-search/files/ccs/tests -v
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.9"
+
+    - name: session-search ccs client suite (Python 3.9, the macOS system python)
+      run: |
+        python --version
+        python -W error::ResourceWarning -m unittest discover -s cookbooks/session-search/files/ccs/tests
+
   error-simulation:
     runs-on: ubuntu-latest
     steps:
