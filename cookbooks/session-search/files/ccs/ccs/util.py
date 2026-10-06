@@ -7,6 +7,7 @@ point HOME at a temporary directory.
 from __future__ import annotations
 
 import datetime as _dt
+import errno
 import json
 import os
 import re
@@ -65,6 +66,56 @@ def config_path() -> str:
 def encode_cwd(cwd: str) -> str:
     """Claude Code's project-directory encoding (§6.1; 210/210 measured in Phase 0)."""
     return re.sub(r"[^A-Za-z0-9-]", "-", cwd)
+
+
+class UnsafePath(Exception):
+    """A path that is a symlink, not a regular file, or resolves outside its root."""
+
+
+def is_within(path: str, root: str) -> bool:
+    """realpath(path) is strictly inside realpath(root)."""
+    r = os.path.realpath(root)
+    p = os.path.realpath(path)
+    return p.startswith(r + os.sep)
+
+
+def open_regular(path: str, root: str | None = None) -> int:
+    """Open a regular file for reading without following a final symlink.
+
+    - O_NOFOLLOW refuses a symlink as the last component;
+    - O_NONBLOCK keeps a FIFO from blocking the open (it is then refused by fstat);
+    - fstat after the open decides S_ISREG, so there is no check-then-open race;
+    - with `root`, the resolved path must lie inside realpath(root), which also
+      catches a symlinked parent directory.
+    Returns a file descriptor (blocking mode restored). Raises UnsafePath.
+    """
+    import stat as _stat
+
+    if root is not None and not is_within(path, root):
+        raise UnsafePath("%s resolves outside %s" % (path, root))
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as e:
+        # Linux/macOS report ELOOP for O_NOFOLLOW on a symlink; FreeBSD uses EMLINK.
+        if e.errno in (errno.ELOOP, errno.EMLINK):
+            raise UnsafePath("%s is a symlink" % path)
+        raise
+    try:
+        st = os.fstat(fd)
+        if not _stat.S_ISREG(st.st_mode):
+            raise UnsafePath("%s is not a regular file" % path)
+        if root is not None:
+            # The object we opened must be the one the resolved path names now.
+            rst = os.stat(os.path.realpath(path))
+            if (rst.st_dev, rst.st_ino) != (st.st_dev, st.st_ino):
+                raise UnsafePath("%s changed while opening" % path)
+        if hasattr(os, "set_blocking"):
+            os.set_blocking(fd, True)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def ensure_dir(path: str, mode: int = 0o700) -> None:

@@ -54,10 +54,14 @@ def record_text(rec) -> str:
 
 
 def iter_records(path: str):
-    """Yield parsed records; skips unparsable lines and the partial trailing line."""
+    """Yield parsed records; skips unparsable lines and the partial trailing line.
+
+    Only a regular file inside ~/.claude/projects is read (no symlink, FIFO or
+    device): the fallback and local resume take these paths from rg and fzf.
+    """
     try:
-        fh = open(path, "rb")
-    except OSError:
+        fh = os.fdopen(util.open_regular(path, util.projects_dir()), "rb")
+    except (OSError, util.UnsafePath):
         return
     with fh:
         for raw in fh:

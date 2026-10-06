@@ -147,15 +147,22 @@ class Restore(HomeCase):
         self.assertEqual(code, util.EXIT_RESUME)
         self.assertIn("archive incomplete", err)
 
-    def test_local_session_exec_and_missing_cwd(self):
+    def test_local_session_exec_uses_cwd_from_the_jsonl(self):
         p = self.transcript([user("x", cwd=self.cwd)], cwd=self.cwd)
         self.meta.update(host="pro-dev", jsonl_path=p, resume_cwd=self.cwd)
         self.assertEqual(self.go(fork=True)[0], 0)
-        self.assertEqual(self.execs[-1], ["claude", "--resume", SID, "--fork-session"])
-        self.meta["resume_cwd"] = "/gone/dir"
+        self.assertEqual(self.execs, [("chdir", self.cwd), ["claude", "--resume", SID, "--fork-session"]])
+
+    def test_local_session_with_vanished_cwd_fails(self):
+        gone = os.path.join(self.tmp, "gone", "dir")
+        os.makedirs(gone)
+        self.transcript([user("x", cwd=gone)], cwd=gone)
+        os.rmdir(gone)
+        self.meta.update(host="pro-dev", jsonl_path=None, archived=False)
         code, err = self.go()
         self.assertEqual(code, util.EXIT_RESUME)
-        self.assertIn("does not exist", err)
+        self.assertIn("exists on this host", err)
+        self.assertEqual(self.execs, [])
 
     def test_print_command(self):
         p = self.transcript([user("x", cwd=self.cwd)], cwd=self.cwd)
@@ -172,6 +179,93 @@ class Restore(HomeCase):
         out = resume.rewrite_tool_result_paths(text, ORIG_PROJ, SID, "/new/dir")
         self.assertIn('"/new/dir/a"', out)
         self.assertIn("/other/tool-results/b", out)
+
+
+class UntrustedCwd(Restore):
+    """The server never chooses the directory claude starts in (its .claude/ hooks would run)."""
+
+    def planted(self):
+        d = os.path.join(self.tmp, "planted")
+        os.makedirs(os.path.join(d, ".claude"), exist_ok=True)
+        with open(os.path.join(d, ".claude", "settings.json"), "w") as fh:
+            fh.write('{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "touch planted-ran"}]}]}}')
+        return d
+
+    def test_local_resume_ignores_server_resume_cwd(self):
+        p = self.transcript([user("x", cwd=self.cwd)], cwd=self.cwd)
+        self.meta.update(host="pro-dev", jsonl_path=p, resume_cwd=self.planted())
+        self.assertEqual(self.go()[0], 0)
+        self.assertEqual(self.execs[0], ("chdir", self.cwd))
+
+    def test_jsonl_recorded_cwd_must_encode_to_its_directory(self):
+        planted = self.planted()
+        d = self.project(self.cwd)  # the demo project dir, but the record claims the planted cwd
+        with open(os.path.join(d, SID + ".jsonl"), "w") as fh:
+            fh.write(json.dumps(user("x", cwd=planted)) + "\n")
+        self.meta.update(host="pro-dev", jsonl_path=os.path.join(d, SID + ".jsonl"), archived=False)
+        code, err = self.go()
+        self.assertEqual(code, util.EXIT_RESUME)
+        self.assertEqual(self.execs, [])
+
+    def test_traversal_and_symlink_jsonl_path_rejected(self):
+        outside = os.path.join(self.tmp, "outside")
+        os.makedirs(outside)
+        evil = os.path.join(outside, SID + ".jsonl")
+        with open(evil, "w") as fh:
+            fh.write(json.dumps(user("x", cwd=self.planted())) + "\n")
+        d = self.project("/elsewhere/proj")
+        link = os.path.join(d, SID + ".jsonl")
+        os.symlink(evil, link)
+        for hint in (evil, os.path.join(self.projects, "..", "outside", SID + ".jsonl"), link):
+            self.assertFalse(resume.local_jsonl_ok(hint, SID), hint)
+            self.meta.update(host="pro-dev", jsonl_path=hint, archived=False)
+            code, _ = self.go()
+            self.assertEqual(code, util.EXIT_RESUME, hint)
+        self.assertEqual(self.execs, [])
+        self.assertEqual(self.go_local(link)[0], util.EXIT_RESUME)
+        self.assertEqual(self.execs, [])
+
+    def go_local(self, path):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = resume.resume("local:" + path, execvp=lambda f, a: self.execs.append(a),
+                                 chdir=lambda d: self.execs.append(("chdir", d)), out=io.StringIO())
+        return code, err.getvalue()
+
+    def restore_with(self, answers, isatty=True, do_print=False):
+        asked = []
+
+        def ask(prompt):
+            asked.append(prompt)
+            return answers.pop(0) if answers else ""
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = resume.resume("sk_r", do_print=do_print, execvp=lambda f, a: self.execs.append(a),
+                                 chdir=lambda d: self.execs.append(("chdir", d)), ask=ask, isatty=isatty,
+                                 out=io.StringIO())
+        return code, asked, err.getvalue()
+
+    def test_restore_without_to_needs_a_tty(self):
+        self.meta["resume_cwd"] = self.planted()
+        for kw in ({"isatty": False}, {"isatty": True, "do_print": True}):
+            code, asked, err = self.restore_with([], **kw)
+            self.assertEqual(code, util.EXIT_RESUME)
+            self.assertIn("--to DIR", err)
+            self.assertEqual(asked, [])
+        self.assertEqual(self.execs, [])
+
+    def test_restore_defaults_to_current_dir_unless_confirmed(self):
+        planted = self.planted()
+        self.meta["resume_cwd"] = planted
+        code, asked, err = self.restore_with(["", ""])  # decline, then accept the default
+        self.assertEqual(code, 0, err)
+        self.assertIn(planted, err)  # the path is shown before asking
+        self.assertEqual(self.execs[0], ("chdir", os.getcwd()))
+        self.execs.clear()
+        code, asked, err = self.restore_with(["y"])  # explicit confirmation
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.execs[0], ("chdir", os.path.realpath(planted)))
 
 
 class RestoreWithoutDataFilter(Restore):

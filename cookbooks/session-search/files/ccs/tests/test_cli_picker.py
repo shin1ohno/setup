@@ -61,6 +61,9 @@ class Parsing(HomeCase):
     def test_resume_precondition_exit_4(self):
         code, err = quiet_main(["resume", "local:/nonexistent/x.jsonl"])
         self.assertEqual(code, util.EXIT_RESUME)
+        self.assertIn("refusing session_id", err)
+        code, err = quiet_main(["resume", "local:%s/-x/%s.jsonl" % (self.projects, SID)])
+        self.assertEqual(code, util.EXIT_RESUME)
         self.assertIn("no longer exists", err)
 
     def test_unreachable_exit_3(self):

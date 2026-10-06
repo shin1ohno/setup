@@ -50,12 +50,18 @@ def _tomb_line(reason, kinds, line_offset) -> str:
 
 
 def classify(path: str, projects: str | None = None):
-    """-> dict(kind, project_dir, session_id, parent_session_id?, agent_id?) or None."""
-    projects = os.path.realpath(projects or util.projects_dir())
-    p = os.path.realpath(path)
-    if not p.startswith(projects + os.sep):
+    """-> dict(kind, project_dir, session_id, parent_session_id?, agent_id?) or None.
+
+    The layout is read from the path as given (abspath), and the path must also
+    resolve inside realpath(~/.claude/projects): a symlink that points elsewhere
+    is never a transcript.
+    """
+    projects = projects or util.projects_dir()
+    root = os.path.abspath(projects)
+    p = os.path.abspath(path)
+    if not p.startswith(root + os.sep) or not util.is_within(p, root):
         return None
-    rel = p[len(projects) + 1:].replace(os.sep, "/")
+    rel = p[len(root) + 1:].replace(os.sep, "/")
     m = _MAIN_RE.match(rel)
     if m:
         return {"kind": "main", "project_dir": m.group(1), "session_id": m.group(2)}
@@ -91,13 +97,16 @@ def discover(projects: str | None = None):
 
 
 def subagent_files(session_dir: str):
+    """agent-*.jsonl regular files; a symlinked subagents/ dir or entry is skipped."""
     sub = os.path.join(session_dir, "subagents")
+    if os.path.islink(sub) or not os.path.isdir(sub):
+        return []
     try:
-        names = sorted(os.listdir(sub))
+        entries = sorted(os.scandir(sub), key=lambda e: e.name)
     except OSError:
         return []
-    return [os.path.join(sub, n) for n in names
-            if n.startswith("agent-") and n.endswith(".jsonl") and os.path.isfile(os.path.join(sub, n))]
+    return [e.path for e in entries
+            if e.name.startswith("agent-") and e.name.endswith(".jsonl") and e.is_file(follow_symlinks=False)]
 
 
 def _mtime(p):
@@ -218,7 +227,13 @@ class Shipper:
         info = classify(path, self.projects)
         if info is None:
             raise ShipError("not a transcript path under %s" % self.projects)
-        st = os.stat(path)
+        # O_NOFOLLOW + fstat S_ISREG + inside realpath(projects); raises UnsafePath.
+        fd = util.open_regular(path, self.projects)
+        with os.fdopen(fd, "rb") as fh:
+            st = os.fstat(fh.fileno())
+            return self._ship_open(path, info, fh, st)
+
+    def _ship_open(self, path, info, fh, st) -> str:
         entry = self.entry_for(path, st)
         if entry["offset"] >= st.st_size:
             entry["size"] = st.st_size
@@ -227,46 +242,45 @@ class Shipper:
         self.stats["files"] += 1
         limit = self.max_segment
         resyncs = 0
-        with open(path, "rb") as fh:
-            while entry["offset"] < st.st_size:
-                self._check_budget()
-                offset = entry["offset"]
-                chunk, kind = self._read_segment(fh, offset, st.st_size, limit)
-                if kind == "partial":
-                    break
-                if kind == "oversize":
-                    # Never send a line above the 4 MiB segment cap; keep its place.
-                    lines, offs, forced = [_tomb_line("too_large", [], offset)], [offset], True
+        while entry["offset"] < st.st_size:
+            self._check_budget()
+            offset = entry["offset"]
+            chunk, kind = self._read_segment(fh, offset, st.st_size, limit)
+            if kind == "partial":
+                break
+            if kind == "oversize":
+                # Never send a line above the 4 MiB segment cap; keep its place.
+                lines, offs, forced = [_tomb_line("too_large", [], offset)], [offset], True
+            else:
+                lines, offs = self._mask_chunk(chunk, offset)
+                forced = False
+            outcome = self._send(info, path, entry, offset, offset + len(chunk), lines, offs)
+            if outcome == "ok":
+                limit = self.max_segment
+                if forced:
+                    self.stats["tombstones"] += 1
+            elif outcome == "resync":
+                resyncs += 1
+                self.stats["resyncs"] += 1
+                if resyncs > 3:
+                    raise ShipError("offset resync did not converge")
+                if entry["offset"] > st.st_size:
+                    # The server is ahead of this file: it holds bytes we do
+                    # not. Do not store an offset past EOF (that would read
+                    # as a truncation and bump the generation next run).
+                    expected = entry["offset"]
+                    entry["offset"] = offset
+                    raise ShipError("server expects offset %d beyond local size %d" % (expected, st.st_size))
+            elif outcome == "too_large":
+                if len(lines) > 1:
+                    limit = max(1, len(chunk) // 2)
                 else:
-                    lines, offs = self._mask_chunk(chunk, offset)
-                    forced = False
-                outcome = self._send(info, path, entry, offset, offset + len(chunk), lines, offs)
-                if outcome == "ok":
-                    limit = self.max_segment
-                    if forced:
-                        self.stats["tombstones"] += 1
-                elif outcome == "resync":
-                    resyncs += 1
-                    self.stats["resyncs"] += 1
-                    if resyncs > 3:
-                        raise ShipError("offset resync did not converge")
-                    if entry["offset"] > st.st_size:
-                        # The server is ahead of this file: it holds bytes we do
-                        # not. Do not store an offset past EOF (that would read
-                        # as a truncation and bump the generation next run).
-                        expected = entry["offset"]
-                        entry["offset"] = offset
-                        raise ShipError("server expects offset %d beyond local size %d" % (expected, st.st_size))
-                elif outcome == "too_large":
-                    if len(lines) > 1:
-                        limit = max(1, len(chunk) // 2)
-                    else:
-                        # One line the server will not take even alone: tombstone it.
-                        tl = [_tomb_line("too_large", [], offset)]
-                        if self._send(info, path, entry, offset, offset + len(chunk), tl, [offset]) != "ok":
-                            raise ShipError("tombstone for an oversized line was refused")
-                        self.stats["tombstones"] += 1
-                self.state.save()
+                    # One line the server will not take even alone: tombstone it.
+                    tl = [_tomb_line("too_large", [], offset)]
+                    if self._send(info, path, entry, offset, offset + len(chunk), tl, [offset]) != "ok":
+                        raise ShipError("tombstone for an oversized line was refused")
+                    self.stats["tombstones"] += 1
+            self.state.save()
         entry["size"] = st.st_size
         self._ship_blobs(path, info, entry)
         return "shipped"
@@ -340,7 +354,11 @@ class Shipper:
     def _ship_blobs(self, path, info, entry):
         if info["kind"] != "main" or not entry.get("session_key"):
             return
-        tdir = os.path.join(os.path.dirname(path), info["session_id"], "tool-results")
+        sdir = os.path.join(os.path.dirname(path), info["session_id"])
+        tdir = os.path.join(sdir, "tool-results")
+        if os.path.islink(sdir) or os.path.islink(tdir):
+            util.log("WARN", "ingest: %s is a symlink; tool-results not shipped" % tdir)
+            return
         try:
             names = sorted(os.listdir(tdir))
         except OSError:
@@ -348,14 +366,20 @@ class Shipper:
         sent = entry.setdefault("blobs", {})
         for name in names:
             fp = os.path.join(tdir, name)
-            if not util.TOOL_RESULT_NAME_RE.match(name) or not os.path.isfile(fp) or os.path.islink(fp):
+            if not util.TOOL_RESULT_NAME_RE.match(name):
                 continue
             try:
-                if os.path.getsize(fp) > MAX_BLOB:
-                    continue
-                with open(fp, "rb") as fh:
-                    raw = fh.read()
+                fd = util.open_regular(fp, self.projects)
+            except util.UnsafePath as e:
+                util.log("WARN", "ingest: skipped %s" % e)
+                continue
             except OSError:
+                continue
+            with os.fdopen(fd, "rb") as fh:
+                if os.fstat(fh.fileno()).st_size > MAX_BLOB:
+                    continue
+                raw = fh.read(MAX_BLOB + 1)
+            if len(raw) > MAX_BLOB:
                 continue
             raw_sha = hashlib.sha256(raw).hexdigest()
             if sent.get(name) == raw_sha:
@@ -484,7 +508,7 @@ def run(mode: str, file_path: str | None = None, with_subagents: bool = False, q
                     sh.ship_file(path)
                 except FileNotFoundError:
                     continue
-                except ShipError as e:
+                except (ShipError, util.UnsafePath) as e:
                     sh.stats["errors"] += 1
                     util.log("WARN", "ingest: %s: %s" % (path, e))
                 except (api_mod.AuthError, config_mod.ConfigError) as e:

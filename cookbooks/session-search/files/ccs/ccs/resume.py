@@ -1,7 +1,21 @@
 """`ccs resume SESSION_KEY` (§6.6 Resume).
 
-1. Local file: this host's session and its JSONL exists -> chdir(resume_cwd), exec claude --resume.
-2. No local file, archived and archive_complete -> restore the masked archive, then step 1.
+Trust rule: the directory `claude` starts in decides which .claude/settings.json
+hooks and CLAUDE.md it loads, so it is code execution. The server (or anyone who
+can write its ES or archive) never chooses it:
+- local resume takes the cwd only from the local JSONL — a recorded cwd (or
+  relocatedCwd) is accepted only when its encoding equals the JSONL's parent
+  directory name and it exists here; the server's jsonl_path is a lookup hint,
+  accepted only as ~/.claude/projects/<dir>/<sid>.jsonl, a regular non-symlink
+  file inside realpath(~/.claude/projects);
+- restore resumes in --to DIR or the current directory; the server's resume_cwd
+  is offered only when it exists here AND the user confirms it at a TTY prompt
+  that shows the path; --print or a non-TTY run needs --to;
+- `claude` is resolved from PATH with a fixed argv; the only server string in
+  it is the session_id, validated against ^[0-9a-f-]{36}$.
+
+1. Local file: this host's session and its JSONL exists -> chdir(cwd from the JSONL), exec claude --resume.
+2. No local file, archived and archive_complete -> restore the masked archive, then exec.
    Hardening: the project dir is computed locally (encode(local_cwd)); nothing the
    server sends is used as a path; session_id must match ^[0-9a-f-]{36}$; the
    tool-results tar is extracted member by member with tarfile's `data` filter
@@ -48,8 +62,12 @@ def exec_claude(cwd: str, session_id: str, fork: bool, do_print: bool, execvp=os
     if do_print:
         out.write(command_line(cwd, session_id, fork) + "\n")
         return util.EXIT_OK
+    validate_session_id(session_id)
     chdir(cwd)
-    execvp("claude", claude_argv(session_id, fork))
+    try:
+        execvp("claude", claude_argv(session_id, fork))
+    except FileNotFoundError:
+        raise ResumeError("claude is not on PATH")
     return util.EXIT_OK  # only reached with a stubbed execvp
 
 
@@ -106,21 +124,75 @@ def _file_sha(path: str) -> str:
     return h.hexdigest()
 
 
-def choose_cwd(meta: dict, to_dir: str | None, ask=input, isatty=None) -> str:
-    rc = meta.get("resume_cwd")
-    if isinstance(rc, str) and rc.startswith("/") and os.path.isdir(rc):
-        return rc
+_PROJECT_DIR_RE = re.compile(r"^[A-Za-z0-9-]{1,255}$")
+
+
+def local_jsonl_ok(path, sid: str) -> bool:
+    """path is ~/.claude/projects/<dir>/<sid>.jsonl: no symlink anywhere below the root, regular file."""
+    if not isinstance(path, str) or not path:
+        return False
+    root = os.path.abspath(util.projects_dir())
+    p = os.path.abspath(path)
+    parent = os.path.dirname(p)
+    if os.path.basename(p) != sid + ".jsonl" or os.path.dirname(parent) != root:
+        return False
+    if os.path.islink(parent) or os.path.islink(p) or not util.is_within(p, root):
+        return False
+    try:
+        os.close(util.open_regular(p, root))
+    except (OSError, util.UnsafePath):
+        return False
+    return True
+
+
+def find_local_jsonl(sid: str, hint=None):
+    """The local JSONL for sid: the server's hint if it passes local_jsonl_ok, else a scan."""
+    validate_session_id(sid)
+    if local_jsonl_ok(hint, sid):
+        return os.path.abspath(hint)
+    root = util.projects_dir()
+    try:
+        dirs = [e.path for e in os.scandir(root) if e.is_dir(follow_symlinks=False)]
+    except OSError:
+        return None
+    for d in sorted(dirs):
+        c = os.path.join(d, sid + ".jsonl")
+        if local_jsonl_ok(c, sid):
+            return c
+    return None
+
+
+def local_resume_cwd(path: str) -> str:
+    """The recorded cwd whose encoding names the JSONL's directory and that exists here."""
+    project_dir = os.path.basename(os.path.dirname(os.path.abspath(path)))
+    for c in extract.scan(path).cwd_candidates:
+        if isinstance(c, str) and c.startswith("/") and util.encode_cwd(c) == project_dir and os.path.isdir(c):
+            return c
+    raise ResumeError("no cwd recorded in %s encodes to %s and exists on this host; not resuming from a "
+                      "guessed directory" % (path, project_dir))
+
+
+def choose_restore_cwd(meta: dict, to_dir, do_print: bool, ask=input, isatty=None, err=None) -> str:
+    """Where a restored session resumes: --to DIR, or (TTY only) a confirmed choice."""
+    err = err or sys.stderr
     if to_dir:
-        d = os.path.abspath(os.path.expanduser(to_dir))
+        d = os.path.realpath(os.path.expanduser(to_dir))
         if not os.path.isdir(d):
             raise ResumeError("--to %s is not a directory" % to_dir)
         return d
-    here = os.getcwd()
     tty = sys.stdin.isatty() if isatty is None else isatty
-    if not tty:
-        return here
-    ans = ask("original cwd %s is not on this host; resume in [%s]: " % (rc or "?", here)).strip()
-    d = os.path.abspath(os.path.expanduser(ans)) if ans else here
+    if do_print or not tty:
+        raise ResumeError("this session must be restored from the archive; pass --to DIR to choose where it "
+                          "resumes (required with --print or without a terminal)")
+    here = os.getcwd()
+    rc = meta.get("resume_cwd")
+    if isinstance(rc, str) and rc.startswith("/") and os.path.isdir(rc):
+        err.write("The session's original directory exists on this host:\n  %s\n"
+                  "Starting claude there loads that directory's .claude/ settings and hooks.\n" % rc)
+        if ask("Resume in that directory? [y/N] ").strip().lower() in ("y", "yes"):
+            return os.path.realpath(rc)
+    ans = ask("Directory to resume in [%s]: " % here).strip()
+    d = os.path.realpath(os.path.expanduser(ans)) if ans else here
     if not os.path.isdir(d):
         raise ResumeError("%s is not a directory" % d)
     return d
@@ -145,7 +217,12 @@ def restore(api, meta: dict, local_cwd: str, force: bool, session_key: str, out=
     if not re.match(r"^[0-9a-f]{64}$", want) or want != got:
         raise ResumeError("archive sha256 mismatch (header %s, body %s); nothing restored" % (want or "missing", got))
     tr_dir = os.path.join(pdir, sid, "tool-results")
-    orig_proj = meta.get("project_dir") if isinstance(meta.get("project_dir"), str) else ""
+    for pth in (pdir, os.path.join(pdir, sid), tr_dir, target):
+        if os.path.islink(pth):
+            raise ResumeError("%s is a symlink; refusing to restore through it" % pth)
+    orig_proj = meta.get("project_dir")
+    # Used only as a literal inside the rewrite pattern, and only in its expected shape.
+    orig_proj = orig_proj if isinstance(orig_proj, str) and _PROJECT_DIR_RE.match(orig_proj) else ""
     text = resp.body.decode("utf-8", "replace")
     if orig_proj:
         text = rewrite_tool_result_paths(text, orig_proj, sid, tr_dir)
@@ -155,7 +232,10 @@ def restore(api, meta: dict, local_cwd: str, force: bool, session_key: str, out=
             raise ResumeError("%s already exists and differs from the archive; pass --force to replace it" % target)
     os.makedirs(pdir, mode=0o700, exist_ok=True)
     try:
-        with open(tmp, "wb") as fh:
+        if os.path.lexists(tmp):
+            os.unlink(tmp)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         tres = api.get("/archive/tool-results", params={"session_key": session_key}, timeout=120)
         if tres.status == 200 and tres.body:
@@ -164,29 +244,25 @@ def restore(api, meta: dict, local_cwd: str, force: bool, session_key: str, out=
             raise ResumeError("tool-results download answered HTTP %d" % tres.status)
         os.replace(tmp, target)
     finally:
-        if os.path.exists(tmp):
+        if os.path.lexists(tmp):
             os.unlink(tmp)
     out.write(RESTORED_NOTE + "\n")
     return sid
 
 
-def _local_session(path: str) -> dict:
-    ls = extract.scan(path)
-    return {"session_id": ls.session_id, "resume_cwd": ls.resume_cwd, "jsonl_path": path,
-            "host": None, "jsonl_exists": True}
-
-
 def resume(session_key: str, do_print: bool = False, fork: bool = False, to_dir: str | None = None,
-           force: bool = False, api_factory=None, execvp=os.execvp, chdir=os.chdir, ask=input, out=None) -> int:
+           force: bool = False, api_factory=None, execvp=os.execvp, chdir=os.chdir, ask=input, isatty=None,
+           out=None) -> int:
     out = out or sys.stdout
     try:
         if session_key.startswith("local:"):
             path = session_key[len("local:"):]
-            if not os.path.isfile(path):
-                raise ResumeError("local transcript %s no longer exists" % path)
-            meta = _local_session(path)
-            validate_session_id(meta["session_id"])
-            return exec_claude(meta["resume_cwd"], meta["session_id"], fork, do_print, execvp, chdir, out)
+            sid = os.path.basename(path)[:-len(".jsonl")] if path.endswith(".jsonl") else ""
+            validate_session_id(sid)
+            if not local_jsonl_ok(path, sid):
+                raise ResumeError("local transcript %s no longer exists or is not a plain file under %s"
+                                  % (path, util.projects_dir()))
+            return exec_claude(local_resume_cwd(path), sid, fork, do_print, execvp, chdir, out)
         try:
             cfg = config_mod.load()
         except config_mod.ConfigError as e:
@@ -205,12 +281,12 @@ def resume(session_key: str, do_print: bool = False, fork: bool = False, to_dir:
             return util.EXIT_UNREACHABLE
         meta = (resp.json() or {}).get("session") or {}
         sid = validate_session_id(meta.get("session_id"))
-        jp = meta.get("jsonl_path")
-        if meta.get("host") == cfg.host_label and isinstance(jp, str) and os.path.isfile(jp):
-            cwd = meta.get("resume_cwd") or ""
-            return exec_claude(cwd, sid, fork, do_print, execvp, chdir, out)
+        if meta.get("host") == cfg.host_label:
+            local = find_local_jsonl(sid, hint=meta.get("jsonl_path"))
+            if local:
+                return exec_claude(local_resume_cwd(local), sid, fork, do_print, execvp, chdir, out)
         if meta.get("archived") and meta.get("archive_complete"):
-            local_cwd = choose_cwd(meta, to_dir, ask=ask)
+            local_cwd = choose_restore_cwd(meta, to_dir, do_print, ask=ask, isatty=isatty)
             try:
                 sid = restore(api, meta, local_cwd, force, session_key)
             except api_mod.Unreachable as e:

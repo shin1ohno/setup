@@ -294,5 +294,76 @@ class RunLevel(IngestCase):
         self.assertEqual(b["sha256"], hashlib.sha256(b["content"].encode()).hexdigest())
 
 
+class NoSymlinksOrSpecialFiles(IngestCase):
+    """Only regular files inside realpath(~/.claude/projects) are ever read or shipped."""
+
+    def outside_secret(self):
+        p = os.path.join(self.tmp, "outside-secret.txt")
+        with open(p, "w") as fh:
+            fh.write('{"type":"user","message":{"content":"OUTSIDE-SECRET-CONTENT"}}\n')
+        return p
+
+    def shipped_text(self):
+        return json.dumps([r["body"] for r in self.srv.requests if r["body"] is not None])
+
+    def test_symlinked_jsonl_is_not_read(self):
+        d = self.project()
+        os.symlink(self.outside_secret(), os.path.join(d, "%s.jsonl" % support.SID2))
+        self.transcript([user("legit")])
+        self.assertEqual(ingest.run("sweep", quiet=True, redactor=FakeRedactor()), 0)
+        self.assertNotIn("OUTSIDE-SECRET-CONTENT", self.shipped_text())
+        self.assertEqual(len(self.ingests()), 1)
+        link = os.path.join(d, "%s.jsonl" % support.SID2)
+        self.assertEqual(ingest.run("file", file_path=link, quiet=True, redactor=FakeRedactor()), util.EXIT_USAGE)
+        with self.assertRaises(util.UnsafePath):
+            # even when called directly with a path that classifies, open_regular refuses the link
+            os.close(util.open_regular(link))
+        self.assertEqual(len(self.ingests()), 1)
+
+    def test_fifo_jsonl_is_not_opened_for_reading(self):
+        d = self.project()
+        fifo = os.path.join(d, "%s.jsonl" % support.SID2)
+        os.mkfifo(fifo)
+        self.transcript([user("legit")])
+        self.assertEqual(ingest.run("sweep", quiet=True, redactor=FakeRedactor()), 0)  # does not hang
+        self.assertEqual(ingest.run("file", file_path=fifo, quiet=True, redactor=FakeRedactor()), 0)
+        self.assertEqual([r["body"]["file"]["session_id"] for r in self.ingests()], [SID])
+        self.assertNotIn(fifo, ingest.State().files)
+
+    def test_symlinked_tool_results_dir_is_not_shipped(self):
+        p = self.transcript([user("one")])
+        outside = os.path.join(self.tmp, "outside-dir")
+        os.makedirs(outside)
+        with open(os.path.join(outside, "toolu_9.txt"), "w") as fh:
+            fh.write("OUTSIDE-SECRET-CONTENT")
+        os.makedirs(os.path.join(os.path.dirname(p), SID))
+        os.symlink(outside, os.path.join(os.path.dirname(p), SID, "tool-results"))
+        self.shipper().ship_file(p)
+        self.assertEqual(self.srv.of("/blob"), [])
+        self.assertNotIn("OUTSIDE-SECRET-CONTENT", self.shipped_text())
+
+    def test_symlinked_tool_result_file_is_not_shipped(self):
+        p = self.transcript([user("one")])
+        tr = os.path.join(os.path.dirname(p), SID, "tool-results")
+        os.makedirs(tr)
+        os.symlink(self.outside_secret(), os.path.join(tr, "toolu_7.txt"))
+        os.mkfifo(os.path.join(tr, "toolu_8.txt"))
+        self.shipper().ship_file(p)
+        self.assertEqual(self.srv.of("/blob"), [])
+
+    def test_symlinked_subagents_dir_is_not_walked(self):
+        p = self.transcript([user("main")])
+        outside = os.path.join(self.tmp, "outside-sub")
+        os.makedirs(outside)
+        with open(os.path.join(outside, "agent-x.jsonl"), "w") as fh:
+            fh.write('{"type":"user","message":{"content":"OUTSIDE-SECRET-CONTENT"}}\n')
+        os.makedirs(os.path.join(os.path.dirname(p), SID))
+        os.symlink(outside, os.path.join(os.path.dirname(p), SID, "subagents"))
+        self.assertEqual(ingest.run("sweep", quiet=True, redactor=FakeRedactor()), 0)
+        self.assertEqual(ingest.run("file", file_path=p, with_subagents=True, quiet=True,
+                                    redactor=FakeRedactor()), 0)
+        self.assertNotIn("OUTSIDE-SECRET-CONTENT", self.shipped_text())
+
+
 if __name__ == "__main__":
     unittest.main()
