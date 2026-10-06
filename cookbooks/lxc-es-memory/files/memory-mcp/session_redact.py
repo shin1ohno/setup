@@ -60,12 +60,33 @@ def load_key(path: str) -> bytes:
 
 
 # --------------------------------------------------------------------------- #
+# Input caps (enforced BEFORE any regex runs)
+# --------------------------------------------------------------------------- #
+# Every rule below is linear in the input (see the ReDoS notes on each), and
+# these caps bound the size of the one string a single regex call sees and the
+# total a record may carry. Over a cap nothing is matched: redaction replaces
+# the string with `[REDACTED:oversize]` and detection reports `oversize`, so an
+# oversized value is never shipped and never accepted unscanned.
+MAX_VALUE_CHARS = 1_000_000
+MAX_RECORD_CHARS = 4_000_000
+MAX_KEY_NAME_CHARS = 128
+OVERSIZE = "[REDACTED:oversize]"
+
+# --------------------------------------------------------------------------- #
 # Ruleset r1
 # --------------------------------------------------------------------------- #
 # A placeholder this module (or an older client of it) produced. Text inside one
 # is never scanned again.
 PLACEHOLDER_RE = re.compile(r"\[REDACTED:[a-z0-9-]+(?::[0-9a-f]{8})?\]")
 
+# ReDoS discipline. Python's `re` backtracks, so a pattern is only safe when the
+# set of start positions that can reach an expensive (backtracking) part is
+# small. Patterns whose character class contains a non-word character ('-',
+# '.', '+') would otherwise start inside every run (`eyJ-eyJ-eyJ-...`,
+# `aaaa...` for a URL scheme) and rescan the rest of the run from each start:
+# quadratic. Those start only at the beginning of a run (negative lookbehind
+# over the same class), and keyword prefixes/suffixes are bounded ({0,40}).
+#
 # Kinds whose matched value is high-entropy: tagged with an 8-hex HMAC so that a
 # leaked token can be traced across sessions. Order matters: anthropic-key must
 # run before openai-key (both start with `sk-`).
@@ -77,29 +98,31 @@ _TAGGED = (
     ("slack-token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
     ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
     ("gitlab-token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}")),
-    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
+    ("jwt", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
 )
 
 # A truncated block (BEGIN without END, e.g. a capped tool_result) is masked to
 # the end of the string: half a private key is still a private key.
 _PRIVATE_KEY_RE = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
-    r"(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|[\s\S]*\Z)")
+    r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY(?: BLOCK)?-----"
+    r"(?:[\s\S]*?-----END [A-Z ]{0,40}PRIVATE KEY(?: BLOCK)?-----|[\s\S]*\Z)")
 
 # Only the value is replaced; the header name stays readable. Also accepts the
 # JSON / dict spelling `"Authorization": "Bearer ..."`.
 _BEARER_RE = re.compile(
-    r"(?i)(\bauthorization[\"']?\s*[:=]\s*[\"']?bearer\s+)([^\s\"']{16,})")
+    r"(?i)(\bauthorization[\"']?[ \t]{0,16}[:=][ \t]{0,16}[\"']?bearer[ \t]+)([^\s\"']{16,})")
 
-_URL_CRED_RE = re.compile(r"(?i)([a-z][a-z0-9+.-]*://[^\s/:@]+:)([^\s/@]+)(@)")
+_URL_CRED_RE = re.compile(
+    r"(?i)(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,31}://[^\s/:@]+:)([^\s/@]+)(@)")
 
-_CFG_KEY = r"[A-Za-z0-9_.-]*(?:secret|token|passw(?:or)?d|api[_-]?key|credential|private)[A-Za-z0-9_.-]*"
+_CFG_KEY = (r"[A-Za-z0-9_.-]{0,40}(?:secret|token|passw(?:or)?d|api[_-]?key|credential|private)"
+            r"[A-Za-z0-9_.-]{0,40}")
 _CFG_KEY_RE = re.compile(r"(?i)" + _CFG_KEY)
 # "KEY": "VALUE" (value may contain spaces and escaped quotes)
-_CFG_JSON_RE = re.compile(r'(?i)("' + _CFG_KEY + r'"\s*:\s*")((?:[^"\\]|\\.)*)(")')
+_CFG_JSON_RE = re.compile(r'(?i)("' + _CFG_KEY + r'"[ \t]{0,16}:[ \t]{0,16}")((?:[^"\\]|\\.)*)(")')
 # KEY=VALUE / KEY: VALUE, optionally quoted key and value
 _CFG_KV_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9_.-])(" + _CFG_KEY + r"[\"']?\s*[:=]\s*[\"']?)([^\s\"'`,;&]+)")
+    r"(?i)(?<![A-Za-z0-9_.-])(" + _CFG_KEY + r"[\"']?[ \t]{0,16}[:=][ \t]{0,16}[\"']?)([^\s\"'`,;&]+)")
 
 _CFG_MIN_LEN = 8
 _LOW_ENTROPY = ("bearer", "private-key", "config-secret", "url-credential")
@@ -139,9 +162,8 @@ def _outside_placeholders(text: str, fn) -> str:
     return "".join(out)
 
 
-def _one_pass(text: str, key, counts: dict) -> str:
-    """One application of every rule, in order. key None = detect only (the
-    text is returned unchanged; counts still records every hit)."""
+def _one_pass(text: str, key: bytes, counts: dict) -> str:
+    """One application of every rule, in order."""
 
     def bump(kind):
         counts[kind] = counts.get(kind, 0) + 1
@@ -152,7 +174,7 @@ def _one_pass(text: str, key, counts: dict) -> str:
         def sub(segment):
             def r(m):
                 bump(kind)
-                return m.group(0) if key is None else repl_fn(m)
+                return repl_fn(m)
             return regex.sub(r, segment)
 
         text = _outside_placeholders(text, sub)
@@ -172,8 +194,6 @@ def _one_pass(text: str, key, counts: dict) -> str:
                 if not _cfg_value_maskable(m.group(value_group)):
                     return m.group(0)
                 bump("config-secret")
-                if key is None:
-                    return m.group(0)
                 return m.group(1) + "[REDACTED:config-secret]" + (m.group(3) if tail else "")
             return regex.sub(r, segment)
 
@@ -187,19 +207,28 @@ def _one_pass(text: str, key, counts: dict) -> str:
 _MAX_PASSES = 8
 
 
-def redact_text(text: str, key: bytes, version: str = RULESET_VERSION) -> tuple[str, dict[str, int]]:
-    """Mask every secret in one string. Repeats until nothing changes, so the
-    result is a fixed point of the ruleset."""
-    _check_version(version)
-    if not key:
-        raise KeyMissing("hmac key is empty")
-    counts: dict[str, int] = {}
+def _mask_text(text: str, key: bytes, counts: dict, max_chars: int = MAX_VALUE_CHARS) -> str:
+    """The capped fixed-point loop shared by redaction and detection."""
+    if len(text) > max_chars:
+        counts["oversize"] = counts.get("oversize", 0) + 1
+        return OVERSIZE
     for _ in range(_MAX_PASSES):
         new = _one_pass(text, key, counts)
         if new == text:
             break
         text = new
-    return text, counts
+    return text
+
+
+def redact_text(text: str, key: bytes, version: str = RULESET_VERSION) -> tuple[str, dict[str, int]]:
+    """Mask every secret in one string. Repeats until nothing changes, so the
+    result is a fixed point of the ruleset. A string over MAX_VALUE_CHARS is
+    replaced whole by `[REDACTED:oversize]` without being scanned."""
+    _check_version(version)
+    if not key:
+        raise KeyMissing("hmac key is empty")
+    counts: dict[str, int] = {}
+    return _mask_text(text, key, counts), counts
 
 
 # Detection masks a throwaway copy with this key and keeps only the counts, so
@@ -209,26 +238,20 @@ def redact_text(text: str, key: bytes, version: str = RULESET_VERSION) -> tuple[
 _DETECT_KEY = b"detect-only"
 
 
-def _detect_text(text: str, counts: dict) -> None:
-    for _ in range(_MAX_PASSES):
-        new = _one_pass(text, _DETECT_KEY, counts)
-        if new == text:
-            break
-        text = new
-
-
 def _dict_key_secret(name, value) -> bool:
     """A str value stored under a secret-looking dict key (`{"password": "..."}`
     in a tool input) is masked whole: the text rules only see `KEY=VALUE`
     spellings inside a string, not the JSON structure around it."""
     return (isinstance(name, str) and isinstance(value, str)
+            and len(name) <= MAX_KEY_NAME_CHARS
             and _CFG_KEY_RE.fullmatch(name) is not None
             and _cfg_value_maskable(value))
 
 
-def _walk(record, on_str):
+def _walk(record, on_str, on_key):
     """Iterative deep copy. on_str(value, dict_key_or_None) returns the new
-    string. dicts and lists are copied; every other scalar is shared."""
+    string; on_key(key) the new dict key (keys can carry secrets too). dicts and
+    lists are copied; every other scalar is shared."""
     holder = [record]
     stack = [(holder, 0, None)]
     while stack:
@@ -237,10 +260,20 @@ def _walk(record, on_str):
         if isinstance(v, str):
             parent[k] = on_str(v, name)
         elif isinstance(v, dict):
-            new = dict(v)
+            new = {}
+            originals = []
+            for ok, ov in v.items():
+                nk = on_key(ok) if isinstance(ok, str) else ok
+                if nk in new:  # two masked keys collapsed to one placeholder
+                    i = 2
+                    while f"{nk}#{i}" in new:
+                        i += 1
+                    nk = f"{nk}#{i}"
+                new[nk] = ov
+                originals.append((nk, ok))
             parent[k] = new
-            for ck in new:
-                stack.append((new, ck, ck))
+            for nk, ok in originals:
+                stack.append((new, nk, ok))
         elif isinstance(v, list):
             new = list(v)
             parent[k] = new
@@ -249,51 +282,69 @@ def _walk(record, on_str):
     return holder[0]
 
 
+class _Budget:
+    """Per-record total of scanned characters (MAX_RECORD_CHARS)."""
+
+    def __init__(self):
+        self.used = 0
+
+    def take(self, n: int) -> bool:
+        self.used += n
+        return self.used <= MAX_RECORD_CHARS
+
+
+def _record_pass(record, key: bytes, counts: dict):
+    budget = _Budget()
+
+    def text(value):
+        if not budget.take(len(value)):
+            counts["oversize"] = counts.get("oversize", 0) + 1
+            return OVERSIZE
+        return _mask_text(value, key, counts)
+
+    def on_str(value, name):
+        if _dict_key_secret(name, value):
+            budget.take(len(value))
+            counts["config-secret"] = counts.get("config-secret", 0) + 1
+            return "[REDACTED:config-secret]"
+        return text(value)
+
+    return _walk(record, on_str, text)
+
+
 def redact_record(record, key: bytes, version: str = RULESET_VERSION) -> tuple[object, dict[str, int]]:
-    """Mask every str value inside a parsed JSON record. The structure (keys,
-    nesting, non-string values) is never altered."""
+    """Mask every str value AND every dict key inside a parsed JSON record. The
+    nesting and the non-string values are never altered; a key changes only when
+    it carried a secret. Strings over MAX_VALUE_CHARS, and every string after
+    the record's first MAX_RECORD_CHARS characters, become `[REDACTED:oversize]`."""
     _check_version(version)
     if not key:
         raise KeyMissing("hmac key is empty")
     counts: dict[str, int] = {}
-
-    def on_str(value, name):
-        if _dict_key_secret(name, value):
-            counts["config-secret"] = counts.get("config-secret", 0) + 1
-            return "[REDACTED:config-secret]"
-        masked, c = redact_text(value, key, version)
-        for kind, n in c.items():
-            counts[kind] = counts.get(kind, 0) + n
-        return masked
-
-    return _walk(record, on_str), counts
+    return _record_pass(record, key, counts), counts
 
 
 def detect_record(record, version: str = RULESET_VERSION) -> list[str]:
-    """Kinds of secrets still present (unmasked) anywhere in the record, sorted.
-    Placeholders are ignored. Used by the server re-scan; returns kind names
-    only, never values."""
+    """Kinds of secrets still present (unmasked) anywhere in the record —
+    values and dict keys — sorted. Placeholders are ignored. `oversize` means a
+    string or the record exceeds the caps and was not scanned, which the server
+    rejects like a hit. Kind names only, never values."""
     _check_version(version)
     counts: dict[str, int] = {}
-
-    def on_str(value, name):
-        if _dict_key_secret(name, value):
-            counts["config-secret"] = counts.get("config-secret", 0) + 1
-        else:
-            _detect_text(value, counts)
-        return value
-
-    _walk(record, on_str)
+    _record_pass(record, _DETECT_KEY, counts)
     return sorted(counts)
 
 
-def detect_text(text: str, version: str = RULESET_VERSION) -> list[str]:
-    """detect_record for one bare string (the /blob content)."""
+def detect_text(text: str, version: str = RULESET_VERSION,
+                max_chars: int = MAX_VALUE_CHARS) -> list[str]:
+    """detect_record for one bare string (the /blob content, whose cap is the
+    caller's to choose)."""
     _check_version(version)
     counts: dict[str, int] = {}
-    _detect_text(text, counts)
+    _mask_text(text, _DETECT_KEY, counts, max_chars)
     return sorted(counts)
 
 
 __all__ = ["RULESET_VERSION", "KeyMissing", "load_key", "redact_record",
-           "redact_text", "detect_record", "detect_text", "PLACEHOLDER_RE"]
+           "redact_text", "detect_record", "detect_text", "PLACEHOLDER_RE",
+           "MAX_VALUE_CHARS", "MAX_RECORD_CHARS"]

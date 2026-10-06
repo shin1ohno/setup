@@ -380,7 +380,7 @@ async def _json_body(request: Request) -> dict:
         raise HTTPError(413, "too_large")
     try:
         body = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):  # RecursionError: a hostile nesting depth
         raise HTTPError(400, "bad_json") from None
     if not isinstance(body, dict):
         raise HTTPError(400, "bad_json")
@@ -421,6 +421,141 @@ async def _owned_session(session_key: str, caller, *, allow_hostless=False):
     if src.get("host") != _require_host(caller):
         raise HTTPError(403, "host_mismatch")
     return got
+
+
+# --------------------------------------------------------------------------- #
+# Strict line handling + CPU budget (security review of the first revision)
+# --------------------------------------------------------------------------- #
+# Invariant: the bytes written to the archive and the record handed to the
+# parser are both derived from EXACTLY the object the detector scanned. A raw
+# line is never archived. Each line is loaded strictly (no duplicate keys, no
+# NaN/Infinity, no lone surrogates, bounded depth, an object at top level) and
+# re-serialised canonically; whatever cannot round-trip is rejected per line
+# with 422 so the client tombstones it instead of stalling the file.
+SEGMENT_BUDGET_S = float(os.environ.get("SESSION_SEGMENT_BUDGET_S", "2.0"))
+SEGMENT_CONCURRENCY = 2
+MAX_RECORD_DEPTH = 64
+BLOB_MAX_CHARS = DECOMPRESSED_MAX
+ARCHIVE_DOWNLOAD_MAX = 512 * 1024 * 1024
+TOOL_RESULTS_MAX_BYTES = 256 * 1024 * 1024
+TOOL_RESULTS_MAX_FILES = 1000
+_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+_PRINTABLE_PATH_RE = re.compile("[^\x00-\x1f\x7f\ud800-\udfff]{1,4096}")
+
+
+class _OverBudget(Exception):
+    pass
+
+
+class _BadLine(ValueError):
+    def __init__(self, kind):
+        super().__init__(kind)
+        self.kind = kind
+
+
+def _no_duplicate_keys(pairs):
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise _BadLine("duplicate-key")
+        out[k] = v
+    return out
+
+
+def _reject_constant(name):
+    raise _BadLine("non-finite-number")
+
+
+def strict_load(line: str):
+    """Parse one JSONL line strictly. Returns the record or raises _BadLine."""
+    try:
+        rec = json.loads(line, object_pairs_hook=_no_duplicate_keys,
+                         parse_constant=_reject_constant)
+    except _BadLine:
+        raise
+    except (ValueError, RecursionError):
+        raise _BadLine("invalid-json") from None
+    if not isinstance(rec, dict):
+        raise _BadLine("not-an-object")
+    stack = [(rec, 1)]
+    while stack:
+        v, depth = stack.pop()
+        if depth > MAX_RECORD_DEPTH:
+            raise _BadLine("too-deep")
+        if isinstance(v, dict):
+            for k, cv in v.items():
+                if _SURROGATE_RE.search(k):
+                    raise _BadLine("surrogate")
+                stack.append((cv, depth + 1))
+        elif isinstance(v, list):
+            stack.extend((cv, depth + 1) for cv in v)
+        elif isinstance(v, str) and _SURROGATE_RE.search(v):
+            raise _BadLine("surrogate")
+    return rec
+
+
+def canonical_line(rec) -> str:
+    """Compact JSON, UTF-8, control characters escaped (json.dumps always
+    escapes them), and U+2028/U+2029 escaped too so no reader that splits on
+    Unicode line boundaries sees a different line structure."""
+    try:
+        out = json.dumps(rec, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    except (ValueError, RecursionError):
+        raise _BadLine("invalid-json") from None
+    return out.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+
+def _scan_segment(lines: list, version: str, deadline: float | None = None) -> dict:
+    """CPU-bound part of the ingest: strict load, C2 detect, canonicalise.
+    Runs in a worker thread. Checks the deadline between lines; every single
+    regex call inside is bounded by session_redact's caps."""
+    bad, kinds, canonical = [], set(), []
+    secret = False
+    for i, line in enumerate(lines):
+        if deadline is not None and time.monotonic() > deadline:
+            raise _OverBudget()
+        try:
+            rec = strict_load(line)
+            hit = session_redact.detect_record(rec, version)
+            if hit:
+                bad.append(i)
+                kinds.update(hit)
+                secret = True
+                continue
+            canonical.append(canonical_line(rec))
+        except _BadLine as exc:
+            bad.append(i)
+            kinds.add(exc.kind)
+    return {"bad_lines": bad, "kinds": sorted(kinds), "canonical": canonical,
+            "error": "unmasked_secret" if secret else "invalid_line"}
+
+
+_SLOTS: dict = {}
+
+
+def _segment_slot():
+    """At most SEGMENT_CONCURRENCY CPU-bound segment jobs per event loop, so a
+    burst of hostile segments cannot occupy every worker thread."""
+    loop = asyncio.get_running_loop()
+    sem = _SLOTS.get(loop)
+    if sem is None:
+        sem = _SLOTS[loop] = asyncio.Semaphore(SEGMENT_CONCURRENCY)
+    return sem
+
+
+async def _run_bounded(fn, *args, **kw):
+    """Run fn in a worker thread with a wall-clock budget. Functions that take
+    a `deadline` keyword get it and stop themselves; for the rest the wait is
+    abandoned (their work is linear and capped). Over budget = 413, which the
+    client answers by halving the segment."""
+    budget = SEGMENT_BUDGET_S
+    if fn is _scan_segment:
+        kw["deadline"] = time.monotonic() + budget
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn, *args, **kw), timeout=budget + 1.0)
+    except (_OverBudget, asyncio.TimeoutError):
+        _log(f"segment over budget fn={fn.__name__} budget_s={budget}")
+        raise HTTPError(413, "too_expensive") from None
 
 
 def _segment_chunks(chunks):
@@ -534,33 +669,27 @@ async def ingest(request: Request, caller: dict):
     if not isinstance(lines, list) or not lines or not all(isinstance(x, str) for x in lines):
         raise HTTPError(400, "invalid_request", field="segment.lines")
 
-    # Step 3: re-scan every line, detect-only, with the declared ruleset.
-    bad_lines, kinds, invalid = [], set(), []
-    for i, line in enumerate(lines):
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            invalid.append(i)
-            continue
-        if not isinstance(rec, (dict, list)):
-            invalid.append(i)
-            continue
-        hit = session_redact.detect_record(rec, version)
-        if hit:
-            bad_lines.append(i)
-            kinds.update(hit)
-    if invalid:
-        raise HTTPError(400, "invalid_line", lines=invalid)
-    if bad_lines:
-        _COUNTERS["rejected_lines"] += len(bad_lines)
-        _log(f"reject unmasked_secret host={host} kinds={','.join(sorted(kinds))}"
-             f" lines={','.join(map(str, bad_lines[:50]))}")
-        raise HTTPError(422, "unmasked_secret", lines=bad_lines, kinds=sorted(kinds))
-
-    payload = "".join(line + "\n" for line in lines).encode("utf-8")
-    sha = hashlib.sha256(payload).hexdigest()
-    if sha != seg_sha:
+    # Step 3: strict load + re-scan, off the event loop, under a deadline.
+    async with _segment_slot():
+        scan = await _run_bounded(_scan_segment, lines, version)
+    if scan["bad_lines"]:
+        _COUNTERS["rejected_lines"] += len(scan["bad_lines"])
+        _log(f"reject {scan['error']} host={host} kinds={','.join(scan['kinds'])}"
+             f" lines={','.join(map(str, scan['bad_lines'][:50]))}")
+        raise HTTPError(422, scan["error"], lines=scan["bad_lines"], kinds=scan["kinds"])
+    if session_redact.detect_text(jsonl_path, version) or not _PRINTABLE_PATH_RE.fullmatch(jsonl_path):
+        raise HTTPError(400, "invalid_request", field="file.jsonl_path")
+    # The client's checksum covers the lines it sent (transport integrity).
+    sent = "".join(line + "\n" for line in lines).encode("utf-8", "surrogatepass")
+    if hashlib.sha256(sent).hexdigest() != seg_sha:
         raise HTTPError(400, "sha256_mismatch")
+    # What is archived and parsed is the canonical serialisation of exactly the
+    # records the detector scanned (see _scan_segment), never the raw lines.
+    canonical = scan["canonical"]
+    payload = "".join(line + "\n" for line in canonical).encode("utf-8")
+    if len(payload) > sessions_archive.MAX_CHUNK_OUTPUT:
+        raise HTTPError(413, "too_large")
+    sha = hashlib.sha256(payload).hexdigest()
 
     session_key = make_session_key(host, project_dir, key_sid)
     got = await _get_session(session_key)
@@ -588,9 +717,11 @@ async def ingest(request: Request, caller: dict):
         else:
             raise HTTPError(409, "offset_mismatch", expected_offset=next_expected)
 
-    parsed = sessions_parse.parse_lines(
-        session_key, kind, lines, offset, host=host, session_id=session_id, agent_id=agent_id,
-        known_entrypoint=(existing or {}).get("entrypoint"), redact_version=version)
+    async with _segment_slot():
+        parsed = await _run_bounded(
+            sessions_parse.parse_lines, session_key, kind, canonical, offset, host=host,
+            session_id=session_id, agent_id=agent_id,
+            known_entrypoint=(existing or {}).get("entrypoint"), redact_version=version)
     for k, n in parsed["counters"]["unknown_types"].items():
         _COUNTERS["unknown_types"][k] = _COUNTERS["unknown_types"].get(k, 0) + n
 
@@ -672,10 +803,18 @@ async def blob(request: Request, caller: dict):
         raise HTTPError(400, "invalid_request", field="content")
     src, seq, term = await _owned_session(session_key, caller)
     version = src.get("redact_version") or session_redact.RULESET_VERSION
-    kinds = session_redact.detect_text(content, version)
+    if _SURROGATE_RE.search(content):
+        # Not encodable as UTF-8: what would be stored is not what was scanned.
+        raise HTTPError(422, "invalid_line", lines=[], kinds=["surrogate"])
+    existing_blobs = _blob_entries(src.get("archive_chunks"))
+    if len(existing_blobs) >= TOOL_RESULTS_MAX_FILES and all(e["name"] != name for e in existing_blobs):
+        raise HTTPError(413, "too_many_tool_results")
+    async with _segment_slot():
+        kinds = await _run_bounded(session_redact.detect_text, content, version, BLOB_MAX_CHARS)
     if kinds:
         _log(f"reject unmasked_secret blob host={src.get('host')} kinds={','.join(kinds)}")
         raise HTTPError(422, "unmasked_secret", lines=[], kinds=kinds)
+    # The scanned str is exactly what is stored (strict UTF-8, surrogates refused).
     data = content.encode("utf-8")
     if hashlib.sha256(data).hexdigest() != sha:
         raise HTTPError(400, "sha256_mismatch")
@@ -771,6 +910,8 @@ async def _download_segments(src: dict) -> bytes:
             _log(f"archive_tampered session={src['session_key']} offset={c['offset']}")
             raise HTTPError(409, "archive_tampered")
         out += data
+        if len(out) > ARCHIVE_DOWNLOAD_MAX:
+            raise HTTPError(413, "too_large")
     return bytes(out)
 
 
@@ -792,6 +933,9 @@ async def archive_tool_results(request: Request, caller: dict):
     src = got[0]
     entries = _blob_entries(src.get("archive_chunks"))
     backend = _archive_backend() if entries else None
+    if len(entries) > TOOL_RESULTS_MAX_FILES:
+        raise HTTPError(413, "too_large")
+    total = 0
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tar:
         for e in sorted(entries, key=lambda x: x["name"]):
@@ -808,6 +952,9 @@ async def archive_tool_results(request: Request, caller: dict):
                 raise HTTPError(409, "archive_tampered") from None
             if hashlib.sha256(data).hexdigest() != e["sha256"]:
                 raise HTTPError(409, "archive_tampered")
+            total += len(data)
+            if total > TOOL_RESULTS_MAX_BYTES:
+                raise HTTPError(413, "too_large")
             info = tarfile.TarInfo(e["name"])
             info.size = len(data)
             info.mode = 0o600

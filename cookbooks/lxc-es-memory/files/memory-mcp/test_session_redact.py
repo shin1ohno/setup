@@ -9,6 +9,7 @@ Usage: python3 test_session_redact.py
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
@@ -212,6 +213,98 @@ class Keys(unittest.TestCase):
         with self.assertRaises(ValueError):
             sr.detect_record({}, "r9")
         self.assertEqual(sr.RULESET_VERSION, "r1")
+
+
+class Adversarial(unittest.TestCase):
+    """ReDoS: every pattern is linear on hostile input. Before the fix,
+    `eyJ-` * 2000, a run of letters (URL scheme) and `"token` * 1600 each took
+    0.6-1.5 s at 8 KB and grew quadratically; at 200 KB they would run for
+    minutes. The bound is generous for a slow CI runner and still far below
+    what a quadratic pattern needs at this size."""
+
+    N = 200_000
+    BOUND_S = 3.0
+
+    def rep(self, s):
+        return (s * (self.N // len(s) + 1))[:self.N]
+
+    def test_wall_clock_bound(self):
+        cases = ["eyJ-", "eyJaaaaaaaa.", "a", "a://b:", '"token', '"token": "', "token",
+                 "-----BEGIN A ", "authorization: bearer ", "-ghp_" + "A" * 40 + "_", "sk-",
+                 "xoxb-", "[REDACTED:", 'token=eyJ-a://ghp_sk-"secret": "']
+        import time
+        for c in cases:
+            with self.subTest(case=c[:20]):
+                s = self.rep(c)
+                t = time.monotonic()
+                sr.detect_text(s)
+                redact(s)
+                self.assertLess(time.monotonic() - t, self.BOUND_S)
+        for prefix, filler in (("token", " "), ("authorization:", " "), ("a://b:", "c:"),
+                               ('"token": "', "x\\")):
+            s = prefix + self.rep(filler)
+            t = time.monotonic()
+            sr.detect_text(s)
+            self.assertLess(time.monotonic() - t, self.BOUND_S, prefix)
+
+    def test_scaling_is_linear(self):
+        import time
+
+        def cost(n):
+            s = ("eyJ-" * (n // 4)) + ("a" * n) + ('"token' * (n // 6))
+            t = time.monotonic()
+            sr.detect_text(s)
+            return time.monotonic() - t
+
+        small, big = cost(20_000), cost(160_000)
+        # 8x the input: linear ≈ 8x, quadratic ≈ 64x
+        self.assertLess(big, max(small, 0.005) * 24)
+
+
+class Caps(unittest.TestCase):
+    def test_oversize_value_is_never_scanned_or_shipped(self):
+        s = "ghp_" + "A" * 36 + " " + "x" * sr.MAX_VALUE_CHARS
+        out, counts = sr.redact_text(s, KEY)
+        self.assertEqual((out, counts), ("[REDACTED:oversize]", {"oversize": 1}))
+        self.assertEqual(sr.detect_text(s), ["oversize"])
+        self.assertEqual(sr.detect_record({"t": s}), ["oversize"])
+        self.assertEqual(sr.detect_record({"t": out}), [])
+
+    def test_record_total_cap(self):
+        chunk = "y" * (sr.MAX_VALUE_CHARS - 1)
+        rec = {f"k{i}": chunk for i in range(5)}
+        self.assertEqual(sr.detect_record(rec), ["oversize"])
+        out, counts = sr.redact_record(rec, KEY)
+        self.assertEqual(set(counts), {"oversize"})
+        masked = [k for k, v in out.items() if v == "[REDACTED:oversize]"]
+        self.assertEqual(len(masked), counts["oversize"])
+        self.assertLessEqual(sum(len(v) for v in out.values()), sr.MAX_RECORD_CHARS)
+        self.assertEqual(sr.detect_record(out), [])
+
+    def test_blob_cap_is_the_callers(self):
+        s = "z" * (sr.MAX_VALUE_CHARS + 10)
+        self.assertEqual(sr.detect_text(s), ["oversize"])
+        self.assertEqual(sr.detect_text(s, max_chars=5_000_000), [])
+
+
+class Keys2(unittest.TestCase):
+    def test_secret_in_dict_key_is_detected_and_masked(self):
+        tok = "ghp_" + A36
+        rec = {"input": {tok: 1, "DB_PASSWORD=hunter2hunter2": 2, "plain": 3}}
+        self.assertEqual(sr.detect_record(rec), ["config-secret", "github-token"])
+        out, _ = sr.redact_record(rec, KEY)
+        keys = list(out["input"])
+        self.assertNotIn(tok, json.dumps(out))
+        self.assertTrue(keys[0].startswith("[REDACTED:github-token:"))
+        self.assertEqual(keys[1], "DB_PASSWORD=[REDACTED:config-secret]")
+        self.assertEqual(out["input"]["plain"], 3)
+        self.assertEqual(sr.detect_record(out), [])
+
+    def test_colliding_masked_keys_are_kept_apart(self):
+        rec = {"password=aaaaaaaa1": 1, "password=bbbbbbbb2": 2}
+        out, _ = sr.redact_record(rec, KEY)
+        self.assertEqual(sorted(out.values()), [1, 2])
+        self.assertEqual(len(out), 2)
 
 
 if __name__ == "__main__":

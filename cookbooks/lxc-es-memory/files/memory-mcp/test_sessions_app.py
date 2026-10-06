@@ -204,7 +204,7 @@ def line(uuid, text, ts="2026-10-01T10:00:00Z", **kw):
     r = {"type": "user", "uuid": uuid, "sessionId": SID, "cwd": "/home/dev/proj",
          "entrypoint": "cli", "timestamp": ts, "message": {"role": "user", "content": text}}
     r.update(kw)
-    return json.dumps(r)
+    return json.dumps(r, ensure_ascii=False, separators=(",", ":"))
 
 
 def segment_body(lines, offset, end_offset=None, generation=0, host="pro-dev", sid=SID,
@@ -445,7 +445,6 @@ class Ingest(Base):
             segment_body([line("u1", "x")], 0, pdir="a/b"),
             segment_body([line("u1", "x")], 0, kind="other"),
             segment_body([line("u1", "x")], 0, version="r9"),
-            segment_body(["not json"], 0),
             segment_body([], 0),
         ]
         for b in bad:
@@ -518,6 +517,107 @@ class Ingest(Base):
         self.assertEqual((r.status_code, r.json()["error"]), (503, "archive_unavailable"))
         self.assertFalse(FAKE.indices.get("memory-session"))
         self.assertFalse(FAKE.indices.get("memory-session-message"))
+
+
+class Hostile(Base):
+    """Parser-differential, ReDoS and event-loop findings from the security
+    review: what is archived and indexed is exactly what the detector saw."""
+
+    def test_invalid_lines_are_422_per_line(self):
+        cases = {
+            "duplicate-key": '{"type":"user","uuid":"d","message":{"content":"a"},"message":{"content":"b"}}',
+            "surrogate": '{"type":"user","uuid":"s","message":{"content":"\\ud800x"}}',
+            "non-finite-number": '{"type":"user","uuid":"n","x":NaN}',
+            "invalid-json": "not json",
+            "not-an-object": "[1,2]",
+            "too-deep": '{"a":' * 70 + "1" + "}" * 70,
+        }
+        for kind, bad in cases.items():
+            with self.subTest(kind=kind):
+                r = self.ingest(segment_body([line("u1", "ok"), bad], 0))
+                self.assertEqual(r.status_code, 422, r.text)
+                self.assertEqual(r.json(), {"error": "invalid_line", "lines": [1], "kinds": [kind]})
+
+    def test_secret_and_invalid_lines_are_reported_together(self):
+        r = self.ingest(segment_body([line("u1", "ghp_" + "A" * 36), "nope", line("u3", "ok")], 0))
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(r.json(), {"error": "unmasked_secret", "lines": [0, 1],
+                                    "kinds": ["github-token", "invalid-json"]})
+
+    def test_secret_in_a_dict_key_is_rejected(self):
+        bad = json.dumps({"type": "user", "uuid": "k", "toolUseResult": {"ghp_" + "A" * 36: 1}})
+        r = self.ingest(segment_body([bad], 0))
+        self.assertEqual((r.status_code, r.json()["kinds"]), (422, ["github-token"]))
+
+    def test_archive_holds_the_canonical_form_of_what_was_scanned(self):
+        rec = {"type": "user", "uuid": "c1", "cwd": "/home/dev/proj",
+               "message": {"role": "user", "content": "line\u2028sep and \u0000 nul\r\nend"}}
+        spaced = json.dumps(rec, ensure_ascii=False)  # ", " / ": " separators, raw U+2028
+        self.assertIn("\u2028", spaced)
+        r = self.ingest(segment_body([spaced], 0))
+        self.assertEqual(r.status_code, 200, r.text)
+        sk = r.json()["session_key"]
+        dl = self.c.get(PREFIX + "/archive", params={"session_key": sk}, headers=AIR).content
+        self.assertEqual(dl.decode(), sa.canonical_line(rec) + "\n")
+        self.assertNotIn("\u2028".encode(), dl)
+        self.assertNotIn(b"\r", dl)
+        self.assertNotIn(b"\0", dl)
+        self.assertEqual(dl.count(b"\n"), 1)
+        self.assertEqual(json.loads(dl), rec)
+        chunk = self.session(sk)["archive_chunks"][0]
+        self.assertEqual(chunk["sha256"], hashlib.sha256(dl).hexdigest())
+        doc = next(iter(FAKE.indices["memory-session-message"].values()))[0]
+        self.assertEqual(doc["text"], rec["message"]["content"].strip())
+
+    def test_jsonl_path_is_scanned_and_printable(self):
+        for p in ("/x/ghp_" + "A" * 36 + ".jsonl", "/x/a\nb.jsonl", "/x/\x00.jsonl"):
+            with self.subTest(p=p):
+                b = segment_body([line("u1", "x")], 0)
+                b["file"]["jsonl_path"] = p
+                self.assertEqual(self.ingest(b).status_code, 400)
+
+    def test_deeply_nested_request_body_is_400(self):
+        r = self.ingest(None, raw=gzip.compress(b"[" * 200_000 + b"]" * 200_000))
+        self.assertEqual((r.status_code, r.json()["error"]), (400, "bad_json"))
+
+    def test_surrogate_blob_is_422(self):
+        sk = self.ingest(segment_body([line("u1", "x")], 0)).json()["session_key"]
+        raw = ('{"session_key":"%s","name":"a.txt","sha256":"%s","content":"\\ud800"}'
+               % (sk, "0" * 64)).encode()
+        r = self.c.post(PREFIX + "/blob", content=gzip.compress(raw), headers=PRO_DEV)
+        self.assertEqual((r.status_code, r.json()["kinds"]), (422, ["surrogate"]))
+
+    def test_hostile_segment_is_bounded_and_does_not_block_the_loop(self):
+        """A segment that costs well over the budget is cut off with 413, and a
+        cheap request issued while it runs completes promptly."""
+        import time as _t
+
+        import httpx
+        hostile = 'token=eyJ-a://xx_sk-"secret": "' * 6000  # ~190 KB of worst-case text
+        lines = [json.dumps({"type": "user", "uuid": f"h{i}", "message": {"content": hostile}})
+                 for i in range(18)]
+        body = gz(segment_body(lines, 0))
+
+        async def run():
+            transport = httpx.ASGITransport(app=APP)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+                t0 = _t.monotonic()
+                slow = asyncio.ensure_future(client.post(
+                    PREFIX + "/ingest", content=body, headers=PRO_DEV))
+                await asyncio.sleep(0.3)
+                t1 = _t.monotonic()
+                st = await client.get(PREFIX + "/status", headers=PRO_DEV)
+                status_latency = _t.monotonic() - t1
+                done_before = slow.done()
+                res = await slow
+                return res, st, status_latency, done_before, _t.monotonic() - t0
+
+        res, st, status_latency, done_before, total = asyncio.run(run())
+        self.assertEqual(st.status_code, 200)
+        self.assertFalse(done_before, "the hostile segment should still be running")
+        self.assertLess(status_latency, 1.0)
+        self.assertEqual((res.status_code, res.json()["error"]), (413, "too_expensive"))
+        self.assertLess(total, sa.SEGMENT_BUDGET_S + 3.0)
 
 
 class Archive(Base):
