@@ -72,6 +72,50 @@ ALLOWED_CLIENT_IDS = {
     c.strip() for c in os.environ.get("ALLOWED_CLIENT_IDS", "").split(",") if c.strip()
 }
 
+# Shared secret with the upstream server (identity.py require_proxy_secret).
+# When set, every proxied request carries it as X-Proxy-Secret, so a local
+# process that reaches the server's loopback port directly cannot forge the
+# X-Verified-* headers. Empty = no header (the server's check is inert too).
+PROXY_SHARED_SECRET = os.environ.get("PROXY_SHARED_SECRET", "")
+HEADER_PROXY_SECRET = "X-Proxy-Secret"
+
+# Request body limits (design spec §7.2 "Body limits"). 8 MiB only under the
+# session search API, 1 MiB everywhere else. Enforced while reading, so a
+# chunked body without Content-Length is cut off at the limit, and only ever
+# after authentication. The path is the one this proxy receives (nginx strips
+# the /memory location prefix).
+BODY_LIMIT_DEFAULT = 1024 * 1024
+BODY_LIMIT_SESSIONS = 8 * 1024 * 1024
+SESSIONS_PATH_PREFIX = "/sessions/v1/"
+BODY_READ_CHUNK = 64 * 1024
+
+
+def body_limit(request) -> int:
+    """8 MiB for /sessions/v1/..., 1 MiB otherwise. A path with a dot segment
+    or a percent escape never gets the larger limit, whatever it decodes to."""
+    raw = request.raw_path.split("?", 1)[0]
+    if (raw.startswith(SESSIONS_PATH_PREFIX) and "%" not in raw
+            and not any(seg in (".", "..") for seg in raw.split("/"))):
+        return BODY_LIMIT_SESSIONS
+    return BODY_LIMIT_DEFAULT
+
+
+class BodyTooLarge(Exception):
+    pass
+
+
+async def read_body_bounded(request, limit: int) -> bytes:
+    """The request body, or BodyTooLarge as soon as it exceeds `limit` (by the
+    declared Content-Length or by the bytes actually received)."""
+    if request.content_length is not None and request.content_length > limit:
+        raise BodyTooLarge()
+    buf = bytearray()
+    async for chunk in request.content.iter_chunked(BODY_READ_CHUNK):
+        buf += chunk
+        if len(buf) > limit:
+            raise BodyTooLarge()
+    return bytes(buf)
+
 
 # ── JWKS-based token verifier ──────────────────────────────────────────
 
@@ -315,17 +359,32 @@ async def handle(request: web.Request) -> web.StreamResponse:
     url = f"{UPSTREAM_URL}{request.path_qs}"
     # Strip any inbound X-Verified-* headers (spoof defense) before injecting our
     # own — the proxy is the only trusted source of these identity headers.
+    # X-Proxy-Secret is stripped the same way: only this proxy may set it.
     fwd_headers = {
         k: v
         for k, v in request.headers.items()
-        if k.lower() not in HOP_BY_HOP and not k.lower().startswith("x-verified-")
+        if k.lower() not in HOP_BY_HOP
+        and not k.lower().startswith("x-verified-")
+        and k.lower() != HEADER_PROXY_SECRET.lower()
     }
     fwd_headers["X-Verified-Sub"] = sub
     fwd_headers["X-Verified-Client-Id"] = client_id
     fwd_headers["X-Verified-Grant"] = grant
+    if PROXY_SHARED_SECRET:
+        fwd_headers[HEADER_PROXY_SECRET] = PROXY_SHARED_SECRET
 
     session = request.app["http_client"]
-    body = await request.read() if request.can_read_body else None
+    body = None
+    if request.can_read_body:
+        limit = body_limit(request)
+        try:
+            body = await read_body_bounded(request, limit)
+        except BodyTooLarge:
+            logger.warning("Body over %d bytes for %s %s", limit, request.method, request.path)
+            return web.json_response({"error": "too_large"}, status=413, headers=CORS_HEADERS)
+        # The body is forwarded as bytes, so the client's Content-Length (absent
+        # on a chunked request) must not travel with it; aiohttp sets its own.
+        fwd_headers = {k: v for k, v in fwd_headers.items() if k.lower() != "content-length"}
 
     try:
         upstream = await session.request(
@@ -374,7 +433,8 @@ async def handle(request: web.Request) -> web.StreamResponse:
     # Regular responses
     content = await upstream.read()
     await upstream.release()
-    logger.info("Response body (%d bytes): %s", len(content), content[:500])
+    # No response-body logging: on /sessions/v1/ the body is transcript text
+    # (design spec §8 row 22). The status line above is the whole record.
     return web.Response(body=content, status=upstream.status, headers=resp_headers)
 
 

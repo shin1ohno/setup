@@ -696,6 +696,24 @@ jobs:
         # missing archive chunk is 409.
         /tmp/memory-mcp-venv/bin/python cookbooks/lxc-es-memory/files/memory-mcp/test_sessions_app.py
 
+    - name: session search — C8 maintenance job and auth-proxy body limits (personal infra)
+      run: |
+        # docs/design/claude-session-search.md §6.9 / §7.2 / §8 rows 20 + 22.
+        # sessions_maint.py over an in-memory ES and archive (reuses the
+        # MANIFEST venv): 364 d kept / 366 d deleted with its messages and
+        # objects, purge-marker sweep, pending-embedding retry on success and
+        # provider failure, re-mask with a fake newer ruleset, the run record
+        # /status reads, and the lock. Then the auth proxy in its own venv
+        # (requirements.txt: aiohttp, PyJWT, opentelemetry) against an
+        # in-process upstream: 1 MiB + 1 on /mcp and 8 MiB + 1 on /sessions/v1
+        # are 413, 8 MiB on /sessions/v1/ingest passes, chunked bodies over the
+        # limit are 413, X-Proxy-Secret is injected, no response body is logged.
+        # -B: auth-proxy/__pycache__ is tracked, so the test must not rewrite it.
+        /tmp/memory-mcp-venv/bin/python -B cookbooks/lxc-es-memory/files/memory-mcp/test_sessions_maint.py
+        python3 -m venv /tmp/es-memory-proxy-venv
+        /tmp/es-memory-proxy-venv/bin/pip install -q -r cookbooks/lxc-es-memory/files/requirements.txt
+        /tmp/es-memory-proxy-venv/bin/python -B cookbooks/lxc-es-memory/files/auth-proxy/test_proxy.py
+
     - name: Background-launch Stop hook regression suite
       run: |
         # hooks/warn-background-launch-no-progress.rb is the mechanical backstop
