@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+"""Session search latency benchmark at one-year scale (design spec §8 row 17,
+§9: lexical server `took` p95 < 50 ms). Local only — NOT run in CI and not
+deployed (it lives in bin/, outside the memory-mcp MANIFEST unit).
+
+It loads SYNTHETIC documents shaped like §7.1 into a scratch Elasticsearch and
+times the exact bodies sessions_search.py sends (imported from the repo, so the
+benchmark cannot drift from the code). No real transcript is read.
+
+Start a scratch ES first — never the running service, never its config dir:
+
+    ES_HOME=/data/elasticsearch/current
+    W=$(mktemp -d)/es; mkdir -p "$W"/data "$W"/logs
+    cp -r "$ES_HOME"/config "$W"/config        # stock config dir of the distribution
+    cat > "$W"/config/elasticsearch.yml <<EOF
+    cluster.name: bench-session-search
+    node.name: bench
+    path.data: $W/data
+    path.logs: $W/logs
+    network.host: 127.0.0.1
+    http.port: 19200
+    transport.port: 19300
+    discovery.type: single-node
+    xpack.security.enabled: false
+    xpack.ml.enabled: false
+    EOF
+    ES_PATH_CONF="$W"/config ES_JAVA_OPTS="-Xms1g -Xmx1g" "$ES_HOME"/bin/elasticsearch -d -p "$W"/pid
+
+Then:
+
+    bin/bench-session-search --es http://127.0.0.1:19200            # load + bench
+    bin/bench-session-search --es http://127.0.0.1:19200 --skip-load
+
+Stop it with `kill "$(cat "$W"/pid)"` and delete "$W" afterwards.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import random
+import statistics
+import sys
+import time
+import urllib.parse
+import urllib.request
+import uuid
+from datetime import datetime, timedelta, timezone
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MCP = os.path.join(REPO, "cookbooks", "lxc-es-memory", "files", "memory-mcp")
+INDICES = os.path.join(REPO, "cookbooks", "lxc-es-memory", "files", "es-indices-v2")
+sys.path.insert(0, MCP)
+sys.dont_write_bytecode = True  # keep __pycache__ out of the MANIFEST unit
+
+import sessions_search as ss  # noqa: E402
+
+EN = ("worktree cookbook deploy timeout elasticsearch kuromoji session resume hook snapshot "
+      "terraform latency highlight collapse token mitamae docker systemd tailscale gateway "
+      "redactor archive ingest cursor breaker fallback picker preview embedding vector "
+      "retention lifecycle bucket upload checksum generation offset parser record attachment "
+      "subagent sidechain headless interactive benchmark percentile shard replica mapping "
+      "analyzer tokenizer bigram highlightfragment pagination aggregation collapse query "
+      "filter prefix range since host cwd branch commit merge rebase review pipeline runner "
+      "workflow schedule cron monitor alert dashboard kibana prometheus exporter scrape "
+      "certificate renew rotate secret vault policy scope grant client identity proxy nginx "
+      "upstream healthcheck restart reload drift converge idempotent guard sentinel lock").split()
+JA = ("検索 設定 障害 認証 再起動 監視 証明書 移行 削除 変更 ログ 分析 確認 失敗 成功 原因 修正 "
+      "計画 仕様 実装 テスト 環境 権限 接続 遅延 応答 送信 受信 保存 復元 圧縮 展開 暗号 鍵 期限 "
+      "更新 同期 差分 履歴 会話 要約 回答 質問 調査 報告 結論 前提 判断 方針 手順 例外 警告 "
+      "通知 予定 会議 資料 顧客 売上 指標 施策 効果 比較 推定 実測 改善 対応 運用 構成 境界").split()
+WORDS = EN + JA
+# Zipf-like weights so some terms are common and some rare, as in real text.
+WEIGHTS = [1.0 / (i + 1) ** 0.9 for i in range(len(WORDS))]
+HOSTS = ["pro-dev", "mini", "neo"]
+QUERIES = ["worktree", "検索", "timeout 再起動", "kuromoji", "証明書 renew", "cookbook deploy",
+           "障害 原因", "snapshot", "認証 proxy", "latency", "移行 計画", "highlight collapse",
+           "ログ 分析", "embedding vector", "削除", "tailscale gateway", "仕様 実装", "mitamae",
+           "失敗 修正", "archive generation"]
+assert len(QUERIES) == 20
+
+
+def es_call(base, method, path, body=None, ndjson=None, timeout=600):
+    data = None
+    headers = {}
+    if ndjson is not None:
+        data, headers["Content-Type"] = ndjson, "application/x-ndjson"
+    elif body is not None:
+        data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
+    req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+
+def session_key(host, pdir, sid):
+    raw = hashlib.sha256(f"{host}\0{pdir}\0{sid}".encode()).digest()[:20]
+    return "sk_" + base64.b32encode(raw).decode().lower()
+
+
+def sentence(rng, n):
+    return " ".join(rng.choices(WORDS, WEIGHTS, k=n))
+
+
+def message_counts(rng, sessions, total):
+    """Heavy-tailed per-session message counts summing to `total`."""
+    raw = [rng.paretovariate(1.2) for _ in range(sessions)]
+    scale = total / sum(raw)
+    counts = [max(1, int(r * scale)) for r in raw]
+    counts[0] += total - sum(counts)
+    return counts
+
+
+def create_indices(base):
+    for name in ("memory-session", "memory-session-message"):
+        es_call(base, "DELETE", f"/{name}")
+        with open(os.path.join(INDICES, f"{name}.json")) as fh:
+            body = json.load(fh)
+        body["settings"]["number_of_replicas"] = 0
+        body["settings"]["refresh_interval"] = "-1"  # bulk load; restored below
+        st, resp = es_call(base, "PUT", f"/{name}", body)
+        if st != 200:
+            sys.exit(f"create {name}: {st} {resp}")
+
+
+def load(base, n_sessions, n_messages, seed):
+    rng = random.Random(seed)
+    create_indices(base)
+    now = datetime.now(timezone.utc)
+    cwds = [f"/home/dev/proj{i}" for i in range(40)] + [f"/home/dev/proj{i}/sub" for i in range(10)]
+    counts = message_counts(rng, n_sessions, n_messages)
+    sess_lines, msg_lines, loaded = [], [], 0
+    t0 = time.time()
+
+    def flush(index, lines):
+        if not lines:
+            return
+        st, resp = es_call(base, "POST", f"/{index}/_bulk", ndjson=("\n".join(lines) + "\n").encode())
+        if st != 200 or resp.get("errors"):
+            first = next((i for i in resp.get("items", []) if list(i.values())[0].get("error")), None)
+            sys.exit(f"bulk {index}: {st} {first}")
+        lines.clear()
+
+    for si, cnt in enumerate(counts):
+        host = HOSTS[si % len(HOSTS)]
+        sid = str(uuid.UUID(int=rng.getrandbits(128)))
+        pdir = "-home-dev-proj%d" % (si % 40)
+        sk = session_key(host, pdir, sid)
+        cwd = rng.choice(cwds)
+        interactive = rng.random() < 0.25  # 48 of 209 main sessions are interactive (§3.1)
+        start = now - timedelta(days=rng.uniform(0, 365))
+        end = start + timedelta(minutes=rng.uniform(1, 600))
+        sess_lines.append(json.dumps({"index": {"_id": sk}}))
+        sess_lines.append(json.dumps({
+            "session_key": sk, "session_id": sid, "host": host, "project_dir": pdir,
+            "jsonl_path": f"/home/dev/.claude/projects/{pdir}/{sid}.jsonl", "cwd": cwd,
+            "resume_cwd": cwd, "title": sentence(rng, 6), "title_source": "first_prompt",
+            "entrypoint": "cli" if interactive else "sdk-cli", "interactive": interactive,
+            "started_at": start.isoformat(), "updated_at": end.isoformat(),
+            "message_count": cnt, "text_message_count": max(1, cnt // 10),
+            "has_subagents": True, "jsonl_exists": True, "archived": True,
+            "archive_complete": True, "archive_generation": 0, "redact_version": "r1",
+            "parser_version": "p1"}, ensure_ascii=False))
+        for mi in range(cnt):
+            has_text = rng.random() < 0.10  # 7,284 of 75,351 docs carry text (§3.1)
+            doc = {
+                "session_key": sk, "session_id": sid, "host": host, "cwd": cwd,
+                "interactive": interactive, "uuid": str(uuid.UUID(int=rng.getrandbits(128))),
+                "role": rng.choice(("user", "assistant")),
+                "ts": (start + (end - start) * (mi / max(1, cnt))).isoformat(),
+                "is_sidechain": rng.random() < 0.6, "line_offset": mi * 1000,
+                "redact_version": "r1", "embedding_status": "pending",
+            }
+            if has_text:
+                doc["text"] = sentence(rng, rng.randint(8, 120))
+            else:
+                doc["tool_text"] = sentence(rng, rng.randint(20, 300))
+                doc["tool_names"] = [rng.choice(("Bash", "Read", "Grep", "Edit"))]
+            msg_lines.append(json.dumps({"index": {"_id": f"{sk}:{mi}"}}))
+            msg_lines.append(json.dumps(doc, ensure_ascii=False))
+            loaded += 1
+            if len(msg_lines) >= 10000:
+                flush("memory-session-message", msg_lines)
+        if len(sess_lines) >= 2000:
+            flush("memory-session", sess_lines)
+        if si % 200 == 0:
+            print(f"  loaded sessions={si}/{n_sessions} messages={loaded} "
+                  f"elapsed={time.time() - t0:.0f}s", flush=True)
+    flush("memory-session-message", msg_lines)
+    flush("memory-session", sess_lines)
+    for name in ("memory-session", "memory-session-message"):
+        es_call(base, "PUT", f"/{name}/_settings", {"index": {"refresh_interval": "1s"}})
+        es_call(base, "POST", f"/{name}/_refresh")
+        es_call(base, "POST", f"/{name}/_forcemerge?max_num_segments=1", timeout=3600)
+    print(f"loaded {n_sessions} sessions, {loaded} messages in {time.time() - t0:.0f}s", flush=True)
+
+
+def pct(xs, p):
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, max(0, int(round(p / 100.0 * len(xs) + 0.5)) - 1))]
+
+
+def bench(base, runs):
+    results = {}
+
+    def timed(label, method, path, body):
+        st, resp = es_call(base, method, path, body)
+        if st != 200:
+            sys.exit(f"{label}: HTTP {st} {json.dumps(resp)[:300]}")
+        results.setdefault(label, []).append(int(resp.get("took", 0)))
+        return resp
+
+    # warm-up: one pass not recorded
+    for q in QUERIES:
+        es_call(base, "POST", "/memory-session-message/_search",
+                ss.lexical_body(ss.parse_request({"q": q})))
+    hits_per_query = {}
+    for _ in range(runs):
+        for q in QUERIES:
+            req = ss.parse_request({"q": q})
+            lex = timed("lexical (default filters)", "POST", "/memory-session-message/_search",
+                        ss.lexical_body(req))
+            keys = ss.session_ranks(lex["hits"]["hits"])
+            hits_per_query[q] = len(keys)
+            timed("lexical --all --sidechain", "POST", "/memory-session-message/_search",
+                  ss.lexical_body(ss.parse_request({"q": q, "include_headless": True,
+                                                    "include_sidechain": True})))
+            dreq = ss.parse_request({"q": q, "deep": True, "include_headless": True,
+                                     "include_sidechain": True})
+            dlex = timed("lexical --deep --all --sidechain", "POST",
+                         "/memory-session-message/_search", ss.lexical_body(dreq))
+            dkeys = ss.session_ranks(dlex["hits"]["hits"])
+            if dkeys:
+                timed("hit count (deep, 50 sessions)", "POST", "/memory-session-message/_search",
+                      ss.hit_count_body(dreq, dkeys))
+                # mget has no `took`; time it on the wall clock instead
+                t = time.perf_counter()
+                st, _ = es_call(base, "POST", "/memory-session/_mget?_source="
+                                + ",".join(ss._MGET_SOURCE), ss.mget_body(dkeys))
+                results.setdefault("mget 50 sessions (wall ms)", []).append(
+                    int((time.perf_counter() - t) * 1000))
+                timed("preview highlight (1 session)", "POST", "/memory-session-message/_search",
+                      ss.preview_match_body(dkeys[0], q))
+        timed("empty query (50 most recent)", "POST", "/memory-session/_search",
+              ss.recent_body(ss.parse_request({"q": ""})))
+    print(json.dumps({"sessions_returned_per_query": hits_per_query}, ensure_ascii=False))
+    gate_ok = True
+    for label, xs in results.items():
+        p50, p95 = statistics.median(xs), pct(xs, 95)
+        line = f"{label:40s} n={len(xs):4d} p50={p50:6.1f} ms p95={p95:6.1f} ms max={max(xs)} ms"
+        if label == "lexical (default filters)":
+            gate_ok = p95 < 50
+            line += "   GATE p95<50ms: " + ("PASS" if gate_ok else "FAIL")
+        print(line)
+    return gate_ok
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--es", default="http://127.0.0.1:19200")
+    ap.add_argument("--sessions", type=int, default=2300)
+    ap.add_argument("--messages", type=int, default=830000)
+    ap.add_argument("--runs", type=int, default=5)
+    ap.add_argument("--seed", type=int, default=20261006)
+    ap.add_argument("--skip-load", action="store_true")
+    a = ap.parse_args()
+    u = urllib.parse.urlparse(a.es)
+    # Scratch only: loopback, and never the service port.
+    if u.hostname not in ("127.0.0.1", "localhost", "::1") or u.port in (None, 9200):
+        sys.exit("refusing: --es must be a loopback scratch node on a port other than 9200")
+    st, info = es_call(a.es, "GET", "/")
+    if st != 200 or info.get("cluster_name") != "bench-session-search":
+        sys.exit(f"refusing: unexpected node at {a.es}: {st} {info.get('cluster_name')}")
+    print(f"node {info.get('name')} version {info.get('version', {}).get('number')}")
+    if not a.skip_load:
+        load(a.es, a.sessions, a.messages, a.seed)
+    for name in ("memory-session", "memory-session-message"):
+        _, c = es_call(a.es, "GET", f"/{name}/_count")
+        _, s = es_call(a.es, "GET", f"/_cat/indices/{name}?format=json&bytes=mb")
+        print(f"{name}: docs={c.get('count')} store_mb={(s or [{}])[0].get('store.size')}")
+    sys.exit(0 if bench(a.es, a.runs) else 1)
+
+
+if __name__ == "__main__":
+    main()
