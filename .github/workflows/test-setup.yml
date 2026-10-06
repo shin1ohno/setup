@@ -696,6 +696,17 @@ jobs:
         # missing archive chunk is 409.
         /tmp/memory-mcp-venv/bin/python cookbooks/lxc-es-memory/files/memory-mcp/test_sessions_app.py
 
+    - name: session search — search and preview query bodies (stubbed ES)
+      run: |
+        # docs/design/claude-session-search.md §6.7 / §8 rows 10 and 17. Asserts
+        # the exact ES bodies: the keystroke path has no highlight,
+        # track_total_hits false, collapse on session_key and the default
+        # interactive / non-sidechain filters; deep adds tool_text^0.5; hybrid
+        # fuses with RRF k=60 and an embedding timeout returns bm25-only; the
+        # recency nudge math; preview is the only highlight. Reuses the venv so
+        # /search and /preview are also driven through sessions_app's gate.
+        /tmp/memory-mcp-venv/bin/python cookbooks/lxc-es-memory/files/memory-mcp/test_sessions_search.py
+
     - name: Background-launch Stop hook regression suite
       run: |
         # hooks/warn-background-launch-no-progress.rb is the mechanical backstop
