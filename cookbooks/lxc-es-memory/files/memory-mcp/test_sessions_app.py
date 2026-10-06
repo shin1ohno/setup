@@ -77,13 +77,36 @@ class FakeES:
         if method == "POST" and parts == ["_bulk"]:
             lines = content.strip().split("\n")
             items = []
+            errors = False
             for meta, src in zip(lines[::2], lines[1::2]):
-                m = __import__("json").loads(meta)["index"]
+                action = __import__("json").loads(meta)
+                body = __import__("json").loads(src)
+                if "update" in action:
+                    m = action["update"]
+                    docs = self._idx(m["_index"])
+                    if m["_id"] not in docs:
+                        items.append({"update": {"_id": m["_id"], "status": 404,
+                                                 "error": {"type": "document_missing_exception"}}})
+                        errors = True
+                        continue
+                    cur, seq = docs[m["_id"]]
+                    if m.get("if_seq_no") is not None and m["if_seq_no"] != seq:
+                        items.append({"update": {"_id": m["_id"], "status": 409,
+                                                 "error": {"type": "version_conflict_engine_exception"}}})
+                        errors = True
+                        continue
+                    self.seq += 1
+                    docs[m["_id"]] = ({**cur, **body["doc"]}, self.seq)
+                    items.append({"update": {"_id": m["_id"], "status": 200, "_seq_no": self.seq,
+                                             "_primary_term": 1}})
+                    continue
+                m = action["index"]
                 self.seq += 1
-                self._idx(m["_index"])[m["_id"]] = (__import__("json").loads(src), self.seq)
-                items.append({"index": {"_id": m["_id"], "status": 201}})
+                self._idx(m["_index"])[m["_id"]] = (body, self.seq)
+                items.append({"index": {"_id": m["_id"], "status": 201, "_seq_no": self.seq,
+                                        "_primary_term": 1}})
             self.calls[-1] = (method, path, query)
-            return FakeResp(200, {"errors": False, "items": items})
+            return FakeResp(200, {"errors": errors, "items": items})
         index = parts[0]
         if len(parts) == 3 and parts[1] == "_doc":
             docs = self._idx(index)
@@ -232,6 +255,8 @@ class Base(unittest.TestCase):
         sa._ARCHIVE.clear()
         sa._ARCHIVE["backend"] = self.store
         sa._STATE["ready"] = True
+        sa._PURGED.clear()
+        sa._EMBED_STATE.update(queued=0, dropped=0)
         self.embedded = []
         sa.EMBED_SCHEDULER = self.embedded.extend
         self.c = TestClient(APP)
@@ -419,7 +444,7 @@ class Ingest(Base):
         self.assertEqual(r.json(), {"error": "unmasked_secret", "lines": [1, 3],
                                     "kinds": ["config-secret", "github-token"]})
         self.assertNotIn(tok, r.text)
-        self.assertNotIn("memory-session", FAKE.indices)
+        self.assertFalse(FAKE.indices.get("memory-session"))
 
     def test_masked_input_passes_rescan(self):
         rec = json.loads(line("u2", "token ghp_" + "A" * 36 + " and Authorization: Bearer "
@@ -918,27 +943,281 @@ class Indices(unittest.TestCase):
         FAKE.created.clear()
 
 
-class Embedding(unittest.TestCase):
-    def test_embed_docs_reindexes_with_vector(self):
-        FAKE.indices.clear()
-        vo = types.ModuleType("voyage")
+class _StubVoyage:
+    """Installs a fake `voyage` module; counts provider calls."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __enter__(self):
+        mod = types.ModuleType("voyage")
 
         async def embed_documents(texts, batch=128):
+            self.calls += 1
             return [[0.5] * 4 for _ in texts]
 
-        vo.embed_documents = embed_documents
-        sys.modules["voyage"] = vo
+        mod.embed_documents = embed_documents
+        sys.modules["voyage"] = mod
+        return self
+
+    def __exit__(self, *a):
+        sys.modules.pop("voyage", None)
+
+
+class Embedding(Base):
+    def msg(self, uuid):
+        for s, _ in FAKE.indices["memory-session-message"].values():
+            if s["uuid"] == uuid:
+                return s
+        return None
+
+    def test_conditional_update_attaches_vector(self):
+        self.ingest(segment_body([line("u1", "embed me"), line("u2", "and me")], 0))
+        self.assertEqual(len(self.embedded), 2)
+        self.assertTrue(all(d["_seq_no"] is not None for d in self.embedded))
+        with _StubVoyage():
+            asyncio.run(sa._embed_docs(self.embedded))
+        for u in ("u1", "u2"):
+            self.assertEqual((self.msg(u)["embedding_status"], self.msg(u)["embedding"]),
+                             ("done", [0.5] * 4))
+        # bookkeeping keys never reach ES
+        self.assertFalse([k for k in self.msg("u1") if k.startswith("_")])
+
+    def test_deleted_doc_is_not_recreated(self):
+        self.ingest(segment_body([line("u1", "x")], 0))
+        FAKE.indices["memory-session-message"].clear()  # deleted by anyone, any way
+        with _StubVoyage():
+            asyncio.run(sa._embed_docs(self.embedded))
+        self.assertEqual(FAKE.indices["memory-session-message"], {})
+
+    def test_changed_doc_is_not_overwritten(self):
+        b = segment_body([line("u1", "x")], 0)
+        self.ingest(b)
+        stale = list(self.embedded)
+        self.ingest(b)  # a retry re-indexes the doc: new seq_no
+        with _StubVoyage():
+            asyncio.run(sa._embed_docs(stale))
+        self.assertEqual(self.msg("u1")["embedding_status"], "pending")
+        self.assertNotIn("embedding", self.msg("u1"))
+
+    def test_purge_while_an_embed_batch_is_pending(self):
+        sk = self.ingest(segment_body([line("u1", "x")], 0, host="air"), headers=AIR).json()["session_key"]
+        pending = list(self.embedded)
+        r = self.c.delete(PREFIX + "/session", params={"session_key": sk}, headers=AIR)
+        self.assertEqual(r.status_code, 200)
+        with _StubVoyage() as v:
+            asyncio.run(sa._embed_docs(pending))
+        self.assertEqual(v.calls, 0, "a purged session is not even sent to the provider")
+        self.assertEqual(FAKE.indices["memory-session-message"], {})
+
+    def test_embedding_queue_is_bounded(self):
+        spawned = []
+        saved_spawn, saved_max = sa._spawn, sa.EMBED_QUEUE_MAX_DOCS
+        sa._spawn = lambda coro: (spawned.append(coro), coro.close())
+        sa.EMBED_QUEUE_MAX_DOCS = 10
         try:
-            docs = [{"_id": f"d{i}", "text": "t" * 20000, "embedding_status": "pending",
-                     "session_key": "sk"} for i in range(130)]
-            asyncio.run(sa._embed_docs(docs))
+            docs = [{"_id": str(i), "text": "t", "session_key": "sk"} for i in range(6)]
+            sa._schedule_embedding(docs)
+            sa._schedule_embedding(docs)  # 12 > 10: not queued, stays pending
+            self.assertEqual(len(spawned), 1)
+            self.assertEqual(sa._EMBED_STATE, {"queued": 6, "dropped": 6})
+            r = self.c.get(PREFIX + "/status", headers=PRO_DEV)
+            self.assertEqual(r.json()["embedding_queue"], {"queued": 6, "dropped": 6})
         finally:
-            del sys.modules["voyage"]
-        got = FAKE.indices["memory-session-message"]
-        self.assertEqual(len(got), 130)
-        self.assertTrue(all(s["embedding_status"] == "done" and s["embedding"] == [0.5] * 4
-                            for s, _ in got.values()))
-        self.assertEqual(docs[0]["embedding_status"], "pending", "input docs are not mutated")
+            sa._spawn, sa.EMBED_QUEUE_MAX_DOCS = saved_spawn, saved_max
+
+    def test_queue_slot_is_released_after_the_batch(self):
+        async def run():
+            with _StubVoyage():
+                sa._schedule_embedding([{"_id": "x", "text": "t", "session_key": "sk",
+                                         "_seq_no": None}])
+                self.assertEqual(sa._EMBED_STATE["queued"], 1)
+                await asyncio.gather(*list(sa._BG_TASKS))
+        asyncio.run(run())
+        self.assertEqual(sa._EMBED_STATE["queued"], 0)
+
+
+class PurgeRace(Base):
+    def test_purge_between_parse_and_bulk(self):
+        import httpx
+        r1 = self.ingest(segment_body([line("u1", "first")], 0)).json()
+        sk = r1["session_key"]
+        reached, release = None, None
+        real_bulk = sa._bulk_index
+
+        async def slow_bulk(index, docs):
+            if index == sa.MESSAGE_INDEX and any(d["uuid"] == "u2" for d in docs):
+                reached.set()
+                await release.wait()
+            return await real_bulk(index, docs)
+
+        async def run():
+            nonlocal reached, release
+            reached, release = asyncio.Event(), asyncio.Event()
+            transport = httpx.ASGITransport(app=APP)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+                ing = asyncio.ensure_future(client.post(
+                    PREFIX + "/ingest", content=gz(segment_body([line("u2", "second")],
+                                                                r1["next_offset"])),
+                    headers=PRO_DEV))
+                await asyncio.wait_for(reached.wait(), 5)  # parsed, bulk not yet written
+                dele = asyncio.ensure_future(client.delete(
+                    PREFIX + "/session", params={"session_key": sk}, headers=OPERATOR))
+                await asyncio.sleep(0.2)
+                blocked = not dele.done()
+                release.set()
+                return await ing, await dele, blocked
+
+        sa._bulk_index = slow_bulk
+        try:
+            ing, dele, blocked = asyncio.run(run())
+        finally:
+            sa._bulk_index = real_bulk
+        self.assertTrue(blocked, "the purge waits for the in-flight write phase")
+        self.assertEqual(ing.status_code, 200, ing.text)
+        self.assertEqual(dele.status_code, 200, dele.text)
+        # nothing the in-flight ingest wrote survived the purge
+        self.assertEqual(FAKE.indices["memory-session-message"], {})
+        self.assertNotIn(sk, FAKE.indices["memory-session"])
+        self.assertEqual(self.store.objects, {})
+        self.assertIn(sa.PURGE_MARKER_PREFIX + sk, FAKE.indices["memory-session"])
+
+    def purged_session(self):
+        r = self.ingest(segment_body([line("u1", "x")], 0))
+        sk = r.json()["session_key"]
+        self.assertEqual(self.c.delete(PREFIX + "/session", params={"session_key": sk},
+                                       headers=OPERATOR).status_code, 200)
+        return sk
+
+    def test_every_write_path_refuses_a_purged_key(self):
+        sk = self.purged_session()
+        r = self.ingest(segment_body([line("u1", "x")], 0))
+        self.assertEqual((r.status_code, r.json()["error"]), (409, "purged"))
+        r = self.c.post(PREFIX + "/state", json={"session_key": sk, "jsonl_exists": False},
+                        headers=PRO_DEV)
+        self.assertEqual((r.status_code, r.json()["error"]), (409, "purged"))
+        content = "x"
+        r = self.c.post(PREFIX + "/blob", content=gz({
+            "session_key": sk, "name": "a.txt", "content": content,
+            "sha256": hashlib.sha256(content.encode()).hexdigest()}), headers=PRO_DEV)
+        self.assertEqual(r.status_code, 404)  # the session doc is gone
+        self.assertEqual(self.store.objects, {})
+
+    def test_marker_survives_a_restart(self):
+        sk = self.purged_session()
+        sa._PURGED.clear()  # a new process: only the ES marker remains
+        r = self.ingest(segment_body([line("u1", "x")], 0))
+        self.assertEqual((r.status_code, r.json()["error"]), (409, "purged"))
+        self.assertIn(sk, sa._PURGED)
+
+    def test_operator_clears_the_marker(self):
+        sk = self.purged_session()
+        r = self.c.delete(PREFIX + "/purged", params={"session_key": sk}, headers=PRO_DEV)
+        self.assertEqual(r.status_code, 403)  # pro-dev has no purge scope
+        r = self.c.delete(PREFIX + "/purged", params={"session_key": sk}, headers=OPERATOR)
+        self.assertEqual(r.json(), {"cleared": True})
+        self.assertEqual(self.ingest(segment_body([line("u1", "x")], 0)).status_code, 200)
+        r = self.c.delete(PREFIX + "/purged", params={"session_key": sk}, headers=OPERATOR)
+        self.assertEqual(r.status_code, 404)
+
+    def test_hostbound_operator_cannot_clear_another_hosts_marker(self):
+        sk = self.purged_session()
+        r = self.c.delete(PREFIX + "/purged", params={"session_key": sk}, headers=AIR)
+        self.assertEqual((r.status_code, r.json()["error"]), (403, "host_mismatch"))
+
+
+class Bounds(unittest.TestCase):
+    def test_queue_full_is_503(self):
+        async def run():
+            s = sa._Slots(size=1, max_waiters=1, per_caller=5, wait_s=5)
+            a = s.hold("a")
+            await a.__aenter__()
+            waiter = asyncio.ensure_future(s.hold("b").__aenter__())
+            await asyncio.sleep(0.05)
+            self.assertEqual(s.waiters, 1)
+            with self.assertRaises(sa.HTTPError) as ctx:
+                await s.hold("c").__aenter__()
+            self.assertEqual((ctx.exception.status, ctx.exception.extra["reason"]), (503, "queue_full"))
+            await a.__aexit__(None, None, None)
+            b = await asyncio.wait_for(waiter, 1)
+            self.assertEqual(s.active, 1)
+            await b.__aexit__(None, None, None)
+            self.assertEqual((s.active, s.waiters, s.by_caller), (0, 0, {}))
+        asyncio.run(run())
+
+    def test_wait_is_bounded(self):
+        async def run():
+            s = sa._Slots(size=1, max_waiters=4, per_caller=5, wait_s=0.1)
+            a = s.hold("a")
+            await a.__aenter__()
+            with self.assertRaises(sa.HTTPError) as ctx:
+                await s.hold("b").__aenter__()
+            self.assertEqual(ctx.exception.extra["reason"], "wait_timeout")
+            self.assertEqual((s.waiters, set(s.by_caller)), (0, {"a"}))
+            await a.__aexit__(None, None, None)
+        asyncio.run(run())
+
+    def test_per_caller_limit(self):
+        async def run():
+            s = sa._Slots(size=2, max_waiters=4, per_caller=1, wait_s=5)
+            x = s.hold("x")
+            await x.__aenter__()
+            with self.assertRaises(sa.HTTPError) as ctx:
+                await s.hold("x").__aenter__()
+            self.assertEqual(ctx.exception.extra["reason"], "caller_concurrency")
+            y = s.hold("y")
+            await y.__aenter__()  # another caller still gets the second slot
+            await x.__aexit__(None, None, None)
+            await y.__aexit__(None, None, None)
+            self.assertEqual(s.by_caller, {})
+        asyncio.run(run())
+
+    def test_production_limits(self):
+        self.assertEqual((sa.SEGMENT_CONCURRENCY, sa.SEGMENT_PER_CALLER), (2, 1))
+        self.assertLessEqual(sa.SEGMENT_MAX_WAITERS, 8)
+        self.assertLessEqual(sa.SEGMENT_WAIT_S, 30)
+
+    def test_one_caller_cannot_hold_both_slots_over_http(self):
+        import httpx
+        gate_open = None
+        real = sa._scan_segment
+
+        def slow_scan(lines, version, deadline=None):
+            import time as _t
+            _t.sleep(0.4)
+            return real(lines, version, None)
+
+        async def run():
+            transport = httpx.ASGITransport(app=APP)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+                b1 = gz(segment_body([line("u1", "x")], 0))
+                b2 = gz(segment_body([line("u1", "x")], 0, sid="bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"))
+                first = asyncio.ensure_future(client.post(PREFIX + "/ingest", content=b1, headers=PRO_DEV))
+                await asyncio.sleep(0.1)
+                second = await client.post(PREFIX + "/ingest", content=b2, headers=PRO_DEV)
+                other = await client.post(PREFIX + "/ingest", content=gz(segment_body(
+                    [line("u1", "x")], 0, host="air")), headers=AIR)
+                return await first, second, other
+
+        FAKE.indices.clear()
+        sa._ARCHIVE["backend"] = arc.MemoryBackend()
+        sa._STATE["ready"] = True
+        sa.EMBED_SCHEDULER = lambda docs: None
+        saved = sa._run_bounded
+
+        async def bounded(fn, *args, **kw):
+            if fn is sa._scan_segment:
+                return await asyncio.to_thread(slow_scan, *args)
+            return await saved(fn, *args, **kw)
+
+        sa._run_bounded = bounded
+        try:
+            first, second, other = asyncio.run(run())
+        finally:
+            sa._run_bounded = saved
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual((second.status_code, second.json()["reason"]), (503, "caller_concurrency"))
+        self.assertEqual(other.status_code, 200, other.text)
 
 
 class ServerWiring(unittest.TestCase):

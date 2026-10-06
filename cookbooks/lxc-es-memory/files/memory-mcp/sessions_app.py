@@ -43,6 +43,7 @@ import re
 import sys
 import tarfile
 import time
+import weakref
 import zlib
 
 from starlette.requests import Request
@@ -96,6 +97,7 @@ ROUTES = {
     ("GET", "/archive"): SCOPE_READ,
     ("GET", "/archive/tool-results"): SCOPE_READ,
     ("DELETE", "/session"): SCOPE_PURGE,
+    ("DELETE", "/purged"): SCOPE_PURGE,
     ("GET", "/status"): SCOPE_READ,
 }
 
@@ -311,7 +313,7 @@ async def _bulk_index(index: str, docs: list[dict]) -> int:
     lines = []
     for d in docs:
         lines.append(json.dumps({"index": {"_index": index, "_id": d["_id"]}}))
-        lines.append(json.dumps({k: v for k, v in d.items() if k != "_id"}))
+        lines.append(json.dumps({k: v for k, v in d.items() if not k.startswith("_")}))
     r = await _es("POST", "/_bulk", content="\n".join(lines) + "\n",
                   headers={"Content-Type": "application/x-ndjson"})
     if r.status_code >= 400:
@@ -322,7 +324,94 @@ async def _bulk_index(index: str, docs: list[dict]) -> int:
         types = sorted({(i["index"]["error"] or {}).get("type", "?") for i in bad})
         _log(f"bulk errors index={index} count={len(bad)} types={','.join(types)}")
         raise ESUnavailable("bulk had errors")
+    # Remember each doc's _seq_no/_primary_term: the embedding update is
+    # conditional on them, so it can never re-create or overwrite a doc that a
+    # purge or a newer ingest replaced in the meantime.
+    for d, item in zip(docs, res.get("items", [])):
+        meta = item.get("index") or {}
+        d["_seq_no"] = meta.get("_seq_no")
+        d["_primary_term"] = meta.get("_primary_term")
     return len(docs)
+
+
+async def _bulk_embed_updates(updates: list) -> dict:
+    """Conditional partial updates [(doc_id, seq_no, primary_term, vector)].
+    `_update` on a missing doc fails (no upsert) and a changed doc fails the
+    seq_no check; both are dropped, never retried here. Returns counts."""
+    lines = []
+    for doc_id, seq, term, vec in updates:
+        lines.append(json.dumps({"update": {"_index": MESSAGE_INDEX, "_id": doc_id,
+                                            "if_seq_no": seq, "if_primary_term": term}}))
+        lines.append(json.dumps({"doc": {"embedding": vec, "embedding_status": "done"}}))
+    r = await _es("POST", "/_bulk", content="\n".join(lines) + "\n",
+                  headers={"Content-Type": "application/x-ndjson"})
+    if r.status_code >= 400:
+        raise ESUnavailable(f"bulk update: {r.status_code}")
+    out = {"updated": 0, "dropped": 0, "failed": 0}
+    for item in r.json().get("items", []):
+        meta = item.get("update") or {}
+        err = meta.get("error")
+        if not err:
+            out["updated"] += 1
+        elif meta.get("status") in (404, 409):
+            out["dropped"] += 1
+        else:
+            out["failed"] += 1
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Purge tombstone (security review: a purge must not be undone by work in flight)
+# --------------------------------------------------------------------------- #
+# DELETE /session first writes a durable marker doc (`purge-<session_key>` in the
+# session index; mapped fields only, title_source "purged") and records the key
+# in-process, THEN deletes. Every write path holds the session's lock and checks
+# the marker, so an ingest, blob or state write either completes before the
+# purge starts (and is then deleted by it) or sees the marker and is refused
+# with 409 purged. The background embedding is outside the lock and is guarded
+# twice: it skips purged keys, and its ES write is a conditional `_update`
+# (seq_no / primary_term) that fails on a deleted doc instead of re-creating it.
+# The marker stays until the operator clears it with DELETE /purged.
+PURGE_MARKER_PREFIX = "purge-"
+_PURGED: set = set()
+_LOCKS: "weakref.WeakValueDictionary" = weakref.WeakValueDictionary()
+
+
+def _session_lock(session_key: str) -> asyncio.Lock:
+    key = (id(asyncio.get_running_loop()), session_key)
+    lock = _LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _LOCKS[key] = lock
+    return lock
+
+
+async def _is_purged(session_key: str) -> bool:
+    if session_key in _PURGED:
+        return True
+    r = await _es("GET", f"/{SESSION_INDEX}/_doc/{PURGE_MARKER_PREFIX}{session_key}")
+    if r.status_code == 404:
+        return False
+    if r.status_code != 200:
+        raise ESUnavailable(f"purge marker: {r.status_code}")
+    if r.json().get("found"):
+        _PURGED.add(session_key)
+        return True
+    return False
+
+
+async def _refuse_if_purged(session_key: str) -> None:
+    if await _is_purged(session_key):
+        raise HTTPError(409, "purged")
+
+
+async def _mark_purged(session_key: str, host: str) -> None:
+    _PURGED.add(session_key)
+    r = await _es("PUT", f"/{SESSION_INDEX}/_doc/{PURGE_MARKER_PREFIX}{session_key}?refresh=wait_for",
+                  json={"session_key": session_key, "host": host, "updated_at": _now_iso(),
+                        "title_source": "purged", "interactive": False, "archived": False})
+    if r.status_code >= 400:
+        raise ESUnavailable(f"purge marker write: {r.status_code}")
 
 
 async def _delete_messages(session_key: str, agent_id: str | None = None,
@@ -573,17 +662,86 @@ def _scan_segment(lines: list, version: str, deadline: float | None = None) -> d
             "error": "unmasked_secret" if secret else "invalid_line"}
 
 
+SEGMENT_MAX_WAITERS = 4
+SEGMENT_WAIT_S = 10.0
+SEGMENT_PER_CALLER = 1
+
+
+class _Slots:
+    """Bounded admission for the CPU-bound worker jobs: `size` running at
+    once, at most `max_waiters` queued (more = 503 busy, never an unbounded
+    queue), a bounded wait, and at most `per_caller` running-or-waiting jobs
+    per identity, so one client cannot hold every slot."""
+
+    def __init__(self, size, max_waiters, per_caller, wait_s):
+        self.size, self.max_waiters, self.per_caller, self.wait_s = size, max_waiters, per_caller, wait_s
+        self.active = 0
+        self.waiters = 0
+        self.by_caller: dict = {}
+        self.cond = asyncio.Condition()
+
+    def hold(self, caller_key):
+        return _SlotHold(self, caller_key)
+
+
+class _SlotHold:
+    def __init__(self, slots, caller_key):
+        self.s, self.k = slots, caller_key
+
+    async def __aenter__(self):
+        s = self.s
+        if s.by_caller.get(self.k, 0) >= s.per_caller:
+            raise HTTPError(503, "busy", reason="caller_concurrency")
+        s.by_caller[self.k] = s.by_caller.get(self.k, 0) + 1
+        try:
+            async with s.cond:
+                if s.active >= s.size:
+                    if s.waiters >= s.max_waiters:
+                        raise HTTPError(503, "busy", reason="queue_full")
+                    s.waiters += 1
+                    try:
+                        await asyncio.wait_for(s.cond.wait_for(lambda: s.active < s.size), s.wait_s)
+                    except asyncio.TimeoutError:
+                        raise HTTPError(503, "busy", reason="wait_timeout") from None
+                    finally:
+                        s.waiters -= 1
+                s.active += 1
+        except BaseException:
+            self._release_caller()
+            raise
+        return self
+
+    async def __aexit__(self, *exc):
+        s = self.s
+        async with s.cond:
+            s.active -= 1
+            s.cond.notify()
+        self._release_caller()
+        return False
+
+    def _release_caller(self):
+        n = self.s.by_caller.get(self.k, 1) - 1
+        if n <= 0:
+            self.s.by_caller.pop(self.k, None)
+        else:
+            self.s.by_caller[self.k] = n
+
+
 _SLOTS: dict = {}
 
 
-def _segment_slot():
-    """At most SEGMENT_CONCURRENCY CPU-bound segment jobs per event loop, so a
-    burst of hostile segments cannot occupy every worker thread."""
+def _caller_key(caller) -> str:
+    c = caller or {}
+    return f"{c.get('grant', '')}|{c.get('client_id', '')}|{c.get('sub', '')}"
+
+
+def _segment_slot(caller):
     loop = asyncio.get_running_loop()
-    sem = _SLOTS.get(loop)
-    if sem is None:
-        sem = _SLOTS[loop] = asyncio.Semaphore(SEGMENT_CONCURRENCY)
-    return sem
+    slots = _SLOTS.get(loop)
+    if slots is None:
+        slots = _SLOTS[loop] = _Slots(SEGMENT_CONCURRENCY, SEGMENT_MAX_WAITERS,
+                                      SEGMENT_PER_CALLER, SEGMENT_WAIT_S)
+    return slots.hold(_caller_key(caller))
 
 
 async def _run_bounded(fn, *args, **kw):
@@ -625,13 +783,18 @@ def _blob_entries(chunks):
 # Embedding queue (§6.5 "Embedding")
 # --------------------------------------------------------------------------- #
 _EMBED_LOCK = None
+# Bounded: at most EMBED_QUEUE_MAX_DOCS docs queued or in flight. Beyond that a
+# batch is not queued at all; its docs simply stay embedding_status=pending,
+# which C8 retries (§6.5, §8 row 10).
+EMBED_QUEUE_MAX_DOCS = 5000
+_EMBED_STATE = {"queued": 0, "dropped": 0}
 
 
 async def _embed_docs(docs: list[dict]) -> None:
-    """Embed text docs in batches of 128 and re-index them with the vector.
-    The whole doc is re-indexed rather than _update'd: `embedding` is excluded
-    from _source, so any partial update would rebuild the doc without it.
-    A failed batch keeps embedding_status=pending for C8 to retry."""
+    """Embed text docs in batches of 128 and attach the vector with a
+    conditional `_update` (see _bulk_embed_updates). Docs of a purged session
+    are skipped before and after the provider call. A failed batch keeps
+    embedding_status=pending for C8 to retry."""
     global _EMBED_LOCK
     if _EMBED_LOCK is None:
         _EMBED_LOCK = asyncio.Lock()
@@ -642,25 +805,40 @@ async def _embed_docs(docs: list[dict]) -> None:
             _log(f"embedding unavailable: {exc.__class__.__name__}")
             return
         for i in range(0, len(docs), EMBED_BATCH):
-            batch = docs[i:i + EMBED_BATCH]
+            batch = [d for d in docs[i:i + EMBED_BATCH]
+                     if d["session_key"] not in _PURGED and d.get("_seq_no") is not None]
+            if not batch:
+                continue
             texts = [sessions_parse._cap_bytes(d["text"], EMBED_TEXT_CAP) for d in batch]
             try:
                 vecs = await voyage.embed_documents(texts)
-                out = []
-                for d, v in zip(batch, vecs):
-                    nd = dict(d)
-                    nd["embedding"] = v
-                    nd["embedding_status"] = "done"
-                    out.append(nd)
-                await _bulk_index(MESSAGE_INDEX, out)
+                updates = [(d["_id"], d["_seq_no"], d["_primary_term"], v)
+                           for d, v in zip(batch, vecs) if d["session_key"] not in _PURGED]
+                if updates:
+                    res = await _bulk_embed_updates(updates)
+                    if res["dropped"] or res["failed"]:
+                        _log(f"embedding updates dropped={res['dropped']} failed={res['failed']}")
             except Exception as exc:  # noqa: BLE001 — stays pending
                 _log(f"embedding batch failed size={len(batch)} error={exc.__class__.__name__}")
 
 
+async def _embed_and_release(docs: list[dict]) -> None:
+    try:
+        await _embed_docs(docs)
+    finally:
+        _EMBED_STATE["queued"] -= len(docs)
+
+
 def _schedule_embedding(docs: list[dict]) -> None:
     """Indirection so the tests can capture the queued docs."""
-    if docs:
-        _spawn(_embed_docs(docs))
+    if not docs:
+        return
+    if _EMBED_STATE["queued"] + len(docs) > EMBED_QUEUE_MAX_DOCS:
+        _EMBED_STATE["dropped"] += len(docs)
+        _log(f"embedding queue full: {len(docs)} docs left pending")
+        return
+    _EMBED_STATE["queued"] += len(docs)
+    _spawn(_embed_and_release(docs))
 
 
 EMBED_SCHEDULER = _schedule_embedding
@@ -726,141 +904,146 @@ async def ingest(request: Request, caller: dict):
     if not isinstance(lines, list) or not lines or not all(isinstance(x, str) for x in lines):
         raise HTTPError(400, "invalid_request", field="segment.lines")
 
-    # Step 3: strict load + re-scan, off the event loop, under a deadline.
-    async with _segment_slot():
-        scan = await _run_bounded(_scan_segment, lines, version)
-    if scan["bad_lines"]:
-        _COUNTERS["rejected_lines"] += len(scan["bad_lines"])
-        _log(f"reject {scan['error']} host={host} kinds={','.join(scan['kinds'])}"
-             f" lines={','.join(map(str, scan['bad_lines'][:50]))}")
-        raise HTTPError(422, scan["error"], lines=scan["bad_lines"], kinds=scan["kinds"])
-    if session_redact.detect_text(jsonl_path, version) or not _PRINTABLE_PATH_RE.fullmatch(jsonl_path):
-        raise HTTPError(400, "invalid_request", field="file.jsonl_path")
-    # segment.sha256 = sha256 of the masked lines, each followed by "\n" (client
-    # contract): transport integrity of what the client sent.
-    sent = "".join(line + "\n" for line in lines).encode("utf-8", "surrogatepass")
-    if hashlib.sha256(sent).hexdigest() != seg_sha:
-        raise HTTPError(422, "sha256_mismatch")
-    # What is archived and parsed is the canonical serialisation of exactly the
-    # records the detector scanned (see _scan_segment), never the raw lines.
-    canonical = scan["canonical"]
-    payload = "".join(line + "\n" for line in canonical).encode("utf-8")
-    if len(payload) > sessions_archive.MAX_CHUNK_OUTPUT:
-        raise HTTPError(413, "too_large")
-    sha = hashlib.sha256(payload).hexdigest()
-
     session_key = make_session_key(host, project_dir, session_id)
-    got = await _get_session(session_key)
-    existing, seq, term = got if got else (None, None, None)
-    if existing and existing.get("host") != host:
-        raise HTTPError(403, "host_mismatch")
-    chunks = list((existing or {}).get("archive_chunks") or [])
-    stream = _stream_chunks(chunks, agent_id)
-    if agent_id is None:
-        cur_gen = (existing or {}).get("archive_generation")
-        cur_gen = -1 if cur_gen is None else cur_gen
-    else:
-        cur_gen = max((c["generation"] for c in stream), default=-1)
-    seg_chunks = [c for c in stream if c.get("generation") == cur_gen]
-    next_expected = max((c["end_offset"] for c in seg_chunks), default=0)
-    new_generation = False
-    if generation < cur_gen:
-        raise HTTPError(409, "stale_generation", expected_offset=0, generation=cur_gen)
-    if generation > cur_gen:
-        if offset != 0:
-            raise HTTPError(409, "offset_mismatch", expected_offset=0)
-        new_generation = True
-        seg_chunks = []
-    elif offset != next_expected:
-        if any(c["offset"] == offset for c in seg_chunks):
-            # A retry of a segment already accepted: the same objects and ids
-            # are rewritten, and anything after it is superseded.
-            seg_chunks = [c for c in seg_chunks if c["offset"] < offset]
+    # The whole write phase runs under the session's lock, so a concurrent
+    # DELETE /session either waits for it (and then deletes what it wrote) or
+    # has already left the purge marker, which refuses it here.
+    async with _session_lock(session_key):
+        await _refuse_if_purged(session_key)
+        # Step 3: strict load + re-scan, off the event loop, under a deadline.
+        async with _segment_slot(caller):
+            scan = await _run_bounded(_scan_segment, lines, version)
+        if scan["bad_lines"]:
+            _COUNTERS["rejected_lines"] += len(scan["bad_lines"])
+            _log(f"reject {scan['error']} host={host} kinds={','.join(scan['kinds'])}"
+                 f" lines={','.join(map(str, scan['bad_lines'][:50]))}")
+            raise HTTPError(422, scan["error"], lines=scan["bad_lines"], kinds=scan["kinds"])
+        if session_redact.detect_text(jsonl_path, version) or not _PRINTABLE_PATH_RE.fullmatch(jsonl_path):
+            raise HTTPError(400, "invalid_request", field="file.jsonl_path")
+        # segment.sha256 = sha256 of the masked lines, each followed by "\n" (client
+        # contract): transport integrity of what the client sent.
+        sent = "".join(line + "\n" for line in lines).encode("utf-8", "surrogatepass")
+        if hashlib.sha256(sent).hexdigest() != seg_sha:
+            raise HTTPError(422, "sha256_mismatch")
+        # What is archived and parsed is the canonical serialisation of exactly the
+        # records the detector scanned (see _scan_segment), never the raw lines.
+        canonical = scan["canonical"]
+        payload = "".join(line + "\n" for line in canonical).encode("utf-8")
+        if len(payload) > sessions_archive.MAX_CHUNK_OUTPUT:
+            raise HTTPError(413, "too_large")
+        sha = hashlib.sha256(payload).hexdigest()
+
+        got = await _get_session(session_key)
+        existing, seq, term = got if got else (None, None, None)
+        if existing and existing.get("host") != host:
+            raise HTTPError(403, "host_mismatch")
+        chunks = list((existing or {}).get("archive_chunks") or [])
+        stream = _stream_chunks(chunks, agent_id)
+        if agent_id is None:
+            cur_gen = (existing or {}).get("archive_generation")
+            cur_gen = -1 if cur_gen is None else cur_gen
         else:
-            raise HTTPError(409, "offset_mismatch", expected_offset=next_expected)
+            cur_gen = max((c["generation"] for c in stream), default=-1)
+        seg_chunks = [c for c in stream if c.get("generation") == cur_gen]
+        next_expected = max((c["end_offset"] for c in seg_chunks), default=0)
+        new_generation = False
+        if generation < cur_gen:
+            raise HTTPError(409, "stale_generation", expected_offset=0, generation=cur_gen)
+        if generation > cur_gen:
+            if offset != 0:
+                raise HTTPError(409, "offset_mismatch", expected_offset=0)
+            new_generation = True
+            seg_chunks = []
+        elif offset != next_expected:
+            if any(c["offset"] == offset for c in seg_chunks):
+                # A retry of a segment already accepted: the same objects and ids
+                # are rewritten, and anything after it is superseded.
+                seg_chunks = [c for c in seg_chunks if c["offset"] < offset]
+            else:
+                raise HTTPError(409, "offset_mismatch", expected_offset=next_expected)
 
-    async with _segment_slot():
-        parsed = await _run_bounded(
-            sessions_parse.parse_lines, session_key, kind, canonical, offset, host=host,
-            session_id=session_id, agent_id=agent_id,
-            known_entrypoint=(existing or {}).get("entrypoint"), redact_version=version)
-    for k, n in parsed["counters"]["unknown_types"].items():
-        _COUNTERS["unknown_types"][k] = _COUNTERS["unknown_types"].get(k, 0) + n
+        async with _segment_slot(caller):
+            parsed = await _run_bounded(
+                sessions_parse.parse_lines, session_key, kind, canonical, offset, host=host,
+                session_id=session_id, agent_id=agent_id,
+                known_entrypoint=(existing or {}).get("entrypoint"), redact_version=version)
+        for k, n in parsed["counters"]["unknown_types"].items():
+            _COUNTERS["unknown_types"][k] = _COUNTERS["unknown_types"].get(k, 0) + n
 
-    # Step 6 (main only): the archive chunk.
-    archive_state = "skipped"
-    archived_chunk = False
-    if kind == "main":
-        backend = _archive_backend()
-        if backend is not None:
-            name = sessions_archive.object_name(host, session_key, generation=generation, offset=offset)
-            try:
-                await backend.put(name, sessions_archive.compress(payload))
-            except sessions_archive.ArchiveError:
-                raise HTTPError(503, "archive_unavailable") from None
-            archive_state = "written"
-            archived_chunk = True
+        # Step 6 (main only): the archive chunk.
+        archive_state = "skipped"
+        archived_chunk = False
+        if kind == "main":
+            backend = _archive_backend()
+            if backend is not None:
+                name = sessions_archive.object_name(host, session_key, generation=generation, offset=offset)
+                try:
+                    await backend.put(name, sessions_archive.compress(payload))
+                except sessions_archive.ArchiveError:
+                    raise HTTPError(503, "archive_unavailable") from None
+                archive_state = "written"
+                archived_chunk = True
 
-    if new_generation and existing is not None:
-        # A rewritten or truncated JSONL starts over (§8 row 5) — only this
-        # stream's docs: the main file's, or one subagent's.
-        await _delete_messages(session_key, agent_id=agent_id, main_only=agent_id is None)
-    # Step 5: bulk index, no refresh.
-    await _bulk_index(MESSAGE_INDEX, parsed["docs"])
+        if new_generation and existing is not None:
+            # A rewritten or truncated JSONL starts over (§8 row 5) — only this
+            # stream's docs: the main file's, or one subagent's.
+            await _delete_messages(session_key, agent_id=agent_id, main_only=agent_id is None)
+        # Step 5: bulk index, no refresh.
+        await _bulk_index(MESSAGE_INDEX, parsed["docs"])
 
-    delta = parsed["delta"]
-    entry = {
-        "generation": generation, "offset": offset, "end_offset": end_offset,
-        "sha256": sha, "bytes": len(payload), "archived": archived_chunk,
-        "messages": delta["message_count"], "text_messages": delta["text_message_count"],
-        "tombstones": delta["tombstones"],
-    }
-    if agent_id is not None:
-        entry["agent_id"] = agent_id
-    seg_chunks.append(entry)
-    seg_chunks.sort(key=lambda c: c["offset"])
-    others = [c for c in chunks if c not in stream]  # blobs and the other streams
+        delta = parsed["delta"]
+        entry = {
+            "generation": generation, "offset": offset, "end_offset": end_offset,
+            "sha256": sha, "bytes": len(payload), "archived": archived_chunk,
+            "messages": delta["message_count"], "text_messages": delta["text_message_count"],
+            "tombstones": delta["tombstones"],
+        }
+        if agent_id is not None:
+            entry["agent_id"] = agent_id
+        seg_chunks.append(entry)
+        seg_chunks.sort(key=lambda c: c["offset"])
+        others = [c for c in chunks if c not in stream]  # blobs and the other streams
 
-    if agent_id is not None:
-        doc = dict(existing or {
-            "session_key": session_key, "session_id": session_id, "host": host,
-            "project_dir": project_dir, "archived": False, "archive_complete": False})
-        doc["has_subagents"] = True
-        doc["archive_chunks"] = others + seg_chunks
-        if delta.get("updated_at") and delta["updated_at"] > (doc.get("updated_at") or ""):
-            doc["updated_at"] = delta["updated_at"]
-        doc.setdefault("updated_at", _now_iso())
-    else:
-        if new_generation:
-            others = [c for c in others if "agent_id" in c or "name" in c]
-        doc = sessions_parse.merge_session(None if new_generation else existing, delta,
-                                           project_dir=project_dir)
-        all_archived = all(c.get("archived") for c in seg_chunks)
-        doc.update({
-            "session_key": session_key, "session_id": session_id, "host": host,
-            "project_dir": project_dir, "jsonl_path": jsonl_path,
-            "jsonl_exists": True, "jsonl_checked_at": _now_iso(),
-            "message_count": sum(c["messages"] for c in seg_chunks),
-            "text_message_count": sum(c["text_messages"] for c in seg_chunks),
-            "has_subagents": bool((existing or {}).get("has_subagents")),
-            "archived": all_archived,
-            "archive_complete": all_archived and not any(c["tombstones"] for c in seg_chunks),
-            "archive_generation": generation,
-            "archive_bytes": sum(c["bytes"] for c in seg_chunks if c.get("archived")),
-            "archive_chunks": seg_chunks + others,
-            "redact_version": version,
-        })
-        if not doc.get("updated_at"):
-            doc["updated_at"] = _now_iso()
-        if existing and existing.get("restored_from"):
-            doc["restored_from"] = existing["restored_from"]
-    await _put_session(session_key, doc, seq, term)
+        if agent_id is not None:
+            doc = dict(existing or {
+                "session_key": session_key, "session_id": session_id, "host": host,
+                "project_dir": project_dir, "archived": False, "archive_complete": False})
+            doc["has_subagents"] = True
+            doc["archive_chunks"] = others + seg_chunks
+            if delta.get("updated_at") and delta["updated_at"] > (doc.get("updated_at") or ""):
+                doc["updated_at"] = delta["updated_at"]
+            doc.setdefault("updated_at", _now_iso())
+        else:
+            if new_generation:
+                others = [c for c in others if "agent_id" in c or "name" in c]
+            doc = sessions_parse.merge_session(None if new_generation else existing, delta,
+                                               project_dir=project_dir)
+            all_archived = all(c.get("archived") for c in seg_chunks)
+            doc.update({
+                "session_key": session_key, "session_id": session_id, "host": host,
+                "project_dir": project_dir, "jsonl_path": jsonl_path,
+                "jsonl_exists": True, "jsonl_checked_at": _now_iso(),
+                "message_count": sum(c["messages"] for c in seg_chunks),
+                "text_message_count": sum(c["text_messages"] for c in seg_chunks),
+                "has_subagents": bool((existing or {}).get("has_subagents")),
+                "archived": all_archived,
+                "archive_complete": all_archived and not any(c["tombstones"] for c in seg_chunks),
+                "archive_generation": generation,
+                "archive_bytes": sum(c["bytes"] for c in seg_chunks if c.get("archived")),
+                "archive_chunks": seg_chunks + others,
+                "redact_version": version,
+            })
+            if not doc.get("updated_at"):
+                doc["updated_at"] = _now_iso()
+            if existing and existing.get("restored_from"):
+                doc["restored_from"] = existing["restored_from"]
+        await _put_session(session_key, doc, seq, term)
 
-    _COUNTERS["ingested_segments"] += 1
-    # Step 7: embeddings in the background.
-    EMBED_SCHEDULER([d for d in parsed["docs"] if d.get("text")])
-    return JSONResponse({"session_key": session_key, "indexed": len(parsed["docs"]),
-                         "next_offset": end_offset, "archive": archive_state})
+        _COUNTERS["ingested_segments"] += 1
+        # Step 7: embeddings in the background.
+        EMBED_SCHEDULER([d for d in parsed["docs"] if d.get("text")])
+        return JSONResponse({"session_key": session_key, "indexed": len(parsed["docs"]),
+                             "next_offset": end_offset, "archive": archive_state})
 
 async def blob(request: Request, caller: dict):
     body = await _json_body(request)
@@ -880,7 +1063,7 @@ async def blob(request: Request, caller: dict):
     existing_blobs = _blob_entries(src.get("archive_chunks"))
     if len(existing_blobs) >= TOOL_RESULTS_MAX_FILES and all(e["name"] != name for e in existing_blobs):
         raise HTTPError(413, "too_many_tool_results")
-    async with _segment_slot():
+    async with _segment_slot(caller):
         kinds = await _run_bounded(session_redact.detect_text, content, version, BLOB_MAX_CHARS)
     if kinds:
         _log(f"reject unmasked_secret blob host={src.get('host')} kinds={','.join(kinds)}")
@@ -892,16 +1075,21 @@ async def blob(request: Request, caller: dict):
     backend = _archive_backend()
     if backend is None:
         return JSONResponse({"stored": False, "reason": "archive_disabled"})
-    obj = sessions_archive.object_name(src["host"], session_key, tool_result=name)
-    try:
-        await backend.put(obj, sessions_archive.compress(data))
-    except sessions_archive.ArchiveError:
-        raise HTTPError(503, "archive_unavailable") from None
-    chunks = [c for c in src.get("archive_chunks") or [] if c.get("name") != name]
-    chunks.append({"name": name, "sha256": sha, "bytes": len(data)})
-    src = dict(src)
-    src["archive_chunks"] = chunks
-    await _put_session(session_key, src, seq, term)
+    # Write phase under the session lock, re-reading the session doc: a purge
+    # that ran while the content was being scanned leaves the marker (409).
+    async with _session_lock(session_key):
+        await _refuse_if_purged(session_key)
+        src, seq, term = await _owned_session(session_key, caller)
+        obj = sessions_archive.object_name(src["host"], session_key, tool_result=name)
+        try:
+            await backend.put(obj, sessions_archive.compress(data))
+        except sessions_archive.ArchiveError:
+            raise HTTPError(503, "archive_unavailable") from None
+        chunks = [c for c in src.get("archive_chunks") or [] if c.get("name") != name]
+        chunks.append({"name": name, "sha256": sha, "bytes": len(data)})
+        src = dict(src)
+        src["archive_chunks"] = chunks
+        await _put_session(session_key, src, seq, term)
     return JSONResponse({"stored": True})
 
 
@@ -911,8 +1099,10 @@ async def state(request: Request, caller: dict):
     exists = body.get("jsonl_exists")
     if not isinstance(exists, bool):
         raise HTTPError(400, "invalid_request", field="jsonl_exists")
-    await _owned_session(session_key, caller)
-    await _update_session(session_key, {"jsonl_exists": exists, "jsonl_checked_at": _now_iso()})
+    async with _session_lock(session_key):
+        await _refuse_if_purged(session_key)
+        await _owned_session(session_key, caller)
+        await _update_session(session_key, {"jsonl_exists": exists, "jsonl_checked_at": _now_iso()})
     return JSONResponse({"ok": True})
 
 
@@ -1037,26 +1227,53 @@ async def delete_session(request: Request, caller: dict):
     session_key = _session_key_param(request.query_params.get("session_key"))
     # A host-less identity (the personal operator) may purge any host's
     # session; a host-bound one only its own (§7.2 writes rule).
-    src, _, _ = await _owned_session(session_key, caller, allow_hostless=True)
-    deleted_objects = 0
-    backend = _archive_backend()
-    if backend is not None:
-        prefix = sessions_archive.object_name(src["host"], session_key)
-        try:
-            for name in await backend.list(prefix):
-                if name.startswith(prefix):
-                    await backend.delete(name)
-                    deleted_objects += 1
-        except sessions_archive.ArchiveError:
-            raise HTTPError(503, "archive_unavailable") from None
-    deleted_docs = await _delete_messages(session_key)
-    r = await _es("DELETE", f"/{SESSION_INDEX}/_doc/{session_key}")
-    if r.status_code not in (200, 404):
-        raise ESUnavailable(f"delete session: {r.status_code}")
-    deleted_docs += 1 if r.status_code == 200 else 0
+    async with _session_lock(session_key):
+        src, _, _ = await _owned_session(session_key, caller, allow_hostless=True)
+        backend = _archive_backend()
+        # Marker FIRST: from here on every write path refuses this key, and a
+        # failed purge (503) can simply be retried — it stays refused meanwhile.
+        await _mark_purged(session_key, src["host"])
+        deleted_objects = 0
+        if backend is not None:
+            prefix = sessions_archive.object_name(src["host"], session_key)
+            try:
+                for name in await backend.list(prefix):
+                    if name.startswith(prefix):
+                        await backend.delete(name)
+                        deleted_objects += 1
+            except sessions_archive.ArchiveError:
+                raise HTTPError(503, "archive_unavailable") from None
+        deleted_docs = await _delete_messages(session_key)
+        r = await _es("DELETE", f"/{SESSION_INDEX}/_doc/{session_key}")
+        if r.status_code not in (200, 404):
+            raise ESUnavailable(f"delete session: {r.status_code}")
+        deleted_docs += 1 if r.status_code == 200 else 0
     _log(f"purge session={session_key} host={src.get('host')} by={caller.get('agent')}"
          f" docs={deleted_docs} objects={deleted_objects}")
     return JSONResponse({"deleted_docs": deleted_docs, "deleted_objects": deleted_objects})
+
+
+async def clear_purged(request: Request, caller: dict):
+    """Operator action: lift the purge marker so the key may be ingested again
+    (e.g. a deliberate re-backfill). Same host rule as DELETE /session."""
+    session_key = _session_key_param(request.query_params.get("session_key"))
+    async with _session_lock(session_key):
+        marker_id = f"{PURGE_MARKER_PREFIX}{session_key}"
+        r = await _es("GET", f"/{SESSION_INDEX}/_doc/{marker_id}")
+        if r.status_code == 404 or (r.status_code == 200 and not r.json().get("found")):
+            _PURGED.discard(session_key)
+            raise HTTPError(404, "not_purged")
+        if r.status_code != 200:
+            raise ESUnavailable(f"purge marker: {r.status_code}")
+        host = r.json()["_source"].get("host")
+        if caller.get("host") is not None and host != caller["host"]:
+            raise HTTPError(403, "host_mismatch")
+        d = await _es("DELETE", f"/{SESSION_INDEX}/_doc/{marker_id}?refresh=wait_for")
+        if d.status_code not in (200, 404):
+            raise ESUnavailable(f"purge marker delete: {d.status_code}")
+        _PURGED.discard(session_key)
+    _log(f"purge marker cleared session={session_key} by={caller.get('agent')}")
+    return JSONResponse({"cleared": True})
 
 
 async def status(request: Request, caller: dict):
@@ -1068,6 +1285,7 @@ async def status(request: Request, caller: dict):
            "caller_host": caller.get("host"),
            "unknown_types": dict(_COUNTERS["unknown_types"]),
            "rejected_lines": _COUNTERS["rejected_lines"],
+           "embedding_queue": dict(_EMBED_STATE),
            "search": sessions_search is not None}
     if not _STATE["ready"]:
         out["error"] = _STATE["error"]
@@ -1091,6 +1309,7 @@ HANDLERS = {
     ("GET", "/archive"): archive,
     ("GET", "/archive/tool-results"): archive_tool_results,
     ("DELETE", "/session"): delete_session,
+    ("DELETE", "/purged"): clear_purged,
     ("GET", "/status"): status,
 }
 assert set(HANDLERS) == set(ROUTES)  # noqa: S101 — import-time invariant
