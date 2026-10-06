@@ -169,6 +169,21 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/warn-background-launch-no-progress.rb"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/session-ingest.rb"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/session-ingest.rb"
           }
         ]
       }

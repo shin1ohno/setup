@@ -690,6 +690,17 @@ jobs:
         bash cookbooks/claude-code/files/hooks/test-mirror-file-memory.sh \
           cookbooks/claude-code/files/hooks/mirror-file-memory.rb
 
+    - name: Session-ingest hook regression suite
+      run: |
+        # hooks/session-ingest.rb (session search C4) is fed the captured real
+        # Stop / SessionEnd payloads under a throwaway HOME with a recording fake
+        # ccs: exact argv, detached process group, exit 0, silent stdout, under
+        # 200 ms; and no spawn for malformed JSON, a path outside
+        # ~/.claude/projects/ (incl. '..' and symlink escapes), a missing file or
+        # a missing ccs, which must leave one log line.
+        bash cookbooks/claude-code/files/hooks/test-session-ingest.sh \
+          cookbooks/claude-code/files/hooks/session-ingest.rb
+
     - name: Validate JSON files
       run: |
         # Check if any JSON files exist and validate them
