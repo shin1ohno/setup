@@ -289,13 +289,23 @@ class S3Backend:
                 return names
 
 
+def archive_disabled(env=None) -> bool:
+    """True only when the operator explicitly turned the archive off with
+    SESSION_ARCHIVE_BACKEND=none. Unset is NOT disabled: ingest then refuses
+    main-transcript segments with 503 until a backend is configured."""
+    env = os.environ if env is None else env
+    return env.get("SESSION_ARCHIVE_BACKEND", "") == "none"
+
+
 def backend_from_env(env=None):
-    """The configured backend, or None when SESSION_ARCHIVE_BACKEND is unset
-    (archive disabled: ingest answers archive:"skipped"). A set-but-invalid
-    configuration raises, so a typo cannot silently disable the archive."""
+    """The configured backend, or None when SESSION_ARCHIVE_BACKEND is unset or
+    "none". Ingest treats unset as "not ready" (503) and "none" as an explicit
+    search-only deployment (archive:"skipped"); see archive_disabled(). A
+    set-but-invalid configuration raises, so a typo cannot silently disable the
+    archive."""
     env = os.environ if env is None else env
     kind = env.get("SESSION_ARCHIVE_BACKEND", "")
-    if not kind:
+    if not kind or kind == "none":
         return None
     bucket = env.get("SESSION_ARCHIVE_BUCKET", "")
     if not bucket:

@@ -1117,6 +1117,12 @@ async def ingest(request: Request, caller: dict):
 
         if kind == "main":
             backend = _archive_backend()
+            if backend is None and not sessions_archive.archive_disabled():
+                # No backend configured and no explicit opt-out: refuse instead of
+                # accepting the segment unarchived. The client keeps its cursor and
+                # retries, so nothing is lost while the operator finishes setup; a
+                # silently skipped segment would never be archived later.
+                raise HTTPError(503, "archive_unavailable")
             if backend is not None:
                 name = sessions_archive.object_name(host, session_key, generation=generation, offset=offset)
                 await _put_object_verified(backend, session_key, name, sessions_archive.compress(payload),
