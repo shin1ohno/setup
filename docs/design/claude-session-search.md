@@ -316,7 +316,7 @@ Standard-mechanism check:
   - The query collapses on `session_key`, size 50, `_source=[session_key]`, `track_total_hits=false`. Measured p95: 20 ms.
   - Session metadata comes from one `mget` on the session index, which is about 50 small docs.
 - **Hybrid**: the lexical leg as above plus `knn(embedding, k=100, num_candidates=1000, same filters)` on message docs. The two legs are fused per session with `rrf_fuse(k=60)`, using each session's best message rank. The query embedding has a 1.5 s timeout and goes through an in-process LRU cache (256 entries), because the measured embedding call alone is p50 201–321 ms and p95 620–3,715 ms (Phase 0, §11). On timeout or provider failure the response carries `degraded: "bm25-only"`.
-- **Ranking**: score = RRF, or BM25 alone, plus `0.05 × 2^(−age_days/30)` as a recency nudge.
+- **Ranking**: score = (RRF, or BM25 alone) × `(1 + 0.05 × 2^(−age_days/30))`. The nudge is multiplicative because an RRF score is at most about 2/61; an additive 0.05 would let recency outrank relevance in hybrid mode. The empty-query path (no relevance) ranks by the nudge alone.
 - **Preview**: a separate call per session. `match` inside one `session_key`, size 6, with highlight (`fragment_size=160`). With an empty `q`, it returns the last 4 text messages.
 
 ### 6.8 C9 offline fallback (every host, inside `ccs`)
@@ -563,7 +563,8 @@ Scopes are `sessions:ingest`, `sessions:read` and `sessions:purge`. Hydra's `sco
 | Search index per host-year | ≈ 0.63 GB (+ ≈ 0.09 GB vectors, estimate); ×2 on personal (replica) | measured §3.2 |
 | Archive per host-year | ≈ 0.94 GB | measured §3.4 |
 | Lexical search, server `took` | p95 < 50 ms at one-year scale | measured 20 ms at 33 days |
-| Lexical search, end-to-end on the ES host | p95 < 100 ms | measured wall 20 ms + picker overhead |
+| Lexical search, end-to-end on the ES host | p95 < 100 ms | measured wall 20 ms + picker overhead; at 1-year scale (830k synthetic docs) server `took` p95 24 ms |
+| `--deep` lexical search, server `took` | p95 < 150 ms | measured p95 75 ms at 1-year scale; explicit opt-in, so outside the keystroke target |
 | Lexical search from air over tailnet | p95 < RTT + 60 ms | RTT measured on the first real call after rollout |
 | Hybrid search, end-to-end | p95 < 1,000 ms on a cache miss; ≤ 1.5 s worst case, after which it degrades to BM25-only | Phase 0: embedding call alone p50 201–321 ms, p95 620–3,715 ms over two runs of 20 |
 | Preview | p95 < 150 ms | single-session highlight |
