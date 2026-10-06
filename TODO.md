@@ -1274,3 +1274,15 @@ load-bearing and would have read as a setting with no surviving reason.
 - **First step**: add a logrotate drop-in in `cookbooks/auto-mitamae-orchestrator`
   (weekly, rotate 4, compress, copytruncate) and verify with
   `logrotate -d /etc/logrotate.d/auto-mitamae-orchestrator`.
+
+## Every Ruby hook pays ~140 ms of rbenv shim start-up (Low)
+
+- **What**: `cookbooks/claude-code/files/hooks/ruby-shim` puts `~/.rbenv/shims` first on PATH, and the rbenv
+  bash shim adds about 140 ms per hook run on hosts with rbenv (measured 150-170 ms per `session-ingest.rb`
+  run there, against 16-21 ms on the real binary with `--disable-gems`; setup #1071 report).
+- **Why deferred**: `ruby-shim` is shared by every hook, so the change is fleet-wide and was out of scope for the
+  session-search hook stream. The 50 ms budget in `docs/design/claude-session-search.md` §6.4 is not met on
+  rbenv hosts until this lands; Stop hooks run at every turn end.
+- **First step**: resolve the interpreter once at deploy time (`rbenv which ruby` in the claude-code cookbook,
+  written into the shim) and fall back to the PATH lookup only when that path is missing; re-measure with
+  `test-session-ingest.sh` timing on an rbenv host.
