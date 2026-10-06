@@ -26,7 +26,7 @@ class NotConfigured(ConfigError):
     pass
 
 
-def _check_url(value, field: str) -> str:
+def _check_url(value, field: str, tailnet: bool = False) -> str:
     if not isinstance(value, str) or not value:
         raise ConfigError("config: `%s` is missing" % field)
     parts = urllib.parse.urlsplit(value)
@@ -35,7 +35,15 @@ def _check_url(value, field: str) -> str:
     # Plain http only to loopback (tests, an on-box client).
     if parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost", "::1"):
         return value.rstrip("/")
-    raise ConfigError("config: `%s` must be an https URL (http only to 127.0.0.1)" % field)
+    # Plain http to a tailnet MagicDNS name, only for tailnet auth: the work
+    # proxy listens on its tailscale0 address without TLS, and the hop is
+    # already WireGuard-encrypted. Identity comes from the tailnet, so no
+    # bearer token ever travels over this URL.
+    host = parts.hostname or ""
+    if tailnet and parts.scheme == "http" and host.endswith(".ts.net") and len(host) > len(".ts.net"):
+        return value.rstrip("/")
+    raise ConfigError("config: `%s` must be an https URL (http only to 127.0.0.1, "
+                      "or to a *.ts.net host with tailnet auth)" % field)
 
 
 class Config:
@@ -43,7 +51,9 @@ class Config:
         self.path = path
         if not isinstance(data, dict):
             raise ConfigError("config: top level must be an object")
-        self.endpoint = _check_url(data.get("endpoint"), "endpoint")
+        auth_raw = data.get("auth")
+        is_tailnet = isinstance(auth_raw, dict) and auth_raw.get("type") == "tailnet"
+        self.endpoint = _check_url(data.get("endpoint"), "endpoint", tailnet=is_tailnet)
         host = data.get("host_label")
         if not isinstance(host, str) or not util.HOST_LABEL_RE.match(host):
             raise ConfigError("config: `host_label` must match ^[a-z0-9-]{1,63}$")
