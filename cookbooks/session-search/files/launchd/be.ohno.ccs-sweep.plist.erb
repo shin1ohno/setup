@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>be.ohno.ccs-sweep</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string><%= @launcher %></string>
+    <string>ingest</string>
+    <string>--sweep</string>
+    <string>--quiet</string>
+  </array>
+  <key>StartInterval</key><integer>900</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string><%= @log_path %></string>
+</dict>
+</plist>

@@ -160,6 +160,7 @@ ALLOW3 = %w[
 BARE_OK = %w[
   cookbooks/ssh-keys/default.rb
   cookbooks/memory-mirror/default.rb
+  cookbooks/session-search/common.rb
 ].to_set
 
 # --- file discovery --------------------------------------------------------

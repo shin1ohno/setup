@@ -716,6 +716,17 @@ jobs:
         bash cookbooks/claude-code/files/hooks/test-mirror-file-memory.sh \
           cookbooks/claude-code/files/hooks/mirror-file-memory.rb
 
+    - name: Session-ingest hook regression suite
+      run: |
+        # hooks/session-ingest.rb (session search C4) is fed the captured real
+        # Stop / SessionEnd payloads under a throwaway HOME with a recording fake
+        # ccs: exact argv, detached process group, exit 0, silent stdout, under
+        # 200 ms; and no spawn for malformed JSON, a path outside
+        # ~/.claude/projects/ (incl. '..' and symlink escapes), a missing file or
+        # a missing ccs, which must leave one log line.
+        bash cookbooks/claude-code/files/hooks/test-session-ingest.sh \
+          cookbooks/claude-code/files/hooks/session-ingest.rb
+
     - name: Validate JSON files
       run: |
         # Check if any JSON files exist and validate them
@@ -725,6 +736,28 @@ jobs:
         else
           echo "No JSON files found to validate"
         fi
+
+    - name: session-search ccs client suite (runner python3)
+      run: |
+        # cookbooks/session-search/files/ccs is the C3/C7/C9 client (stdlib only).
+        # Hermetic: a fake HTTP server on 127.0.0.1, a fake redactor with the
+        # frozen session_redact API, and a temp $HOME. Covers the diff rule,
+        # segmenting, 409/413/422 handling, tombstones, the breaker, the
+        # offline fallback cap and banner, CLI exit codes, fzf argv, restore
+        # hardening and the /ingest body shape. ripgrep makes the fallback
+        # cases run instead of skip.
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq ripgrep
+        python3 -m unittest discover -s cookbooks/session-search/files/ccs/tests -v
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.9"
+
+    - name: session-search ccs client suite (Python 3.9, the macOS system python)
+      run: |
+        python --version
+        python -W error::ResourceWarning -m unittest discover -s cookbooks/session-search/files/ccs/tests
 
   error-simulation:
     runs-on: ubuntu-latest
