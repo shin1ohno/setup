@@ -117,12 +117,13 @@ Subagent transcripts are not archived (§6.5); they would add about 1.9 GB per h
 | B | Hit whose JSONL is not on this host | Download the masked archive from the store, restore it locally, then resume. With no archive, the hit is view-only. |
 | C | Retention | Masked main JSONL plus `tool-results/` are archived to object storage: GCS for work, S3 for personal. ES and the archive keep a session for 365 days after its last update. Local JSONL keeps Claude Code's `cleanupPeriodDays` (30). |
 | D | Semantic search | In v1, as message-level kNN on `text`, fused with BM25 by client-side RRF (k = 60, the existing `scoring.rrf_fuse`). It is off the keystroke path (§6.7). |
-| E | Masking | Prefixed API keys and tokens, private-key blocks, and `.env`/config-style secret values. A match is replaced with `[REDACTED:<kind>:<hmac8>]`. Masking runs on the client before anything leaves the host, and the server re-scans every record. |
-| F | Boundary | Work hosts (air, sh1-cloud) use only memory-work. Personal hosts (pro-dev, mini, neo) use only the personal store. The server rejects ingest from a host label that is not on its allowlist. |
+| E | Masking | Prefixed API keys and tokens, private-key blocks, and `.env`/config-style secret values. A prefixed token becomes `[REDACTED:<kind>:<hmac8>]`; a low-entropy kind (`config-secret`, `url-credential`, `bearer`, `private-key`) becomes `[REDACTED:<kind>]` with no tag, because a 32-bit tag lets a key holder confirm guessed passwords offline. Masking runs on the client before anything leaves the host, and the server re-scans every record. |
+| F | Boundary | Work hosts (air, sh1-cloud) use only memory-work. Personal hosts (pro-dev, mini, neo) use only the personal store. The server derives the caller's host from its authenticated identity (§7.6), never from the request body, and rejects any write whose `session_key` belongs to another host. |
+| I | Authorization | The sessions app has its own default-deny gate: one middleware runs `require_proxy_secret` → `parse_identity` → an explicit route-to-scope table for every route, and an unlisted route is 403. Scopes come from a new `SESSION_SCOPE_POLICY`; unset or malformed means deny-all. `CLIENT_POLICY` is not extended: its parser rejects `sessions:*` and an unknown tool voids the whole policy, which would lock `memory-mirror` out. |
 | G | Access path | Clients never talk to ES directly. Every call goes through the memory-v2 server's new `/memory/sessions/v1/*` routes behind the existing auth proxy. The work ES is loopback-bound and the personal ES is LAN-only, so a direct path does not exist from air anyway. |
 | H | Parsing location | The server parses. A client only diffs, masks, and ships raw (masked) lines. As a result, one parser exists, and the whole index can be rebuilt from the archive without any client. |
 
-The original "ingest → ES; picker → ES" sketch changed in four places: ES access (G), parsing location (H), archive and resume (B, C), and boundary separation (F). The hook and backfill triggers stay, and a periodic sweep is added (§6.4) because `SessionEnd` never fires on kill or crash.
+The original "ingest → ES; picker → ES" sketch changed in five places: ES access (G), parsing location (H), archive and resume (B, C), boundary separation (F), and a gate of its own (I). The hook and backfill triggers stay, and a periodic sweep is added (§6.4) because `SessionEnd` never fires on kill or crash.
 
 Standard-mechanism check:
 
@@ -134,7 +135,7 @@ Standard-mechanism check:
 ```
  originating host (any host in the boundary)                    ES host (CT 119 / sh1-cloud)
  ┌───────────────────────────────────────────┐   HTTPS/tailnet  ┌──────────────────────────────────────┐
- │ Claude Code ──Stop/SessionEnd──► C4 hook  │                  │ auth proxy (existing, unchanged)     │
+ │ Claude Code ──Stop/SessionEnd──► C4 hook  │                  │ auth proxy (existing; 8 MiB on /sessions/v1/ only) │
  │                                  (Ruby)   │                  │   │ /memory/*                        │
  │ timer (15 min) ────────────────► C3 ccs   │                  │   ▼                                  │
  │                         ingest/sweep      │  POST ingest     │ memory-mcp (existing process)        │
@@ -169,11 +170,11 @@ Standard-mechanism check:
     - `cc_version`: the last record's `version`.
     - `relocatedCwd` values are collected into `cwd_candidates`.
   - `resume_cwd` is the candidate (the first `cwd`, then each `relocatedCwd` in order) whose encoding equals the JSONL's parent directory name. Encoding: `re.sub(r'[^A-Za-z0-9-]', '-', cwd)`. If none matches, use the first `cwd` and set `resume_cwd_verified=false`.
-- **Relation to existing code**: new module `memory-mcp/sessions/parse.py`, imported only by C6. It reuses nothing from the knowledge chunking code.
+- **Relation to existing code**: new flat module `memory-mcp/sessions_parse.py`, imported only by C6. It reuses nothing from the knowledge chunking code. Modules are flat files rather than a `sessions/` package because `bin/check-memory-v2-manifest` accepts only `^[A-Za-z0-9_]+\.py$` and the personal MANIFEST loop (`lxc-es-memory/default.rb:217-226`) creates no subdirectories.
 
 ### 6.2 C2 `sessions.redact` — masking library (client and server, Python stdlib)
 
-- **Responsibility**: replace secrets inside every JSON string value of every record, recursively. That includes `attachment`, `toolUseResult` and tool inputs, because the archive keeps whole records. The JSON structure is never altered.
+- **Responsibility**: replace secrets inside every JSON string value of every record. That includes `attachment`, `toolUseResult` and tool inputs, because the archive keeps whole records. The JSON structure is never altered. The walk is iterative (an explicit stack), so deeply nested input cannot raise `RecursionError`.
 - **Input**: a parsed record (dict), an HMAC key, and the ruleset version.
 - **Output**: the masked record and per-kind counts.
 - **Rules (ruleset `r1`)**:
@@ -193,9 +194,13 @@ Standard-mechanism check:
   | `config-secret` | `KEY=VALUE`, `KEY: VALUE`, `"KEY": "VALUE"` where KEY matches `(?i)(secret\|token\|passw(or)?d\|api[_-]?key\|credential\|private)`. Only VALUE is replaced, and only when it is at least 8 characters and not already a placeholder (`${…}`, `<…>`, `xxx…`, `***`, `[REDACTED`). |
   | `url-credential` | `[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s/@]+@` (the password part only) |
 
-- **Replacement**: `[REDACTED:<kind>:<hex8>]`, where `hex8` is the first 8 hex characters of `HMAC-SHA256(key, matched_value)`. The same secret produces the same tag across sessions, so a leak can be traced; the original cannot be recovered. Rotating the key changes every tag from then on, and that is acceptable.
+- **Replacement**:
+  - Prefixed tokens (`aws-key` through `jwt`): `[REDACTED:<kind>:<hex8>]`, where `hex8` is the first 8 hex characters of `HMAC-SHA256(key, matched_value)`. The same token produces the same tag across sessions, so a leak can be traced. These tokens are high-entropy, so holding the key does not let anyone recover or confirm them.
+  - Low-entropy kinds (`bearer`, `private-key`, `config-secret`, `url-credential`): `[REDACTED:<kind>]` with no tag. With a 32-bit tag, a key holder could test about 10⁹ guessed passwords for roughly 0.2 false positives.
+  - Rotating the key changes every tag from then on, and that is acceptable. One key per boundary.
+- **Fixed point**: masking already-masked text changes nothing (`redact(redact(x)) == redact(x)`), and the detector excludes `[REDACTED:…]` placeholders. A property test enforces both. Without this, `bearer`'s `\S{16,}` matches a 24-character placeholder and the server re-scan rejects already-masked input.
 - **Fail-closed**: with no key or an unreadable key, nothing is shipped and the cursor does not move. The error shows in `ccs status`.
-- **Relation to existing code**: new; neither repository has any redaction today. One file, `session_search/redact.py`, is vendored into the client package and the server package from the same source; the MANIFEST check (`bin/check-memory-v2-manifest`) asserts that the two copies are byte-identical.
+- **Relation to existing code**: new; neither repository has any redaction today. The single source is `memory-mcp/session_redact.py`, inside `memory-mcp/` because the work overlay rsyncs only that directory (`gcp-es-memory/default.rb:368-371`). The client cookbook copies it into the `ccs` package, and a check in `bin/check-memory-v2-manifest` asserts that the two copies are byte-identical.
 
 ### 6.3 C3 `ccs ingest` — client shipper (every host, Python stdlib)
 
@@ -206,7 +211,8 @@ Standard-mechanism check:
   - Per file, store `(dev, inode, size, offset, generation)`.
   - When the inode changes or the size shrinks below the stored offset, increment `generation` and start again from offset 0; the server replaces that generation's archive.
   - Read only up to the last `\n`; a partial trailing line waits for the next run.
-  - Segments are at most 4 MB of raw input. The cursor advances only after a 2xx response.
+  - Segments are at most 4 MiB of raw input. The cursor advances only after a 2xx response.
+  - A `422` names the offending line indexes. The client replaces those lines with a tombstone record (`{"type":"session-search-tombstone","reason":"unmasked_secret","kinds":[…]}`), re-sends, and moves on, so one false positive cannot stall a file until its JSONL is cleaned up. The session is marked `archive_complete=false`.
 - **Subagents**: `…/<sid>/subagents/agent-*.jsonl` is shipped with `kind=subagent` and `parent_session_id=<sid>`. These files are indexed but not archived.
 - **`tool-results/`**: each file in `<sid>/tool-results/` is masked and sent once through `/blob`, keyed by name and sha256.
 - **Gone files**: on `--sweep`, every state entry whose file no longer exists is reported with `jsonl_exists=false`, then dropped from state.
@@ -234,27 +240,38 @@ Standard-mechanism check:
   - write the archive;
   - search, preview and archive download;
   - update existence state and purge.
-- **Input and output**: the routes in §7.2. They are mounted as `Mount("/memory/sessions/v1", sessions_app)` ahead of the existing `Mount("/memory", mcp)`. Both proxies already forward `/memory/*` unchanged (work `UPSTREAM_URL=…/memory`, personal nginx `location /memory/`), so neither proxy changes.
+- **Input and output**: the routes in §7.2, mounted as `Mount("/memory/sessions/v1", sessions_app)` ahead of the existing `Mount("/memory", mcp)`, so `/memory/mcp` is not shadowed. Both boundaries reach that path today:
+  - work: the proxy's `UPSTREAM_URL` is the bare origin and it forwards the path verbatim;
+  - personal: nginx `location /memory/` strips the prefix, and the proxy's `UPSTREAM_URL=http://127.0.0.1:8010/memory` puts it back.
+- **Gate** (decision I): one middleware wraps the whole sub-app. It runs `require_proxy_secret`, then `parse_identity`, then looks the route up in a fixed route→scope table; unlisted routes are 403. It then derives `caller_host` from the identity (§7.6). Personal CT 119 gets a `PROXY_SHARED_SECRET` it does not have today, so a local process cannot forge the identity headers.
 - **Ingest pipeline**:
-  1. Check that the host label is on the store's allowlist (F).
-  2. Decompress the gzip body.
-  3. Re-scan every line with C2 in detect-only mode. Any unmasked hit rejects the segment with `422 unmasked_secret`, and the kinds are logged (never the values).
+  1. Reject a body whose `client.host` differs from `caller_host` (403).
+  2. Decompress with a bounded streaming `zlib.decompressobj(16 + MAX_WBITS)` and `max_length`; more than 5 MiB of output is 413.
+  3. Re-scan every line with C2 in detect-only mode, using the ruleset version the client declared in `redact_version`. Hits return `422 {lines:[…], kinds:[…]}`; only kinds and line indexes are logged, never values. Server-side ruleset upgrades are applied later by C8, not by rejecting clients.
   4. Run C1.
   5. Run `_bulk` without `refresh=true`, relying on the 1 s refresh interval, which is enough for a picker.
-  6. For `kind=main`, write the archive chunk.
+  6. For `kind=main`, write the archive chunk and record its sha256 in the session doc.
   7. Queue the new `text` docs for embedding.
 - **Archive layout**:
-  - Segments: `<prefix>/<boundary>/<host>/<session_id>/<dirhash8>/g<generation>/<offset:012d>.jsonl.zst`
-  - Side files: `…/tool-results/<name>.zst`
+  - `session_key` is opaque and issued by the server: `sk_` + base32 of `sha256(caller_host + "\0" + project_dir + "\0" + session_id)[:20]`. Object names are built by one function, from parts validated and stored in ES only:
+    - `host` must match `^[a-z0-9-]{1,63}$`;
+    - `session_id` must match `^[0-9a-f-]{36}$`;
+    - a tool-results `name` must match `^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`;
+    - the function asserts the result starts with `sessions/` and rejects dot segments. It quotes each segment (`quote(seg, safe='')`) for both GCS and S3.
+  - Segments: `sessions/<host>/<session_key>/g<generation>/<offset:012d>.jsonl.zst`. Side files: `sessions/<host>/<session_key>/tool-results/<name>.zst`.
   - Writing the same offset again overwrites the same object, so retries are safe.
-  - Download concatenates the chunks of the highest generation in offset order. The offsets must be contiguous; a gap marks the session `archive_complete=false`.
+  - Download concatenates the chunks of the highest generation in offset order. The offsets must be contiguous and each chunk's sha256 must match the value in ES (only the server holds the ES password); a mismatch is `409 archive_tampered`, a gap marks the session `archive_complete=false`. Decompression uses `zstandard` with `max_output_size` per chunk.
+  - Storage:
+    - **work**: prefix `sessions/` in the existing bucket `kouzoh-p-sh1-es-memory-backup`. The instance SA already has `objectAdmin` on it, so no IAM change is needed. The lifecycle rule must carry `matches_prefix=["sessions/"]`, or it would also expire the ES snapshot repository.
+    - **personal**: a new bucket separate from the ES snapshot bucket, with versioning on and noncurrent versions expiring after 30 days. The writer policy is limited to `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and `s3:AbortMultipartUpload` on `<bucket>/sessions/*`, plus `s3:ListBucket` with `s3:prefix` like `sessions/*`.
 - **Embedding**: the existing `voyage.py` (Voyage for personal, LiteLLM `text-embedding-3-large` at 1024 dims for work). It runs in batches of 128 in a background task, so ingest latency does not depend on the provider. A failed batch is stored as `embedding_status=pending` and retried by C8. The embedding input is `text`, capped at 16 KB.
 - **Relation to existing code**:
   - reuses `es_backend._bulk_index`, `ensure_indices` (403-tolerant), `_ANALYSIS` (`ja_en_hybrid`), `scoring.rrf_fuse`, `voyage.py` and `identity.py`;
-  - new: `memory-mcp/sessions/{app,parse,redact,archive,search}.py`, plus MANIFEST entries;
+  - new flat modules: `memory-mcp/{sessions_app,sessions_parse,session_redact,sessions_archive,sessions_sigv4,sessions_search}.py`, plus MANIFEST entries;
+  - object storage without SDKs: GCS through httpx with a metadata-server token, S3 through httpx with a stdlib SigV4 signer (`sessions_sigv4.py`, tested against the AWS published vectors);
   - new dependency: `zstandard` (server venv only);
-  - new Hydra client: `session-search` (personal);
-  - new identity grants for work (§7.6).
+  - new Hydra clients: one per personal host, `session-search-<host>` (§7.6);
+  - identity-to-host and scope tables for both boundaries (§7.6).
 
 ### 6.6 C7 `ccs` — picker CLI (every host, Python stdlib + fzf)
 
@@ -270,8 +287,10 @@ Standard-mechanism check:
 - **Resume (`ccs resume <session_key>`)**:
   1. **Local file**: if the session is from this host and `jsonl_path` exists, run `chdir(resume_cwd)` then `exec claude --resume <sid> [--fork-session]`. If `resume_cwd` no longer exists, fail with a clear message instead of resuming from the wrong directory.
   2. **No local file**: if `archived` is true and `archive_complete` is true, choose a local cwd: `resume_cwd` if it exists locally, else `--to DIR`, else ask (default: current directory).
-     - Download the archive into `~/.claude/projects/<encode(local_cwd)>/<sid>.jsonl.tmp`, plus `tool-results/`.
+     - Compute the project dir locally as `encode(local_cwd)`; never take a directory or file name from the server as is. Validate `session_id` against `^[0-9a-f-]{36}$`.
+     - Download the archive into `~/.claude/projects/<encode(local_cwd)>/<sid>.jsonl.tmp`, plus `tool-results/`. The tar is extracted with `tarfile` `filter='data'`, and every member name must match the tool-results name regex.
      - Verify the `X-Archive-Sha256` header, then rename the file into place.
+     - Rewrite absolute `…/.claude/projects/<original project dir>/<sid>/tool-results/` path strings in the restored JSONL to the new location. Resume itself never opens those files (Phase 0: 0 opens under strace), but the model may `Read` them later.
      - If a different file with that `<sid>` already exists there, refuse unless `--force`.
      - Print `restored masked transcript (secrets appear as [REDACTED:…])`, then exec as in step 1.
      - A restored session continues on this host under a new `session_key`, and its `restored_from` field links it to the original.
@@ -285,7 +304,7 @@ Standard-mechanism check:
   - Filters: host, cwd prefix, `interactive` (default true), `is_sidechain` (default false), `ts >= since`.
   - The query collapses on `session_key`, size 50, `_source=[session_key]`, `track_total_hits=false`. Measured p95: 20 ms.
   - Session metadata comes from one `mget` on the session index, which is about 50 small docs.
-- **Hybrid**: the lexical leg as above plus `knn(embedding, k=100, num_candidates=1000, same filters)` on message docs. The two legs are fused per session with `rrf_fuse(k=60)`, using each session's best message rank. If the embedding provider is unavailable, the response carries `degraded: "bm25-only"`.
+- **Hybrid**: the lexical leg as above plus `knn(embedding, k=100, num_candidates=1000, same filters)` on message docs. The two legs are fused per session with `rrf_fuse(k=60)`, using each session's best message rank. The query embedding has a 1.5 s timeout and goes through an in-process LRU cache (256 entries), because the measured embedding call alone is p50 201–321 ms and p95 620–3,715 ms (Phase 0, §11). On timeout or provider failure the response carries `degraded: "bm25-only"`.
 - **Ranking**: score = RRF, or BM25 alone, plus `0.05 × 2^(−age_days/30)` as a recency nudge.
 - **Preview**: a separate call per session. `match` inside one `session_key`, size 6, with highlight (`fragment_size=160`). With an empty `q`, it returns the last 4 text messages.
 
@@ -306,7 +325,7 @@ Standard-mechanism check:
 - **Responsibility** (runs daily):
   - delete each session whose `updated_at < now − 365d`: the session doc, its message docs (`delete_by_query` on `session_key`) and its archive prefix;
   - retry `embedding_status=pending` docs;
-  - re-scan for masking-rule upgrades (§8, row 8).
+  - re-mask the archive and ES in place when the server's ruleset is newer than a session's `redact_version` (§8, row 8).
 - **Backstop**: a lifecycle rule on the archive prefix at 395 days (GCS and S3 both have this built in), in case the job dies.
 - **Relation to existing code**: work has no keeper today, so the work overlay adds a systemd timer. Personal adds a timer next to the keeper timers on CT 119.
 
@@ -357,6 +376,7 @@ Index names: `memory-session` and `memory-session-message`, each with 1 shard; 1
       "archive_complete":  { "type": "boolean" },
       "archive_generation":{ "type": "integer" },
       "archive_bytes":     { "type": "long" },
+      "archive_chunks":    { "type": "object", "enabled": false },
       "restored_from":     { "type": "keyword" },
       "redact_version":    { "type": "keyword" },
       "parser_version":    { "type": "keyword" }
@@ -365,7 +385,7 @@ Index names: `memory-session` and `memory-session-message`, each with 1 shard; 1
 }
 ```
 
-`session_key` = `<host>/<project_dir>/<session_id>`. A session id alone is not unique across project folders (claude-history issue #59).
+`session_key` is the opaque, server-issued value from §6.5, derived from (`host`, `project_dir`, `session_id`), all three of which are also stored as fields. A session id alone is not unique across project folders (claude-history issue #59). `archive_chunks` is a list of `{generation, offset, end_offset, sha256}` stored without indexing; download checks every chunk against it.
 
 #### 7.1.2 `memory-session-message`
 
@@ -413,26 +433,33 @@ Embeddings are excluded from `_source`; otherwise each doc would carry about 10 
 
 | Method and path | Scope | Request | Response |
 |---|---|---|---|
-| `POST /ingest` | `sessions:ingest` | gzip JSON: `{client:{host, client_version, redact_version}, file:{session_id, project_dir, jsonl_path, kind:"main"\|"subagent", parent_session_id?, agent_id?}, segment:{generation, offset, end_offset, sha256, lines:[<masked JSON line>…]}}`. At most 4 MB of raw input. | `200 {session_key, indexed, next_offset, archive:"written"\|"skipped"}` · `409 {expected_offset}` · `422 {error:"unmasked_secret", kinds:[…]}` · `403 host_not_allowed` |
+| `POST /ingest` | `sessions:ingest` | gzip JSON: `{client:{host, client_version, redact_version}, file:{session_id, project_dir, jsonl_path, kind:"main"\|"subagent", parent_session_id?, agent_id?}, segment:{generation, offset, end_offset, sha256, lines:[<masked JSON line>…]}}`. At most 4 MiB of raw input and 8 MiB on the wire. | `200 {session_key, indexed, next_offset, archive:"written"\|"skipped"}` · `409 {expected_offset}` · `413 too_large` · `422 {error:"unmasked_secret", lines:[…], kinds:[…]}` · `403 host_mismatch` |
 | `POST /blob` | `sessions:ingest` | gzip JSON: `{session_key, name, sha256, content}` (masked, tool-results only) | `200 {stored:true}` |
 | `POST /state` | `sessions:ingest` | `{session_key, jsonl_exists:false}` | `200` |
 | `POST /search` | `sessions:read` | `{q, mode:"lexical"\|"hybrid", deep:false, hosts?:[…], cwd_prefix?, include_headless:false, include_sidechain:false, since?, limit:50}` | `200 {sessions:[{session_key, session_id, host, title, cwd, resume_cwd, updated_at, score, hit_count, jsonl_exists, archived, archive_complete, interactive}], took_ms, degraded?}` |
 | `GET /preview?session_key=&q=` | `sessions:read` | — | `200 {session:{…}, snippets:[{ts, role, fragment}]}` |
-| `GET /archive?session_key=` | `sessions:read` | — | `200 application/x-ndjson` (decompressed, masked), header `X-Archive-Sha256` · `404` · `409 archive_incomplete` |
+| `GET /archive?session_key=` | `sessions:read` | — | `200 application/x-ndjson` (decompressed, masked), header `X-Archive-Sha256` · `404` · `409 archive_incomplete` · `409 archive_tampered` |
 | `GET /archive/tool-results?session_key=` | `sessions:read` | — | `200 application/x-tar` |
 | `DELETE /session?session_key=` | `sessions:purge` | — | `200 {deleted_docs, deleted_objects}` |
-| `GET /status` | `sessions:read` | — | `200 {schema, redact_version, docs, sessions, pending_embeddings, last_retention_run}` |
+| `GET /status` | `sessions:read` | — | `200 {schema, redact_version, docs, sessions, pending_embeddings, last_retention_run, caller_host}` |
+
+Writes (`/ingest`, `/blob`, `/state`, `DELETE`) are rejected with `403 host_mismatch` when the target `session_key` belongs to a host other than `caller_host`. Reads cover every host in the boundary.
+
+Body limits: the proxies allow 8 MiB only on `/memory/sessions/v1/` and keep 1 MiB elsewhere, reading the body in chunks when `Content-Length` is absent. Personal nginx gets a dedicated `location /memory/sessions/v1/` with `client_max_body_size 8m` plus `limit_req` and `limit_conn`; the global 1m stays. Neither proxy reads a body before authenticating. The personal proxy's INFO log of the first 500 bytes of every response body (`auth-proxy/proxy.py:377`) is removed, and uvicorn's access log drops query strings, so search terms and transcript text never reach the logs.
 
 ### 7.3 Hook payload consumed by C4
 
 From Claude Code on stdin, for `Stop` and `SessionEnd`:
 
 ```json
-{ "session_id": "<uuid>", "transcript_path": "/abs/…/<sid>.jsonl", "cwd": "/abs/…",
-  "hook_event_name": "Stop" | "SessionEnd", "stop_hook_active": false, "reason": "<SessionEnd only>" }
+Stop:       { "session_id", "transcript_path", "cwd", "prompt_id", "permission_mode", "effort": {"level"},
+              "hook_event_name": "Stop", "stop_hook_active", "last_assistant_message",
+              "background_tasks": [], "session_crons": [] }
+SessionEnd: { "session_id", "transcript_path", "cwd", "prompt_id",
+              "hook_event_name": "SessionEnd", "reason" }
 ```
 
-C4 reads only `transcript_path` and `session_id`, and ignores everything else. Phase 0 captures one real payload of each event on Claude Code 2.1.291 and freezes it as an adapter test fixture.
+These are the fields of real payloads captured on Claude Code 2.1.291 (Phase 0, headless run; `reason` was `"other"`). Both are frozen as adapter test fixtures. C4 reads only `transcript_path` and `session_id`, and ignores everything else.
 
 ### 7.4 CLI
 
@@ -460,17 +487,22 @@ Exit codes: 0 for success or a cancelled picker, 2 for a usage error, 3 when the
 ### 7.5 Client files
 
 - `~/.config/session-search/config.json`: `{endpoint, host_label, auth:{type:"tailnet"|"client_credentials", token_url?, client_id?, secret_file?}, hmac_key_file}`. It is rendered by the boundary-owning cookbook and is mode 0600.
-- `~/.config/session-search/hmac.key`: mode 0600. Work keeps it in Secret Manager (`sh1-es-memory-session-redact-key`); personal keeps it in SSM (`/memory/session-redact-hmac-key`).
+- `~/.config/session-search/hmac.key`: mode 0600. Work keeps it in Secret Manager (`sh1-es-memory-session-redact-key`); personal keeps it in SSM (`/memory/session-redact-hmac-key`). The personal path is readable by the whole `pve-bootstrap-ssm` fleet. That is acceptable now that low-entropy kinds carry no tag (decision E): the key only links occurrences of high-entropy tokens.
+- Personal per-host Hydra client secrets are distributed the same way the `memory-mirror` client secret is today.
 - `~/.claude/session-search/state.json`: `{version:1, files:{<path>:{dev, inode, size, offset, generation, session_key, last_ok}}}`, written atomically (temp file, then rename).
 - `~/.claude/session-search/{lock,breaker.json}` and `~/.claude/session-search.log`.
 
 ### 7.6 Authorization
 
-- **Personal**: a new Hydra machine client `session-search`. `CLIENT_POLICY` is extended from `ingest,forget@dataset` to also accept `sessions:ingest`, `sessions:read` and `sessions:purge`. Hosts get ingest and read; purge is for the operator only.
+Scopes are `sessions:ingest`, `sessions:read` and `sessions:purge`. Hydra's `scope` claim is not used: the proxies forward only sub, client id and grant, so the server maps (grant, client id, sub) to scopes and host itself. The mapping lives in `SESSION_SCOPE_POLICY` (a JSON env value); unset or malformed means deny-all.
+
+- **Personal**:
+  - one Hydra machine client per host, `session-search-<host>` (`pro-dev`, `mini`, `neo`), each mapped to its own host label with ingest and read; each is added to the proxy's `ALLOWED_CLIENT_IDS`;
+  - the operator (`authorization_code`, sub limited to the personal operator account; `sh1@mercari.com`, which is also in `ALLOWED_SUBS`, gets no session scope) gets read and purge;
+  - `memory-mirror` gets nothing.
 - **Work**:
-  - the tailnet human identity (air) gets all three scopes;
-  - the box machine identity (sh1-cloud loopback) gets ingest and read;
-  - the server checks host labels against `SESSION_HOSTS_ALLOWED=air,sh1-dev-instance-1`.
+  - the tailnet human identity (air, matched by StableID) maps to host `air` with all three scopes;
+  - the box machine identity (`sh1-dev-instance-sa`) maps to host `sh1-dev-instance-1` with ingest and read. Read covers both hosts by user decision, although the machine identity includes autonomous agents that handle untrusted input; the StableID→label table lives in the server env.
 
 ## 8. Failure modes and class-wide countermeasures
 
@@ -489,10 +521,16 @@ Exit codes: 0 for success or a cancelled picker, 2 for a usage error, 3 when the
 | 11 | Index missing or mapping drift | `ensure_indices` at server start (403-tolerant, as today), `_meta.schema` checked on start, `dynamic: strict` so that drift fails loudly. |
 | 12 | Archive chunk missing or corrupt | Contiguous-offset and sha256 checks. A failing session becomes view-only with the reason shown, and nothing half-written is restored. |
 | 13 | Session id collision across project folders | `session_key` includes host and project dir. |
-| 14 | Work data reaching the personal store, or the reverse | The boundary owns the config (work values only from the zp-SHIN overlay); the server-side host allowlist; no shared credentials. |
+| 14 | Work data reaching the personal store, or the reverse | The boundary owns the config (work values only from the zp-SHIN overlay); host comes from identity, and an identity that is not in the boundary's `SESSION_SCOPE_POLICY` gets nothing; no shared credentials. |
 | 15 | Retention job dies | Object lifecycle at 395 days as backstop. `/status` exposes `last_retention_run`. |
 | 16 | Restored session diverges from a newer copy elsewhere | A restore never overwrites an existing different file without `--force`; the restore is recorded as a new session with `restored_from`. |
 | 17 | Latency regression as the index grows (≈ 11× in a year) | The keystroke path avoids highlight and `track_total_hits`. Phase 1 benchmarks at 1-year scale (synthetic 11× replication) and blocks the release if server-side p95 is 50 ms or more. |
+| 18 | A host in the boundary claims to be another host, overwrites that host's archive, and injects a fake history through restore + resume | Host derived from identity, never from the body; writes to another host's `session_key` are 403; per-host Hydra clients on personal. |
+| 19 | Archive objects altered directly in the bucket, bypassing the API (the work SA token is available to any local process from the metadata server) | Per-chunk sha256 kept in ES, which only the server can write; a mismatch is `409 archive_tampered` and nothing is restored. Personal adds bucket versioning, and its writer key is readable only by CT 119. |
+| 20 | Oversized or compressed-bomb bodies, deeply nested JSON | 8 MiB wire limit only on `/sessions/v1/`; bounded streaming gzip and zstd decompression (413 above the limit); iterative redactor. nginx `limit_req` / `limit_conn` on the sessions location. |
+| 21 | A redaction false positive blocks a file forever | 422 names lines; the client tombstones them and moves on. Masking is a fixed point and the detector skips placeholders (property test). |
+| 22 | Transcript text in logs | No response-body logging on the personal proxy; uvicorn access logs drop query strings; rejections log kinds and line indexes only. |
+| 23 | Unauthenticated path to the sessions app (for example `/.well-known/../sessions/v1/…` through the proxy's unauthenticated pass-through) | Default-deny middleware: a request without verified identity headers and proxy secret is 401/403 regardless of how it arrived. Covered by the live probes in §11. |
 
 ## 9. Quantified targets
 
@@ -505,8 +543,8 @@ Exit codes: 0 for success or a cancelled picker, 2 for a usage error, 3 when the
 | Archive per host-year | ≈ 0.94 GB | measured §3.4 |
 | Lexical search, server `took` | p95 < 50 ms at one-year scale | measured 20 ms at 33 days |
 | Lexical search, end-to-end on the ES host | p95 < 100 ms | measured wall 20 ms + picker overhead |
-| Lexical search from air over tailnet | p95 < RTT + 60 ms | RTT to be measured in phase 0 |
-| Hybrid search, end-to-end | p95 < 600 ms | includes one embedding call; to be measured in phase 0 |
+| Lexical search from air over tailnet | p95 < RTT + 60 ms | RTT measured on the first real call after rollout |
+| Hybrid search, end-to-end | p95 < 1,000 ms on a cache miss; ≤ 1.5 s worst case, after which it degrades to BM25-only | Phase 0: embedding call alone p50 201–321 ms, p95 620–3,715 ms over two runs of 20 |
 | Preview | p95 < 150 ms | single-session highlight |
 | Ingest freshness | < 10 s after `Stop` (hook path); < 15 min worst case (sweep) | design |
 | Backfill on a host | ≈ 65 s parse + upload of 1.2 GB raw (≈ 170 MB gzip) | measured parse time |
@@ -516,39 +554,62 @@ Exit codes: 0 for success or a cancelled picker, 2 for a usage error, 3 when the
 
 | Artifact | Location now (setup) | After ADR 0013 |
 |---|---|---|
-| Server: `sessions/` package, MANIFEST entries | `cookbooks/lxc-es-memory/files/memory-mcp/sessions/` | `shin1ohno/ai-memory` server |
+| Server modules (flat), MANIFEST entries | `cookbooks/lxc-es-memory/files/memory-mcp/sessions_*.py` | `shin1ohno/ai-memory` server |
 | Index JSON | `cookbooks/lxc-es-memory/files/es-indices-v2/memory-session{,-message}.json` | ai-memory |
-| Shared redactor | `cookbooks/lxc-es-memory/files/session_search/redact.py` (single source, copied by MANIFEST) | ai-memory |
+| Shared redactor | `cookbooks/lxc-es-memory/files/memory-mcp/session_redact.py` (single source; copy-sync check) | ai-memory |
 | Client package `ccs` + config + timer | new `cookbooks/session-search/` | package to ai-memory, cookbook stays |
 | Hook shim + settings registration | `cookbooks/claude-code/files/hooks/session-ingest.rb`, `files/settings.json` | per ADR 0013 Decision 9 |
-| Personal: Hydra client, SSM HMAC key, S3 bucket/prefix + IAM, SLM index list | setup (`lxc-es-memory`, `lxc-elasticsearch`) + home-monitor terraform | unchanged |
-| Work: roles.json, Secret Manager key, GCS prefix + SA grant, retention timer, host config for air/sh1-cloud | zp-SHIN `projects/mercari-setup/cookbooks/gcp-es-memory` | unchanged |
+| Personal server side: env, retention timer, proxy body limit and log removal, `PROXY_SHARED_SECRET`, `ALLOWED_CLIENT_IDS`, per-host Hydra clients, SLM index list | setup (`lxc-es-memory`, `lxc-elasticsearch`, new `bin/register-session-search`) | unchanged |
+| Personal AWS: archive bucket (versioned, separate from ES snapshots), writer IAM user, CT 119 bootstrap principal, SSM parameters, nginx sessions location | home-monitor terraform | unchanged |
+| Work: roles.json, index-copy and pip guards, render-env, proxy body limit, retention timer, config for air and box, prefix-scoped lifecycle | zp-SHIN `projects/mercari-setup/cookbooks/gcp-es-memory` and `terraform/es-memory-backup` | unchanged |
+| Work secret: redaction HMAC key + accessor for the instance SA | kouzoh-p-terraform `terraform/accounts/sh1/google_secret_manager_secret.tf` | unchanged |
 
-Personal archive writes need a new AWS principal on CT 119, scoped to the archive prefix. That is a credential added to a host and so triggers the adversarial-review gate. It also conflicts with ADR 0013 Decision 3 ("no new credentials on CT 119", written for GitHub access), so it must be ruled on explicitly and cannot be implied from this spec.
+Personal archive writes need an AWS principal on CT 119, and `pve-bootstrap-ssm` cannot provide it safely. It is one key pair shared by the whole fleet: all LXCs, the PVE host, and darwin hosts through `roles/foundation`. Any secret under `/memory/*` is therefore readable from every exposed LXC. So:
+
+- A new IAM user `es-memory-ct119-bootstrap` can read only SSM `/es-memory-ct119/*` (with the matching KMS context). The operator places its keys on CT 119 once with `bin/bootstrap-lxc-creds`.
+- The archive writer user `memory-session-archive` has the prefix-limited policy from §6.5. Its keys live under `/es-memory-ct119/session-archive/*`.
+
+ADR 0013 Decision 3 ("no new credentials on CT 119") was written for GitHub access. It gets a note recording this exception and its scope.
 
 No new external service is introduced. GCS, S3, LiteLLM, Voyage, fzf and ripgrep are all already in use.
 
 ## 11. Delivery plan
 
-- **Wave 0 (serial)**: freeze §7, the contracts. Then run the phase 0 probes:
-  - real `Stop`/`SessionEnd` payloads;
-  - whether `claude --resume` needs `tool-results/` and `subagents/` (resume after removing each);
-  - the cwd encoding rule on 2.1.291;
-  - tailnet RTT from air;
-  - LiteLLM embedding latency;
-  - kNN under the deployed licence (dense_vector kNN is Basic).
+- **Wave 0**: freeze §7, the contracts, then run the Phase 0 probes. Results, measured on sh1-cloud on 2026-10-06:
+
+  | Probe | Result |
+  |---|---|
+  | Real `Stop` / `SessionEnd` payloads | Captured from a headless run with a capture hook passed through `--settings` (global settings untouched); fields in §7.3 |
+  | Does `claude --resume` need `subagents/`? | No. A copy without `subagents/` resumed and reproduced the subagent's reply |
+  | Does `claude --resume` need `tool-results/`? | No. A real session copied without `tool-results/` resumed, and strace recorded 0 opens under `tool-results/` among 18,409 opens (21 of them the JSONL itself). The JSONL references those files by absolute path, so restore rewrites the paths (§6.6) |
+  | cwd encoding `re.sub(r'[^A-Za-z0-9-]', '-', cwd)` | Matches the directory name for 210 of 210 main JSONL files |
+  | LiteLLM embedding latency (20 calls) | p50 201 ms / p95 3,715 ms, then p50 321 ms / p95 620 ms. The gateway returns 403 to the default Python-urllib User-Agent |
+  | tailnet RTT from air | Deferred to the first real call after rollout |
+  | kNN licence | dense_vector kNN is available on Basic; the existing `recall` already runs it |
+
 - **Parallel streams after Wave 0**, with exclusive file ownership:
 
-  | Stream | Owns |
-  |---|---|
-  | S1 | Server parse + redact + ingest + archive (`memory-mcp/sessions/{parse,redact,archive,app}.py`) |
-  | S2 | Server search + preview (`sessions/search.py`) |
-  | S3 | Client `ccs` package (`cookbooks/session-search/files/`) |
-  | S4 | Hook shim + claude-code registration |
-  | S5 | Personal infrastructure (setup + home-monitor) |
-  | S6 | Work overlay (zp-SHIN) |
+  | Stream | Repo | Owns |
+  |---|---|---|
+  | S1 | setup | Server ingest: `memory-mcp/{sessions_app,sessions_parse,session_redact,sessions_archive,sessions_sigv4}.py`, `server.py` mount, `identity.py` session-scope function, index JSON, MANIFEST, `requirements-v2.txt`, tests, CI steps, copy-sync check |
+  | S2 | setup | Server search + preview: `memory-mcp/sessions_search.py` + tests |
+  | S3 | setup | Client `ccs`: `cookbooks/session-search/`, timer, launchd agent, personal `config.json` |
+  | S4 | setup | Hook shim + claude-code registration |
+  | S5 | setup | Personal server infrastructure (see §10) |
+  | S6 | home-monitor | Personal AWS + nginx (see §10) |
+  | S7 | zp-SHIN | Work overlay (see §10) |
+  | S8 | kouzoh-p-terraform | Work HMAC secret |
 
-  Concurrency is set to 3 streams at a time (S1, S3, S4 first; then S2, S5, S6) to keep review load at one PR per stream.
+  Concurrency is 3 streams at a time (S1, S3, S4 first; then S2, S5, S6, S7, S8) to keep review load at one PR per stream.
+- **Live security probes** (required before calling either boundary done):
+  1. A real `session-search-<host>` token is accepted on `/status`; a real `memory-mirror` token is rejected on every sessions route while its MCP ingest still works.
+  2. Work: air can `DELETE`, the box gets 403.
+  3. `127.0.0.1:8010/memory/sessions/v1/status` without `X-Proxy-Secret` is rejected on both boundaries.
+  4. Host spoofing (`host=air` from the box, `host=mini` with the pro-dev token) is 403.
+  5. Unauthenticated `/.well-known/../sessions/v1/status` and `/.well-known/..%2Fsessions/v1/status` never return 200.
+  6. A 9 MiB body is 413, and an unauthenticated 8 MiB body is 401 with no nginx temp file left behind.
+  7. A 1 KB gzip that expands to 10 GB is 413.
+  8. `name="../x"` and a `session_id` containing `../` are 4xx, and `gsutil ls` / `aws s3 ls` show no object outside `sessions/`.
 - **Tests**:
   - parser golden fixtures (synthetic JSONL covering every record type observed in §3.1, plus unknown types);
   - redactor test vectors (positive, negative, and placeholder cases for every kind);
