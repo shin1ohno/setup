@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# bin/register-session-search — one-time operator setup for the session search
+# ccs clients' OAuth2 client_credentials clients in Hydra (personal boundary).
+#
+# Design: docs/design/claude-session-search.md §7.6. Each personal host gets its
+# own machine client, session-search-<host> (pro-dev, mini, neo), so a host can
+# only ever write its own sessions: the server maps the client id to a host label
+# through SESSION_SCOPE_POLICY (memory-v2.env), and memory-v2-proxy.service lists
+# the three ids in ALLOWED_CLIENT_IDS. Modelled on bin/register-memory-mirror:
+#   - the client is as narrow as Hydra allows: grant client_credentials only,
+#     audience ["memory"] only (the value in the proxy's MEMORY_AUDIENCES that
+#     ccs requests by default), no redirect_uris, no scope;
+#   - the secret never appears in a process argv on any hop: the Hydra
+#     registration payload travels over ssh stdin into curl `-d @-`, and the SSM
+#     write reads the value from stdin (--value file:///dev/stdin);
+#   - the secret is never printed.
+# Each secret is stored in SSM /memory/session-search-client-secret-<host>
+# (SecureString, aws/ssm key), where cookbooks/session-search reads it with the
+# fleet profile — the same fleet-readable placement as memory-mirror's secret.
+# The boundary HMAC key (/memory/session-redact-hmac-key) is NOT written here:
+# home-monitor terraform owns it.
+#
+# Usage:
+#   bin/register-session-search              # all three hosts
+#   bin/register-session-search mini neo     # a subset
+#
+# Environment overrides:
+#   PVE_HOST     default 192.168.1.10
+#   HYDRA_CTID   default 106
+#   AWS_PROFILE  default sh1admn
+#   AWS_REGION   default ap-northeast-1
+#
+# Idempotent, per host:
+#   - Registered and the SSM secret exists: metadata is verified, nothing else.
+#     The secret is NOT rotated (Hydra cannot return it).
+#   - Registered but the SSM secret is missing: fails loudly with the recovery
+#     command (delete the client, re-run) — the original secret is unrecoverable.
+#   - Not registered: a fresh secret is minted, registered and stored.
+#
+# Prerequisites: ssh root@PVE_HOST, jq, aws CLI with PutParameter on /memory/*.
+
+set -euo pipefail
+
+PVE_HOST="${PVE_HOST:-192.168.1.10}"
+HYDRA_CTID="${HYDRA_CTID:-106}"
+AWS_PROFILE="${AWS_PROFILE:-sh1admn}"
+AWS_REGION="${AWS_REGION:-ap-northeast-1}"
+
+ALL_HOSTS=(pro-dev mini neo)
+HYDRA_ADMIN="http://127.0.0.1:4445"
+
+log() { printf '[register-session-search] %s\n' "$*" >&2; }
+fail() { log "ERROR: $*"; exit 1; }
+
+command -v jq >/dev/null 2>&1 || fail "jq is required"
+command -v aws >/dev/null 2>&1 || fail "aws CLI is required"
+
+if [[ $# -gt 0 ]]; then
+  HOSTS=("$@")
+else
+  HOSTS=("${ALL_HOSTS[@]}")
+fi
+for h in "${HOSTS[@]}"; do
+  case " ${ALL_HOSTS[*]} " in
+    *" $h "*) ;;
+    *) fail "unknown host '$h' (expected one of: ${ALL_HOSTS[*]})" ;;
+  esac
+done
+
+hydra() { # hydra <command...> — run inside the Hydra CT, stdin closed
+  ssh -n root@"$PVE_HOST" "pct exec $HYDRA_CTID -- $*"
+}
+
+delete_hint() {
+  printf 'ssh root@%s pct exec %s -- curl -fsS -X DELETE %s/admin/clients/%s' \
+    "$PVE_HOST" "$HYDRA_CTID" "$HYDRA_ADMIN" "$1"
+}
+
+# Checks the registered client against the contract; prints nothing from the
+# response except the non-secret fields when it does not match.
+verify_metadata() {
+  local client_id="$1" meta
+  meta=$(hydra curl -fsS "$HYDRA_ADMIN/admin/clients/$client_id") ||
+    fail "could not read $client_id back from the Hydra admin API"
+  if ! jq -e --arg id "$client_id" '
+      .client_id == $id
+      and .grant_types == ["client_credentials"]
+      and ((.redirect_uris // []) | length) == 0
+      and .audience == ["memory"]
+      and .token_endpoint_auth_method == "client_secret_basic"
+    ' >/dev/null <<<"$meta"; then
+    log "registered metadata of $client_id does not match the contract:"
+    jq '{client_id, grant_types, redirect_uris, audience, token_endpoint_auth_method}' <<<"$meta" >&2
+    fail "fix or delete the client: $(delete_hint "$client_id")"
+  fi
+  log "$client_id: Hydra metadata OK (client_credentials, audience [memory], no redirect_uris, client_secret_basic)."
+}
+
+ssm_present() {
+  local found
+  found=$(aws ssm describe-parameters --parameter-filters "Key=Name,Values=$1" \
+    --query 'Parameters[].Name' --output text --profile "$AWS_PROFILE" --region "$AWS_REGION" 2>/dev/null || true)
+  [[ "$found" == "$1" ]]
+}
+
+# 1. Preflight: the admin profile must work BEFORE a secret is minted, or the
+#    registration would succeed with nowhere to store the only copy.
+log "checking AWS profile $AWS_PROFILE..."
+aws sts get-caller-identity --profile "$AWS_PROFILE" --region "$AWS_REGION" >/dev/null ||
+  fail "AWS profile $AWS_PROFILE is not usable (aws login / aws configure first)."
+
+log "checking Hydra admin API on CT $HYDRA_CTID..."
+hydra curl -fsS "$HYDRA_ADMIN/health/ready" >/dev/null 2>&1 ||
+  fail "Hydra admin API at $HYDRA_ADMIN/health/ready (inside CT $HYDRA_CTID) is not ready."
+log "Hydra admin API ready."
+
+register_one() {
+  local host="$1"
+  local client_id="session-search-$host"
+  local ssm_param="/memory/session-search-client-secret-$host"
+
+  # 2. Re-run path.
+  if hydra curl -fsS "$HYDRA_ADMIN/admin/clients/$client_id" 2>/dev/null | grep -q '"client_id"'; then
+    log "$client_id already registered in Hydra."
+    verify_metadata "$client_id"
+    if ssm_present "$ssm_param"; then
+      log "$client_id: $ssm_param present. Nothing to do."
+      return 0
+    fi
+    fail "$client_id is registered in Hydra but $ssm_param is missing. The original client_secret is unrecoverable from Hydra. Recovery: $(delete_hint "$client_id")  then re-run this script."
+  fi
+
+  # 3. Fresh secret: 48 alphanumerics. The charset check also makes it safe to
+  #    embed in the JSON payload below without escaping.
+  local secret
+  secret=$(openssl rand -base64 64 | tr -d '/+=\n' | head -c 48)
+  [[ "$secret" =~ ^[A-Za-z0-9]{48}$ ]] || fail "openssl produced an unexpected secret shape (${#secret} chars)"
+
+  # 4. Register. printf is a bash builtin, so the payload (and the secret in it)
+  #    reaches ssh's stdin without appearing in any argv; pct exec forwards
+  #    stdin to curl, which reads the body with -d @-.
+  log "registering $client_id (client_credentials, audience [memory])..."
+  printf '{"client_id":"%s","client_name":"Session Search (%s)","client_secret":"%s","grant_types":["client_credentials"],"response_types":[],"audience":["memory"],"token_endpoint_auth_method":"client_secret_basic"}' \
+    "$client_id" "$host" "$secret" |
+    ssh root@"$PVE_HOST" "pct exec $HYDRA_CTID -- curl -fsS -X POST $HYDRA_ADMIN/admin/clients -H 'Content-Type: application/json' -d @-" \
+      >/dev/null || fail "Hydra admin API rejected the registration of $client_id."
+
+  # 5. Verify what Hydra stored.
+  verify_metadata "$client_id"
+
+  # 6. Store in SSM through the CLI's per-parameter file:// loader on stdin,
+  #    never as a literal --value (which would put it in aws's argv).
+  log "writing $ssm_param (SecureString) to SSM..."
+  if ! printf '%s' "$secret" |
+      aws ssm put-parameter --name "$ssm_param" --type SecureString --overwrite \
+        --value file:///dev/stdin \
+        --profile "$AWS_PROFILE" --region "$AWS_REGION" >/dev/null; then
+    fail "SSM write failed after registering $client_id; the secret is lost. Recovery: $(delete_hint "$client_id")  then re-run this script."
+  fi
+  secret=""
+  ssm_present "$ssm_param" ||
+    fail "$ssm_param is not visible after the write. Recovery: $(delete_hint "$client_id")  then re-run this script."
+  log "$client_id registered; its secret is in $ssm_param."
+}
+
+for h in "${HOSTS[@]}"; do
+  register_one "$h"
+done
+
+log "done: ${HOSTS[*]}."
+log "Next: memory-v2-proxy.service ALLOWED_CLIENT_IDS and memory-mcp-v2.service CLIENT_POLICY list"
+log "session-search-<host>, and SESSION_SCOPE_POLICY in memory-v2.env maps each to its host; then"
+log "cookbooks/session-search places ~/.config/session-search/client.secret on each host."

@@ -133,6 +133,9 @@ def cc(client_id):
 HUMAN = {"sub": "shin1ohno@gmail.com", "client_id": "claude-ai",
          "grant": identity.GRANT_AUTHZ_CODE, "agent": "shin1ohno@gmail.com"}
 MIRROR = cc("memory-mirror")
+# Session search ccs clients (design spec §7.6): listed in the proxy's
+# ALLOWED_CLIENT_IDS, so CLIENT_POLICY must know them — with no MCP tools.
+SESSION_SEARCH_CLIENTS = ["session-search-pro-dev", "session-search-mini", "session-search-neo"]
 DENIED = (False, identity.POLICY_DENIED_MESSAGE)
 ALLOWED = (True, "")
 
@@ -150,9 +153,12 @@ def raises_policy_error(spec):
 # --------------------------------------------------------------------------- #
 def test_parser():
     pol = identity.parse_client_policy(PRODUCTION_POLICY)
-    check("production policy lists exactly keeper, prober and mirror",
-          list(pol) == ["memory-keeper", "monitoring-prober", "memory-mirror"],
+    check("production policy lists exactly keeper, prober, mirror and the session-search clients",
+          list(pol) == ["memory-keeper", "monitoring-prober", "memory-mirror"] + SESSION_SEARCH_CLIENTS,
           f"got {list(pol)}")
+    check("session-search clients are known with no tools",
+          all(pol.get(c) == {"tools": (), "datasets": ()} for c in SESSION_SEARCH_CLIENTS),
+          f"got {pol}")
     check("memory-mirror may ingest and forget in file-memory only",
           pol.get("memory-mirror") == {"tools": ("ingest", "forget"),
                                        "datasets": ("file-memory",)},
@@ -371,7 +377,8 @@ def test_startup_and_audit():
               "POLICY memory-keeper -> (none) @ (none)",
               "POLICY monitoring-prober -> (none) @ (none)",
               "POLICY memory-mirror -> ingest,forget @ file-memory",
-          ], f"got {identity.policy_lines(identity._CLIENT_POLICY)}")
+          ] + [f"POLICY {c} -> (none) @ (none)" for c in SESSION_SEARCH_CLIENTS],
+          f"got {identity.policy_lines(identity._CLIENT_POLICY)}")
     check("startup line for an invalid policy",
           identity.policy_lines(None, "boom")[0].startswith("AUDIT policy_invalid"))
     check("startup line for an unset policy says the gate is off",
@@ -382,7 +389,35 @@ def test_startup_and_audit():
     try:
         out = capture_stderr(identity.check_client_policy, tools)
         check("check_client_policy keeps a valid policy and logs one POLICY line per client",
-              identity._CLIENT_POLICY == saved[0] and out.count("POLICY ") == 3, f"got {out!r}")
+              identity._CLIENT_POLICY == saved[0]
+              and out.count("POLICY ") == 3 + len(SESSION_SEARCH_CLIENTS), f"got {out!r}")
+        # The rendered production string through the unit's own startup path:
+        # (a) the empty-tool session-search entries do not void the policy,
+        # (b) memory-mirror keeps ingest,forget@file-memory, (c) every MCP tool
+        # is denied to each session-search client (their /sessions/v1 scopes
+        # come from SESSION_SCOPE_POLICY, never from CLIENT_POLICY).
+        check("production string ends with the three empty-tool session-search entries",
+              PRODUCTION_POLICY.endswith(
+                  ";session-search-pro-dev=;session-search-mini=;session-search-neo="),
+              f"got {PRODUCTION_POLICY!r}")
+        identity._CLIENT_POLICY = identity.parse_client_policy(PRODUCTION_POLICY)
+        identity._CLIENT_POLICY_ERROR = ""
+        out = capture_stderr(identity.check_client_policy, tools)
+        check("(a) session-search entries do not void the policy",
+              isinstance(identity._CLIENT_POLICY, dict) and "AUDIT policy_invalid" not in out
+              and all(c in identity._CLIENT_POLICY for c in SESSION_SEARCH_CLIENTS), f"got {out!r}")
+        check("(b) memory-mirror keeps ingest,forget in file-memory",
+              identity.authorize_tool(MIRROR, "ingest",
+                                      {"document": "x", "dataset": "file-memory"}) == ALLOWED
+              and identity.authorize_tool(MIRROR, "forget",
+                                          {"id": "x", "dataset": "file-memory"}) == ALLOWED
+              and identity.authorize_tool(MIRROR, "recall", {"query": "x"}) == DENIED)
+        denied = [(c, t) for c in SESSION_SEARCH_CLIENTS for t in tools
+                  if identity.authorize_tool(cc(c), t, {"query": "x", "document": "x",
+                                                        "dataset": "file-memory", "id": "x"}) != DENIED]
+        check("(c) every MCP tool is denied to the session-search clients",
+              denied == [] and len(tools) > 0, f"allowed: {denied}")
+        identity._CLIENT_POLICY, identity._CLIENT_POLICY_ERROR = saved
         identity._CLIENT_POLICY = identity.parse_client_policy("memory-mirror=ingest,forget@file-memory")
         out = capture_stderr(identity.check_client_policy, without_forget)
         check("an unregistered granted tool invalidates the whole policy (fail-closed)",
@@ -770,7 +805,8 @@ def test_server_module(policy_cls):
     check("server.py serves a PolicyFastMCP", isinstance(server.mcp, policy_cls),
           f"got {type(server.mcp)}")
     check("server.py startup logs the production policy as valid",
-          out.count("POLICY ") == 3 and "policy_invalid" not in out, f"got {out!r}")
+          out.count("POLICY ") == 3 + len(SESSION_SEARCH_CLIENTS) and "policy_invalid" not in out,
+          f"got {out!r}")
     try:
         with contextlib.redirect_stderr(io.StringIO()):
             run(server.mcp.call_tool("recall", {"query": "x"}))
