@@ -79,7 +79,7 @@ class AdapterShape(IngestCase):
         self.assertEqual(f["kind"], "subagent")
         self.assertEqual(f["parent_session_id"], SID)
         self.assertEqual(f["agent_id"], "a1b2")
-        self.assertEqual(f["session_id"], "agent-a1b2")
+        self.assertEqual(f["session_id"], SID)
 
     def test_tombstone_format(self):
         t = ingest.tombstone("unmasked_secret", ["aws-key"], 123)
@@ -287,6 +287,7 @@ class RunLevel(IngestCase):
             fh.write(json.dumps(user("two")) + "\n")
         sh.ship_file(p)
         (blob,) = self.srv.of("/blob")
+        self.assertIn("'.hidden' does not match", support.read(util.log_path()))
         b = blob["body"]
         self.assertEqual(set(b), {"session_key", "name", "sha256", "content"})
         self.assertEqual(b["name"], "toolu_01.txt")

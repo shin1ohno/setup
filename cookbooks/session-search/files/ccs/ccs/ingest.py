@@ -67,7 +67,9 @@ def classify(path: str, projects: str | None = None):
         return {"kind": "main", "project_dir": m.group(1), "session_id": m.group(2)}
     m = _SUB_RE.match(rel)
     if m:
-        return {"kind": "subagent", "project_dir": m.group(1), "session_id": m.group(3),
+        # A subagent ships under its PARENT session's UUID (the server validates
+        # ^[0-9a-f-]{36}$); agent_id tells the transcripts apart.
+        return {"kind": "subagent", "project_dir": m.group(1), "session_id": m.group(2),
                 "parent_session_id": m.group(2), "agent_id": m.group(3)[len("agent-"):]}
     return None
 
@@ -367,6 +369,8 @@ class Shipper:
         for name in names:
             fp = os.path.join(tdir, name)
             if not util.TOOL_RESULT_NAME_RE.match(name):
+                util.log("WARN", "ingest: tool-results name %r does not match %s; not sent"
+                         % (name[:80], util.TOOL_RESULT_NAME_RE.pattern))
                 continue
             try:
                 fd = util.open_regular(fp, self.projects)
