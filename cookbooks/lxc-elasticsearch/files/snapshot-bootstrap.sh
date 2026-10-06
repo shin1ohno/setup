@@ -187,12 +187,20 @@ cmd_slm_current() {
   # fails) or that predates the memory-index addition returns 1, so
   # cmd_register_slm re-PUTs the updated policy. ES PUT _slm/policy is a full
   # overwrite, so re-registering is idempotent.
-  local body
+  #
+  # Session search (design spec §7.1) added memory-session and
+  # memory-session-message to the explicit list; a live policy that lists the
+  # memory-* indices but predates them is drift too, so all three sentinels
+  # must be present.
+  local body sentinel
   body=$(es_curl "${ES_URL}/_slm/policy/${SLM_POLICY}" 2>/dev/null) || return 1
-  case "${body}" in
-    *'"memory-fact"'*) return 0 ;;
-    *) return 1 ;;
-  esac
+  for sentinel in '"memory-fact"' '"memory-session"' '"memory-session-message"'; do
+    case "${body}" in
+      *"${sentinel}"*) ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
 }
 
 cmd_register_slm() {
@@ -203,7 +211,7 @@ cmd_register_slm() {
 
   # DR-scoped data-stream coverage (logs-* / synthetics-* / traces-*
   # / self-heal-state + memory-fact / memory-knowledge / memory-episode /
-  # memory-stats) + include_global_state=true (captures cluster state AND,
+  # memory-stats / memory-session / memory-session-message) + include_global_state=true (captures cluster state AND,
   # on 8.x, all feature states — Kibana saved objects, alerting rules, security).
   #
   # metrics-* is INTENTIONALLY EXCLUDED. It was the dominant driver of S3
@@ -231,7 +239,7 @@ cmd_register_slm() {
   "name": "<daily-snap-{now/d}>",
   "repository": "s3-home-monitor",
   "config": {
-    "indices": ["logs-*", "synthetics-*", "traces-*", "self-heal-state", "memory-fact", "memory-knowledge", "memory-episode", "memory-stats"],
+    "indices": ["logs-*", "synthetics-*", "traces-*", "self-heal-state", "memory-fact", "memory-knowledge", "memory-episode", "memory-stats", "memory-session", "memory-session-message"],
     "include_global_state": true,
     "ignore_unavailable": true
   },
