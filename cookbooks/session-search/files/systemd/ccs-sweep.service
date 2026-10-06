@@ -1,0 +1,11 @@
+[Unit]
+Description=ccs session-search sweep (ship new Claude Code transcript bytes)
+Documentation=https://github.com/shin1ohno/setup/blob/main/docs/design/claude-session-search.md
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/ccs ingest --sweep --quiet
+Nice=10
+IOSchedulingClass=idle
+# The sweep has a 120 s budget of its own; this is the backstop.
+TimeoutStartSec=300

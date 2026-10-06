@@ -14,6 +14,9 @@ include_cookbook "gemini-cli"
 include_cookbook "codex-cli"  # Uses node[:mcp_servers] from mcp cookbook
 include_cookbook "crit"       # crit review-tool binary (ubi); CC plugin via claude-code
 include_cookbook "fractal"    # plasma.ai fractal + wiki CLIs (mise pipx); CC plugin via claude-code
+# ccs: Claude Code session search client + sweep timer (systemd user timer on
+# Linux, launchd agent on macOS); see docs/design/claude-session-search.md
+include_platform_cookbook "session-search"
 include_platform_cookbook "ollama"  # brew formula on macOS, upstream installer on Linux
 include_cookbook "llama-3-elyza-jp"
 include_cookbook "tfmcp"
