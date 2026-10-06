@@ -213,7 +213,8 @@ Standard-mechanism check:
   - Read only up to the last `\n`; a partial trailing line waits for the next run.
   - Segments are at most 4 MiB of raw input. The cursor advances only after a 2xx response.
   - A `422` names the offending line indexes. The client replaces those lines with a tombstone record (`{"type":"session-search-tombstone","reason":"unmasked_secret","kinds":[…]}`), re-sends, and moves on, so one false positive cannot stall a file until its JSONL is cleaned up. The session is marked `archive_complete=false`.
-- **Subagents**: `…/<sid>/subagents/agent-*.jsonl` is shipped with `kind=subagent` and `parent_session_id=<sid>`. These files are indexed but not archived.
+- **What may be read**: only regular files whose realpath is inside `realpath(~/.claude/projects)`. Files are opened with `O_NOFOLLOW | O_NONBLOCK` and checked with `fstat` after opening (no check-then-open window); symlinked `subagents/` and `tool-results/` directories, FIFOs and devices are skipped and logged.
+- **Subagents**: `…/<sid>/subagents/agent-<id>.jsonl` is shipped with `kind=subagent`, `session_id` and `parent_session_id` both set to the parent's UUID, and `agent_id=<id>`. These files are indexed into the parent session but not archived.
 - **`tool-results/`**: each file in `<sid>/tool-results/` is masked and sent once through `/blob`, keyed by name and sha256.
 - **Gone files**: on `--sweep`, every state entry whose file no longer exists is reported with `jsonl_exists=false`, then dropped from state.
 - **Concurrency**: a non-blocking `flock` on `~/.claude/session-search/lock` is held for each run. A run that loses the lock exits 0, and the next sweep picks up its work.
@@ -264,6 +265,11 @@ Standard-mechanism check:
   - Storage:
     - **work**: prefix `sessions/` in the existing bucket `kouzoh-p-sh1-es-memory-backup`. The instance SA already has `objectAdmin` on it, so no IAM change is needed. The lifecycle rule must carry `matches_prefix=["sessions/"]`, or it would also expire the ES snapshot repository.
     - **personal**: a new bucket separate from the ES snapshot bucket, with versioning on and noncurrent versions expiring after 30 days. The writer policy is limited to `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and `s3:AbortMultipartUpload` on `<bucket>/sessions/*`, plus `s3:ListBucket` with `s3:prefix` like `sessions/*`.
+- **Hardening** (from the implementation-time security reviews):
+  - What is archived and parsed is the canonical re-serialisation of exactly the record the detector scanned. Lines with duplicate keys, NaN, lone surrogates or nesting deeper than 64 are `422` per line.
+  - Redaction patterns are linear-time. Caps (1M characters per value, 4M per record) apply before any regex; an over-cap value is rejected whole as kind `oversize`, never scanned partially. Secrets in dict keys are masked too.
+  - Scan and parse run in worker threads with a 2 s budget per segment (`413 too_expensive`), at most 50,000 lines and 200,000 strings per segment, and bounded admission: 2 running, 4 queued, 1 per caller, then `503 busy`. The embedding queue holds at most 5,000 docs; overflow stays `pending` for C8.
+  - Purge cannot be undone by in-flight work. The session doc is flipped to its purged form first by a sequence-guarded write; every later session-doc write is conditional (`if_seq_no` or `_create`) and a writer that loses discards its batch. Object writes are write-then-verify. Embedding updates never upsert. Any error while reading purge state fails closed with `503`. The purged form keeps only `{session_key, host, purged_at, purged_by}`; C8 deletes it after 30 days and re-sweeps purged prefixes daily, which bounds a straggler object to one day. In the versioned personal bucket a purged object also survives as a noncurrent version for up to 30 days.
 - **Embedding**: the existing `voyage.py` (Voyage for personal, LiteLLM `text-embedding-3-large` at 1024 dims for work). It runs in batches of 128 in a background task, so ingest latency does not depend on the provider. A failed batch is stored as `embedding_status=pending` and retried by C8. The embedding input is `text`, capped at 16 KB.
 - **Relation to existing code**:
   - reuses `es_backend._bulk_index`, `ensure_indices` (403-tolerant), `_ANALYSIS` (`ja_en_hybrid`), `scoring.rrf_fuse`, `voyage.py` and `identity.py`;
@@ -285,15 +291,20 @@ Standard-mechanism check:
 - **Row**: `session_key \t <age> <host> <short cwd> │ <title> │ <hits>`. A hit that cannot be resumed is marked with `·` (view-only).
 - **Search request**: lexical by default. With semantic on, `_backend` first returns lexical results, and a second, debounced (≥ 400 ms idle) `reload` swaps in the fused results.
 - **Resume (`ccs resume <session_key>`)**:
-  1. **Local file**: if the session is from this host and `jsonl_path` exists, run `chdir(resume_cwd)` then `exec claude --resume <sid> [--fork-session]`. If `resume_cwd` no longer exists, fail with a clear message instead of resuming from the wrong directory.
-  2. **No local file**: if `archived` is true and `archive_complete` is true, choose a local cwd: `resume_cwd` if it exists locally, else `--to DIR`, else ask (default: current directory).
+  The server never chooses the directory `claude` starts in. Starting Claude in an attacker-chosen directory loads that directory's `.claude/settings.json` hooks and `CLAUDE.md`, which is code execution. `resume_cwd` and `jsonl_path` from the server are lookup hints only.
+  1. **Local file**: if the session is from this host, the client looks for the JSONL at `~/.claude/projects/<dir>/<sid>.jsonl` (realpath inside that root, no symlink, regular file) and derives the cwd from that file alone:
+     - A session restored earlier uses only the cwd recorded in `~/.claude/session-search/restored.json` at restore time, ignoring every cwd inside the file.
+     - Otherwise, a candidate (the first `cwd`, then each `relocatedCwd`) is accepted only if its encoding equals the parent directory name, it exists, and it equals its own realpath. Encoding is lossy (`/a/b` and `/a-b` share `-a-b`), so two matching existing candidates are refused and the user is asked for `--to`.
+     - Lines with duplicate JSON keys are ignored when reading cwd.
+     - The client then runs `exec claude --resume <sid> [--fork-session]` with a fixed argv; only the regex-validated session id comes from data.
+  2. **No local file**: if `archived` is true and `archive_complete` is true, the target cwd is chosen locally: `--to DIR`, or the current directory. The server's `resume_cwd` is offered as a default only when it exists locally and the user confirms it at a prompt that shows the path; `--print` and non-TTY runs require `--to`.
      - Compute the project dir locally as `encode(local_cwd)`; never take a directory or file name from the server as is. Validate `session_id` against `^[0-9a-f-]{36}$`.
      - Download the archive into `~/.claude/projects/<encode(local_cwd)>/<sid>.jsonl.tmp`, plus `tool-results/`. The tar is extracted with `tarfile` `filter='data'`, and every member name must match the tool-results name regex.
      - Verify the `X-Archive-Sha256` header, then rename the file into place.
      - Rewrite absolute `…/.claude/projects/<original project dir>/<sid>/tool-results/` path strings in the restored JSONL to the new location. Resume itself never opens those files (Phase 0: 0 opens under strace), but the model may `Read` them later.
      - If a different file with that `<sid>` already exists there, refuse unless `--force`.
      - Print `restored masked transcript (secrets appear as [REDACTED:…])`, then exec as in step 1.
-     - A restored session continues on this host under a new `session_key`, and its `restored_from` field links it to the original.
+     - A restored session continues on this host under a new `session_key`, and its `restored_from` field links it to the original. The chosen cwd is recorded in `restored.json` (0600).
   3. **Otherwise**: view-only. The preview shows why (`not archived (subagent)`, `archive incomplete`, `older than retention`).
 - **Relation to existing code**: new. It shares the config, auth and HTTP layer with C3 in the same package.
 
@@ -441,7 +452,17 @@ Embeddings are excluded from `_source`; otherwise each doc would carry about 10 
 | `GET /archive?session_key=` | `sessions:read` | — | `200 application/x-ndjson` (decompressed, masked), header `X-Archive-Sha256` · `404` · `409 archive_incomplete` · `409 archive_tampered` |
 | `GET /archive/tool-results?session_key=` | `sessions:read` | — | `200 application/x-tar` |
 | `DELETE /session?session_key=` | `sessions:purge` | — | `200 {deleted_docs, deleted_objects}` |
+| `DELETE /purged?session_key=` | `sessions:purge` | — | `200` — clears a purged marker so the session can be ingested again |
 | `GET /status` | `sessions:read` | — | `200 {schema, redact_version, docs, sessions, pending_embeddings, last_retention_run, caller_host}` |
+
+Additional status codes used by the implementation:
+
+- `409 purged`: ingest for a purged session;
+- `413 too_expensive`, `too_many_lines`, `too_many_values`: segment limits;
+- `422 invalid_line`, `sha256_mismatch`: line or segment validation, same `{lines, kinds}` shape as `unmasked_secret` where lines apply;
+- `503 busy`, `index_unavailable`, `archive_unavailable`, `es_unavailable`: transient, the client keeps its cursor.
+
+The client tombstones every 422 line and halves the segment on every 413. `segment.sha256` is the sha256 of the masked lines, each followed by `\n`. The gate refuses every request while `PROXY_SHARED_SECRET` is unset.
 
 Writes (`/ingest`, `/blob`, `/state`, `DELETE`) are rejected with `403 host_mismatch` when the target `session_key` belongs to a host other than `caller_host`. Reads cover every host in the boundary.
 
