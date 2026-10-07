@@ -45,7 +45,10 @@ class AdapterShape(IngestCase):
         (req,) = self.ingests()
         self.assertEqual(req["method"], "POST")
         self.assertEqual(req["path"], "/memory/sessions/v1/ingest")
-        self.assertEqual(req["headers"].get("Content-Encoding"), "gzip")
+        # gzip on the wire, but no Content-Encoding: the aiohttp proxies would
+        # decompress it and stall the request (found on the first real backfill).
+        self.assertIsNone(req["headers"].get("Content-Encoding"))
+        self.assertEqual(req["raw"][:2], b"\x1f\x8b")
         b = req["body"]
         self.assertEqual(set(b), {"client", "file", "segment"})
         self.assertEqual(set(b["client"]), {"host", "client_version", "redact_version"})

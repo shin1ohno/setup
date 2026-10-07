@@ -96,7 +96,9 @@ class FakeServer:
                 n = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(n) if n else b""
                 body = raw
-                if self.headers.get("Content-Encoding") == "gzip":
+                # Same rule as the real server (sessions_app._json_body): gzip is
+                # recognised by its magic bytes, never by a Content-Encoding header.
+                if raw[:2] == b"\x1f\x8b":
                     body = gzip.decompress(raw)
                 u = urllib.parse.urlsplit(self.path)
                 ctype = self.headers.get("Content-Type") or ""

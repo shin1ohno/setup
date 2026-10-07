@@ -129,8 +129,12 @@ class Api:
             data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             headers["Content-Type"] = "application/json"
             if gzip_body:
+                # No Content-Encoding header on purpose: the aiohttp proxies in
+                # front of the server auto-decompress an encoded request body
+                # while keeping the compressed Content-Length, and the request
+                # stalls. The server recognises gzip by its magic bytes instead
+                # (sessions_app._json_body), so the body travels opaque.
                 data = gzip.compress(data, compresslevel=6)
-                headers["Content-Encoding"] = "gzip"
         t = self.timeout if timeout is None else timeout
         for attempt in (0, 1):
             h = dict(headers)
