@@ -375,6 +375,15 @@ async def handle(request: web.Request) -> web.StreamResponse:
 
     session = request.app["http_client"]
     body = None
+    # aiohttp decompresses an encoded request body on read while the client's
+    # Content-Length still counts the compressed bytes, so a forwarded
+    # Content-Encoding request stalls instead of failing. No caller needs it
+    # (the session-search client sends gzip without the header and the server
+    # recognises it by magic bytes), so refuse it up front on every path.
+    ce = request.headers.get("Content-Encoding", "").strip().lower()
+    if ce and ce != "identity":
+        logger.warning("Refusing request Content-Encoding %r for %s %s", ce, request.method, request.path)
+        return web.json_response({"error": "unsupported_content_encoding"}, status=415, headers=CORS_HEADERS)
     if request.can_read_body:
         limit = body_limit(request)
         try:
