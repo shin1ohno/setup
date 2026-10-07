@@ -98,6 +98,23 @@ class ProxyTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(self.seen[-1][1], MIB)
 
+    def test_request_content_encoding_refused(self):
+        # A Content-Encoding request used to stall (aiohttp decompresses on read
+        # while Content-Length counts compressed bytes). It is refused up front.
+        import gzip as _gzip
+        gz = _gzip.compress(b'{"a":1}')
+        status, body = self.call("POST", "/sessions/v1/ingest", data=gz,
+                                 headers=dict(AUTH, **{"Content-Encoding": "gzip"}))
+        self.assertEqual(status, 415, body[:200])
+        self.assertEqual(self.seen, [])
+
+    def test_gzip_body_without_header_passes_through_unchanged(self):
+        import gzip as _gzip
+        gz = _gzip.compress(b'{"a":1}' * 1000)
+        status, body = self.call("POST", "/sessions/v1/ingest", data=gz, headers=AUTH)
+        self.assertEqual(status, 200, body[:200])
+        self.assertEqual(self.seen[-1][:2], ("/sessions/v1/ingest", len(gz)))
+
     def test_sessions_limit(self):
         status, body = self.call("POST", "/sessions/v1/ingest", data=b"y" * (8 * MIB), headers=AUTH)
         self.assertEqual(status, 200, body[:200])
