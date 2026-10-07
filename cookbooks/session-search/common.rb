@@ -155,6 +155,18 @@ remote_file "#{pkg_dir}/session_redact.py" do
   only_if redactor_ok
 end
 
+# The interpreter is resolved once, here, to the real binary behind `python3`:
+# fzf starts `ccs _backend` on every keystroke, and a pyenv shim costs ~140 ms
+# per start against ~20 ms for the binary itself (measured on sh1-cloud). If the
+# recorded binary disappears (a pyenv version removed), the launcher falls back
+# to whatever `python3` is on PATH. Resolution is skipped when converging as
+# root for another user, where PATH is not that user's.
+python_real = ""
+unless run_command("id -u", error: false).stdout.strip == "0"
+  python_real = run_command(%q(python3 -c 'import sys; print(sys.executable)'), error: false).stdout.strip
+  python_real = "" unless python_real.start_with?("/")
+end
+
 # -I: isolated mode (no PYTHONPATH, no user site, no cwd on sys.path), so a
 # planted module in the directory ccs runs from cannot shadow the package.
 file launcher do
@@ -163,7 +175,9 @@ file launcher do
     # ccs — Claude Code session search (managed by cookbooks/session-search)
     CCS_LAUNCHER=#{launcher}
     export CCS_LAUNCHER
-    exec /usr/bin/env python3 -I -c 'import sys; sys.path.insert(0, "#{share_dir}"); from ccs.cli import main; sys.exit(main(sys.argv[1:]))' "$@"
+    PY="#{python_real}"
+    [ -n "$PY" ] && [ -x "$PY" ] || PY=$(command -v python3)
+    exec "$PY" -I -c 'import sys; sys.path.insert(0, "#{share_dir}"); from ccs.cli import main; sys.exit(main(sys.argv[1:]))' "$@"
   SH
   owner target_user
   group target_group
