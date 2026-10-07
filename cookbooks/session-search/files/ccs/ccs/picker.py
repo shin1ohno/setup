@@ -9,6 +9,12 @@ Field 1 is hidden (--with-nth=2..) and is what `_preview` and `resume` get.
 Toggles (ctrl-s semantic, ctrl-d deep, ctrl-a all) are kept in the fzf prompt
 (`ccs:sda> `), which fzf exports to callbacks as $FZF_PROMPT; fzf builds that
 predate $FZF_PROMPT fall back to the per-picker state file in $CCS_PICK_STATE.
+
+When curl is on PATH, `run` serves those callbacks from the picker process itself
+(ccs.helper, a unix socket in the 0700 picker temp dir) and fzf calls them with
+`curl --unix-socket … || ccs _backend {q}`, so a keystroke no longer pays for a
+Python start and the HTTP-stack imports. The per-process commands stay as the
+fallback and as the wiring when curl is missing or the socket cannot be bound.
 """
 
 from __future__ import annotations
@@ -87,18 +93,34 @@ def launcher() -> str:
     return os.environ.get("CCS_LAUNCHER") or shutil.which("ccs") or "ccs"
 
 
-def fzf_argv(query: str, flags, self_cmd: str, banner: str | None = None, listen: bool = True):
+def fzf_argv(query: str, flags, self_cmd: str, banner: str | None = None, listen: bool = True,
+             helper_sock: str | None = None):
+    """With `helper_sock`, every callback goes through `curl --unix-socket` to the picker's
+    own helper (ccs.helper) and falls back to the per-process command if curl fails."""
     s = shlex.quote(self_cmd)
-    backend = "reload(%s _backend {q})" % s
+
+    def cmd(sub, args, path, fields):
+        plain = "%s %s %s" % (s, sub, args)
+        if not helper_sock:
+            return plain
+        from . import helper as helper_mod
+
+        return "%s || %s" % (helper_mod.curl_cmd(helper_sock, path, fields), plain)
+
+    def toggle_cmd(letter):
+        return cmd("_toggle", letter, "/toggle", [("letter", letter)])
+
+    backend = "reload(%s)" % cmd("_backend", "{q}", "/backend", [("q", "{q}")])
+    preview_cmd = cmd("_preview", "{1} {q}", "/preview", [("key", "{1}"), ("q", "{q}")])
     argv = [
         "fzf", "--disabled", "--ansi", "--layout=reverse", "--delimiter=\t", "--with-nth=2..",
         "--prompt", prompt_for(flags), "--query", query or "",
         "--bind", "start:" + backend,
         "--bind", "change:" + backend,
-        "--bind", "ctrl-s:transform-prompt(%s _toggle s)+%s" % (s, backend),
-        "--bind", "ctrl-d:transform-prompt(%s _toggle d)+%s" % (s, backend),
-        "--bind", "ctrl-a:transform-prompt(%s _toggle a)+%s" % (s, backend),
-        "--preview", "%s _preview {1} {q}" % s,
+        "--bind", "ctrl-s:transform-prompt(%s)+%s" % (toggle_cmd("s"), backend),
+        "--bind", "ctrl-d:transform-prompt(%s)+%s" % (toggle_cmd("d"), backend),
+        "--bind", "ctrl-a:transform-prompt(%s)+%s" % (toggle_cmd("a"), backend),
+        "--preview", preview_cmd,
         "--preview-window", "down,45%,wrap",
         "--expect=ctrl-y",
     ]
@@ -213,7 +235,7 @@ def server_rows(cfg, api, q, flags, opts, env=None, mode=None, timeout=None) -> 
     return rows
 
 
-def backend(q: str, env=None, api_factory=None, breaker=None, out=None) -> int:
+def backend(q: str, env=None, api_factory=None, breaker=None, out=None, fuse_scheduler=None) -> int:
     """`ccs _backend Q` — print rows for fzf. Never raises; prints something."""
     env = os.environ if env is None else env
     out = out or sys.stdout
@@ -242,7 +264,7 @@ def backend(q: str, env=None, api_factory=None, breaker=None, out=None) -> int:
             rows = offline_rows(q, flags, opts, host, env)
             fused_later = False
         if fused_later:
-            schedule_fuse(q, env)
+            (fuse_scheduler or schedule_fuse)(q, env)
     out.write("\n".join(rows) + ("\n" if rows else ""))
     out.flush()
     return util.EXIT_OK
@@ -379,25 +401,97 @@ def preview(key: str, q: str, env=None, api_factory=None, breaker=None, out=None
 
 # --- the picker itself ---------------------------------------------------------------
 
+def start_helper(env, tmpdir: str, which=shutil.which, api_factory=None):
+    """-> (helper, sock_dir) or (None, None) when curl is missing or the socket cannot be bound."""
+    if not which("curl"):
+        return None, None
+    try:
+        from . import helper as helper_mod
+    except ImportError:  # a partial install without helper.py keeps the per-process wiring
+        return None, None
+
+    sock_dir = tmpdir
+    if len(os.path.join(tmpdir, helper_mod.SOCK_NAME).encode("utf-8")) > helper_mod.MAX_SOCK_PATH:
+        try:
+            sock_dir = tempfile.mkdtemp(prefix="ccs-", dir="/tmp")  # a long $TMPDIR would overflow sun_path
+        except OSError:
+            return None, None
+    h = helper_mod.Helper(env, api_factory=api_factory)
+    try:
+        os.chmod(sock_dir, 0o700)
+        h.start(sock_dir)
+    except (OSError, ValueError):
+        h.close()
+        if sock_dir != tmpdir:
+            shutil.rmtree(sock_dir, ignore_errors=True)
+        return None, None
+    return h, sock_dir
+
+
+class _Terminated(BaseException):
+    pass
+
+
+def _raise_terminated(signum, frame):
+    raise _Terminated(signum)
+
+
+def _trap_signals():
+    """SIGTERM / SIGHUP unwind through `finally` so the socket directory is removed."""
+    import signal
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        return []
+    saved = []
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            saved.append((sig, signal.signal(sig, _raise_terminated)))
+        except (OSError, ValueError):
+            pass
+    return saved
+
+
+def _restore_signals(saved):
+    import signal
+
+    for sig, handler in saved:
+        try:
+            signal.signal(sig, handler)
+        except (OSError, ValueError):
+            pass
+
+
 def run(query: str, flags, opts: dict, do_print: bool, fork: bool, runner=subprocess.run, which=shutil.which,
-        resume_fn=None) -> int:
+        resume_fn=None, api_factory=None) -> int:
     if not which("fzf"):
         sys.stderr.write("ccs: fzf is not installed; the picker needs it (ccs resume KEY still works)\n")
         return util.EXIT_UNREACHABLE
     tmpdir = tempfile.mkdtemp(prefix="ccs-pick-")
-    state = os.path.join(tmpdir, "prompt")
-    util.atomic_write(state, prompt_for(flags))
-    env = dict(os.environ)
-    env["CCS_PICK"] = json.dumps(dict(opts, flags="".join(sorted(flags))))
-    env["CCS_PICK_STATE"] = state
-    env["CCS_LAUNCHER"] = launcher()
-    env.setdefault("FZF_API_KEY", secrets.token_hex(16))
-    banner = fallback.BANNER if opts.get("offline") else None
-    argv = fzf_argv(query, flags, env["CCS_LAUNCHER"], banner=banner)
+    helper, sock_dir = None, None
+    saved = _trap_signals()
     try:
+        state = os.path.join(tmpdir, "prompt")
+        util.atomic_write(state, prompt_for(flags))
+        env = dict(os.environ)
+        env["CCS_PICK"] = json.dumps(dict(opts, flags="".join(sorted(flags))))
+        env["CCS_PICK_STATE"] = state
+        env["CCS_LAUNCHER"] = launcher()
+        env.setdefault("FZF_API_KEY", secrets.token_hex(16))
+        banner = fallback.BANNER if opts.get("offline") else None
+        helper, sock_dir = start_helper(env, tmpdir, which=which, api_factory=api_factory)
+        argv = fzf_argv(query, flags, env["CCS_LAUNCHER"], banner=banner,
+                        helper_sock=helper.path if helper else None)
         proc = runner(argv, stdout=subprocess.PIPE, env=env)
+    except _Terminated as e:
+        return 128 + int(e.args[0])
     finally:
+        if helper is not None:
+            helper.close()
+        if sock_dir and sock_dir != tmpdir:
+            shutil.rmtree(sock_dir, ignore_errors=True)
         shutil.rmtree(tmpdir, ignore_errors=True)
+        _restore_signals(saved)
     if proc.returncode in (1, 130):
         return util.EXIT_OK  # no match / cancelled
     if proc.returncode != 0:

@@ -133,7 +133,7 @@ end
 end
 
 # Explicit list (mruby has no Dir.glob guarantee); tests/ is not installed.
-%w[__init__.py __main__.py api.py cli.py config.py extract.py fallback.py ingest.py picker.py resume.py util.py].each do |f|
+%w[__init__.py __main__.py api.py cli.py config.py extract.py fallback.py helper.py ingest.py picker.py resume.py util.py].each do |f|
   remote_file "#{pkg_dir}/#{f}" do
     source "files/ccs/ccs/#{f}"
     owner target_user
