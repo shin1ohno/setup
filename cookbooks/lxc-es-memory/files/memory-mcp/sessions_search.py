@@ -521,7 +521,10 @@ async def search(es, body, caller) -> dict:
                 continue
             row = _public(src, SEARCH_FIELDS)
             row["session_key"] = sk
-            row["score"] = round(base.get(sk, 0.0) + recency_nudge(src.get("updated_at"), now), 6)
+            # Multiplicative, so recency only reorders sessions of similar
+            # relevance: an RRF score is at most ~2/61, smaller than an additive
+            # 0.05 nudge, which would let recency outrank relevance in hybrid.
+            row["score"] = round(base.get(sk, 0.0) * (1.0 + recency_nudge(src.get("updated_at"), now)), 6)
             row["hit_count"] = counts.get(sk, 0)
             sessions.append(row)
         sessions.sort(key=lambda r: (-r["score"], r["session_key"]))
