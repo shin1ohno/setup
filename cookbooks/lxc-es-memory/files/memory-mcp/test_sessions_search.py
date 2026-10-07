@@ -297,8 +297,8 @@ class LexicalSearch(SearchBase):
         keys = [s["session_key"] for s in out["sessions"]]
         self.assertEqual(keys, ["sk_b", "sk_a"])  # equal BM25: recency nudge breaks the tie
         b, a = out["sessions"]
-        self.assertAlmostEqual(b["score"], 9.0 + 0.05, places=4)
-        self.assertAlmostEqual(a["score"], 9.0 + 0.0125, places=4)
+        self.assertAlmostEqual(b["score"], 9.0 * (1 + 0.05), places=4)
+        self.assertAlmostEqual(a["score"], 9.0 * (1 + 0.0125), places=4)
         self.assertEqual((a["hit_count"], b["hit_count"]), (4, 2))
         self.assertEqual(set(a), set(ss.SEARCH_FIELDS) | {"score", "hit_count"})
         self.assertNotIn("archive_chunks", a)
@@ -373,6 +373,17 @@ class HybridSearch(SearchBase):
         self.assertNotIn("degraded", out)
         self.assertEqual(ss.EMBED_QUERY.calls, ["semantic thing"])
 
+    def test_hybrid_relevance_beats_recency(self):
+        # sk_old is ranked first by both legs (RRF 2/61); sk_new only second by
+        # one leg (RRF 1/62) but updated today. An additive 0.05 nudge would put
+        # sk_new on top; the multiplicative nudge must not.
+        ss.EMBED_QUERY = _EmbedStub(vec=[1.0, 0.0])
+        sessions = {"sk_old": sess("sk_old", days_ago=365), "sk_new": sess("sk_new", days_ago=0)}
+        fake = FakeES(standard_routes([("sk_old", 5.0), ("sk_new", 4.0)], sessions,
+                                      knn_rows=[("sk_old", 0.9)]))
+        out = run(ss.search(es_module(fake), {"q": "semantic thing", "mode": "hybrid"}, {}))
+        self.assertEqual([s["session_key"] for s in out["sessions"]], ["sk_old", "sk_new"])
+
     def test_embedding_timeout_degrades_and_fills_cache(self):
         ss.EMBED_TIMEOUT_S = 0.05
         ss.EMBED_QUERY = _EmbedStub(delay=0.3)
@@ -387,7 +398,7 @@ class HybridSearch(SearchBase):
         first, second = run(scenario())
         self.assertEqual(first["degraded"], "bm25-only")
         self.assertEqual([s["session_key"] for s in first["sessions"]], ["sk_a"])
-        self.assertAlmostEqual(first["sessions"][0]["score"], 3.0 + 0.05 * 2 ** (-1 / 30), places=3)
+        self.assertAlmostEqual(first["sessions"][0]["score"], 3.0 * (1 + 0.05 * 2 ** (-1 / 30)), places=3)
         self.assertNotIn("degraded", second)
         self.assertEqual(len(ss.EMBED_QUERY.calls), 1)  # second request was a cache hit
         self.assertEqual(len([b for b in fake.bodies(MSG) if "knn" in b]), 1)
