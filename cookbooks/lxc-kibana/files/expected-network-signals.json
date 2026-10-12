@@ -40,12 +40,12 @@
       "key": "syslog_silent_wlx313",
       "title": "syslog silent (wlx313 ITM)",
       "index": ["logs-wlx-default"],
-      "window_minutes": 30,
+      "window_minutes": 90,
       "comparator": "<",
       "threshold": 1,
       "exclude_previous_hits": false,
       "query": { "bool": { "filter": [ { "term": { "device": "wlx313" } } ] } },
-      "message": "No syslog from wlx313 (192.168.1.155, ITM) for {{window}} min. This AP shipped nothing at all until 2026-09-06, when `syslog host 192.168.1.76` was set on the AP and .155 was added to the Vector source map (setup #949); before that the ITM site had no wireless visibility. First check whether the AP still holds .155: it has no static address and the ITM RTX830 leases 192.168.1.150-.225 with no bind for ac:44:f2:5a:d7:20, so a changed lease drops it out of the map and back to zero. Confirm with a tcpdump on the PVE bridge for `udp dst port 514` — if packets arrive from some other address, that address is the fix. Otherwise same triage as wlx323."
+      "message": "No syslog from wlx313 (192.168.1.155, ITM) for {{window}} min. This AP shipped nothing at all until 2026-09-06, when `syslog host 192.168.1.76` was set on the AP and .155 was added to the Vector source map (setup #949); before that the ITM site had no wireless visibility. First check whether the AP still holds .155: it has no static address and the ITM RTX830 leases 192.168.1.150-.225 with no bind for ac:44:f2:5a:d7:20, so a changed lease drops it out of the map and back to zero. Confirm with a tcpdump on the PVE bridge for `udp dst port 514` — if packets arrive from some other address, that address is the fix. Otherwise same triage as wlx323. Window: the only client-independent floor is the hourly `<5113> Log message were saved to FLASH` at :00 (present in 168/168 hours over 7 days, setup #1087); everything else is client-driven, so quiet ITM hours produce 20-34 min gaps. 90 min = one hourly heartbeat + 30 min margin, so any firing means at least one :00 heartbeat was missed."
     },
     {
       "key": "syslog_silent_rtx_hnd",
