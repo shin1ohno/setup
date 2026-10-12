@@ -1286,3 +1286,19 @@ load-bearing and would have read as a setting with no surviving reason.
 - **First step**: resolve the interpreter once at deploy time (`rbenv which ruby` in the claude-code cookbook,
   written into the shim) and fall back to the PATH lookup only when that path is missing; re-measure with
   `test-session-ingest.sh` timing on an rbenv host.
+
+## bootstrap-lxc-creds re-seed erases CT 119's session-archive profile (Medium)
+
+- **Failure class**: the default (fleet) mode of `bin/bootstrap-lxc-creds` rewrites the whole
+  `/root/.aws/credentials` and `/root/.aws/config` with `cat >` (`bin/bootstrap-lxc-creds`, the flock block after
+  "Write the profile inside the target LXC"). The orchestrator runs it whenever the `pve-bootstrap-ssm` sts check
+  fails on a CT, e.g. after a key rotation. On CT 119 that also deletes the `es-memory-ct119-bootstrap` profile
+  placed with `--profile … --stdin 119`; the next `generate_env_v2.sh` drops `SESSION_ARCHIVE_*` with a WARN and
+  every main-segment ingest answers 503 `archive_unavailable` (`sessions_app.py`, the `kind == "main"` branch)
+  until the operator re-places the profile by hand.
+- **Why now**: found by the adversarial review of the home-monitor S6 change (session search personal AWS side,
+  2026-10-12); out of that PR's scope. The `generate_env_v2.sh` header comment also says the server answers
+  `archive:"skipped"` in this case, which contradicts the code (503).
+- **First step**: make the default mode reuse the section-preserving `drop_section` path that `--profile` mode
+  already has (drop only `[pve-bootstrap-ssm]` / `[profile pve-bootstrap-ssm]`, append the new sections), and
+  correct the `generate_env_v2.sh` comment to "ingest answers 503".
