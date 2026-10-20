@@ -18,6 +18,8 @@ GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
 GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 GOOGLE_REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
 ALLOWED_EMAILS = set(os.environ.get("ALLOWED_EMAILS", "").split(","))
+# Hydra's default DCR scope; dcr_proxy adds these to every registration.
+DCR_REQUIRED_SCOPES = ("openid", "offline", "offline_access")
 
 # In-memory state store for Google OAuth flow (maps state → login_challenge).
 # Bounded FIFO: oldest pending state is evicted at the cap so the dict
@@ -305,15 +307,19 @@ async def dcr_proxy(request: Request):
         "Accept": "application/json",
     }
 
-    # Ensure every dynamically-registered client is ALLOWED to request
-    # offline_access. Claude Code derives the DCR `scope` from the protected
-    # resource's scopes_supported (mcp:read/write/admin — no offline_access),
-    # so the Hydra client it registers cannot request offline_access; Claude's
-    # /authorize then asks for offline_access (refresh token) and Hydra rejects
-    # with `invalid_scope: ... not allowed to request scope 'offline_access'`.
-    # Injecting it into the client's allowed scope at registration time fixes
-    # the round-trip. Robust to a missing/empty scope and to non-JSON bodies
-    # (forwarded unchanged).
+    # Ensure every dynamically-registered client is ALLOWED to request the
+    # scopes of Hydra's own DCR default (openid offline offline_access), on top
+    # of whatever it registered. Two clients register a scope narrower than
+    # what their /authorize later asks for, and Hydra rejects with
+    # `invalid_scope: ... not allowed to request scope '<x>'`:
+    #   - Claude Code derives the DCR `scope` from the protected resource's
+    #     scopes_supported (mcp:read/write/admin — no offline_access), then
+    #     asks for offline_access.
+    #   - ChatGPT sends no scope at all, then asks for `openid offline_access`.
+    #     Hydra would apply its default set to an absent scope, but this proxy
+    #     must write the field, so the default has to be written here too.
+    # Allowing a scope only permits the client to ask for it; consent still
+    # grants exactly the requested set. Non-JSON bodies are forwarded unchanged.
     body = raw
     try:
         payload = json.loads(raw) if raw else {}
@@ -321,8 +327,9 @@ async def dcr_proxy(request: Request):
         payload = None
     if isinstance(payload, dict):
         scopes = (payload.get("scope") or "").split()
-        if "offline_access" not in scopes:
-            scopes.append("offline_access")
+        for required in DCR_REQUIRED_SCOPES:
+            if required not in scopes:
+                scopes.append(required)
         payload["scope"] = " ".join(scopes)
         body = json.dumps(payload).encode()
 
