@@ -14,7 +14,7 @@
   mqtt-explorer             obs
   obsidian                  rapidapi
   tidal                     transmit
-  via
+  codex-app                 via
   zoom
 ).each do |app|
   execute "brew reinstall --cask #{app}" do
