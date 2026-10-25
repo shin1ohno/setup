@@ -28,6 +28,15 @@ AWS_REGION="${AWS_REGION:-ap-northeast-1}"
 # here is that user's home — the same value the [projects.*] tables below use.
 PREAMBLE_FILE="${CODEX_CONFIG_PREAMBLE:-${HOME_DIR}/.codex/config-preamble.toml}"
 
+# Only root keys override defaults; permission settings in a named profile do not.
+preamble_has_key() {
+  [ -f "${PREAMBLE_FILE}" ] && awk -v key="$1" '
+    /^[[:space:]]*\[/ { exit }
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" { found = 1 }
+    END { exit !found }
+  ' "${PREAMBLE_FILE}"
+}
+
 # Detect yq version and set appropriate command for YAML to JSON conversion
 # Python yq (kislyuk/yq): yq '.' file.yaml
 # Go yq (mikefarah/yq): yq -o json file.yaml
@@ -54,12 +63,20 @@ fetch_ssm() {
 
 # Start building config.toml
 {
+  # Default to full access for CLI and Remote sessions; local preambles may override.
+  if ! preamble_has_key approval_policy; then
+    echo 'approval_policy = "never"'
+  fi
+  if ! preamble_has_key sandbox_mode; then
+    echo 'sandbox_mode = "danger-full-access"'
+  fi
+  echo ""
+
   # Optional preamble injected before the generated [projects.*] tables. A
   # consumer (e.g. a work-Mac overlay) writes a file holding top-level keys
   # (model_provider, model, approval_policy, ...) and provider tables
   # ([model_providers.*]) to PREAMBLE_FILE. TOML requires top-level keys to
-  # precede any [table], so this MUST be emitted first. Absent -> no-op, output
-  # is byte-identical to the pre-existing behavior.
+  # precede any [table], so the defaults and preamble MUST come before tables.
   if [ -f "${PREAMBLE_FILE}" ]; then
     cat "${PREAMBLE_FILE}"
     echo ""
