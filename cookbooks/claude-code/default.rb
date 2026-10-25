@@ -349,7 +349,7 @@ directory "#{node[:setup][:home]}/.claude/agents" do
   action :create
 end
 
-%w(mitamae-validator.md researcher.md session-retrospective.md claude-docs-researcher.md domain-researcher.md service-health-monitor.md).each do |file_name|
+%w(mitamae-validator.md researcher.md session-retrospective.md claude-docs-researcher.md domain-researcher.md service-health-monitor.md infra-investigator.md).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/agents/#{file_name}" do
     source "files/agents/#{file_name}"
     owner node[:setup][:user]

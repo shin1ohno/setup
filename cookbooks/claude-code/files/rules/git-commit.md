@@ -1,7 +1,3 @@
----
-description: "Git commit message format rules — loaded when creating commits"
----
-
 # Git Commit Format
 
 Start the summary with a `{component}: ` prefix; explain the "why", not just the "what".
