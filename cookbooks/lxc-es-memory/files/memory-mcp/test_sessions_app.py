@@ -1623,6 +1623,8 @@ class Bounds(unittest.TestCase):
 
 class CodexIngest(Base):
     def test_native_archive_and_index_share_the_masked_input(self):
+        status = self.c.get(PREFIX + "/status", headers=PRO_DEV)
+        self.assertIn("codex", status.json()["sources"])
         cwd = "/work/codex-demo"
         native = [json.dumps({"type": "session_meta", "timestamp": "2026-10-25T00:00:00Z",
                               "payload": {"id": SID, "cwd": cwd, "source": "vscode",

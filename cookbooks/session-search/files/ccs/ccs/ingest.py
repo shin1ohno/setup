@@ -152,6 +152,7 @@ class Shipper:
         self.deadline = None if budget is None else clock() + budget
         self.max_segment = max_segment
         self.projects = projects or util.projects_dir()
+        self.codex_ready = None
         self.stats = {"files": 0, "segments": 0, "bytes": 0, "tombstones": 0, "resyncs": 0, "errors": 0,
                       "blobs": 0, "gone": 0}
 
@@ -237,6 +238,16 @@ class Shipper:
         info = classify(path, self.projects)
         if info is None:
             raise ShipError("not a transcript path under %s" % self.projects)
+        if info.get("source") == "codex":
+            # Fleet hosts update independently. An old server accepts native
+            # lines as unknown records, so never advance a cursor against it.
+            if self.codex_ready is None:
+                response = self.api.get("/status")
+                body = response.json() or {}
+                sources = body.get("sources") if isinstance(body, dict) else None
+                self.codex_ready = response.status == 200 and isinstance(sources, list) and "codex" in sources
+            if not self.codex_ready:
+                raise ShipError("server has no Codex parser; cursor held until the server is updated")
         # O_NOFOLLOW + fstat S_ISREG + inside realpath(projects); raises UnsafePath.
         from . import codex
 

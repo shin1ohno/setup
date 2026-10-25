@@ -1461,6 +1461,7 @@ async def status(request: Request, caller: dict):
     out = {"schema": {"session": SCHEMA_SESSION, "message": SCHEMA_MESSAGE},
            "redact_version": session_redact.RULESET_VERSION,
            "parser_version": sessions_parse.PARSER_VERSION,
+           "sources": ["claude", "codex"],
            "ready": _STATE["ready"], "docs": None, "sessions": None,
            "pending_embeddings": None, "last_retention_run": None,
            "caller_host": caller.get("host"),

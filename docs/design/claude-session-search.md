@@ -668,6 +668,9 @@ to `"claude"` for existing clients. Codex `project_dir` is `codex-` followed by
 the encoded local cwd, keeping its session keys separate from Claude Code.
 `session_codex.py` normalizes native records for the existing parser and is
 placed into the client package by the session-search cookbook as well.
+The status response advertises `sources: ["claude", "codex"]`. A client sends
+Codex segments only after observing this capability, keeping its cursor held
+while a fleet server is still on the older parser.
 
 Only `response_item` user and assistant messages supply searchable conversation
 text; duplicate `event_msg` records, reasoning, developer instructions and

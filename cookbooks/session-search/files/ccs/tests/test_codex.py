@@ -84,6 +84,8 @@ class CodexClient(HomeCase):
                                                   [{"type": "input_text", "text": FAKE_TOKEN}]}))
         self.write_rows()
         def handler(req):
+            if req["path"].endswith("/status"):
+                return 200, {"sources": ["claude", "codex"]}, {}
             segment = req["body"]["segment"]
             return 200, {"session_key": "sk_native", "next_offset": segment["end_offset"]}, {}
         srv = FakeServer(handler)
@@ -97,6 +99,14 @@ class CodexClient(HomeCase):
         self.assertIn("REDACTED", json.dumps(bodies))
         self.assertEqual(ingest.run("sweep", redactor=FakeRedactor(), quiet=True), 0)
         self.assertEqual(len(srv.of("/ingest")), 1)
+
+    def test_old_server_holds_codex_cursor(self):
+        srv = FakeServer(lambda req: (200, {"parser_version": "p1"}, {}))
+        self.addCleanup(srv.close)
+        self.write_config(srv.base)
+        self.assertEqual(ingest.run("sweep", redactor=FakeRedactor(), quiet=True), 0)
+        self.assertEqual(srv.of("/ingest"), [])
+        self.assertNotIn(self.path, ingest.State().files)
 
     def test_structured_search_and_preview(self):
         def handler(req):
