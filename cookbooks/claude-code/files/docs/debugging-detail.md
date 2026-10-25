@@ -10,6 +10,20 @@ Synthetic-token tests encode your assumption about the token shape — the exact
 
 Origin: 2026-06-07 synthetic-token PASS, real `aud=[]`.
 
+## do-not-report-success-without-state-evidence
+
+Green CI is not evidence when the step that would exercise your change is gated behind `workflow_dispatch` inputs: `github.event.inputs.*` is empty on `pull_request`, so an `if: github.event.inputs.test_level == '…'` step silently skips and still contributes to the green checkmark. Before writing "CI verifies X" in a PR body or commit message, grep the workflow YAML for the `if:` on the specific step that exercises X; if it is input-gated, dispatch it (`gh workflow run <wf> --ref <branch> -f <input>=<value>`) and read that step's conclusion AND its real stdout — `gh run watch --exit-status` exits 0 for a skipped step too.
+
+Unit/integration tests exercise isolated paths, not end-to-end effects, which is why a passing suite is not state evidence either.
+
+Origin: 2026-08-02 setup #793 — a PR body claimed `test-macos` gated a darwin change while its apply/verify steps had not run.
+
+## adapter-layers-host-shaped-input
+
+Unit tests on the wrapped logic say nothing about the wrapper: the logic can be correct while every call site passes it the wrong shape. Name the missing adapter tier as a plan gap before implementation, not as a review finding after it.
+
+Origin: 2026-09-26 — 390 passing unit tests on the logic layer, while five Code-node adapters passed the wrong input shapes (one would have blocked every promotion); found only at review.
+
 ## noisy-non-failure-pattern
 
 The trap: warning-driven debugging starts from "this looks broken, fix it" and skips the function test. The fix often disables the OS feature that was holding things together. Function-test first, classify the noise, then act.
@@ -54,6 +68,10 @@ This rule exists because roon-mcp's `verify_bearer` (in `crates/roon-mcp/src/aut
 
 ## fix-loop-escalation-threshold
 
+**Signal**: same symptom after 3 cycles = wrong design assumption, not wrong implementation detail.
+
+**Count by capability, not by error text**: when 3+ cycles chase the same *capability* ("make GPG signing work unattended", "get this secret readable from the box") but each cycle's error message differs, do NOT reset the counter because the symptom changed shape. Ask instead: do these differently-worded errors share one root assumption? A drifting error message is the normal look of a wrong assumption being probed from different angles. Origin: 2026-08-01 sh1-cloud — 5 cycles on unattended GPG signing (`No secret key` → protected-export silently dropping the subkey → `--passwd` targeting a stub primary → agent `Bad passphrase` → broken temp keyring), all resting on "an interactive passphrase flow is available"; the same-symptom counter never fired because no two errors matched.
+
 **Batch fixes within a rebuild cycle**: when a debugging loop involves an expensive rebuild (`docker compose up --build`, `cargo build --release`, `xcodebuild`, `terraform apply` — anything that takes more than ~60s end to end), collect ALL hypothesized format / config fixes for the *current* observable failure before triggering the rebuild. Do not submit one change, wait for the build, observe the same-class failure, then submit a second change.
 
 If 3 hypotheses each have 50/50 odds and the rebuild costs 5 min, sequential evaluation costs ~15 min plus mental context switching; batched evaluation costs ~5 min and forces you to enumerate the candidate space up front. Exception: when the second fix genuinely depends on observing the first fix's partial effect (e.g. you cannot guess header B's value without seeing the connection survive header A's wrong value first). When in doubt, batch.
@@ -61,6 +79,8 @@ If 3 hypotheses each have 50/50 odds and the rebuild costs 5 min, sequential eva
 This rule exists because the 2026-04-28 roon-mcp / SSE session ran ~7 docker rebuild cycles back-to-back — each cycle added one of {snake_case session_id, trailing slash on `/messages/`, `X-Accel-Buffering: no` header, `charset=utf-8` on content-type, default `sse_path = "/sse"`} — every one of which was diagnosable from the same `curl --hex-dump` against the cognee reference server before the first rebuild. ~35 minutes of build wall-clock recoverable by batching.
 
 ## wire-protocol-reverse-engineering
+
+Sequence: (1) identify the nearest working reference deployment (sibling vendor endpoint, open-source server, in-tree example — there is almost always one); (2) capture the wire bytes; (3) write the implementation; (4) diff at hex-dump granularity; (5) fix every divergence in **one** batch (per Fix-Loop Escalation). The client has format expectations your code does not satisfy yet — stop hypothesizing, start observing.
 
 Capture the reference wire bytes before writing any implementation:
 
@@ -157,6 +177,18 @@ For tools whose tabular output has stable column counts (most do), awk is shorte
 This rule exists because in the 2026-04-22 session, three cascaded "hard-coded stale value" failures — systemd ExecStart pointing at a deleted `configs/` path, stale release binary predating the config migration, and Hue token IP pinned to a rotated DHCP lease — would each have been caught by asking "is this value persistently hard-coded against a thing that rotates?" before starting implementation. Instead, each was discovered sequentially, wasting restart cycles.
 
 ## verify-remediation-feasible
+
+Probe-before-execute pairs:
+
+- "restore from snapshot" → `GET _snapshot/<repo>/_all` — is the target index actually in a snapshot, with a non-failed shard? — before the restore
+- "cherry-pick that commit" → `git cat-file -e <hash>` / `git log <hash>` before the cherry-pick
+- "restore from S3 / backup" → `aws s3 ls <bucket>/<key>` before the restore
+- "roll back to version X" → confirm the tag / artifact exists before the rollback
+- "reassign to user/role Y" → confirm Y exists with the needed grant before the change
+- "share one subscription/login across two hosts" → inspect the credential file's token structure for rotating-refresh-token semantics BEFORE copying it (in full below)
+- "block / restrict a device" identified from a rotating or shared signal (a private MAC, a DHCP host name, an mDNS name) → confirm WHICH device it is with a per-device identifier (the AirPlay TXT `pi` over unicast mDNS, the model, or the owner's own confirmation) BEFORE merging or applying the block, not after. A MAC that appeared right after the old one vanished is a hypothesis; household Macs often share one name. Origin: 2026-10-03 home-monitor #170 blocked `.68` before the mDNS probe showed `Shinichi-Ohnos-MacBook-Air.local`, the same name as the operator's own Mac; the owner confirmed it was ann's Mac only afterwards.
+
+A doomed command fails with a misleading error ("snapshot not found", "bad revision"), which is why the probe comes first.
 
 The "share one subscription/login across two hosts" probe-before-execute pair, in full: inspect the credential file's token structure (`accessToken`/`refreshToken`/`expiresAt`) for rotating-refresh-token semantics BEFORE copying it — a shared rotating token invalidates whichever host refreshes second; the correct mechanism is an independent login per host (see `~/.claude/docs/claude-cli-headless.md`). Origin: 2026-07-04 memory-v2 keeper — probing the token structure surfaced the refresh-rotation conflict before building; a separate `claude setup-token` per host was the fix.
 

@@ -26,7 +26,7 @@ Path-scoped part of the project CLAUDE.md.
 
 - Use `not_if "which [command]"` or `test -f [file]` for installation checks
 - Use `add_profile` helper for shell environment setup
-- Platform-specific logic: `if node[:platform] == "darwin"`
+- Platform-specific logic: never `node[:platform]` control flow inside a cookbook — see the platform-pure convention below
 - Always include user/group/mode for file operations
 - **External URLs**: Verify external resources (GitHub releases, Homebrew packages, URLs) with `curl -sI` before commit. Dry-run does not fetch external resources — it is not evidence that a URL exists
 

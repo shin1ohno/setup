@@ -1,5 +1,11 @@
 # TODO
 
+## AGENTS.md cites a secondary-summary backing procedure that data-collection.md does not contain (Low)
+
+- **Failure class**: `cookbooks/claude-code/files/AGENTS.md` (Domain term verification bullet and the Detail playbooks row) points to `~/.claude/docs/data-collection.md` for "procedure and verification commands" for backing secondary summaries and cited URLs, but that doc only has Failure Escalation Ladder, Transient Error Retry and Live / Time-Varying Data Research. An agent that follows the pointer finds nothing and falls back to improvising the check.
+- **Why**: found by the Phase B compression stream (instruction-layout, 2026-10-25); pre-existing, not introduced by the compression.
+- **First step**: recall memory for the 2026-09-10〜12 secondary-summary incidents, write a `## secondary-summary-backing` section in `data-collection.md` (primary-source lookup per fact type, divergence note format, "secondary only" tag), and point AGENTS.md at that anchor.
+
 ## Any fleet LXC can read an account-wide GitHub push key, and setup main is unprotected (High)
 
 - **Failure class**: a compromise of ONE fleet LXC becomes a fleet-wide root

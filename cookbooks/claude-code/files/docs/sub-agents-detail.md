@@ -4,6 +4,8 @@
 
 Origin: 2026-05-09 two parallel streams both created the same cookbook file; one full PR cycle wasted on the merge conflict.
 
+Zero-owner check origin: 2026-09-26 — 18 of 43 manifest modules were owned by no stream; such an entry ships as a missing module the integrator writes unplanned. A registration test taking its expected list from one stream's files instead of the manifest inherits the same blind spot. File-split example: `cookbooks/elastic-agent/files/elastic-agent.linux.yml.tmpl` vs `elastic-agent.darwin.yml.tmpl`.
+
 ## destructive-operation-scope-boundary
 
 Origin: 2026-05-09 an agent read "consolidate dashboards" as license to delete predecessor saved objects outside its task scope.
@@ -54,7 +56,12 @@ Example: "Look up all reviews for this brand" → 1 agent per brand in backgroun
 Example: "Find bindings for this board" → 1 agent per brand group in background
 ```
 
+Cited-output verification origin: 2026-09-11 — a court-records URL returned `HTTP/2 200` with `content-type: text/html` while the body was a "page not found" title, so status-code-based verification passed it. Fabricated and misattributed citations are a standing failure mode that plausibility review never catches: one verify role corrected 24 of 43 source pages, including an attribution to an author who did not write the paper and a DOI belonging to a different article; an operator spot-check of 6 citations afterwards found zero remaining errors. Leaving rejected items in place with their reason keeps the next run from re-collecting them.
+
 ## dedup-criteria-data-model
+
+A key that legitimately repeats (chunks of one document sharing a `doc_key`, versions sharing an id, locale rows sharing a slug) turns a plausible "same key twice = duplicate" spec into a delete order for valid data, and the downstream fixer acts on it without further review.
+
 
 Origin: 2026-09-27 pro-dev — a 17-batch workflow migrated local file-memory notes into the memory v2 store, each batch followed by a verifier and a fixer allowed to `forget`. The verifier prompt said "more than one live item for a doc_key = duplicate". memory v2 splits one ingest into several items that share `doc_key` and `parent_id` and differ only in `chunk_index` (a 10 KB note became 10 items), so every multi-chunk document would have been reported as a duplicate and the fixer would have forgotten valid chunks. Caught before any verifier ran: the workflow was stopped, the prompt rewritten to "two different live parent_ids per doc_key", the fixer limited to items the batch itself created and forbidden from forgetting individual chunks, and the run resumed — the completed writers replayed from cache. The final store check (115 doc_keys, 0 duplicate parents) used the corrected invariant.
 
@@ -82,9 +89,13 @@ Origin: 2026-04-23 two consecutive Ultraplan agents failed silently; the user ha
 
 Origin: 2026-06-27 bca7dadc — a resolve session that looked "13-min stuck" was in fact recovering from a shared-tree collision; the kill was the direct cause of the issue going unresolved. This is why the kill gate is "2 consecutive zero-activity probes + transcript tail", not elapsed silence.
 
+Why "emit before asked": the reactive wording recurred in four sessions after the hook landed (2026-08-17 / 09-07 / 09-08 / 09-11, e.g. 「結局 setup の改善計画はどうなってますか？」), so a "status?" question is treated as evidence the discipline already failed, not as a question to answer. An observation loop that dies takes the progress obligation with it silently — a Monitor timeout notice or a watcher's failed notification is a signal that observation broke, not "nothing to report".
+
 Origin (the mechanical backstop): 2026-07-28〜08-05, five sessions where the USER had to ask whether the agent was alive — 「SubAgent動いてなくないですか？」(cd0e58ba) /「続けて、SubAgentの様子も確認」(6dce40db) /「続けて。workflowが止まってるように見える」(95c93439) /「終わってませんか？」(18721f4c) /「左のpaneのAgentの状況わかる？」(a15e3419). All five post-date the rule's own codification, which is the evidence that moved this from prose-only to a Stop hook (`hooks/warn-background-launch-no-progress.rb`). The hook is non-blocking by the same reasoning as `detect-prose-menu.rb`: a legitimately-parked background job must still be able to end its turn, so the hook reminds rather than traps.
 
 ## 60-second-rule
+
+Pattern: launch with `run_in_background: true`, emit one short user-facing line ("Deploy in background, waiting for completion notification"), keep interacting, and feed results back when the completion notification arrives.
 
 Origin: 2026-04-23 attempted `docker compose up -d --build` inline as a foreground Bash call; user corrected "時間がかかるタスクは SubAgent で".
 
@@ -93,3 +104,19 @@ Origin: 2026-04-23 attempted `docker compose up -d --build` inline as a foregrou
 Origin: 2026-06-18 zp-SHIN ×3 sessions — the lead sent with `to:"main"` and was rejected (「You are the main conversation — "main" addresses you. Send to a named agent instead.」); 4/4 teammates finished and emitted findings as plain text that never reached the lead, and the team-lead ran a SendMessage re-request round-trip (0bc32f7d). 2026-07-06 ×2 sessions — the lead re-sent the full task prompt and the worker defended with 「再送要求と判断し、検証済みの同じ完全レポートを再送します」 (45450f91); a teammate whose deliverable was already collected was not shut down until the user prompted 「動作が終わったSubAgentは閉じれますか？」 (da4dcecc).
 
 No hook: `to:"main"` is already rejected by the harness itself (the mechanical enforcement exists; the rule's value is avoiding the wasted turns up front). The remaining items are prompt-composition / agent-judgment problems a PreToolUse hook cannot inspect.
+
+Lead-side rules origin: 2026-09-16 — two of four streams went idle without output and were diagnosed as plan-mode blocking, while another stream wrote its file during that same plan mode. The Stop hook `hooks/warn-background-launch-no-progress.rb` also fires when a teammate's idle notification arrived with no delivered findings and no resend request by turn end — added 2026-08-23 after two teammates in one session idled silently, two months after the prose rule landed.
+
+## scratch-file-discipline
+
+Origin: 2026-07-08 — a ruby agent's fake-remind stub landed in `cookbooks/.../todo-collect/` and blocked the post-merge pull with "untracked working tree files would be overwritten by merge". The `warn-untracked-before-pull.rb` hook is the warn-only backstop; the prompt-side pin to `$TMPDIR` is the prevention.
+
+## mandatory-delegation-blocks
+
+The five blocks are text to paste, which is why they live in the always-loaded rule and not here; this section holds only their origins.
+
+1. Chunked reading — 2026-09-03: made mandatory after a predecessor died of context overflow twice on the same job (「読み方の規律が最重要です」); one template repeated the same text 23 times in a single batch.
+2. Safety boundary — 2026-08-23: copied into six or more agents in one batch.
+3. Untrusted data — 2026-08-23: copied into five or more agents in one batch. It is the general-data extension of the `source_class` judgement in `knowledge-persistence.md`.
+4. Output shape — 2026-09-03.
+5. Self-check — 2026-09-11: an investigation node's artifact mentioned the target's actual title zero times. Receiving-side count — 2026-09-16: a mechanical gate cleared 6 files and 27 sources while the domain's proper nouns appeared zero times in the body; both the delegate's own self-check and the gate had passed a topic mismatch.
