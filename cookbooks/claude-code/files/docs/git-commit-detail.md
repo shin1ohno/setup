@@ -184,6 +184,10 @@ The same prefix-match asymmetry is why a blanket `Bash(sudo:*)` deny cannot be n
 
 ## Default to PR Branch; Do Not Push to main — deny-list scope + non-GitHub remotes
 
+The `Bash(git push:*)` matcher was an `ask` entry before 2026-09-08 and has the same prefix semantics as today's deny entries.
+
+Non-GitHub PR-only convention origin: 2026-09-22 — one chat authorization carried home-monitor PRs #155-#158 (push + merge + apply in one plan).
+
 **Deny-list scope note**: The `Bash(git push:*)` deny entry matches commands that *start with* `git push`. A compound command `cd /repo && git push ...` bypasses the matcher. This is a known limitation. The behavioral rule (always present the blocked push as `! git push ...` and let the user run it) is the reliable enforcement mechanism — not the deny entry alone. Do not exploit the compound-form loophole to auto-push.
 
 **CodeCommit (and other non-`origin` remote URL forms) also bypass the deny entry**: when the remote URL is `codecommit::ap-northeast-1://<profile>@<repo>` instead of `origin → github.com:...`, the command shape `git push origin <branch>` for that repo translates into the codecommit transport at the remote-helper layer — but in some sessions the deny matcher did NOT intercept the push and it ran inline as a regular Bash call (the 2026-05-06 retro session pushed a recovery branch directly to a CodeCommit remote without `!` confirmation). The orphaned-commit recovery accidentally became auto-execute. The fix is behavioral, not a regex change: **for any push to a non-GitHub remote — CodeCommit, GitLab via custom remote, internal Gitea — apply the same `! git push <remote> <branch>` user-authorization rule manually.** Treat the deny entry as a backstop that catches GitHub-flavored pushes, not a complete safety net. When the URL form is exotic, the rule lives in the assistant's behavior, not the deny config.
@@ -196,7 +200,13 @@ Origin: 2026-07 — 3 sessions / 2 repos (setup #624, #632; sage #11→#21) each
 
 Origin: 2026-07 — re-presented `! gh pr merge` after the user had already authorized merging, forcing a re-authorization round-trip. Detail: see `~/.claude/docs/git-commit-detail.md#merge-execution-default`.
 
+Guard (a) observation: a 23-second-old PR was judged "gate satisfied" before `policy-bot-prod` appeared in its rollup. Guard (d) observation: "5 件反映" was declared while 11 review threads were still unresolved — a second round of comments had landed after the push. A repo without a conversation-resolution rule stays `CLEAN` with threads open.
+
 Guard (c)/(d) origins: 2026-07 55206b98 — `mergeStateStatus: CLEAN` was read as "reviews resolved" and a PR with unresolved review threads was declared merge-ready (CLEAN only means no-conflict + required-checks-pass); 2026-07 65589d06 — the immediately-before-merge probe returned `UNKNOWN` (GitHub's async mergeability computation) and a re-poll a few seconds later resolved it, confirming re-poll (not BLOCKED-skip) as the correct handling.
+
+kouzoh attempt log (the evidence behind "non-deterministic, not structural", revised 2026-07-24): headless zp runner sessions (permissionMode=auto — the org managed policy disables bypassPermissions) successfully merged #52/#54/#55 (07-03), #57/#58 (07-06), #56/#76 (07-22), #77/#78 (07-23), while the SAME runner was denied on #76 minutes before its own success, and #79/#81 were denied consecutively on 07-23; one interactive deny was observed 2026-07-08 (#73). The classifier's deny reasons quoted the user's OWN recorded boundary — this rule's former "structurally denies" wording and the runner prompt's "merge is blocked" note — which is why a recorded skip raises the deny rate. Silent success (empty stdout) was observed on #58/#77/#78.
+
+ai-memory owner-approval rationale: see ADR 0013 Decision 6 in the setup repo (`docs/adr/0013-ai-memory-own-repo.md`).
 
 ## recheck-after-background-op
 
@@ -268,6 +278,8 @@ Origin: 2026-04-25 weave — feature branch cut from main lacked an open sibling
 
 The Write tool and ordinary Bash commands run in the Claude Code command sandbox, where `$TMPDIR` is remapped to a sandbox-private directory. Network commands (`gh pr create/edit`, see the next section) must run with `dangerouslyDisableSandbox: true`, where `$TMPDIR` resolves to the REAL OS temp dir (`/var/folders/.../T` on macOS) — a different path. A `cat "$TMPDIR/body.md"` inside the sandbox-disabled invocation then returns 0 bytes with NO error, and the PR is created with a silently empty body.
 
+Building the body inline (heredoc piped to `--body-file -` inside the same sandbox-disabled invocation) sidesteps all three `--body-file` failure modes at once: backtick mis-parse, the harness verifier window, and cross-sandbox TMPDIR. For a user-run `!` command, a scratchpad or sandbox-`$TMPDIR` path fails with `fatal: could not read log file <path>: No such file or directory` — any command taking `-f` / `-F` / `--file`, or an `scp` / `rsync` source, is affected.
+
 Origin: 2026-06-26 PR #556 — body written to the command-sandbox TMPDIR, `gh pr create` ran sandbox-disabled with the real TMPDIR → `cat "$TMPDIR/body.md"` returned empty → blank PR body, no error surfaced.
 
 **User-run `!` command remediation, in order**:
@@ -307,7 +319,33 @@ Origin: 2026-06-19〜07-06 — 18 real-error sessions across 3 repos (setup / zp
 
 ## default-to-pr-branch
 
+Why the PR branch is the default: the harness blocks direct pushes to `main` (correct policy), so attempting one wastes a turn on a permission denial. Even without the gate, the PR flow leaves a review trail for future readers and lets CI run against the isolated branch before it affects main.
+
+The convention signal is per-file-class, not per-repo: a repo can send HANDOFF / CHANGELOG / log files straight to `main` while code changes still go through PRs (the typical direct-to-main shape is solo HANDOFF/CHANGELOG updates). When the file being committed is a different class than the historical direct-to-main commits, the convention does not apply.
+
 Origin: 2026-05-05 PVE migration — asked PR-vs-direct ceremony when git-log already answered.
+
+## branch-check-before-first-commit
+
+Do not commit onto merged PR branches still checked out locally, in-flight feature branches for unrelated work, or any branch whose `git log` shows commits unrelated to the current task. Scope-bleed discovered after the commit requires cherry-pick surgery that the 2-second check prevents. The `&&` between `git fetch` and `git checkout -b` matters on an authenticated remote: a swallowed fetch failure leaves you branching from a stale local `origin/main`, and the later push is rejected non-fast-forward.
+
+## post-merge-cleanup
+
+Origin: 2026-06-24〜29 — the same instruction 「マージしたので git pull してブランチ掃除」 recurred across 6 sessions; a mis-stated reason for skipping a deletion caused an extra confirmation round-trip (2026-06-27). Example of a probed skip reason: 「feat/X は worktree .claude/worktrees/X に checkout 中のため保持」. A guessed reason such as 「WIP upstream なので」 is what the rule forbids.
+
+Worktree teardown origins: 2026-07-24〜08-06 — 4 sessions repeated 「ブランチを掃除してmainに戻りたい」「worktreeは削除できますか？」; setup / zp-SHIN default to worktrees to avoid the shared tree, so reading guard (b) literally left teardown structurally undone. 2026-09 — in the same message that fast-forwarded the primary checkout's main, the agent wrote 「セッション内からは削除できません」 and handed `worktree remove` to the user; the inability claim is a capability claim and needs one attempt first.
+
+## commit-message-glob-chars
+
+Writing the message to a file and committing with `git commit -F <path>` works for the same reason PR bodies go through `--body-file`. Because the whole message comes back as one mangled line, the error points at the quoting rather than at globbing, and a second attempt tends to fiddle with quotes instead of leaving `-m` behind.
+
+Origin: 2026-09-16 — a multi-paragraph message containing "status?" failed with `(eval):2: no matches found:`.
+
+## sibling-repo-worktree
+
+`EnterWorktree` creates a worktree only in the session's current repository, and entering an existing one by `path` is refused unless the target belongs to the current repo or to a repo nested inside it. Creating the sibling worktree with `git worktree add` leaves the session itself un-isolated, so the textual git-substring refusal does not apply there.
+
+Origin: 2026-09-16 — isolated work was needed in the setup repo while cwd stayed in zp-SHIN.
 
 ## config-editing-branch-check
 
@@ -364,9 +402,13 @@ Origin: 2026-04-25 cherry-picked onto the user's unrelated WIP branch.
 
 ## pr-body-file
 
+With an inline HEREDOC the shell or `gh` mis-parses embedded backticks / dollar signs / pipes, and the command aborts with a usage-error blurb that hides the actual parsing failure. The body file is plain Markdown — no escaping, no quoting concerns, no parser ambiguity — so apply `--body-file` unconditionally whenever the body has any of: backticks, code fences, `$()`, `${...}`, single quotes inside double quotes, or multi-paragraph structure.
+
 Origin: 2026-05-05 — inline HEREDOC with backticks made `gh pr create` print `--title string` usage hints and abort.
 
 ## body-file-stdin
+
+The full denial text is `no Write to that file appears in this transcript—the body content is unverifiable.` It happens when the harness's verifier window no longer sees the `Write` that created the body file (a long transcript pushed it out of the lookback). The file IS on disk; the harness just cannot audit it. `--body-file -` reads stdin, so the content flows through the pipe and is visible inline with the command; the file on disk stays the source of truth.
 
 Origin: 2026-05-07 — `--body-file /tmp/...` denied right after a Write the verifier window had advanced past.
 

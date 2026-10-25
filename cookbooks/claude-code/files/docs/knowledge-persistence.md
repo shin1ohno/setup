@@ -1,66 +1,26 @@
 # Knowledge Persistence: Memory (v2)
 
-Doctrine for when and how to search + save durable knowledge. `@`-imported by CLAUDE.md, so this file is always-loaded. The self-hosted Cognee stack (REST `localhost:8001`, ChromaDB, `docker compose cognee`, `bulk_ingest`, the `~/ingest/drop/` watcher) and its MCP tools (`cognify` / `save_interaction` / cognee `search`) were fully retired. The memory-v2 stack is now the single knowledge store — use its tools (`recall` / `remember` / `ingest`).
+When and how to search + save durable knowledge (`@`-imported by CLAUDE.md, so always loaded). The memory-v2 stack is the single knowledge store — use `recall` / `remember` / `ingest`; the Cognee stack and its tools are retired. Detail: see `~/.claude/docs/knowledge-persistence-detail.md#retired-cognee-stack`.
 
 ## ファイル記憶は自動で MCP ストアにミラーされる — 手で二重書きしない
 
-harness native のファイル記憶（`~/.claude/projects/<slug>/memory/*.md`）は、`hooks/mirror-file-memory.rb` が MCP ストアへ自動でミラーする。memory ファイルを Write / Edit した時点で PostToolUse hook が該当ファイルだけを送り、SessionStart の `--sweep` が取りこぼし（他ホスト・手編集・hook が lock を取れなかった場合）を回収する。**同じ内容を `remember` / `ingest` で手動でもう一度書かないこと** — doc_key が `<host>/<project-slug>/<slug>` で upsert されるので、手書きの重複だけが残る。
-
-複製の実害は訂正経路が分かれることです。複製するとファイル側にしか訂正が入らず、ストアには古い主張が残り、`recall` が古い方を高スコアで返します（実測 2026-09-16: 手書き複製が、反証追記入りのファイル正本ミラーより上位に出た）。したがって**自分がこのセッションで保存した結論が後続の観測で反証されたら、同 turn でファイル記憶を Edit する**（mirror が doc_key で上書きする）。`remember` で別 note を足して訂正するのは禁止で、すでに複製を作ってしまった場合だけ `revise` で直します（自分が書いた doc しか supersede できません）。
-
-3 点の含意:
-
-- **ミラーは `fact` の代替にならない**。`ingest` は server 側で `source_class=tool-output` 固定（どのホストから書いても `user-stated` にはならない）。ユーザー属性・嗜好・決定は従来どおり `remember(type='fact')` で保存する — `recall` が「指示として扱ってよい」と教えるのは `user-stated` の `fact` だけ。
-- **ファイル側が正本**。逆方向（MCP → ファイル）の同期は無い。ファイルを削除すると次の sweep が forget を呼んでミラーも消える。
-- **失敗は静かに落ちない**。hook は書き込みを絶対にブロックせず `exit 0` するが、失敗は `~/.claude/memory-mirror.log` に 1 行残り、同じ内容が agent にも返る（PostToolUse と SessionStart の additionalContext）。ミラー先は `~/.claude/memory-mirror.json` で決まり、この config が無いホストでは hook 自体が no-op。
-
-config は 2 形式ある。
-
-- **work overlay**: `{"server","dataset","enabled"}`。`server` は `~/.claude.json` の `mcpServers` にある http サーバ名（memory-work）で、認証は `headersHelper`。
-- **個人ホスト**（pro-dev・mini・neo、`cookbooks/memory-mirror` が配る）: `{"url","auth":{"type":"client_credentials",…},"host","dataset","enabled"}`。Hydra の machine client `memory-mirror` で個人ストア（claude.ai `memory` コネクタと同じ es-memory）へ送る。サーバ側の `CLIENT_POLICY` により、この client ができるのは `file-memory` への ingest と自分の文書の forget だけ。資格情報は `~/.config/memory-mirror/client.env`（0600）で、agent が読む場所ではない。
-
-個人ホストの運用:
-
-- 疎通確認は `ruby ~/.claude/hooks/mirror-file-memory.rb --check`。実トークンで ingest・forget・拒否の 3 系統を往復する。
-- SessionStart の sweep（`--sweep --session-start`）には 40 秒の予算と初回一括ガードがある。state が無い状態で 20 件を超えると送らないので、初回だけ手で `--sweep` を実行する。
+ファイル記憶（`~/.claude/projects/<slug>/memory/*.md`）は `hooks/mirror-file-memory.rb` が MCP ストアへ自動ミラーする（PostToolUse + SessionStart `--sweep`）。**同じ内容を `remember` / `ingest` で手動でもう一度書かないこと**。**このセッションで保存した結論が反証されたら、同 turn でファイル記憶を Edit する**（mirror が doc_key で上書き）。`remember` で別 note を足す訂正は禁止で、複製を作ってしまった場合だけ `revise` で直します。ミラーは `tool-output` なのでユーザー属性・嗜好・決定は `remember(type='fact')`。ファイル側が正本（削除すると sweep が forget）。失敗は `~/.claude/memory-mirror.log`。Detail: see `~/.claude/docs/knowledge-persistence-detail.md#memory-mirror-mechanics`.
 
 ## Connector timeout ≠ service down — curl the endpoint before declaring an outage
 
-When an MCP connector call (`recall` / `remember` / `browse`) hangs or times out mid-session, probe the backing endpoint directly before treating the service as down: `curl -si --max-time 8 <endpoint URL>`. Any HTTP response (401 / 406 / 200) proves the service is alive and the fault is connector-local (OAuth session, transport) — continue via a fallback path (another registered store, curl-MCP for loopback servers, or defer the write) and retry the connector later; it often recovers within the session. No response / connection refused = genuine outage. This is the memory/MCP specialization of `rules/debugging.md`'s Noisy Non-Failure Pattern. Origin: 2026-07-08 — the ai-memory connector timed out for ~40 min while `mcp.ohno.be` answered 401 in 0.06s; writes proceeded via the local store and the connector recovered mid-session.
+When an MCP connector call (`recall` / `remember` / `browse`) hangs or times out, probe the endpoint first: `curl -si --max-time 8 <endpoint URL>`. Any HTTP response (401 / 406 / 200) = service alive, fault is connector-local — continue via a fallback path and retry the connector later. No response / connection refused = genuine outage. Detail: see `~/.claude/docs/knowledge-persistence-detail.md#connector-timeout-origin`.
 
 ## "local" is NOT air-gapped — verify egress before routing work-sensitive data
 
-A store's name — `local`, `work`, a loopback port, a box you own — names the **MCP server location**, not the LLM/embedding backend. Embedding may call **external vendor APIs** (Voyage, OpenAI, etc.) depending on server config, so self-hosted storage can still **egress content to a third party** on every write. Before routing any work-sensitive content (employer KPIs, product metrics, internal business data) through a store:
-
-1. Probe the actual egress — read the embedding config the server process runs with:
-
-   ```bash
-   # systemd-managed server (e.g. memory-mcp-v2): endpoints live in the unit's EnvironmentFile
-   systemctl show <unit> -p Environment -p EnvironmentFiles
-   sudo grep -iE 'LLM_(PROVIDER|ENDPOINT|MODEL)|EMBEDDING_(PROVIDER|ENDPOINT)|VOYAGE|OPENAI|ANTHROPIC' <env file>
-   # container-managed server
-   docker exec <memory-mcp container> env | grep -iE 'LLM_(PROVIDER|ENDPOINT|MODEL)|EMBEDDING_(PROVIDER|ENDPOINT)|VOYAGE|OPENAI|ANTHROPIC'
-   ```
-
-2. Read where each `*_ENDPOINT` actually points — the provider *name* decides nothing. A vendor API (`api.openai.com`, …) makes that MCP equivalent to that vendor for data-sensitivity purposes: route work data through it only when the vendor is sanctioned for that data class, and **never** to a personal home-lab / personal Notion. A **company-sanctioned gateway** URL (an internal LLM proxy) with local storage is the opposite case — that store is then the *correct* sink for work-derived knowledge, and pushing that knowledge to a personal hosted store instead is the actual violation. `EMBEDDING_PROVIDER=openai` beside a gateway endpoint means the gateway's OpenAI-compatible API, not OpenAI — and a `VOYAGE_API_KEY` variable name says nothing either, the VALUE may be a gateway key. Probe per deployment: servers get replaced and stores get retired, so a previous deployment's route is not evidence about the current one.
-3. For structured data that only needs exact comparison (a KPI snapshot, a metrics diff), prefer a **local file (JSON)** — zero egress, exact diff, and the semantic graph adds nothing for fixed numbers.
-
-The name `local` is not evidence of air-gap. Origin: 2026-06-19 kpi-delta-monitor loop — `docker exec env` showed `LLM_ENDPOINT=https://api.openai.com/v1`; routing Mercari KPI through it would have egressed to OpenAI. Snapshot moved to a local JSON file.
+A store's name (`local`, `work`, a loopback port, a box you own) names the MCP server location, not its LLM/embedding backend. Before routing work-sensitive content (employer KPIs, product metrics, internal business data) through a store: (1) read the embedding/LLM config the server process actually runs with; (2) judge by where each `*_ENDPOINT` points — a vendor API makes the store equivalent to that vendor (route work data only if the vendor is sanctioned for that data class, **never** to a personal home-lab / personal Notion), while a company-sanctioned gateway with local storage is the *correct* sink for work knowledge (pushing it to a personal store instead is the violation); probe per deployment; (3) prefer a local JSON file for exact-comparison data (KPI snapshots, metric diffs). Detail: see `~/.claude/docs/knowledge-persistence-detail.md#egress-probe`.
 
 ## Memory (unified v2 MCP)
 
-Cross-project store for user attributes, preferences, possessions, durable facts, technical knowledge, product reviews, business insights, and reference documents. The claude.ai `memory` connector serves the unified v2 MCP (ElasticSearch + Voyage embeddings, hybrid BM25 + kNN recall). The old mem0 tool names (`add_memories` / `search_memory` / `list_memories`) are RETIRED — use:
-
-- `recall(query, type?, top_k?, filters?)` — hybrid search over all memory (was `search_memory`). `type` optionally scopes to `fact` / `knowledge` / `episode`.
-- `remember(content, type, tags?)` — persist a memory; `type` MUST be explicit: `fact` (atomic durable fact — the `add_memories` replacement), `knowledge` (a document/chunk — technical insight, product review, bug root-cause, architectural decision), or `episode` (session summary / light interaction).
-- `browse(type?, filters?, sort?, limit?)` + `memory_stats()` — list + counts (was `list_memories`).
-- `ingest(document, dataset, doc_key)` (upsert a whole document), `revise(id, content)`, `forget(id)`, `get(id)` — document/edit ops.
-
-Async write model: a write is stored immediately as `raw`, then a keeper (on the es-memory host, `claude -p`) reconciles it (ADD/UPDATE/NOOP dedup) within a tick or two. Transparent to callers — keep saving; a just-written item becomes searchable in its reconciled form shortly after. There is no synchronous extraction step, so no timeout-and-retry dance (this replaces the retired cognify-timeout / `pending-cognify` fallback).
+Cross-project store (user attributes, preferences, possessions, durable facts, technical knowledge, reviews, business insights, reference documents) behind the claude.ai `memory` connector. Tools: `recall`, `remember(content, type, tags?)` with `type` explicit (`fact` / `knowledge` / `episode`), `browse` + `memory_stats`, `ingest` / `revise` / `forget` / `get`. Old mem0 names are retired. Writes reconcile asynchronously — keep saving, no retry dance. Detail: see `~/.claude/docs/knowledge-persistence-detail.md#memory-v2-tools`.
 
 ### When to Search (READ)
 
-Run `recall` at conversation start, **before** generating a response to the first message. Also search before decisions on the same topic/product/tech, on errors (may be solved before), and for investment/business questions. Scope with `type` — `fact` for user attributes (possessions, preferences, body measurements), `knowledge` for technical/product insight, `episode` for prior sessions. Use `top_k=5` for focused queries, `top_k=15` for broad exploration.
+Run `recall` at conversation start, **before** responding to the first message; also before decisions on the same topic/product/tech, on errors, and for investment/business questions. Scope with `type` (`fact` user attributes, `knowledge` technical/product insight, `episode` prior sessions); `top_k=5` focused, `top_k=15` broad.
 
 **No search needed**: trivial edits, typo fixes, and git operations only.
 
@@ -68,20 +28,18 @@ Run `recall` at conversation start, **before** generating a response to the firs
 
 Save immediately — do not wait to be asked:
 
-- **User attributes** revealed during conversation (body measurements, owned devices/gear, food preferences, riding style, workflow preferences, relationships/roles) → `remember(type='fact')`.
-- **Research / review / analysis conclusions** (a summary or comparison table produced) → `remember(type='knowledge')`, or `ingest` for a full document. Save before moving to the next task.
-- **Debugging sessions**: the save trigger is **root-cause identification**, not task completion. When you identify the root cause of a non-obvious bug with confidence, save it (`type='knowledge'`) immediately — before implementing the fix. The root cause and the failed hypotheses both have future value.
+- **User attributes** revealed in conversation (body measurements, owned gear, food preferences, riding style, workflow preferences, relationships/roles) → `remember(type='fact')`.
+- **Research / review / analysis conclusions** → `remember(type='knowledge')`, or `ingest` a full document — before moving to the next task.
+- **Debugging**: the trigger is **root-cause identification**, not task completion — save it (`type='knowledge'`) before implementing the fix, with the failed hypotheses.
 
-**Never save**: secrets/credentials/tokens, routine refactors, info already in README, or temporary state (branch/WIP).
+**Never save**: secrets/credentials/tokens, routine refactors, info already in README, temporary state (branch/WIP).
 
-**TODO-shaped content** (unfinished work — anything with a close condition) MUST carry `tags:["todo"]` + an explicit close condition; untagged TODOs are un-enumerable and rot. Store routing (work vs personal, TODO.md vs memory) and the collect/reconcile loops: see `~/.claude/docs/todo-management.md`.
+**TODO-shaped content** (anything with a close condition) MUST carry `tags:["todo"]` + an explicit close condition. Routing and loops: `~/.claude/docs/todo-management.md`.
 
 ### Save Format
 
-Structure each `knowledge` note as a self-contained block: Topic / Context (project, stack) / Problem / Solution / Why. (Adapt the labels for reviews — Rating/Pros/Cons/Verdict — or analyses — Findings/Recommendation/Risks.)
-
-**A work record carries the fact, the internal reading of it, and the agent's own assessment of that reading.** A record holding only facts makes the next reader redo the interpretation from scratch. Write the assessment so it can be checked later — "contradicts the measured value", "the denominators are asymmetric" — not as an impression. Origin: 2026-09-10 — the operator asked for "the facts, the internal interpretation, and your assessment of that interpretation" to be stored together.
+Each `knowledge` note is a self-contained block: Topic / Context / Problem / Solution / Why (reviews and analyses adapt the labels). **A work record carries the fact, the internal reading of it, and the agent's own checkable assessment of that reading.** Detail: see `~/.claude/docs/knowledge-persistence-detail.md#save-format-origin`.
 
 ### Documents / PDFs
 
-For a whole document (a report, a spec, a long reference), use `ingest(document, dataset, doc_key)` — it upserts by `(dataset, doc_key)`, so re-ingesting the same key supersedes the prior version. For a PDF, extract the text first (PyPDF2 for text PDFs; render pages and read them for image-based PDFs), then `ingest` the extracted text.
+Whole documents: `ingest(document, dataset, doc_key)` — upserts by `(dataset, doc_key)`, so re-ingesting supersedes. PDFs: extract text first (PyPDF2 for text PDFs; render and read pages for image PDFs), then `ingest`.

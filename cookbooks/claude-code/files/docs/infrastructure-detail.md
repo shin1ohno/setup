@@ -184,3 +184,17 @@ Phrases that signal a known failure class the current fix does not cover:
 3. Never let "we'll get to it later" be the unstated third option
 
 Origin: 2026-05-07 "manual restart required" comment shipped with no TODO; the named failure class regressed 2 days later (PRs #253/#257/#259).
+
+## managed-file-ownership-gate
+
+Probe example: `rg -l 'zed/settings\.json' ~/ManagedProjects/setup/cookbooks/ ~/ManagedProjects/zp-SHIN/projects/mercari-setup/cookbooks/` — probing on a bare basename (`settings.json`) false-hits everywhere. The emergency-edit TODO has the same shape as the `~/deploy/` memory-MCP record (Deploy-Only Change Tracking).
+
+Shared-value origin: 2026-06 mise `GITHUB_TOKEN` → moved to the zsh cookbook (setup#597).
+
+## auto-mode-classifier-boundary
+
+Origin: 2026-07-11 ES license-expiry storm — classifier blocked (a) SSH+`source` into CT 112 for the elastic credential, (b) `POST _license/start_basic` after a prior blanket "実行して" covered investigation only. Read-only verify ran inline; the SSM-scoped fetch replaced SSH+source; the mutation ran only after a second, explicit "許可するから…実行して".
+
+The narrow secret fetch has lower blast radius and is less likely to trip the classifier at all.
+
+Verbatim-quote observations (2026-07): the kouzoh-exception line was cited in a headless merge denial; a 「私」 label was misread as the user.

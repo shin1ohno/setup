@@ -148,6 +148,12 @@ while IFS= read -r entry; do
 done < <(jq -c '.[]' "$HOSTS_JSON")
 ```
 
+`ssh` consumes pending lines from the pipe **before the next iteration's `read` can see them**. **Same trap applies to** any stdin-reading command in a process-substitution loop: `gpg`, `bash -s`, `read` itself — redirect `< /dev/null` when in doubt.
+
+**Diagnosis signal**: a host loop that should iterate N hosts processes only the first one, exits 0, and emits no parse error. `bash -x` trace shows iteration 2's `read VAR` returning EOF immediately followed by post-loop code.
+
+**Plan-time review checklist**: if an orchestrator-style script has `while read X; do ...; done < <(...)` AND the loop body invokes `ssh`/`gpg`/`bash -s`, confirm `-n` / `< /dev/null` is present BEFORE shipping — the trap is invisible to `shellcheck` and `bash -n`, surfacing only at runtime as a successful run with missing data.
+
 Origin: 2026-05-06 PR #153 — bare ssh in jq-fed read loop dropped all hosts but the first.
 
 ## multi-hop-shell-injection
@@ -205,6 +211,14 @@ Fix options (any work):
 - Escape: `echo "=== foo (bar) ==="` (use double quotes outside, or escape `\(\)`)
 - Heredoc: `bash <<'EOF' ... EOF` (no -c argument)
 
+**When to use which**:
+
+- `ssh host 'cmd'` (single quotes) — fine for single-line commands without quotes inside
+- `ssh host "pct exec X -- bash -s" <<'EOF' ... EOF` — required for any multi-line script with `()`, heredocs, function definitions, or any shell metacharacter
+- `ssh host 'pct exec X -- bash -c "..."'` — only for trivial commands; ban for anything with metacharacters
+
+**Composition gate**: before writing any `bash -c '...'`, `ssh host '...'`, or `ssh host 'pct exec <vmid> -- bash -c/-s ...'`, scan the inner body for `()`, `$()`, backticks, `*`, `!`, `<<`, or quotes nested >1 level deep — **commentary parentheses in `echo` statements count** (e.g. `echo (already paused)`). Any hit → switch to the single-quoted `bash -s` heredoc before sending.
+
 Origin: 2026-05-06 / 2026-05-11 / 2026-06-07 — `syntax error near unexpected token '('` from commentary parens in `echo === ... ===` headers through three remote shells; structural, recurs per metacharacter unless heredoc + `bash -s` is the default.
 
 ## awk-dollar-bash-positional-collision
@@ -236,6 +250,13 @@ Origin: 2026-08-01 sh1-cloud `gcp-ssh-keys` cookbook (zp-SHIN #111) — a github
 
 ## Prefer sed/awk over `python3 -c` for inline filesystem edits
 
+Applies when the task is "edit one line of an INI/JSON/YAML file" or "remove a section header". Two recurring failure modes hit the Python form but not sed:
+
+1. **Multi-line `-c` payload is fragile in chat / prompt presentation**: markdown wrapping / paste rendering frequently adds leading spaces to continuation lines, and Python's significant indentation then surfaces as `IndentationError: unexpected indent` even though the source was valid before paste. sed/awk scripts are statement-per-line with no indentation semantics — wrap-resilient.
+2. **`python3 -c` with shell-quoted multi-line is hard to compose verbatim**: avoiding shell-side escape collisions for `'...'` inside `"..."` inside `;`-chained statements gets messy fast. sed/awk's regex-and-action grammar is one shell-quote layer deep.
+
+**When python IS the right tool**: when the edit needs Python-grade parsing (multi-line JSON edit with comments, complex schema migration, anything where regex fragility outweighs paste fragility).
+
 **Concrete substitutions**:
 
 | Task | python3 -c (avoid) | sed/awk (prefer) |
@@ -246,3 +267,93 @@ Origin: 2026-08-01 sh1-cloud `gcp-ssh-keys` cookbook (zp-SHIN #111) — a github
 | Edit YAML | (Python possible) | `yq` if available, else sed for simple cases |
 
 Origin: 2026-05-11 — multi-line `python3 -c` paste-broke with `IndentationError`; one sed command worked first try.
+
+## locality-check
+
+Cheapest possible check before writing any command that assumes a target host is remote (ssh, scp, rsync over ssh, `gh api` to a remote server, any "please run this on $host" handoff):
+
+```
+hostname -s
+```
+
+If the output matches the target, drop the ssh wrapper and run the command directly. Whenever a user message mentions a host by name (`pro`, `air`, `$service.home.local`, etc.) and the command you're about to issue depends on that host being remote, run this check first. It is also free to run as part of any "deploy this" or "restart the service on $host" workflow.
+
+Origin: 2026-04-23 weave — ssh'd to a host the session already ran on.
+
+## ssh-reachability-probe
+
+Trigger: you are about to (a) frame a step as "please run this on <host>" / present `! ssh/scp ...`, (b) claim "no key for <host>" / "this shell cannot reach <host>", or (c) design a flow around <host> being unreachable.
+
+1. **Resolve what plain ssh would actually do — zero network, 1 second**:
+   ```bash
+   ssh -G <host> | grep -iE '^(hostname|user|identityfile) '  # effective config incl. ~/.ssh/config aliases
+   ssh-keygen -F <host>                                        # known_hosts registration (first-contact check)
+   ```
+   `ssh -G` shows the IdentityFile plain ssh will use; it supersedes guessing from `ls ~/.ssh`.
+
+2. **Probe once**, letting the user's config + agent work, with hang guards only:
+   ```bash
+   ssh -o ConnectTimeout=5 <host> hostname
+   ```
+   Add `-o StrictHostKeyChecking=accept-new` for a first-contact host. A failed `-o BatchMode=yes` run with hand-enumerated `-i` keys proves "these keys failed" — NEVER "no credential exists". Do not claim "鍵がない" from it.
+
+3. **`Too many authentication failures`** (server disconnects mid-auth) = the agent/config offered too many keys, not a missing key. Retry once with `-o IdentitiesOnly=yes -i ~/.ssh/<host>_ed25519` (key path from step 1).
+
+4. **Write ssh options as literal argv tokens.** `KEY="-i ~/.ssh/x"; ssh $KEY host` makes ssh parse the whole string as one token (`hostname contains invalid characters`). Never pack option+path into one shell variable.
+
+5. **Probe failed → report the exact error class** (auth vs network vs host-key), record the host reachability map to project memory (cf. `session-shell-ssh-access`), and present the fallback as ONE composed `! ssh/scp ...` command — not a sequence of retries for the user.
+
+Origin: 2026-07-04 ×2 — three delegations + a "鍵がない" claim the user disproved with plain ssh/scp; a separate session's 5 ssh attempts (incl. Too-many-auth-failures + the `-i`-in-variable token bug) all compressible to one step-1+2 probe.
+
+## zsh-login-shell-traps
+
+The Claude Code Bash tool executes through the user's **login zsh** on darwin, not bash. bash/Linux one-liners that look correct fail in zsh-specific ways that are invisible to `bash -n` and usually surface as a *silent* wrong result, not an error:
+
+1. **Unquoted `$var` is NOT word-split.** `for r in $REGIONS; do …` iterates ONCE over the whole string — zsh does not field-split unquoted parameters (the opposite of bash). Enumerate elements literally, use an array, or wrap the loop in `/bin/bash -c '…'`.
+2. **Unmatched glob aborts the whole script.** zsh `nomatch` makes an unmatched `*.foo` a hard error that kills a multi-line script mid-run — earlier loop output is discarded with it. Quote globs you don't want expanded, or run under bash.
+3. **zsh builtins shadow `/usr/bin` commands.** `log …` hits the zsh `log` builtin (`too many arguments`), not `/usr/bin/log`. Verify with `type <cmd>`; call the full path (`/usr/bin/log show …`) when a builtin shadows the binary you meant.
+4. **A broken `.zshrc` compdef makes `aws` silently exit 1** (git/gh/curl unaffected). Wrap `aws` in `/bin/bash -c '…'` — see memory `aws-cli-needs-bash-c-wrapper`.
+5. **Inline `!` via the Bash tool can arrive mangled to `\!`** — not just jq `!=`; the 2026-06 window also corrupted a `reject!` / `!==` inside a quoted heredoc and a `printf` single-quote `<!--` written to a file (version-dependent) — see `#zsh-bang-history-expansion`.
+
+**Default policy**: observing ONE zsh-dialect error is the signal to switch the whole command to bash — do not patch it token by token. `/bin/bash -c` / quoted-heredoc wrapping fixes traps #1-#3 and does NOT help #5: the corruption happens at the harness layer, before the shell, so the reliable avoidance for a literal/script containing `!` is to place it with the Write/Edit tool.
+
+**Verification discipline**: the "0 results" re-check (drop `2>/dev/null`, re-run one representative case bare) is the zsh-error-specific case of `~/.claude/rules/debugging.md` Silent Failure Detection; the general gate for asserting absence is `Negative search is not evidence of absence` in the shared AGENTS.md. A command that succeeds once but fails inside a loop → suspect the word-split trap (#1) before any external cause. Inline diagnostic one-liners are also subject to the macOS external-command audit (`timeout` / `flock` → exit 127; `#macos-external-command-audit`), not just cookbook-distributed scripts.
+
+**Multi-file `grep -h` drops the filename**: `grep -h -m1 PATTERN file1 file2 file3` prints one match per file with no filename, so reading the output top-to-bottom silently attributes file2's line to file1. When comparing the same field across files (an identifier, a version, a URL), use `-H`, or loop per file (`for f in …; do printf '%s :: %s\n' "$f" "$(grep -m1 … "$f")"; done`), or `rg` (filenames by default). Applies to any claim of the form "file X has the wrong value". Origin: 2026-07-27 — a `grep -h` sweep over three wiki pages produced a false "wrong PMID in page A" finding that a single-file re-probe disproved and forced a retraction.
+
+Origin: 2026-07-04 — `$REGIONS` / `$repos` word-split misdiagnosed as throttling / reported a false "0"; `log` builtin `too many arguments`; `timeout` exit 127.
+
+## sed-delimiter-collision
+
+Switching `s/…/…/` to `s#…#…#` (or `|`, `@`) to dodge slashes in a path only works if the new delimiter appears in neither side. Scan the **replacement** text too: GitHub references (`#123`), URL fragments and shell comments bring `#` in; a pipe-separated table brings `|`. The failure is `unknown option to 's'` — or, worse, a silently truncated substitution when the stray delimiter lands where a flag is legal. When the replacement's character set is not under your control, split the edit, pick a delimiter that cannot occur (a control character via `$'\x01'`), or write the edit as a small script file. A failed `sed` inside a chain leaves the file untouched and the next `git add` commits the old content — hence the grep-before-staging step.
+
+Origin: 2026-09-26 — `s#…#…#` with a replacement containing a PR reference like `#123456` failed and the unmodified file was committed, then amended.
+
+## no-leading-cd
+
+`cd <dir> && cmd` runs the login shell's `chpwd` hook (an auto-`tree` / `ls` on these machines) between the two, so its output lands in the stdout you are about to parse and `$?` of a trailing pipeline no longer means what you think. This is the general form of the git-specific rule in `~/.claude/rules/git-commit.md` ("Never use `cd` to set git context") and the search-specific one (Negative search, now in the shared `~/.agents/AGENTS.md` Probe Discipline; the summary formerly cited `~/.claude/rules/ask-user-question.md`): it applies to every command whose result you read — a formatter's `-check`, a test runner, a validator, a count.
+
+Origin: 2026-09-26 — `cd /tmp && terraform fmt -check … | head; echo $?` printed a full `/tmp` tree and reported `head`'s exit code; the check had to be rerun with `-chdir`.
+
+## find-is-bfs
+
+On pro-dev the Bash tool's `find` is a shell function from the zsh shell snapshot that runs bfs 4.1.1 (`type find`). GNU-only spellings are an error there, not a no-match: the message goes to stderr, and a pipeline that counts the output still reads 0 and exits 0. A liveness or stall watcher built that way reports "no activity" on every pass while its target is busy.
+
+Origin: 2026-09-28 agent-pilot — a review-workflow watcher reported "STALL: no activity for 10 min" while seven agent transcripts were being written.
+
+## compound-command-deny
+
+The permission layer refuses a whole multi-line or `&&`-chained Bash command when any part of it matches a deny rule, so a command that does useful work and then cleans up with `rm -rf` loses the useful part too. The allow rule `Bash(rm -rf /tmp/:*)` in `~/.claude/settings.json` matches the literal command text: `rm -rf "$T"` with `$T` under /tmp still falls to the `Bash(rm -rf:*)` deny, so write the literal path when you rely on it.
+
+Origin: 2026-09-27/28 agent-pilot — three compound commands (a `gh aw compile` run, a sandbox dry-run setup, a sandbox sync) were refused for their cleanup step and had to be rebuilt.
+
+## user-run-block-self-containment
+
+ユーザーの端末で実行させる fenced block / `!` ブロックは、ユーザーの端末状態（cwd・直前ブロックの cd・シェル履歴）に依存せず単体で成立させます。
+
+1. **パスは絶対、または同一ブロック内合成**: 相対パスを使うなら同じブロック内で `cd /abs/path && …` に続けます。cargo は `--manifest-path /abs/Cargo.toml`、git は `git -C /abs/path`（git-commit.md の Claude 側 `git -C` ルールのユーザー実行ブロック版）。セッション中に複数リポを触った場合、ユーザーの端末 cwd は Claude の作業対象リポと一致しない前提で書きます。
+2. **Pre-emit scan の 2 項目追加**: 既存の scratchpad パス検査・GPG チェーン切断検査（git-commit.md）に加え、emit 直前にブロックを見直します: (a) ブロック内の相対パスが、ブロック自身の cd 先と別のリポ / ディレクトリを指していないか、(b) `</parameter>` 等のツール呼び出しタグ断片が（特に末尾行に）混入していないか。混入 1 つでユーザーの round-trip が丸ごと無駄になります。
+3. **タグ断片の検出時の回復**: 自分の出力への `</parameter>` 混入を検出した、またはユーザーの実行失敗報告で判明した場合は、CLAUDE.md「Malformed tool call recovery」と同じ文脈飽和シグナルとして扱います（同ルールの発生回数カウントに含める）。
+4. **1 行が長すぎる / 連結が深い `!` ブロックは分割する**: `&&` 連結が 4 段以上、または 1 行が目安 200 文字を超えると、ユーザーは貼る前に内容を確認できず、貼り付け時の改行崩れも起きます。内容を Write でスクリプトにしてから `! bash /abs/path/script.sh` の 1 行にする方法もあります。対話プロンプト（パスフレーズ・確認）を含む手順を 1 段ずつに割るのは、途中で失敗しても後段が `&&` で連鎖し、どの段で落ちたか判別できなくなるためです。checkpoint には期待値（`subkey=1` 等）を明記し、「期待値でなければ次に進まない」と書きます。Origin: 2026-08-01 — 鍵投入手順を 7 段 `&&` 連結の 1 行で出してユーザーから分割を要求され、さらに連結形では途中段の無音失敗（保護付き subkey の drop）が検出できず secret のバージョンを 2 つ無駄にした。
+
+Origin: 2026-06-23 — 別ブロックの cd 前提の相対パス `open target/dashboard_shibuya.html` がユーザー端末 cwd で does-not-exist ×2（実体は sibling リポ側）; 2026-06-27 — `!` ブロック末尾に `</parameter>` が混入したままユーザーが実行しコマンド破壊、1 往復無駄。
