@@ -1,180 +1,87 @@
 # Code Behavior Debugging Protocol
 
-This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/docs/debugging-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
+Always-loaded summary; examples + origins in `~/.claude/docs/debugging-detail.md` (on-demand).
 
 ## Silent Failure Detection
 
-A silent failure is when an operation returns success but the intended state change did not occur. Observable signals: API returns 200/Ok, function returns without error, but the expected effect (playback starts, file appears, record saved, remote device reacts) is absent.
-
-When you cannot directly observe the effect of a fix from the source code alone:
-
-1. **Build the observation tool first** — create a status command, add debug logging (env-gated is fine, e.g., `ROON_DEBUG=1`), or write a verification script *before* attempting the fix
-2. **Capture baseline state** — observe the state before applying the fix so you have a reference
-3. **Apply the fix**
-4. **Re-observe** — confirm the state changed as expected
-5. Only then report success to the user
+Silent failure = success returned (200/Ok) but the intended effect is absent. When the effect is not visible from source: (1) build the observation tool first (status command, env-gated debug log, verify script), (2) capture baseline, (3) fix, (4) re-observe, (5) only then report success.
 
 ## Noisy Non-Failure Pattern
 
-The inverse of silent failure: a warning, error string, or health-check entry is visibly present, but the system is functioning correctly. Treating the noise as a defect can disable a fallback path the system depends on.
+Inverse: a warning is present while the system works; "fixing" it can kill a fallback. (1) Test the warned-about function end-to-end first (DNS warning → `getent hosts <peer>`, `tailscale ping <peer>`). (2) Classify: Cosmetic (abandoned path) / Partial (degraded — fix the real problem) / Load-bearing (real breakage). (3) Silence only Cosmetic, keeping the working path. (4) State the classification before proposing a fix.
 
-Protocol:
-
-1. **Test the function the warning is about, end-to-end, before believing the warning** — `tailscale status` complains about DNS → run `getent hosts <peer>` and `tailscale ping <peer>` first
-2. **Classify the noise**: Cosmetic (failed path the system already abandoned, safe to silence), Partial (degraded mode in effect, fix the real problem), Load-bearing (warning describes the actual broken behavior)
-3. **Only Cosmetic noise is safe to silence** — verify the silence doesn't disable the working path
-4. **State the classification to the user before proposing a fix**
-
-Detail (trap explanation + origin): see `~/.claude/docs/debugging-detail.md#noisy-non-failure-pattern`.
+Detail: see `~/.claude/docs/debugging-detail.md#noisy-non-failure-pattern`.
 
 ## Do Not Report Success Without State Evidence
 
-NOT evidence: code compiled/ran without errors; function returned `Ok(())`; "success" message printed by *your* code; previous run looked correct; test suite passes (unit/integration tests exercise isolated paths, not end-to-end effects); **a green CI run, when the step that would exercise your change is gated behind `workflow_dispatch` inputs** — `github.event.inputs.*` is empty on `pull_request`, so an `if: github.event.inputs.test_level == '…'` step silently skips and still contributes to the green checkmark. Before writing "CI verifies X" in a PR body or commit message, grep the workflow YAML for the `if:` on the specific step that exercises X; if it is input-gated, dispatch it (`gh workflow run <wf> --ref <branch> -f <input>=<value>`) and read that step's conclusion AND its real stdout — `gh run watch --exit-status` exits 0 for a skipped step too. Origin: 2026-08-02 setup #793 — a PR body claimed `test-macos` gated a darwin change while its apply/verify steps had not run.
+NOT evidence: clean compile/run, `Ok(())`, your own code's "success" line, a previous good run, passing tests, green CI whose exercising step is gated on `workflow_dispatch` inputs (grep its `if:`; if gated, dispatch it and read that step's conclusion and stdout). ARE evidence: receiving-end state (file, DB record, zone status, queue length), tests on the changed path with real inputs, receiving-system logs, a status query showing the expected state.
 
-ARE evidence: observable system state on the receiving end (zone status, file exists, DB record present, queue length changed); test output exercising the changed path against real inputs; log output from the *receiving* system; status-query command returning the expected state after the fix.
+Detail: see `~/.claude/docs/debugging-detail.md#do-not-report-success-without-state-evidence`.
 
 ## Auth Gate Changes — Live Token Step Required
 
-For a change to an authentication / authorization gate on a RUNNING system (JWT validator, nginx `auth_request`, bearer / API-key check, session-cookie validator, mTLS peer check), a source-level adversarial PASS is necessary but NOT sufficient evidence. Verification MUST include a live token round-trip:
+For an auth-gate change on a RUNNING system (JWT, `auth_request`, bearer/API key, session cookie, mTLS), a source-level adversarial PASS is necessary but NOT sufficient. MUST also: (1) decode a real token from the live issuer and confirm the check passes its real claims; (2) after deploy, round-trip a real request and observe accept/reject on the receiving system. Design-time counterpart: `adversarial-review.md` "Live Token Round-Trip Gate".
 
-1. Decode a real token from the actual live issuer (not a synthetic one) and confirm the new check passes for its real claim values.
-2. After deploy, round-trip a real client request and observe accept/reject on the receiving system.
-
-See the design-time counterpart in `~/.claude/rules/adversarial-review.md` "Live Token Round-Trip Gate".
-
-Detail (why synthetic tokens are insufficient + origin): see `~/.claude/docs/debugging-detail.md#auth-gate-changes-live-token`.
+Detail: see `~/.claude/docs/debugging-detail.md#auth-gate-changes-live-token`.
 
 ## When to Add Observation Tooling Proactively
 
-Add a status/observe command *as part of the feature*, not as a follow-up, when:
-
-- The operation crosses a network or IPC boundary (MQTT, HTTP, WebSocket RPC, IPC)
-- The operation is asynchronous (command sent now, effect occurs later)
-- Previous fix attempts reported success but user confirmed the effect was absent
-- The feature controls external hardware or services (audio, IoT, CI pipelines)
-
-If no observation tool exists in the codebase yet, build a minimal one (`status` subcommand, `--verbose` flag, query script) during the same unit of work.
+Ship a status/observe command *with the feature* when it crosses a network/IPC boundary, is async, controls external hardware/services, or earlier fixes "succeeded" with no visible effect. If none exists, build a minimal one in the same unit of work.
 
 ## Adapter layers need tests with host-shaped input
 
-A thin adapter between tested pure logic and an implicitly-shaped host runtime — an n8n Code node, a Lambda handler, a webhook controller, a CLI argument parser — needs its own test that feeds it the input shape the host actually delivers and asserts what it hands to the logic. Unit tests on the wrapped logic say nothing about the wrapper: the logic can be correct while every call site passes it the wrong shape. When a plan's test tiers cover only the pure-logic layer, name the missing adapter tier as a plan gap before implementation, not as a review finding after it. Same failure class as the FFI boundary audit (`~/.claude/docs/ffi-audit.md`). Origin: 2026-09-26 — 390 passing unit tests on the logic layer, while five Code-node adapters passed the wrong input shapes (one would have blocked every promotion); found only at review.
+A thin adapter over tested logic (n8n Code node, Lambda handler, webhook controller, CLI parser) needs its own test with the input shape the host actually delivers, asserting what it passes on. When a plan tests only the logic layer, name the adapter tier as a plan gap before implementing. Same class as `docs/ffi-audit.md`.
+
+Detail: see `~/.claude/docs/debugging-detail.md#adapter-layers-host-shaped-input`.
 
 ## Auth-boundary error visibility — log Err variant on every reject
 
-Authentication and authorization gates (JWT validators, OAuth bearer verifiers, `auth_request` handlers, API key checks, session cookie validators, mTLS peer cert checks) MUST log the rejection variant at WARN or ERROR level **unconditionally** — never gated behind `#[cfg(debug_assertions)]`, `RUST_LOG=trace`, `DEBUG=1`, or any flag that defaults off in production.
+Auth gates MUST log the rejection variant at WARN/ERROR **unconditionally**, never behind a default-off flag (`cfg(debug_assertions)`, `RUST_LOG=trace`, `DEBUG=1`). Trigger: `Err(_) => return 401` discarding a rich error enum — log `error_variant = ?e` + expected config, at the call site or the final reject site. Never the full token; do log variant, kid, expected iss/aud/scope, 16-char prefix.
 
-Trigger pattern: `verify_*` returns `Result<Claims, AuthError>` (rich enum); call site discards the variant via `Err(_) => return 401`. Fix: log `error_variant = ?e` + relevant config (`expected_iss`) before the response, OR move the log into the verify function itself at the final reject site.
-
-**Don't** log the full token. **Do** log: variant, kid from JWT header, expected issuer/audience/scope, 16-char token prefix.
-
-Server-side counterpart of "FFI Boundary Error Visibility" in `~/.claude/docs/ios-build.md`.
-
-Detail (Rust example + origin): see `~/.claude/docs/debugging-detail.md#auth-boundary-error-visibility`.
+Detail: see `~/.claude/docs/debugging-detail.md#auth-boundary-error-visibility`.
 
 ## Do Not Push Error Reproduction to the User
 
-The user asking "試してみてください" / "run it and check" is a fallback, not a default. Before reaching that fallback, run the observe→fix→re-observe loop yourself (Silent Failure Detection above): reproduce the failure via the observation tool, verify the cause via observation (not source reasoning), apply the fix, verify it took effect via observation, then report with the observed state-change as evidence.
-
-Asking the user to reproduce an error they already reported is asking them to do your debugging work.
+"試してみてください" is a fallback, not a default. Reproduce, confirm the cause, fix and verify by observation yourself, then report with the observed state change.
 
 ## Fix-Loop Escalation Threshold
 
-When the same observable symptom persists after 3 hypothesis-test cycles on the same code path, stop the fix loop. Do not start a 4th local fix.
+Same symptom after 3 hypothesis-test cycles on one path → stop, no 4th local fix. Synthesize ("A, B, C failed; shared assumption X") and ask via AskUserQuestion: "局所修正では解決しない可能性がある。設計上の前提 X を見直す必要があるか？". Count by capability, not error text — differently-worded errors on one capability still count. When each try costs a >60s rebuild, batch all hypothesized fixes into one rebuild.
 
-1. Synthesize the failed hypotheses: "3 approaches failed (A, B, C). The shared assumption is X."
-2. Challenge X at the design level with AskUserQuestion: "局所修正では解決しない可能性がある。設計上の前提 X を見直す必要があるか？"
-
-**Signal**: same symptom after 3 cycles = wrong design assumption, not wrong implementation detail.
-
-**Count by capability, not by error text**: when 3+ cycles chase the same *capability* ("make GPG signing work unattended", "get this secret readable from the box") but each cycle's error message differs, do NOT reset the counter because the symptom changed shape. Ask instead: do these differently-worded errors share one root assumption? A drifting error message is the normal look of a wrong assumption being probed from different angles — it is evidence FOR escalating, not against. Origin: 2026-08-01 sh1-cloud — 5 cycles on unattended GPG signing (`No secret key` → protected-export silently dropping the subkey → `--passwd` targeting a stub primary → agent `Bad passphrase` → broken temp keyring), all resting on "an interactive passphrase flow is available"; the same-symptom counter never fired because no two errors matched.
-
-**Batch fixes within a rebuild cycle**: when a debugging loop involves an expensive rebuild (`docker compose up --build`, `cargo build --release`, `xcodebuild`, `terraform apply` — anything >60s), collect ALL hypothesized fixes for the *current* observable failure before triggering the rebuild. Sequential evaluation of N hypotheses costs N × build time; batched evaluation costs one build.
-
-Detail (worked example + origin): see `~/.claude/docs/debugging-detail.md#fix-loop-escalation-threshold`.
+Detail: see `~/.claude/docs/debugging-detail.md#fix-loop-escalation-threshold`.
 
 ## Wire-Protocol Reverse Engineering — Capture Reference Bytes First
 
-When implementing a transport, webhook receiver, or protocol endpoint to satisfy an external client whose format expectations are undocumented (Anthropic Claude.ai MCP connector, Slack RTM/Socket Mode, MCP client SDK, vendor webhook handshake), capture the *raw bytes* from a known-working reference server BEFORE writing any implementation code.
+When an external client's format is undocumented (MCP connector, Slack Socket Mode, vendor webhook), capture raw bytes from a working reference server BEFORE implementing, hex-diff your output against it, and fix all divergences in one batch. Trigger: "client says NG, my server returns 200".
 
-Sequence:
-
-1. Identify the nearest working reference deployment (sibling vendor endpoint, open-source server, in-tree example — there is almost always one)
-2. Capture the wire bytes (raw body + response headers via `curl … | xxd`; exact commands in Detail)
-3. Write the implementation
-4. Diff your output against the reference at the same hex-dump granularity (exact `diff <(curl…) <(curl…)` form in Detail)
-5. Fix every divergence in **one** batch (per Fix-Loop Escalation rule above)
-
-**Trigger**: "the client says NG but my server returns 200 OK". The client has format expectations your code does not satisfy yet. Stop hypothesizing; start observing.
-
-Detail (exact capture/diff commands + common divergence list + origin): see `~/.claude/docs/debugging-detail.md#wire-protocol-reverse-engineering`.
+Detail: see `~/.claude/docs/debugging-detail.md#wire-protocol-reverse-engineering`.
 
 ## Read the Source Before Researching Patterns
 
-When the failure is an observable error string from a third-party Rust / Go / Python SDK (e.g., `BLE error: Device not found`, `connection refused`, `unauthorized`), **grep the SDK source for the exact error string before launching a web-research sub-agent**. Source-first finds the line that emits the error and its guard condition in 1-2 minutes.
+For a third-party SDK error string, **grep the SDK source for it before any web research** (`~/ManagedProjects/<sdk>/`, else `~/.cargo/registry/src/`), read 30-50 lines around the emit site, trace the guard, then hypothesize. Sub-rules (Terraform provider command strings, tool-manager backend claims, CLI JSON schema before jq) in Detail.
 
-Sequence:
-
-1. `find` / `Glob` the SDK repo on disk (`~/ManagedProjects/<sdk>/`). If absent, `cargo fetch` + inspect `~/.cargo/registry/src/`
-2. `Grep` for the error string — typically reveals a single emit site
-3. Read 30-50 lines around the emit site, trace guard back to API surface
-4. Form a hypothesis grounded in source, **then** research if needed
-
-Sub-rules (Detail file): custom Terraform providers — apply-time command-string errors; tool-manager migration design — verify backend claims (cross-link to `~/.claude/docs/mise-migration.md`); CLI tool JSON output — probe schema before writing jq.
-
-Detail (sub-rules + anti-signal + origins): see `~/.claude/docs/debugging-detail.md#read-the-source-before-researching`.
+Detail: see `~/.claude/docs/debugging-detail.md#read-the-source-before-researching`.
 
 ## Frame the Failure Class Before Writing the Fix
 
-When fixing a bug, the first design question is **"what shape is this failure class?"**, not "what minimal change makes this error stop?". Silencing the specific error often leaves the underlying fragility in place.
+Ask "what failure class is this?" before "what stops this error?". Structural triggers: rotating addresses, stored tokens against a mutable endpoint, paths another process manages, timestamps/versions/hashes outliving scope. Structural → propose the class-wide fix (discovery/caching/fallback) via AskUserQuestion; transient → retry suffices. Retry alone never completes a structural fix.
 
-**Triggers** — when the error involves any of these, the failure is structural and deserves a failure-class framing pass:
-
-- Hard-coded addresses (IPs, hostnames, ports) that the environment can rotate — DHCP leases, floating cloud IPs, mDNS-announced services
-- Stored auth tokens or keys against a mutable endpoint — credential stable but endpoint not
-- Hard-coded filesystem paths referencing structure a sibling process / deploy step manages
-- Timestamps, versions, or hashes embedded in persisted state outliving their intended scope
-
-Protocol:
-
-1. Before implementing, name the failure class in one sentence: "what set of similar failures will this same design reproduce?"
-2. If structural (multiple foreseeable triggers), propose the class-wide fix via AskUserQuestion — typically discovery / caching / fallback, not just silencing
-3. If transient (network blip, race, rare external outage), non-fatal retry suffices
-4. Non-fatal + retry is a necessary piece of the structural fix, **never the complete fix** — a dead service retried against stale config stays dead
-
-Detail (anti-pattern + origin): see `~/.claude/docs/debugging-detail.md#frame-the-failure-class`.
+Detail: see `~/.claude/docs/debugging-detail.md#frame-the-failure-class`.
 
 ## Verify a chosen remediation is feasible before executing it
 
-Distinct from **Verify-before-done** (post-fix state confirmation): this is a *pre-execute precondition* check. After AskUserQuestion settles on a remediation, run the cheapest probe that confirms the chosen path can actually work **before** running the destructive or expensive step. A user selecting an option does not make its precondition true.
+After AskUserQuestion picks a remediation, run the cheapest probe proving its precondition **before** the destructive/expensive step (snapshot, commit, backup, tag, role exists; credential is not a shared rotating token; device identified by a per-device identifier). Absent → do not run it; return with feasible options.
 
-Probe-before-execute pairs:
-
-- "restore from snapshot" → `GET _snapshot/<repo>/_all` — is the target index actually in a snapshot, with a non-failed shard? — before the restore
-- "cherry-pick that commit" → `git cat-file -e <hash>` / `git log <hash>` before the cherry-pick
-- "restore from S3 / backup" → `aws s3 ls <bucket>/<key>` before the restore
-- "roll back to version X" → confirm the tag / artifact exists before the rollback
-- "reassign to user/role Y" → confirm Y exists with the needed grant before the change
-- "share one subscription/login across two hosts" → inspect the credential file's token structure (`accessToken`/`refreshToken`/`expiresAt`) for rotating-refresh-token semantics BEFORE copying it — a shared rotating token invalidates whichever host refreshes second; use an independent login per host (see `~/.claude/docs/claude-cli-headless.md`)
-- "block / restrict a device" identified from a rotating or shared signal (a private MAC, a DHCP host name, an mDNS name) → confirm WHICH device it is with a per-device identifier (the AirPlay TXT `pi` over unicast mDNS, the model, or the owner's own confirmation) BEFORE merging or applying the block, not after. A MAC that appeared right after the old one vanished is a hypothesis; household Macs often share one name. Origin: 2026-10-03 home-monitor #170 blocked `.68` before the mDNS probe showed `Shinichi-Ohnos-MacBook-Air.local`, the same name as the operator's own Mac; the owner confirmed it was ann's Mac only afterwards.
-
-If the precondition is absent, do NOT run the doomed command (it fails with a misleading error — "snapshot not found", "bad revision"). Return to the user with the corrected, actually-feasible options.
-
-Detail (claude-cli token-rotation origin + snapshot-restore origin): see `~/.claude/docs/debugging-detail.md#verify-remediation-feasible`.
+Detail: see `~/.claude/docs/debugging-detail.md#verify-remediation-feasible`.
 
 ## Chain verify command with the fix in the same `!` block
 
-When presenting a credential or configuration fix to the user that must succeed before the main task can resume, **compose the verify command into the same `!` block** with `&&` (e.g. `! aws configure --profile … && aws ssm get-parameter … && echo OK` — full example in Detail).
+Compose a must-succeed credential/config fix with its verify in one `!` block via `&&`. If not composable (interactive `aws configure`), mark the verify **required before retrying the main task**, never optional.
 
-When verify cannot be composed (e.g. interactive `aws configure`): explicitly mark verify as **required before retrying the main task**, not a suggestion. "and confirm with" or "before retrying, run". Not "you can also check".
-
-Detail (composed-block example + anti-pattern + origin): see `~/.claude/docs/debugging-detail.md#chain-verify-with-fix`.
+Detail: see `~/.claude/docs/debugging-detail.md#chain-verify-with-fix`.
 
 ## Confirm the suspected driver is actually deployed before optimizing it
 
-Before designing an optimization or fix for a specific process / script / cron job suspected of driving a cost or load metric, run a one-shot probe to confirm it is actually present and running on the target host(s). Source-code existence does not imply deployment.
+Before caching/throttling a script suspected from source of driving cost or load, probe the target: `find`, `pgrep -a -f`, crontabs, `systemctl list-timers --all`. All absent → find the real driver (CloudTrail, `ps aux`, container logs).
 
-Probe (30 seconds): `find` the script under `/root` + cron dirs, `pgrep -a -f`, `grep` the crontabs, and `systemctl list-timers --all` (full 4-line ssh block in Detail). If all return absent / NOT_RUNNING / NO_CRON / NO_TIMER, the suspected driver is not active on the target. Stop optimizing it and pivot to finding the actual driver (CloudTrail, `ps aux`, container logs, `systemctl list-timers`).
-
-**Trigger**: you are about to implement a cache, throttle, or rate-limit for a specific script or service based on source-code reading, without having verified it runs on the target.
-
-Detail (full 4-line ssh probe block + origin): see `~/.claude/docs/debugging-detail.md#confirm-suspected-driver-deployed`.
+Detail: see `~/.claude/docs/debugging-detail.md#confirm-suspected-driver-deployed`.

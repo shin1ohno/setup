@@ -1,4 +1,5 @@
 {
+  "claudeMdExcludes": ["**/cookbooks/claude-code/files/CLAUDE.md"],
   "hooks": {
     "PreToolUse": [
       {

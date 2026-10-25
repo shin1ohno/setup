@@ -1,17 +1,10 @@
 # Plan-Phase Rules
 
-Always-loaded planning discipline. The detailed UX / IA plan-file structure lives in `~/.claude/docs/planning-detail.md` (on-demand — Read it when the task is UX/IA/frontend design).
+Examples, origins and the UX / IA plan structure: `~/.claude/docs/planning-detail.md` (on-demand).
 
 ## Design-to-Plan Transition
 
-When an exploratory conversation ("考えてみてください" / "think about it", "どう思う？" / "what do you think?", "どうすればいい？" / "how should we approach this?") converges on a directional decision ("この方向でやろう" / "let's go with this", "いい案だ" / "good idea", user accepts a design proposal), that convergence is the plan-mode entry trigger — not a chat proposal or consent question.
-
-**Banned closing phrases for non-trivial tasks** — if you are about to write any of these, stop and call EnterPlanMode instead:
-- "この方針で X 実装していいですか？" / "can I implement X with this approach?"
-- "X に進んでいいですか？" / "can I proceed with X?"
-- "実装に入っていいですか？" / "can I start implementing?"
-
-These are plan-mode entry triggers, not chat questions. Writing them in chat means the plan was never created. Correct sequence: design converges → EnterPlanMode → draft plan → user approves → implement.
+An exploratory conversation ("考えてみてください", "どう思う？") converging on a direction ("この方向でやろう", "いい案だ", proposal accepted) is the plan-mode entry trigger, not a chat consent question. **Banned closings for non-trivial tasks** — 「この方針で X 実装していいですか？」「X に進んでいいですか？」「実装に入っていいですか？」 (or English equivalents): call EnterPlanMode instead.
 
 ## Autonomous Execution Boundary
 
@@ -23,86 +16,50 @@ These are plan-mode entry triggers, not chat questions. Writing them in chat mea
 | Ambiguity discovered not covered by the plan | AskUserQuestion |
 | Scope creep temptation | AskUserQuestion |
 | Destructive operation not in the plan | AskUserQuestion |
-| Technically-necessary additive change discovered mid-implementation (shared schema needs an extra field/variant the plan didn't enumerate; no behavior change to scope) | Proceed without asking, but append a one-line note to the plan file in the same turn so the plan stays in sync with what shipped. Future readers must be able to reconstruct the decision from the plan alone |
-| Implementation complete | Create PR; immediately launch a background `gh pr checks --watch` loop. If any check fails, read the log, fix, push without prompting; repeat until CI is fully green. Do NOT declare the task complete or notify the user until every required check passes. `gh pr create` is not the terminal step — green CI is |
-| `gh pr checks --watch` exits non-zero with `HTTP 504` / `Bad Gateway` / `no checks reported on the '<branch>' branch` (early race) | Transient GitHub graphql / API error — re-launch the same `gh pr checks <n> --watch` once. On second consecutive failure, inspect `gh pr view <n> --json statusCheckRollup,mergeStateStatus`: `mergeStateStatus` of `DIRTY` / `CONFLICTING` means GitHub will never run checks on this PR — stop polling, rebase onto the base branch, force-push, re-watch (a mid-flight sibling merge touching the same files is the common cause). Only an empty rollup with `CLEAN` / `UNSTABLE` / `BEHIND` is genuinely transient. Do NOT treat single exit-1 as a CI failure verdict. Origin: 2026-07 setup #696 — "no checks reported" ×2 was a conflict from #695 merging mid-flight, not a race |
+| Technically-necessary additive change mid-implementation (extra schema field/variant, no scope change) | Proceed without asking; append a one-line note to the plan file in the same turn so the plan alone reconstructs the decision |
+| Implementation complete | Create PR, launch a background `gh pr checks --watch` loop at once; on failure read the log, fix, push unprompted, repeat. Not complete (no user notice) until every required check is green |
+| `gh pr checks --watch` exits non-zero with `HTTP 504` / `Bad Gateway` / `no checks reported on the '<branch>' branch` | Re-launch once; on a second failure read `gh pr view <n> --json statusCheckRollup,mergeStateStatus`: `DIRTY` / `CONFLICTING` → rebase, force-push, re-watch; only an empty rollup with `CLEAN` / `UNSTABLE` / `BEHIND` is transient. A single exit-1 is not a CI-failure verdict. Detail: see `~/.claude/docs/planning-detail.md#autonomous-execution-boundary` |
 | Unit of work committed, more items remain | Proceed to next item immediately |
-| Long foreground run of tool calls during autonomous execution (about 8-10 consecutive calls with no user-facing text), or a harness "hasn't heard from you in a while" reminder | Emit one line — the step you are on and the next one — before the next tool call. The reminder is a hard trigger: the reply after it must carry progress, not a silent resumption. This is the foreground counterpart of the background-poll progress rule in CLAUDE.md. Origin: 2026-09-22 home-monitor — the reminder fired 4+ times in one session across ARP/ES probing, four PR cycles and a provider fix-and-release |
+| ~8-10 consecutive foreground tool calls with no user-facing text, or a harness "hasn't heard from you in a while" reminder | Emit one line (current step + next) before the next tool call; after the reminder the reply must carry progress. Foreground counterpart of CLAUDE.md's background-poll rule |
 | All plan items complete but plan mode still active | Exit plan mode immediately, do not re-enter |
 | Blocked waiting for manual user action (sudo, restart, deploy) | Launch background retro/memory/TODO agents immediately |
 
 ## Research-to-Plan Pipeline
 
-When a task requires research before planning, run research and planning in parallel — never sequentially:
-
-1. Launch background research agents
-2. **Immediately** enter plan mode and begin drafting the plan with available information
-3. Incorporate research results into the plan as agents complete
-4. Present the completed plan for user approval
-
-**Anti-pattern**: launching research, then announcing "I'll plan when results arrive" and waiting. This is idle time that violates the planning rule.
+When research precedes planning, run both in parallel: launch background research, **immediately** draft in plan mode, fold results in as they land, then present. Waiting for results before planning is a violation.
 
 ## Requested-Partition Fidelity — mirror the asked-for breakdown into the deliverable
 
-When the request itself enumerates required partitions — outcomes to evaluate separately, viewpoints, segments, scoring axes, comparison targets — those partitions become the deliverable's section headings **1:1**. A partition with no evidence keeps its section and says so (「証拠なし」/「データ未取得」); it is never silently merged away or dropped. Merging or omitting a partition is a scope decision → AskUserQuestion before starting, not after delivering.
+Partitions the request enumerates (outcomes, viewpoints, segments, axes, comparison targets) become the deliverable's section headings **1:1**; an evidence-less partition keeps its section and says 「証拠なし」/「データ未取得」. Merging or dropping one is a scope decision → AskUserQuestion before starting. For a workflow or sub-agent, put the partitions into the `schema` keys. This is AGENTS.md 増分更新の棚卸し applied to the first version.
 
-When the work is handed to a workflow or sub-agent, put the partition list into the `schema` keys so a missing partition fails structurally instead of arriving as a plausible-looking imbalance.
-
-Same discipline as the shared `~/.agents/AGENTS.md`'s 増分更新の棚卸し (diff line counts against the prior version, mark unverified rows) — this is that rule applied to the FIRST version.
-
-Origin: 2026-07-24 — a knowledge-worker overtime study whose request spelled out five outcome classes ((1) physical health (2) mental health: depression / anxiety / burnout (3) cognition (4) productivity (5) employment sustainability) came back weighted toward vascular disease. The user rejected it (「いずれも肉体労働を中心とした、物理的な血管などの疾患に寄りすぎていませんか？…その前提で調査と分析をやり直して欲しいです」) and one whole deep-research workflow run was wasted.
+Detail: see `~/.claude/docs/planning-detail.md#requested-partition-fidelity`.
 
 ## Parallel-Stream Decomposition — Default Plan Shape
 
-For a large rewrite, migration, or multi-module / multi-repo implementation with 3+ independent delivery units, default the plan to a contracts-first parallel shape — do NOT default to a serial phase plan:
+For a rewrite / migration / multi-module or multi-repo job with 3+ independent units, default to contracts-first parallel, proposed unasked: Wave 0 freezes shared types/schemas; streams declare file exclusivity (`sub-agents.md`); state the stream-count vs review-load tradeoff. A genuinely serial graph stays serial with a one-line reason (mechanical sweeps out of scope). Derive a fan-out count from an upstream discovery run first, never a guessed cap. 3+ parallel drafters of one document need a Wave 0 *contracts* file (shared names/shapes), not just a decisions file.
 
-1. **Wave 0 (serial, minimal)**: freeze the shared types, interfaces, and schemas first
-2. **N parallel streams**: declare each stream's file exclusivity (per `sub-agents.md` "Parallel Stream File-Exclusivity Declaration")
-3. **Parallelism is an explicit plan decision**: state the concurrent-stream-count vs review-load tradeoff in the plan so the user can choose it
-
-Propose the decomposition BEFORE the user asks for parallelism — shipping a serial phase plan and getting a "make it parallel where possible" re-request (an ExitPlanMode reject) wastes a round-trip.
-
-**Exception**: when the dependency graph is genuinely serial (each stage's output is the next stage's input), a serial plan is fine — but write one line stating why parallel decomposition isn't offered. Never default to serial silently. (The CLAUDE.md "Inverse — NOT new plan triggers" mechanical-sweep case is out of scope for this rule.)
-
-**Do NOT fix the downstream stream count when it depends on an upstream discovery**: when a later phase fans out over whatever an earlier phase enumerates (verify each finding, migrate each call site, deep-read each source), the count is unknown at plan time and a guessed cap silently truncates coverage. Run the discovery phase on its own first, then derive the fan-out from the actual count — `ceil(N / batch_size)`, or one stream per category when the items group naturally — and launch the second phase with that number. Two invocations you stay between beats one invocation with a guessed cap: you read the real count, and any cap you do impose is a stated decision rather than a silent one. Origin: 2026-08-05 — a workflow fixed its verify fan-out at 8 while discovery returned 99 entries; the run had to be stopped mid-flight and re-shaped into category-based streams, wasting the first run's verify budget.
-
-**Applies to parallel document drafting too**: when 3+ agents draft sections of one plan, spec, or design document in parallel, Wave 0 is a *contracts* file that fixes every definition two or more sections will reference — identifiers, field and property names, JSON shapes, key formats, error codes, caller lists — before any drafter starts. A decisions file of resolved choices is not a substitute: decisions record *which* option was picked, contracts record *what the shared names and shapes are*, and parallel drafters diverge on the second even when they agree on the first. Origin: 2026-09-26 — six parallel section drafters bound only by a decisions file defined the canonical record three different ways; closing the drift took a separate contracts-reconcile pass plus fix/verify loops that ran for about 6h40m.
-
-Origin: 2026-06-15 sage TS→Rust full rewrite — serial phase plan rejected at ExitPlanMode, the only revision request was "make it parallel where possible" (Claude re-shaped it to Wave 0 contract freeze → 9 File-Exclusivity streams); recurred 2026-07-04 in a separate project with the same up-front instruction.
+Detail: see `~/.claude/docs/planning-detail.md#parallel-stream-decomposition`.
 
 ## Architecture Discussion Gates
 
 ### Standard Mechanism First — justify every added layer
 
-Before a plan includes a NEW mechanism — a tunnel, a proxy, a bespoke key/secret distribution path, a wrapper script, a sync daemon — decide in one line whether the platform's **standard** mechanism alone satisfies the requirement (`authorized_keys` + plain ssh, the official CLI's default auth path, a direct IAM grant, the service's own scheduler), and write that decision into the plan. If the standard mechanism suffices and you still choose the extra layer, state the reason it buys (smaller exposed surface, audit requirement, existing fleet convention) and put the choice through AskUserQuestion. A plan that introduces an added layer without this line is incomplete.
+Before a plan adds a NEW mechanism (tunnel, proxy, bespoke secret path, wrapper, sync daemon), write one line on whether the platform's **standard** mechanism suffices (plain ssh + `authorized_keys`, the CLI's default auth, a direct IAM grant, the service's scheduler). If it does and you still add the layer, state what it buys and put it through AskUserQuestion; a plan without that line is incomplete.
 
-This is distinct from the **Existing-facility probe** in the shared `~/.agents/AGENTS.md` (reuse what this repo already ships) — that one asks "does a facility exist here?", this one asks "does the platform already do this without any facility?".
-
-Origin: 2026-07-30 sh1-cloud — the user pushed the solution shape back three times in one session (「普通にssh authorize keyを登録しておけばいいだけじゃないんですか？なぜここでtailscaleを使うのでしょう？」「ちょっとソリューションがズレている気がします。tailscaleで同じネットワークで入り、tailscaleに依存しない普通のsshでログインしたいです」「ちょっと待って。githubにsshできるように鍵を設定する方が良いのでは？」), each time against a layer proposed ahead of the plain mechanism. The end state kept Tailscale as the network but moved auth back to plain ssh keys.
+Detail: see `~/.claude/docs/planning-detail.md#standard-mechanism-first`.
 
 ### Cross-Repo Design Decisions
 
-When a task spans 2+ repositories and involves shared contracts (protocol schemas, MQTT topic structure, API interfaces, event formats, shared data models), stop before implementing and use AskUserQuestion to surface the design decision.
-
-Trigger: before writing code that defines a shared contract, ask:
-"This defines a shared contract between [A] and [B]. Proposed design: [x]. Adjust before I implement?"
+When a task spans 2+ repos with a shared contract (protocol schema, MQTT topics, API, event format, shared model), stop before writing it and ask via AskUserQuestion: "This defines a shared contract between [A] and [B]. Proposed design: [x]. Adjust before I implement?"
 
 ### Architecture Before Implementation
 
-When creating a new system layer (binary, service, routing engine):
-1. Name the component
-2. Define its single responsibility
-3. Define inputs, outputs, and interaction with existing components
-4. AskUserQuestion to confirm — then implement
-
-Architecture reviews are free. Post-implementation redesigns cost sessions.
+For a new system layer (binary, service, routing engine): name it, define its single responsibility, inputs/outputs and interactions, confirm via AskUserQuestion, then implement.
 
 ### SDK vs. Consumer Distinction
 
-SDK must be independently useful without any specific consumer.
-Consumer-specific logic belongs in the consumer binary, not the SDK.
-When unsure which layer a feature belongs to, ask before placing it.
+An SDK must be useful without any specific consumer; consumer-specific logic belongs in the consumer binary. When unsure of the layer, ask before placing it.
 
 ## UX / IA / Frontend Plan File Structure
 
-When the task is UX revision, IA redesign, or any frontend feature with multiple user-facing behaviors, the plan file MUST follow a fixed section order — use-case flows FIRST (so the IA shape emerges from user goals, not file boundaries), and a Verification section split into **Claude-runnable tests** (mandatory — every check Claude can run without the user's hardware) + **User hardware verification** (numbered, only genuinely-device steps). Full section order + rationale: see `~/.claude/docs/planning-detail.md#ux-ia-plan-file-structure`.
+For UX revision, IA redesign, or a frontend feature with multiple user-facing behaviors, the plan file MUST use the fixed section order: use-case flows FIRST, and Verification split into **Claude-runnable tests** (mandatory) + numbered **User hardware verification** (device-only steps). Detail: see `~/.claude/docs/planning-detail.md#ux-ia-plan-file-structure`.

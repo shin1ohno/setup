@@ -70,3 +70,9 @@ done
 ```
 
 Origin: 2026-08-02 setup — a `set -euo pipefail` sweep reported 8 unrecorded dash-fatal sites; the true count was 9 (`lxc-monitoring:430` uses `set -uo pipefail`). A follow-up `-o pipefail` search returned only 5 files and did not include a hit that had already been read directly, and both `rg --glob` and `ugrep --include` returned truncated sets after a flag-parse error. `git grep` on the bare token plus per-hit classification settled it, and separated 5 non-defects (heredoc-shipped scripts, a darwin-only block) from the 9 real ones.
+
+## summary-origins
+
+Origins of the always-loaded summary in `~/.agents/AGENTS.md`. 2026-06-27〜07-03, three incidents in three projects: 「sage 参照ゼロ」 followed immediately by a hit in servers.yml; #45 missed because of a `--search` mismatch; a `cd` that fired the tree hook plus a shallow `find` missed a cookbook. Positive-control failure classes that look identical to a true 0 in the output: `rg` absent, sandbox block, wrong path, a zsh error. 2026-08-02 setup: the 8-vs-9 pipefail count and the `rg --glob` / `ugrep --include` flag-parse truncation described above.
+
+`未列挙` vs `0 件`: folding an unreachable target or a truncated listing into "0 件" makes every downstream dedup and completion check read "absent". Origin: 2026-08-30 — an automation template spells out that writing "0 件" is forbidden (the TODO-pipeline-specific three-state version lives in `docs/todo-management.md`).
