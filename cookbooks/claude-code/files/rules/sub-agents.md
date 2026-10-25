@@ -1,6 +1,3 @@
----
-description: "Sub-agent design principles, bulk research pattern, and tool selection guide"
----
 
 # Sub-agent Design Principles
 

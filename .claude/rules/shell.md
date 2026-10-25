@@ -1,7 +1,3 @@
----
-globs: ["*.sh", "*.zsh", "*.bash"]
----
-
 # Shell Script Guidelines
 
 This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/docs/shell-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).

@@ -1,5 +1,9 @@
 ---
-globs: "*.rb"
+paths:
+  - "**/*.rb"
+  - "cookbooks/**"
+  - "roles/**"
+  - "pve/**"
 ---
 
 # Ruby Code Guidelines
@@ -8,7 +12,7 @@ globs: "*.rb"
 - Prefer symbols over strings for hash keys in DSL code
 - mitamae runs without sudo. Never use `owner node[:setup][:system_user]` on file/remote_file resources — it triggers an internal `sudo chown` that fails without a terminal. Instead, stage files in user space (`node[:setup][:root]`) and use `execute` with explicit `sudo cp` to place them in system directories
 
-This file is the always-loaded summary. Long examples + origin notes are in `~/.claude/docs/ruby-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
+This file is path-scoped: it loads when you Read/Edit a `*.rb` file or anything under `cookbooks/`, `roles/`, `pve/`. Long examples + origin notes are in `~/.claude/docs/ruby-detail.md` (NOT auto-imported — load on demand via Read tool when a section pointer matches the current task).
 
 ## Grep for in-codebase resource pattern before writing custom `execute`
 
