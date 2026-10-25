@@ -130,8 +130,8 @@ def cc(client_id):
             "grant": identity.GRANT_CLIENT_CREDS, "agent": client_id}
 
 
-HUMAN = {"sub": "shin1ohno@gmail.com", "client_id": "claude-ai",
-         "grant": identity.GRANT_AUTHZ_CODE, "agent": "shin1ohno@gmail.com"}
+HUMAN = {"sub": "owner@example.com", "client_id": "claude-ai",
+         "grant": identity.GRANT_AUTHZ_CODE, "agent": "owner@example.com"}
 MIRROR = cc("memory-mirror")
 # Session search ccs clients (design spec §7.6): listed in the proxy's
 # ALLOWED_CLIENT_IDS, so CLIENT_POLICY must know them — with no MCP tools.
@@ -507,7 +507,7 @@ def test_supersede_scope():
         check("forget by id: own file-memory doc is superseded",
               res == {"superseded_count": 3} and calls == [("parent", "p1")], f"got {res!r} {calls}")
 
-        be._get_target_meta = meta_for(be.KNOWLEDGE_INDEX, "file-memory", agent="shin1ohno@gmail.com")
+        be._get_target_meta = meta_for(be.KNOWLEDGE_INDEX, "file-memory", agent="owner@example.com")
         res, _ = attempt(id="doc1", allowed_datasets=allowed)
         check("forget by id: in-scope doc written by someone else is still refused (agent rule)",
               isinstance(res, be.AuthzError) and calls == [], f"got {res!r} {calls}")
@@ -697,7 +697,7 @@ def test_wiring():
                 "x-verified-sub": sub if sub is not None else client_id}
 
     mirror = hdr("client_credentials", "memory-mirror")
-    human = hdr("authorization_code", "claude-ai", "shin1ohno@gmail.com")
+    human = hdr("authorization_code", "claude-ai", "owner@example.com")
     marker = "SECRET-BODY-MARKER-7f3a"
     requests = [
         (mirror, "recall", {"query": "x"}),
@@ -824,7 +824,7 @@ def test_server_module(policy_cls):
     run(server.ingest(document="x", dataset="file-memory",
                       ctx=ctx_with("client_credentials", "memory-mirror", "memory-mirror")))
     run(server.ingest(document="x", dataset="notes",
-                      ctx=ctx_with("authorization_code", "claude-ai", "shin1ohno@gmail.com")))
+                      ctx=ctx_with("authorization_code", "claude-ai", "owner@example.com")))
     check("server.ingest: the mirror is kept inline, claude.ai may still get a job",
           backgrounds == [("file-memory", False), ("notes", True)], f"got {backgrounds}")
 
