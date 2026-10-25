@@ -1,7 +1,7 @@
-# Claude Code session search and resume — design spec
+# Claude Code and Codex session search and resume
 
-**Status**: Draft for review. The shared contracts in §7 need explicit agreement before any implementation starts.
-**Scope**: Search Claude Code session transcripts across projects and hosts, and resume a hit with one key. Nothing else.
+**Status**: Implemented in setup. Codex integration is described in §11.
+**Scope**: Search Claude Code and Codex session transcripts across projects and hosts, and resume a hit with the originating agent.
 **Home**: This file lives in `setup` for now and moves to `shin1ohno/ai-memory` with the rest of the memory-v2 code under ADR 0013.
 
 ## 1. Summary
@@ -653,3 +653,51 @@ No new external service is introduced. GCS, S3, LiteLLM, Voyage, fzf and ripgrep
 - **Latency**: 20 queries ("worktree", "index.lock", "マージ", "認証", "terraform apply", "mitamae dry-run", "ブランチ", "Elasticsearch", "kuromoji", "ScheduleWakeup", "権限", "gh pr merge", "memory-work", "セッション", "timeout", "ルール", "OAuth", "スナップショット", "cookbook", "検索").
   - One warm-up pass, then 5 timed passes, measured as Python wall time over loopback.
 - **Archive**: `cat` of the main JSONL piped to `gzip -6` and `zstd -3`; `tar` of every `tool-results/` directory piped to the same.
+
+## 11. Codex integration
+
+`ccs` indexes both Claude Code JSONL and Codex native rollout JSONL. Codex
+rollouts live under `$CODEX_HOME/sessions` (default `~/.codex/sessions`) and are
+collected by the same 15-minute sweep and `ccs ingest --backfill`. This includes
+rollouts mirrored by Codex's paginated history store; the SQLite databases are
+not uploaded or modified. A host that does not write rollout JSONL has no
+collectable Codex history in this adapter.
+
+The ingest envelope adds optional `file.source: "claude" | "codex"`, defaulting
+to `"claude"` for existing clients. Codex `project_dir` is `codex-` followed by
+the encoded local cwd, keeping its session keys separate from Claude Code.
+`session_codex.py` normalizes native records for the existing parser and is
+placed into the client package by the session-search cookbook as well.
+
+Only `response_item` user and assistant messages supply searchable conversation
+text; duplicate `event_msg` records, reasoning, developer instructions and
+injected AGENTS/environment records are excluded. Function/custom tool calls
+and their outputs populate the existing capped `tool_text` field. Native JSONL
+is masked before shipping and archived without conversion. The server re-scans
+it using the same masking rules as Claude Code.
+
+Existing ES fields and index schemas are retained. `entrypoint` distinguishes
+`codex-cli`, `codex-vscode`, `codex-appServer`, `codex-exec` and other sources.
+The first three are interactive; exec and subagent sessions require `--all`.
+Search results include `entrypoint`, and the picker marks Codex rows explicitly.
+
+Agents can use `ccs search [QUERY] [OPTIONS] [--limit 1..50]` and
+`ccs preview SESSION_KEY [QUERY]` without a terminal; both return JSON. These
+commands reuse the authenticated REST API and add an `agent` field (`claude` or
+`codex`) to the returned sessions. The shared `session-search` skill is deployed
+to `~/.agents/skills` for Codex and linked into Claude Code's skills directory.
+
+Local Codex sessions resume with `codex resume UUID`, or `codex fork UUID` for
+`--fork`. Archive restoration verifies SHA-256 and places a private native
+rollout under the local Codex sessions directory. It selects the locally chosen
+cwd, sets the archive's history mode to `legacy` so that JSONL alone is
+sufficient, and reconstructs display events when the original paginated store
+kept them in SQLite. It omits the old host's `turn_context`, `world_state` and
+`thread_settings_applied` records. Thus archived permission/workspace settings
+cannot select the local runtime environment. Existing different files require
+`--force`; symlink targets are rejected. The local Codex app-server must be
+able to read the restored conversation before this path is considered working.
+
+The offline fallback searches both agents' local rollouts, preserving its
+200-candidate cap and text-only behavior. It does not restore remote archives or
+perform semantic search while offline.

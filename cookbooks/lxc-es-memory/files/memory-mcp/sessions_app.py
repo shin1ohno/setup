@@ -1013,6 +1013,9 @@ async def ingest(request: Request, caller: dict):
     session_id = _str(f.get("session_id"), "file.session_id", SESSION_ID_RE)
     project_dir = _str(f.get("project_dir"), "file.project_dir", PROJECT_DIR_RE)
     jsonl_path = _str(f.get("jsonl_path"), "file.jsonl_path")
+    source = f.get("source", "claude")
+    if source not in ("claude", "codex") or (source == "codex" and not project_dir.startswith("codex-")):
+        raise HTTPError(400, "invalid_request", field="file.source")
     kind = f.get("kind")
     if kind not in ("main", "subagent"):
         raise HTTPError(400, "invalid_request", field="file.kind")
@@ -1099,7 +1102,8 @@ async def ingest(request: Request, caller: dict):
             parsed = await _run_bounded(
                 sessions_parse.parse_lines, session_key, kind, canonical, offset, host=host,
                 session_id=session_id, agent_id=agent_id,
-                known_entrypoint=(existing or {}).get("entrypoint"), redact_version=version)
+                known_entrypoint=(existing or {}).get("entrypoint"), redact_version=version,
+                known_cwd=(existing or {}).get("cwd"), source=source)
         for k, n in parsed["counters"]["unknown_types"].items():
             _COUNTERS["unknown_types"][k] = _COUNTERS["unknown_types"].get(k, 0) + n
 

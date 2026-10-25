@@ -153,9 +153,10 @@ def server_row(s: dict, local_host: str, now: float | None = None) -> str:
     mark = "  " if resumable(s, local_host) else "· "
     hits = s.get("hit_count")
     tail = SEP + str(hits) if isinstance(hits, int) and hits > 0 else ""
+    agent = " [Codex]" if str(s.get("entrypoint") or "").startswith("codex-") else ""
     return "%s\t%s%s %s %s%s%s%s" % (
         _clean(s.get("session_key")), mark, age, _clean(s.get("host")), util.short_cwd(s.get("cwd") or ""),
-        SEP, _clean(s.get("title") or "(untitled)", 80), tail)
+        SEP, _clean(s.get("title") or "(untitled)", 80) + agent, tail)
 
 
 def local_row(ls, host: str, now: float | None = None) -> str:
@@ -163,7 +164,7 @@ def local_row(ls, host: str, now: float | None = None) -> str:
     tail = SEP + str(ls.hits) if ls.hits else ""
     return "local:%s\t  %s %s %s%s%s%s" % (
         ls.path, util.human_age(now - ls.mtime), host, util.short_cwd(ls.cwd), SEP,
-        _clean(ls.title or "(untitled)", 80), tail)
+        _clean(ls.title or "(untitled)", 80) + (" [Codex]" if getattr(ls, "agent", "claude") == "codex" else ""), tail)
 
 
 def banner_row(text: str) -> str:
@@ -207,7 +208,8 @@ def offline_rows(q: str, flags, opts: dict, host: str, env=None) -> list:
         return [banner_row(fallback.BANNER), banner_row("(this host is not in --host; nothing local to show)")]
     try:
         found = fallback.search(q, include_headless="a" in flags, cwd_prefix=opts.get("cwd_prefix"),
-                                since_epoch=since, exclude_session_id=env.get("CLAUDE_CODE_SESSION_ID"))
+                                since_epoch=since, exclude_session_id=env.get("CLAUDE_CODE_SESSION_ID")
+                                or env.get("CODEX_THREAD_ID"))
     except fallback.FallbackUnavailable as e:
         return [banner_row(fallback.BANNER), banner_row(str(e))]
     return [banner_row(fallback.BANNER)] + [local_row(s, host) for s in found]
@@ -224,7 +226,7 @@ def server_rows(cfg, api, q, flags, opts, env=None, mode=None, timeout=None) -> 
     if resp.status != 200:
         raise api_mod.Unreachable("/search answered HTTP %d" % resp.status)
     data = resp.json() or {}
-    me = env.get("CLAUDE_CODE_SESSION_ID")
+    me = env.get("CLAUDE_CODE_SESSION_ID") or env.get("CODEX_THREAD_ID")
     rows = []
     for s in data.get("sessions") or []:
         if not isinstance(s, dict) or (me and s.get("session_id") == me):

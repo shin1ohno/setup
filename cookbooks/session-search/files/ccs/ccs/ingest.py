@@ -56,6 +56,10 @@ def classify(path: str, projects: str | None = None):
     resolve inside realpath(~/.claude/projects): a symlink that points elsewhere
     is never a transcript.
     """
+    from . import codex
+
+    if codex.is_path(path):
+        return codex.classify(path)
     projects = projects or util.projects_dir()
     root = os.path.abspath(projects)
     p = os.path.abspath(path)
@@ -76,8 +80,10 @@ def classify(path: str, projects: str | None = None):
 
 def discover(projects: str | None = None):
     """Every main and subagent JSONL under ~/.claude/projects, newest first."""
+    from . import codex
+
+    out = list(codex.paths()) if projects is None else []
     projects = projects or util.projects_dir()
-    out = []
     try:
         pdirs = list(os.scandir(projects))
     except OSError:
@@ -167,6 +173,8 @@ class Shipper:
     def build_body(self, info: dict, path: str, entry: dict, offset: int, end_offset: int, lines) -> dict:
         f = {"session_id": info["session_id"], "project_dir": info["project_dir"],
              "jsonl_path": os.path.abspath(path), "kind": info["kind"]}
+        if info.get("source"):
+            f["source"] = info["source"]
         if info["kind"] == "subagent":
             f["parent_session_id"] = info["parent_session_id"]
             f["agent_id"] = info["agent_id"]
@@ -230,7 +238,10 @@ class Shipper:
         if info is None:
             raise ShipError("not a transcript path under %s" % self.projects)
         # O_NOFOLLOW + fstat S_ISREG + inside realpath(projects); raises UnsafePath.
-        fd = util.open_regular(path, self.projects)
+        from . import codex
+
+        root = codex.sessions_dir() if info.get("source") == "codex" else self.projects
+        fd = util.open_regular(path, root)
         with os.fdopen(fd, "rb") as fh:
             st = os.fstat(fh.fileno())
             return self._ship_open(path, info, fh, st)
@@ -354,7 +365,7 @@ class Shipper:
 
     # --- side files and gone files ---------------------------------------
     def _ship_blobs(self, path, info, entry):
-        if info["kind"] != "main" or not entry.get("session_key"):
+        if info.get("source") == "codex" or info["kind"] != "main" or not entry.get("session_key"):
             return
         sdir = os.path.join(os.path.dirname(path), info["session_id"])
         tdir = os.path.join(sdir, "tool-results")

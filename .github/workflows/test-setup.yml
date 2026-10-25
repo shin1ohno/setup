@@ -683,6 +683,7 @@ jobs:
         D=cookbooks/lxc-es-memory/files/memory-mcp
         python3 "$D/test_session_redact.py"
         python3 "$D/test_sessions_parse.py"
+        python3 "$D/test_session_codex.py"
         python3 "$D/test_sessions_sigv4.py"
         python3 "$D/test_sessions_scope.py"
 

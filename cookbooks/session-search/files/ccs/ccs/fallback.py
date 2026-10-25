@@ -60,13 +60,22 @@ def candidates(query: str, root: str | None = None, runner=None, which=None):
     """Paths to parse: rg -l pre-selection capped to the 200 newest by mtime."""
     runner = runner or _run
     which = which or shutil.which
+    from . import codex
+
+    native = list(codex.paths()) if root is None else []
     root = root or util.projects_dir()
     if len((query or "").strip()) < 2:
-        return _newest(main_files(root), RECENT_CAP)
+        return _newest(main_files(root) + native, RECENT_CAP)
     if not which("rg"):
         raise FallbackUnavailable("ripgrep (rg) is not installed; the offline fallback needs it")
     try:
-        proc = runner(rg_argv(query, root), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+        roots = [root] if os.path.isdir(root) else []
+        if native:
+            roots.append(codex.sessions_dir())
+        if not roots:
+            return []
+        argv = rg_argv(query, roots[0]) + roots[1:]
+        proc = runner(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
     except (OSError, subprocess.SubprocessError) as e:
         raise FallbackUnavailable("rg failed: %s" % e.__class__.__name__)
     # rg exits 1 for "no match", 2 for errors (with partial output possible).

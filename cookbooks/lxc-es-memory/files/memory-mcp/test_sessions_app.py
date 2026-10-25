@@ -1621,6 +1621,39 @@ class Bounds(unittest.TestCase):
         self.assertEqual(other.status_code, 200, other.text)
 
 
+class CodexIngest(Base):
+    def test_native_archive_and_index_share_the_masked_input(self):
+        cwd = "/work/codex-demo"
+        native = [json.dumps({"type": "session_meta", "timestamp": "2026-10-25T00:00:00Z",
+                              "payload": {"id": SID, "cwd": cwd, "source": "vscode",
+                                          "cli_version": "0.162.1"}}),
+                  json.dumps({"type": "response_item", "timestamp": "2026-10-25T00:00:01Z",
+                              "payload": {"type": "message", "role": "user", "content":
+                                          [{"type": "input_text", "text": "find the Codex regression"}]}})]
+        body = segment_body(native, 0)
+        body["file"].update(source="codex", project_dir="codex-" + sessions_parse.encode_cwd(cwd))
+        response = self.ingest(body)
+        self.assertEqual(response.status_code, 200, response.text)
+        sk = response.json()["session_key"]
+        session = self.session(sk)
+        self.assertEqual(session["entrypoint"], "codex-vscode")
+        self.assertTrue(session["interactive"])
+        self.assertTrue(session["archive_complete"])
+        docs = list(FAKE.indices["memory-session-message"].values())
+        self.assertEqual(docs[0][0]["text"], "find the Codex regression")
+        self.assertEqual(docs[0][0]["cwd"], cwd)
+        archived = self.c.get(PREFIX + "/archive", params={"session_key": sk}, headers=PRO_DEV)
+        self.assertEqual(archived.status_code, 200, archived.text)
+        self.assertEqual(json.loads(archived.content.splitlines()[0])["type"], "session_meta")
+
+    def test_codex_namespace_and_source_are_validated(self):
+        for source in ("unexpected", "codex"):
+            body = segment_body([line("u1", "hello")], 0)
+            body["file"]["source"] = source
+            response = self.ingest(body)
+            self.assertEqual(response.status_code, 400, response.text)
+
+
 class ServerWiring(unittest.TestCase):
     def test_sessions_mount_precedes_memory_mount(self):
         with open(os.path.join(HERE, "server.py")) as fh:
@@ -1631,7 +1664,7 @@ class ServerWiring(unittest.TestCase):
         self.assertIn("sessions_app.start_background()", src)
 
     def test_parse_and_redact_versions_exposed(self):
-        self.assertEqual(sessions_parse.PARSER_VERSION, "p1")
+        self.assertEqual(sessions_parse.PARSER_VERSION, "p2")
         self.assertEqual(session_redact.RULESET_VERSION, "r1")
 
 

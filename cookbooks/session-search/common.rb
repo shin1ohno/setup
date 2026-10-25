@@ -133,7 +133,7 @@ end
 end
 
 # Explicit list (mruby has no Dir.glob guarantee); tests/ is not installed.
-%w[__init__.py __main__.py api.py cli.py config.py extract.py fallback.py helper.py ingest.py picker.py resume.py util.py].each do |f|
+%w[__init__.py __main__.py api.py cli.py codex.py config.py extract.py fallback.py helper.py ingest.py picker.py resume.py util.py].each do |f|
   remote_file "#{pkg_dir}/#{f}" do
     source "files/ccs/ccs/#{f}"
     owner target_user
@@ -141,6 +141,16 @@ end
     mode "644"
     only_if redactor_ok
   end
+end
+
+# The same native-record adapter drives server indexing and local fallback.
+remote_file "#{pkg_dir}/session_codex.py" do
+  source File.join(File.dirname(redactor_src), "session_codex.py")
+  owner target_user
+  group target_group
+  mode "644"
+  sensitive true
+  only_if redactor_ok
 end
 
 # No secret inside, but `sensitive` keeps the redactor's pattern table out of
