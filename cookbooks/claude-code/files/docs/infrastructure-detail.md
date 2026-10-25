@@ -1,6 +1,6 @@
 # Infrastructure — Examples & Origin Notes
 
-This file is the detail companion to `~/ManagedProjects/setup/.claude/rules/infrastructure.md`. The summary file holds the rule statements and minimal probe/checklist; this file holds anti-patterns, full bash blocks, lookup tables, and origin paragraphs.
+This file is the detail companion to `~/ManagedProjects/setup/.claude/rules/infrastructure.md` (ops rules) and `infrastructure-cookbook.md` (cookbook-authoring rules). The summary file holds the rule statements and minimal probe/checklist; this file holds anti-patterns, full bash blocks, lookup tables, and origin paragraphs.
 
 Anchor convention: each section's heading slug matches the pointer line in the summary file.
 

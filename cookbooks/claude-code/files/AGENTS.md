@@ -97,7 +97,7 @@ These are `docs/` files (not auto-loaded). `Read` the file when the task matches
 | Topic | File |
 |---|---|
 | AWS / IAM / SSM / KMS / Terraform — drift 判定、apply branch gate、実ホスト probe | `~/.claude/docs/aws-iam.md` |
-| mitamae/Ruby・shell script・infra ops の常時ルール（setup プロジェクト外から必要時） | `~/ManagedProjects/setup/.claude/rules/{ruby,shell,infrastructure}.md` |
+| mitamae/Ruby・shell script・infra ops・cookbook 作成のルール（setup プロジェクト外から必要時。setup 内では cookbook を触ると自動ロード） | `~/ManagedProjects/setup/.claude/rules/{ruby,shell,infrastructure,infrastructure-cookbook,cookbook-conventions}.md` |
 | Rust workspace commit gate (fmt/build/test/clippy), Cargo.lock staging, crates.io token scopes, cross-platform build gates | `~/.claude/docs/rust.md` |
 | Docker Compose ops — branch-dep pre-deploy check, notify `--force-recreate`, UDP host-net, up -d exit-1 triage | `~/.claude/docs/docker-compose.md` |
 | Pre-PR cookbook implementation checklist (IP literal / healthcheck quoting / bind-mount UID / UDP host-net) | `~/.claude/docs/cookbook-prs.md` |
