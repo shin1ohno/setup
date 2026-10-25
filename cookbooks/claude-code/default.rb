@@ -372,7 +372,7 @@ end
   end
 end
 
-shared_skills = %w(writing interview verify research research-domains load-test check-services security-review feature-parity verify-mise-backend pr-ci-medic morning-triage self-heal-create self-heal-resolve network-log-audit web-crawl setup-release-plz)
+shared_skills = %w(writing interview verify research research-domains load-test check-services security-review feature-parity verify-mise-backend pr-ci-medic morning-triage self-heal-create self-heal-resolve network-log-audit web-crawl setup-release-plz session-search)
 
 shared_skills.each do |skill_name|
   directory "#{node[:setup][:home]}/.agents/skills/#{skill_name}" do

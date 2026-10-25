@@ -683,6 +683,7 @@ jobs:
         D=cookbooks/lxc-es-memory/files/memory-mcp
         python3 "$D/test_session_redact.py"
         python3 "$D/test_sessions_parse.py"
+        python3 "$D/test_session_codex.py"
         python3 "$D/test_sessions_sigv4.py"
         python3 "$D/test_sessions_scope.py"
 
@@ -777,7 +778,11 @@ jobs:
         # cases run instead of skip.
         sudo apt-get update -qq
         sudo apt-get install -y -qq ripgrep
-        python3 -m unittest discover -s cookbooks/session-search/files/ccs/tests -v
+        npm install --prefix /tmp/ccs-test-codex --no-audit --no-fund @openai/codex@0.162.1
+        codex_test_bin=$(find /tmp/ccs-test-codex/node_modules -type f -path '*/vendor/*/bin/codex' -print -quit)
+        test -x "$codex_test_bin"
+        echo "CCS_TEST_CODEX=$codex_test_bin" >> "$GITHUB_ENV"
+        CCS_TEST_CODEX="$codex_test_bin" python3 -m unittest discover -s cookbooks/session-search/files/ccs/tests -v
 
     - uses: actions/setup-python@v5
       with:

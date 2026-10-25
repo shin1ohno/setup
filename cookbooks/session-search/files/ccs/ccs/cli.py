@@ -16,21 +16,23 @@ the fallback unusable, 4 resume precondition failure.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sys
 
 from . import VERSION, util
 
-SUBCOMMANDS = ("resume", "ingest", "status", "purge", "_backend", "_preview", "_toggle", "_fuse")
+SUBCOMMANDS = ("search", "preview", "resume", "ingest", "status", "purge", "_backend", "_preview", "_toggle", "_fuse")
 
 
 class _Parser(argparse.ArgumentParser):
     """argparse already exits 2 on a usage error; keep that, but never print a traceback."""
 
 
-def picker_parser():
-    p = _Parser(prog="ccs", description="Search Claude Code sessions and resume one.")
+def picker_parser(structured=False):
+    p = _Parser(prog="ccs search" if structured else "ccs",
+                description="Search Claude Code and Codex sessions.")
     p.add_argument("query", nargs="*", help="initial query")
     p.add_argument("--deep", action="store_true", help="include tool_text (ctrl-d toggles)")
     p.add_argument("--semantic", action="store_true", help="hybrid ranking from the first query (ctrl-s toggles)")
@@ -41,15 +43,20 @@ def picker_parser():
     p.add_argument("--since", metavar="DUR", help="e.g. 7d, 30d; default: unlimited")
     p.add_argument("--offline", action="store_true", help="force the local rg fallback")
     p.add_argument("--print", dest="do_print", action="store_true",
-                   help="print `cd <cwd> && claude --resume <id>` instead of exec (ctrl-y)")
-    p.add_argument("--fork", action="store_true", help="pass --fork-session to claude")
+                   help="print the resume command instead of exec (ctrl-y)")
+    p.add_argument("--fork", action="store_true", help="fork the selected agent session")
     p.add_argument("--version", action="version", version="ccs " + VERSION)
+    if structured:
+        p.add_argument("--limit", type=int, default=50, help="maximum sessions, 1..50")
     return p
 
 
 def sub_parser(cmd: str):
     p = _Parser(prog="ccs " + cmd)
-    if cmd == "resume":
+    if cmd == "preview":
+        p.add_argument("session_key")
+        p.add_argument("query", nargs="?", default="")
+    elif cmd == "resume":
         p.add_argument("session_key")
         p.add_argument("--print", dest="do_print", action="store_true")
         p.add_argument("--fork", action="store_true")
@@ -80,7 +87,8 @@ def sub_parser(cmd: str):
 def parse(argv):
     """-> (command, namespace). Raises SystemExit(2) on a usage error."""
     argv = list(argv)
-    if argv and argv[0] in SUBCOMMANDS:
+    structured = bool(argv and argv[0] == "search")
+    if argv and argv[0] in SUBCOMMANDS and not structured:
         cmd = argv.pop(0)
         p = sub_parser(cmd)
         ns = p.parse_args(argv)
@@ -89,8 +97,12 @@ def parse(argv):
         return cmd, ns
     if argv and argv[0] == "--":
         argv = argv[1:]
-    p = picker_parser()
+    if structured:
+        argv.pop(0)
+    p = picker_parser(structured)
     ns = p.parse_args(argv)
+    if structured and not 1 <= ns.limit <= 50:
+        p.error("--limit must be in 1..50")
     if ns.since:
         try:
             ns.since_seconds = util.parse_duration(ns.since)
@@ -101,7 +113,7 @@ def parse(argv):
     for h in ns.host:
         if not util.HOST_LABEL_RE.match(h):
             p.error("--host %r is not a host label" % h)
-    return "pick", ns
+    return "search" if structured else "pick", ns
 
 
 def pick_options(ns) -> tuple:
@@ -167,6 +179,81 @@ def cmd_status(out=None) -> int:
     return code
 
 
+def _with_agent(session):
+    row = dict(session)
+    row["agent"] = "codex" if str(row.get("entrypoint") or "").startswith("codex-") else "claude"
+    return row
+
+
+def cmd_search(ns, out=None) -> int:
+    """Noninteractive API for coding agents. stdout is one JSON object."""
+    from . import api as api_mod, config as config_mod, fallback, picker
+
+    out = out or sys.stdout
+    flags, opts = pick_options(ns)
+    q = " ".join(ns.query)
+    current = util.current_session_id()
+    try:
+        if ns.offline:
+            try:
+                host = config_mod.load().host_label
+            except config_mod.ConfigError:
+                host = picker._host_label(None)
+            found = fallback.search(q, include_headless="a" in flags, cwd_prefix=opts.get("cwd_prefix"),
+                                    since_epoch=util.parse_ts(opts["since"]) if opts.get("since") else None,
+                                    exclude_session_id=current)
+            if opts.get("hosts") and host not in opts["hosts"]:
+                found = []
+            rows = [{"session_key": "local:" + s.path, "session_id": s.session_id,
+                     "title": s.title, "cwd": s.cwd, "entrypoint": s.entrypoint,
+                     "host": host, "agent": s.agent, "hit_count": s.hits,
+                     "updated_at": util.iso(datetime.datetime.fromtimestamp(
+                         s.mtime, datetime.timezone.utc))} for s in found[:ns.limit]]
+            data = {"sessions": rows, "degraded": "offline: local text only, at most 200 candidates per agent"}
+        else:
+            cfg = config_mod.load()
+            body = picker.search_body(q, flags, opts)
+            body["limit"] = min(50, ns.limit + bool(current))
+            resp = api_mod.Api(cfg, timeout=5).post("/search", body)
+            if resp.status != 200 or not isinstance(resp.json(), dict):
+                raise api_mod.Unreachable("/search answered HTTP %d" % resp.status)
+            data = resp.json()
+            data["sessions"] = [_with_agent(s) for s in data.get("sessions", [])
+                                if not current or s.get("session_id") != current][:ns.limit]
+        out.write(json.dumps(data, ensure_ascii=False) + "\n")
+        return util.EXIT_OK
+    except (api_mod.Unreachable, api_mod.AuthError, config_mod.ConfigError, fallback.FallbackUnavailable) as e:
+        sys.stderr.write("ccs: %s\n" % e)
+        return util.EXIT_UNREACHABLE
+
+
+def cmd_preview(key: str, q: str, out=None) -> int:
+    from . import api as api_mod, codex, config as config_mod, extract
+
+    out = out or sys.stdout
+    try:
+        if key.startswith("local:"):
+            path = key[len("local:"):]
+            if codex.is_path(path) and codex.classify(path) is None:
+                raise api_mod.Unreachable("local Codex transcript is missing or unsafe")
+            s = extract.scan(path)
+            data = {"session": {"session_key": key, "session_id": s.session_id, "title": s.title,
+                                "cwd": s.cwd, "agent": s.agent},
+                    "snippets": [{"role": role, "fragment": text} for role, text in s.last_texts]}
+        else:
+            cfg = config_mod.load()
+            resp = api_mod.Api(cfg, timeout=5).get("/preview", params={"session_key": key, "q": q})
+            if resp.status != 200 or not isinstance(resp.json(), dict):
+                raise api_mod.Unreachable("/preview answered HTTP %d" % resp.status)
+            data = resp.json()
+            data["session"] = _with_agent(data.get("session") or {})
+        out.write(json.dumps(data, ensure_ascii=False) + "\n")
+        return util.EXIT_OK
+    except (api_mod.Unreachable, api_mod.AuthError, config_mod.ConfigError) as e:
+        sys.stderr.write("ccs: %s\n" % e)
+        return util.EXIT_UNREACHABLE
+
+
 def _last_errors(n: int = 8):
     try:
         with open(util.log_path(), encoding="utf-8", errors="replace") as fh:
@@ -206,6 +293,10 @@ def main(argv=None) -> int:
 
         flags, opts = pick_options(ns)
         return picker.run(" ".join(ns.query), flags, opts, ns.do_print, ns.fork)
+    if cmd == "search":
+        return cmd_search(ns)
+    if cmd == "preview":
+        return cmd_preview(ns.session_key, ns.query)
     if cmd == "resume":
         from . import resume
 

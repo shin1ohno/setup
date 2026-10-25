@@ -12,7 +12,7 @@ import subprocess
 
 from . import extract, util
 
-BANNER = "OFFLINE — local sessions only, ≤200 newest candidates"
+BANNER = "OFFLINE — local sessions only, ≤200 newest candidates per agent"
 CANDIDATE_CAP = 200
 RECENT_CAP = 50
 
@@ -60,20 +60,34 @@ def candidates(query: str, root: str | None = None, runner=None, which=None):
     """Paths to parse: rg -l pre-selection capped to the 200 newest by mtime."""
     runner = runner or _run
     which = which or shutil.which
+    from . import codex
+
+    native = list(codex.paths()) if root is None else []
+    include_codex = root is None
     root = root or util.projects_dir()
+    roots = [root] if os.path.isdir(root) else []
+    if include_codex and os.path.isdir(codex.sessions_dir()):
+        roots.append(codex.sessions_dir())
+    if not roots:
+        raise FallbackUnavailable("no local transcript directories exist")
     if len((query or "").strip()) < 2:
-        return _newest(main_files(root), RECENT_CAP)
+        return _newest(main_files(root) + native, RECENT_CAP)
     if not which("rg"):
         raise FallbackUnavailable("ripgrep (rg) is not installed; the offline fallback needs it")
     try:
-        proc = runner(rg_argv(query, root), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+        argv = rg_argv(query, roots[0]) + roots[1:]
+        proc = runner(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
     except (OSError, subprocess.SubprocessError) as e:
         raise FallbackUnavailable("rg failed: %s" % e.__class__.__name__)
     # rg exits 1 for "no match", 2 for errors (with partial output possible).
     if proc.returncode not in (0, 1):
         raise FallbackUnavailable("rg exited %d" % proc.returncode)
     paths = [line for line in proc.stdout.decode("utf-8", "replace").splitlines() if line.endswith(".jsonl")]
-    return _newest(paths, CANDIDATE_CAP)
+    # Fixed context in native Codex rollouts can match every file. Keep an
+    # independent budget so those false positives cannot evict Claude hits.
+    claude = _newest([p for p in paths if not codex.is_path(p)], CANDIDATE_CAP)
+    native = _newest([p for p in paths if codex.is_path(p)], CANDIDATE_CAP)
+    return _newest(claude + native, None)
 
 
 def search(query: str, include_headless: bool = False, cwd_prefix: str | None = None, since_epoch: float | None = None,
