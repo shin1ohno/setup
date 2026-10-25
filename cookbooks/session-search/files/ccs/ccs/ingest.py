@@ -153,6 +153,7 @@ class Shipper:
         self.max_segment = max_segment
         self.projects = projects or util.projects_dir()
         self.codex_ready = None
+        self.codex_deferred_logged = False
         self.stats = {"files": 0, "segments": 0, "bytes": 0, "tombstones": 0, "resyncs": 0, "errors": 0,
                       "blobs": 0, "gone": 0}
 
@@ -243,11 +244,16 @@ class Shipper:
             # lines as unknown records, so never advance a cursor against it.
             if self.codex_ready is None:
                 response = self.api.get("/status")
-                body = response.json() or {}
-                sources = body.get("sources") if isinstance(body, dict) else None
-                self.codex_ready = response.status == 200 and isinstance(sources, list) and "codex" in sources
+                body = response.json()
+                if response.status != 200 or not isinstance(body, dict):
+                    raise ShipError("server capability check failed: HTTP %d" % response.status)
+                sources = body.get("sources")
+                self.codex_ready = isinstance(sources, list) and "codex" in sources
             if not self.codex_ready:
-                raise ShipError("server has no Codex parser; cursor held until the server is updated")
+                if not self.codex_deferred_logged:
+                    util.log("INFO", "ingest: server has no Codex parser; Codex cursors held until the server is updated")
+                    self.codex_deferred_logged = True
+                return "deferred"
         # O_NOFOLLOW + fstat S_ISREG + inside realpath(projects); raises UnsafePath.
         from . import codex
 

@@ -327,7 +327,9 @@ def restore_codex(api, meta: dict, local_cwd: str, force: bool, session_key: str
         raise ResumeError("archive sha256 mismatch; nothing restored")
     lines = []
     try:
-        records = [extract.loads_strict(line) for line in resp.body.decode("utf-8").splitlines()]
+        from . import session_codex
+
+        records = [extract.loads_strict(raw.decode("utf-8")) for raw in resp.body.split(b"\n") if raw.strip()]
         first = records[0]
         if first.get("type") != "session_meta" or first["payload"].get("id") != sid:
             raise ValueError("session metadata mismatch")
@@ -336,9 +338,18 @@ def restore_codex(api, meta: dict, local_cwd: str, force: bool, session_key: str
                                  and isinstance(r.get("payload"), dict)
                                  and r["payload"].get("type") in ("user_message", "agent_message")
                                  for r in records)
-        for rec in records:
+        index_state = session_codex.IndexState(sid)
+        own_start = None
+        for index, rec in enumerate(records):
             if not isinstance(rec, dict):
                 raise ValueError("non-object record")
+            owned = index_state.accept(rec)
+            if index and owned and own_start is None:
+                own_start = len(lines)
+            # Forks copy the parent's metadata after their own first header.
+            # Only the first header describes the session being restored.
+            if index and rec.get("type") == "session_meta":
+                continue
             if rec.get("type") in ("turn_context", "world_state"):
                 continue
             if rec.get("type") == "event_msg" and isinstance(rec.get("payload"), dict) \
@@ -348,8 +359,6 @@ def restore_codex(api, meta: dict, local_cwd: str, force: bool, session_key: str
                     and rec["payload"].get("type") in ("user_message", "agent_message"):
                 continue
             if rec.get("type") == "session_meta":
-                if rec["payload"].get("id") != sid:
-                    raise ValueError("session metadata mismatch")
                 rec["payload"].update(cwd=local_cwd, session_id=sid, history_mode="legacy",
                                       runtime_workspace_roots=[local_cwd])
             # Paginated rollouts mirror model-visible response items, while
@@ -359,19 +368,26 @@ def restore_codex(api, meta: dict, local_cwd: str, force: bool, session_key: str
             if (rebuild_display or not has_display_events) and rec.get("type") == "response_item" and isinstance(payload, dict) \
                     and payload.get("type") == "message" and payload.get("role") in ("user", "assistant") \
                     and payload.get("channel") != "analysis":
-                from . import session_codex
-
                 common = session_codex.normalize(rec)
                 text = "\n".join(b.get("text", "") for b in common.get("message", {}).get("content", []))
                 if text:
                     event = {"type": "event_msg", "timestamp": rec.get("timestamp"),
                              "payload": {"type": "user_message" if payload["role"] == "user" else "agent_message",
                                          "message": text, "images": [], "local_images": [], "text_elements": []}}
-                    lines.append(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
-            lines.append(json.dumps(rec, ensure_ascii=False, separators=(",", ":")))
+                    lines.append(event)
+            lines.append(rec)
     except (ValueError, KeyError, TypeError, IndexError, AttributeError):
         raise ResumeError("invalid Codex archive; nothing restored")
-    data = "\n".join(lines) + "\n"
+    if (first["payload"].get("forked_from_id") or "subagent_history_start_ordinal" in first["payload"]
+            or "ccs_index_start_ordinal" in first["payload"]):
+        # Restoring removes settings/ancestor headers and may add display rows.
+        # Preserve the indexing boundary in the transformed file's coordinates.
+        first["payload"]["ccs_index_start_ordinal"] = own_start if own_start is not None else len(lines)
+        if "subagent_history_start_ordinal" in first["payload"]:
+            first["payload"]["subagent_history_start_ordinal"] = first["payload"]["ccs_index_start_ordinal"]
+    for ordinal, rec in enumerate(lines):
+        rec["ordinal"] = ordinal
+    data = "\n".join(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) for rec in lines) + "\n"
     now = datetime.datetime.now(datetime.timezone.utc)
     root = codex.sessions_dir()
     pdir = os.path.join(root, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"))

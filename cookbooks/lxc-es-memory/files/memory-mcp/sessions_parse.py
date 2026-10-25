@@ -154,7 +154,7 @@ def new_counters() -> dict:
 def parse_lines(session_key: str, kind: str, lines: list, start_offset: int, *,
                 host: str, session_id: str, agent_id: str | None = None,
                 known_entrypoint: str | None = None, redact_version: str = "",
-                known_cwd: str | None = None, source: str = "claude") -> dict:
+                known_cwd: str | None = None, source: str = "claude", codex_state=None) -> dict:
     """Parse one segment.
 
     `lines` are the masked JSON lines of the segment, in file order.
@@ -177,6 +177,7 @@ def parse_lines(session_key: str, kind: str, lines: list, start_offset: int, *,
     entrypoint = known_entrypoint
     codex_cwd = known_cwd
     codex_stream = source == "codex" or session_codex.is_codex(entrypoint)
+    codex_index = session_codex.IndexState(session_id, codex_state)
     for idx, line in enumerate(lines):
         try:
             rec = json.loads(line) if isinstance(line, str) else None
@@ -187,6 +188,8 @@ def parse_lines(session_key: str, kind: str, lines: list, start_offset: int, *,
             continue
         codex_stream = codex_stream or rec.get("type") == "session_meta"
         if codex_stream:
+            if not codex_index.accept(rec):
+                continue
             rec = session_codex.normalize(rec, position=start_offset + idx,
                                           entrypoint=entrypoint or "codex-unknown", cwd=codex_cwd)
             codex_cwd = rec.get("cwd") or codex_cwd
@@ -272,7 +275,8 @@ def parse_lines(session_key: str, kind: str, lines: list, start_offset: int, *,
         }
         docs.append(doc)
     delta["entrypoint_effective"] = entrypoint
-    return {"docs": docs, "delta": delta, "counters": counters}
+    return {"docs": docs, "delta": delta, "counters": counters,
+            "codex_state": codex_index.state if codex_stream else None}
 
 
 def choose_resume_cwd(cwd_candidates: list, project_dir: str) -> tuple[str | None, bool]:

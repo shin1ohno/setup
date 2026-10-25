@@ -1099,11 +1099,13 @@ async def ingest(request: Request, caller: dict):
                 raise HTTPError(409, "offset_mismatch", expected_offset=next_expected)
 
         async with _segment_slot(caller):
+            previous = [c for c in seg_chunks if c["offset"] < offset]
             parsed = await _run_bounded(
                 sessions_parse.parse_lines, session_key, kind, canonical, offset, host=host,
                 session_id=session_id, agent_id=agent_id,
                 known_entrypoint=(existing or {}).get("entrypoint"), redact_version=version,
-                known_cwd=(existing or {}).get("cwd"), source=source)
+                known_cwd=(existing or {}).get("cwd"), source=source,
+                codex_state=previous[-1].get("codex_state") if previous else None)
         for k, n in parsed["counters"]["unknown_types"].items():
             _COUNTERS["unknown_types"][k] = _COUNTERS["unknown_types"].get(k, 0) + n
 
@@ -1160,6 +1162,8 @@ async def ingest(request: Request, caller: dict):
             "messages": delta["message_count"], "text_messages": delta["text_message_count"],
             "tombstones": delta["tombstones"],
         }
+        if parsed.get("codex_state") is not None:
+            entry["codex_state"] = parsed["codex_state"]
         if agent_id is not None:
             entry["agent_id"] = agent_id
         seg_chunks.append(entry)

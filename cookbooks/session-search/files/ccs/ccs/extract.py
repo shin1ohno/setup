@@ -90,6 +90,11 @@ def iter_records(path: str):
     except (OSError, util.UnsafePath):
         return
     entrypoint, cwd = None, None
+    if native:
+        from . import session_codex
+
+        match = codex.ROLLOUT_RE.fullmatch(os.path.basename(path))
+        index = session_codex.IndexState(match.group(1) if match else None)
     with fh:
         for position, raw in enumerate(fh):
             if not raw.endswith(b"\n"):
@@ -100,8 +105,8 @@ def iter_records(path: str):
                 continue
             if isinstance(rec, dict):
                 if native:
-                    from . import session_codex
-
+                    if not index.accept(rec):
+                        continue
                     rec = session_codex.normalize(rec, position=position, entrypoint=entrypoint, cwd=cwd)
                     entrypoint, cwd = rec.get("entrypoint"), rec.get("cwd") or cwd
                 yield rec

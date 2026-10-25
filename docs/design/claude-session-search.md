@@ -672,6 +672,15 @@ The status response advertises `sources: ["claude", "codex"]`. A client sends
 Codex segments only after observing this capability, keeping its cursor held
 while a fleet server is still on the older parser.
 
+Only the first child-owned `session_meta` supplies metadata. Copied parent
+headers cannot change a child's source, cwd or title. A subagent's
+`subagent_history_start_ordinal` excludes its inherited prefix. Copied
+interactive forks start indexing at the child-owned `thread_settings_applied`
+checkpoint that Codex writes after inherited history. The ordinal/checkpoint
+state is stored in the existing opaque archive-chunk bookkeeping so filtering
+continues across ingest segments and retries. The offline extractor uses the
+same filter. Inherited model context remains available in the archive.
+
 Only `response_item` user and assistant messages supply searchable conversation
 text; duplicate `event_msg` records, reasoning, developer instructions and
 injected AGENTS/environment records are excluded. Function/custom tool calls
@@ -681,13 +690,17 @@ it using the same masking rules as Claude Code.
 
 Existing ES fields and index schemas are retained. `entrypoint` distinguishes
 `codex-cli`, `codex-vscode`, `codex-appServer`, `codex-exec` and other sources.
-The first three are interactive; exec and subagent sessions require `--all`.
+The first three and `codex-unknown` are interactive; exec and explicitly marked
+subagent sessions require `--all`. Missing or unfamiliar legacy source values
+are `codex-unknown`, not evidence of a subagent.
 Search results include `entrypoint`, and the picker marks Codex rows explicitly.
 
 Agents can use `ccs search [QUERY] [OPTIONS] [--limit 1..50]` and
 `ccs preview SESSION_KEY [QUERY]` without a terminal; both return JSON. These
 commands reuse the authenticated REST API and add an `agent` field (`claude` or
-`codex`) to the returned sessions. The shared `session-search` skill is deployed
+`codex`) to the returned sessions. Search excludes the current session using
+the same identity helper as the picker; explicit preview/resume requests can
+still address a known session key. The shared `session-search` skill is deployed
 to `~/.agents/skills` for Codex and linked into Claude Code's skills directory.
 
 Local Codex sessions resume with `codex resume UUID`, or `codex fork UUID` for
@@ -695,12 +708,29 @@ Local Codex sessions resume with `codex resume UUID`, or `codex fork UUID` for
 rollout under the local Codex sessions directory. It selects the locally chosen
 cwd, sets the archive's history mode to `legacy` so that JSONL alone is
 sufficient, and reconstructs display events when the original paginated store
-kept them in SQLite. It omits the old host's `turn_context`, `world_state` and
+kept them in SQLite. JSONL is split on LF bytes so Unicode line separators in
+JSON strings remain intact. Ancestor metadata headers are omitted. The
+transformed records receive contiguous ordinals and a private
+`ccs_index_start_ordinal` header field preserves a fork's indexing boundary
+after rows are removed or added. It omits the old host's `turn_context`, `world_state` and
 `thread_settings_applied` records. Thus archived permission/workspace settings
 cannot select the local runtime environment. Existing different files require
 `--force`; symlink targets are rejected. The local Codex app-server must be
 able to read the restored conversation before this path is considered working.
 
-The offline fallback searches both agents' local rollouts, preserving its
-200-candidate cap and text-only behavior. It does not restore remote archives or
-perform semantic search while offline.
+The offline fallback searches both agents' local rollouts with independent
+200-candidate budgets (at most 400 combined), keeping context-only Codex matches
+from evicting older Claude Code conversations. It searches text only. Missing
+transcript directories report search unavailability; an existing empty directory
+reports no matches. It does not restore remote archives or perform semantic
+search while offline.
+
+### Verification boundary
+
+Codex 0.162.1 can open a restored JSONL with `codex --no-daemon resume UUID`
+when neither `state_5.sqlite` nor `session_index.jsonl` exists. This also works
+when the UUID's creation date differs from the restore directory date. The CLI
+creates its own database; direct database/index writes are unnecessary. CI pins
+that binary and uses a PTY to assert that restored user and assistant messages
+appear, without submitting a model request. The fixture includes an ancestor
+header and Unicode separators. App-server history hydration is tested separately.

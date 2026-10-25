@@ -61,8 +61,15 @@ def classify(path: str):
 
 
 def find_local(sid: str, hint=None):
-    candidates = [hint] if isinstance(hint, str) else []
-    for p in candidates + list(paths()):
+    def candidates():
+        if isinstance(hint, str):
+            yield hint
+        yield from paths()
+
+    for p in candidates():
+        match = ROLLOUT_RE.fullmatch(os.path.basename(p))
+        if not match or match.group(1) != sid:
+            continue
         info = classify(p)
         if info and info["session_id"] == sid:
             return p

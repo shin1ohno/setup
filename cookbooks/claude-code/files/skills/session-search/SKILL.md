@@ -26,7 +26,7 @@ Search user/assistant text first. Choose options that match the request:
 - `--sidechain`: include Claude Code subagent messages.
 - `--here`, `--host HOST`, `--since 7d`: narrow project, host or time.
 - `--offline`: search local JSONL only when the server is unavailable; results
-  are capped at 200 candidate files and search text only.
+  are capped at 200 candidate files per agent and search text only.
 
 Use the returned `session_key` unchanged. Read previews before reporting what a
 conversation said. Cite its title, agent, host and date when available; report a

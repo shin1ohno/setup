@@ -192,6 +192,7 @@ def cmd_search(ns, out=None) -> int:
     out = out or sys.stdout
     flags, opts = pick_options(ns)
     q = " ".join(ns.query)
+    current = util.current_session_id()
     try:
         if ns.offline:
             try:
@@ -199,7 +200,8 @@ def cmd_search(ns, out=None) -> int:
             except config_mod.ConfigError:
                 host = picker._host_label(None)
             found = fallback.search(q, include_headless="a" in flags, cwd_prefix=opts.get("cwd_prefix"),
-                                    since_epoch=util.parse_ts(opts["since"]) if opts.get("since") else None)
+                                    since_epoch=util.parse_ts(opts["since"]) if opts.get("since") else None,
+                                    exclude_session_id=current)
             if opts.get("hosts") and host not in opts["hosts"]:
                 found = []
             rows = [{"session_key": "local:" + s.path, "session_id": s.session_id,
@@ -207,16 +209,17 @@ def cmd_search(ns, out=None) -> int:
                      "host": host, "agent": s.agent, "hit_count": s.hits,
                      "updated_at": util.iso(datetime.datetime.fromtimestamp(
                          s.mtime, datetime.timezone.utc))} for s in found[:ns.limit]]
-            data = {"sessions": rows, "degraded": "offline: local text only, at most 200 candidates"}
+            data = {"sessions": rows, "degraded": "offline: local text only, at most 200 candidates per agent"}
         else:
             cfg = config_mod.load()
             body = picker.search_body(q, flags, opts)
-            body["limit"] = ns.limit
+            body["limit"] = min(50, ns.limit + bool(current))
             resp = api_mod.Api(cfg, timeout=5).post("/search", body)
             if resp.status != 200 or not isinstance(resp.json(), dict):
                 raise api_mod.Unreachable("/search answered HTTP %d" % resp.status)
             data = resp.json()
-            data["sessions"] = [_with_agent(s) for s in data.get("sessions", [])]
+            data["sessions"] = [_with_agent(s) for s in data.get("sessions", [])
+                                if not current or s.get("session_id") != current][:ns.limit]
         out.write(json.dumps(data, ensure_ascii=False) + "\n")
         return util.EXIT_OK
     except (api_mod.Unreachable, api_mod.AuthError, config_mod.ConfigError, fallback.FallbackUnavailable) as e:

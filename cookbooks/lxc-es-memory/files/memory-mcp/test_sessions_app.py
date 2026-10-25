@@ -1622,6 +1622,35 @@ class Bounds(unittest.TestCase):
 
 
 class CodexIngest(Base):
+    def test_fork_prefix_state_survives_ingest_segments_and_retry(self):
+        parent = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+        cwd = "/work/codex-fork"
+        rows = [{"type": "session_meta", "payload": {"id": SID, "cwd": cwd, "source": "cli", "forked_from_id": parent}},
+                {"type": "session_meta", "payload": {"id": parent, "cwd": "/parent", "source": "exec"}},
+                {"type": "response_item", "payload": {"type": "message", "role": "user", "content":
+                                                       [{"type": "input_text", "text": "inherited parent question"}]}},
+                {"type": "event_msg", "payload": {"type": "thread_settings_applied", "thread_id": SID}},
+                {"type": "response_item", "payload": {"type": "message", "role": "user", "content":
+                                                       [{"type": "input_text", "text": "own child question"}]}}]
+        for ordinal, row in enumerate(rows):
+            row.update(ordinal=ordinal, timestamp="2026-10-25T00:00:00Z")
+        first = segment_body([json.dumps(r) for r in rows[:3]], 0)
+        first["file"].update(source="codex", project_dir="codex-" + sessions_parse.encode_cwd(cwd))
+        response = self.ingest(first)
+        self.assertEqual(response.status_code, 200, response.text)
+        sk = response.json()["session_key"]
+        offset = first["segment"]["end_offset"]
+        second = segment_body([json.dumps(r) for r in rows[3:]], offset)
+        second["file"].update(first["file"])
+        for _ in range(2):
+            response = self.ingest(second)
+            self.assertEqual(response.status_code, 200, response.text)
+        docs = [value[0] for value in FAKE.indices["memory-session-message"].values()]
+        self.assertEqual([d["text"] for d in docs], ["own child question"])
+        self.assertTrue(docs[0]["interactive"])
+        self.assertEqual(self.session(sk)["title"], "own child question")
+        self.assertEqual(self.session(sk)["cwd"], cwd)
+
     def test_native_archive_and_index_share_the_masked_input(self):
         status = self.c.get(PREFIX + "/status", headers=PRO_DEV)
         self.assertIn("codex", status.json()["sources"])

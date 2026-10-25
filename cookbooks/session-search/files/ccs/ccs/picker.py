@@ -208,8 +208,7 @@ def offline_rows(q: str, flags, opts: dict, host: str, env=None) -> list:
         return [banner_row(fallback.BANNER), banner_row("(this host is not in --host; nothing local to show)")]
     try:
         found = fallback.search(q, include_headless="a" in flags, cwd_prefix=opts.get("cwd_prefix"),
-                                since_epoch=since, exclude_session_id=env.get("CLAUDE_CODE_SESSION_ID")
-                                or env.get("CODEX_THREAD_ID"))
+                                since_epoch=since, exclude_session_id=util.current_session_id(env))
     except fallback.FallbackUnavailable as e:
         return [banner_row(fallback.BANNER), banner_row(str(e))]
     return [banner_row(fallback.BANNER)] + [local_row(s, host) for s in found]
@@ -226,7 +225,7 @@ def server_rows(cfg, api, q, flags, opts, env=None, mode=None, timeout=None) -> 
     if resp.status != 200:
         raise api_mod.Unreachable("/search answered HTTP %d" % resp.status)
     data = resp.json() or {}
-    me = env.get("CLAUDE_CODE_SESSION_ID") or env.get("CODEX_THREAD_ID")
+    me = util.current_session_id(env)
     rows = []
     for s in data.get("sessions") or []:
         if not isinstance(s, dict) or (me and s.get("session_id") == me):

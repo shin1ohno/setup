@@ -24,8 +24,8 @@ def message(role, text, **extra):
 
 
 class CodexParse(unittest.TestCase):
-    def parse(self, lines, **kw):
-        return sp.parse_lines("sk_" + "a" * 32, "main", lines, 0, host="pro-dev", session_id=SID, **kw)
+    def parse(self, lines, start_offset=0, **kw):
+        return sp.parse_lines("sk_" + "a" * 32, "main", lines, start_offset, host="pro-dev", session_id=SID, **kw)
 
     def test_conversation_tools_and_noise(self):
         lines = [meta(), message("developer", "injected developer context"),
@@ -77,6 +77,49 @@ class CodexParse(unittest.TestCase):
         self.assertEqual(parsed["docs"][0]["text"], "still searchable")
         self.assertEqual(parsed["delta"]["tombstones"], 1)
         self.assertEqual(parsed["delta"]["entrypoint"], "codex-unknown")
+
+    def test_unknown_sources_are_interactive_but_explicit_subagents_are_not(self):
+        for source in (None, "future_source", {"custom": "desktop"}):
+            parsed = self.parse([meta(source), message("user", "old conversation")])
+            self.assertEqual(parsed["delta"]["entrypoint"], "codex-unknown")
+            self.assertTrue(parsed["docs"][0]["interactive"])
+        for source in ({"subagent": {}}, {"subAgent": {}}):
+            self.assertFalse(self.parse([meta(source), message("user", "worker")])["docs"][0]["interactive"])
+
+    def test_fork_parent_context_is_excluded_across_every_segment_boundary(self):
+        parent = "019bbbbb-1111-7111-8111-111111111111"
+        for subagent in (False, True):
+            header = json.loads(meta({"subagent": {}} if subagent else "cli"))
+            header["payload"]["forked_from_id"] = parent
+            if subagent:
+                header["payload"]["subagent_history_start_ordinal"] = 5
+            rows = [header, json.loads(meta("exec")), json.loads(message("user", "parent question")),
+                    json.loads(record("response_item", {"type": "function_call", "name": "parent_tool",
+                                                         "arguments": "parent command"})),
+                    json.loads(record("event_msg", {"type": "thread_settings_applied", "thread_id": parent})),
+                    json.loads(record("event_msg", {"type": "thread_settings_applied", "thread_id": SID})),
+                    json.loads(message("user", "child question")),
+                    json.loads(message("assistant", "child answer")),
+                    json.loads(record("response_item", {"type": "function_call", "name": "child_tool",
+                                                         "arguments": "child command"}))]
+            rows[1]["payload"]["id"] = parent
+            for ordinal, row in enumerate(rows):
+                row["ordinal"] = ordinal
+            lines = [json.dumps(r) for r in rows]
+            for cut in range(1, len(lines)):
+                first = self.parse(lines[:cut], source="codex")
+                second = self.parse(lines[cut:], start_offset=10000, source="codex",
+                                    known_entrypoint=first["delta"]["entrypoint_effective"],
+                                    known_cwd=CWD, codex_state=first["codex_state"])
+                docs = first["docs"] + second["docs"]
+                self.assertEqual([d["text"] for d in docs if d["text"]], ["child question", "child answer"])
+                self.assertNotIn("parent question", json.dumps(docs))
+                self.assertNotIn("parent command", json.dumps(docs))
+                self.assertEqual(docs[-1]["tool_names"], ["child_tool"])
+                self.assertTrue(all(d["interactive"] == (not subagent) for d in docs))
+                session = sp.merge_session(None, first["delta"], project_dir="codex-" + sp.encode_cwd(CWD))
+                session = sp.merge_session(session, second["delta"], project_dir="codex-" + sp.encode_cwd(CWD))
+                self.assertEqual(session["title"], "child question")
 
 
 if __name__ == "__main__":
