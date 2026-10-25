@@ -1066,6 +1066,13 @@ is keyed on an address the AP does not own.
   fleet, (b) native model behaviour now, or (c) detail whose body can move to
   `~/.claude/docs/infrastructure-detail.md`, which already exists and already
   receives pointers from that file.
+- Status 2026-10-25: partial progress on origin/main — #1099 (`45f4004`) moved
+  cookbook-only rules out of the eager set (`CLAUDE.md` @imports dropped,
+  `ruby.md` / new `cookbook-conventions.md` / `infrastructure-cookbook.md` are
+  `paths:`-scoped), #1100 (`4734eb3`) compressed `infrastructure.md` (-60) and
+  `shell.md` (-133), #1101 (`cfc2df6`) moved the commit gate back. No per-section
+  stale / native / detail verdict for the project set is recorded yet, so the
+  entry stays open. probe: `git log --since=2026-10-17 origin/main`.
 
 ## The 90 file memories have never been cross-checked against the rules files (Low)
 
