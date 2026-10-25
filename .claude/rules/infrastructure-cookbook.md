@@ -61,15 +61,6 @@ This is the GCP/kubectl generalisation of `~/.claude/docs/ruby-detail.md#auth-ch
 
 Origin: 2026-08-01 sh1-cloud — `mercari-gcloud` set the active account to the work account mid-apply; a later overlay cookbook's bare `gcloud secrets versions access` lost the instance service account its IAM grant was written for, failed with `does not have any valid credentials`, was swallowed by its own non-aborting guard, and left the cookbook a silent no-op while the run reported success. The tell was that resources NOT depending on the fetch (`known_hosts`, `config.d`) had converged normally — that split is what isolated it (zp-SHIN #114).
 
-## Commit Timing for Cookbook Changes
-
-After implementing a cookbook change:
-1. Run mitamae dry-run (via mitamae-validator agent)
-2. If dry-run passes: commit immediately — do not wait for deploy or user prompt
-3. If dry-run fails: fix and retry, then commit
-
-Dry-run passing is the commit gate for cookbook changes. Never leave cookbook changes uncommitted after a passing dry-run.
-
 ## Cross-OS Scope Gate Before Cookbookifying a Hotfix
 
 When codifying a manual fix into a cookbook, before writing the resource block, identify the target host(s) the cookbook actually runs on and confirm the fix applies to that OS — the host where the manual hotfix worked is not always representative of every host the cookbook covers (`dpkg-divert` is Debian/Ubuntu only; `systemd-resolved`'s `resolvconf` shim is recent-Ubuntu only; AL2023 has neither). If the cookbook runs on hosts that don't satisfy the precondition, gate the resource with `only_if` (an explicit guard, not silent failure), and state the target OS in the commit message ("Ubuntu 24.04 ships ..."), not just the symptom. For scripts shipped via `remote_file` / `files/`, audit their external-command deps for macOS portability (`mitamae --dry-run` does not execute shipped scripts) — see `~/ManagedProjects/setup/.claude/rules/shell.md` "macOS External-Command Audit for Ported Linux Scripts".

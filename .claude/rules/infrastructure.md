@@ -12,6 +12,10 @@ Before Edit/Write of a config file under `$HOME` outside a git working tree, pro
 
 For a direct change in `~/deploy/`: prefer a cookbook if one exists; otherwise make the change, immediately `ingest` what / why / path to the memory MCP, and flag it as unmanaged for future cookbookification — deploy dirs get rebuilt and untracked changes are lost.
 
+## Commit Timing for Cookbook Changes
+
+Always loaded (not path-scoped) because the commit it gates is a Bash call that never triggers a `paths:` rule. Dry-run passing is the commit gate: dry-run (via mitamae-validator or directly) → pass → commit immediately, don't wait for deploy or a prompt; fail → fix and retry. **No dry-run, no commit**: if the dry-run cannot run, do not commit and do not substitute lint or a config parse — report the blocker. `bin/mitamae*` is untracked, so a worktree or clone has none: run `~/ManagedProjects/setup/bin/mitamae local <recipe> --dry-run` (or `COOKBOOK=<name> … test-cookbook.rb`) from the worktree's cwd, and probe that path before claiming "mitamae is not installed".
+
 ## Incident First Response
 
 When a user reports service misbehavior (slow, unavailable, failing): (1) `systemctl --failed` and journal OOM kills before application logic; (2) `journalctl -u <service> -n 50 --no-pager`; (3) the cause may be OS-level — report findings with a concrete fix plan.
