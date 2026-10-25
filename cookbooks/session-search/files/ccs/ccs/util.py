@@ -31,6 +31,11 @@ def home() -> str:
     return os.path.expanduser("~")
 
 
+def current_session_id(env=None):
+    env = os.environ if env is None else env
+    return env.get("CLAUDE_CODE_SESSION_ID") or env.get("CODEX_THREAD_ID")
+
+
 def claude_dir() -> str:
     return os.path.join(home(), ".claude")
 

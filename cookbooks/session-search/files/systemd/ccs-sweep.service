@@ -1,5 +1,5 @@
 [Unit]
-Description=ccs session-search sweep (ship new Claude Code transcript bytes)
+Description=ccs session-search sweep (ship new Claude Code and Codex transcript bytes)
 Documentation=https://github.com/shin1ohno/setup/blob/main/docs/design/claude-session-search.md
 
 [Service]

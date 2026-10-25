@@ -18,6 +18,16 @@ import sys
 import tempfile
 import threading
 import unittest
+
+# Both cookbooks place this canonical server module into the installed client.
+# Exercise that exact file when testing the source package as well.
+import importlib.util
+
+_adapter = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../lxc-es-memory/files/memory-mcp/session_codex.py"))
+_spec = importlib.util.spec_from_file_location("ccs.session_codex", _adapter)
+_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_module)
+sys.modules["ccs.session_codex"] = _module
 import urllib.parse
 
 PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -150,7 +160,8 @@ class HomeCase(unittest.TestCase):
         self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="ccs-test-"))
         self._env = dict(os.environ)
         os.environ["HOME"] = self.tmp
-        for k in ("CCS_CONFIG", "FZF_PROMPT", "FZF_PORT", "CCS_PICK", "CCS_PICK_STATE", "CLAUDE_CODE_SESSION_ID"):
+        for k in ("CCS_CONFIG", "FZF_PROMPT", "FZF_PORT", "CCS_PICK", "CCS_PICK_STATE", "CLAUDE_CODE_SESSION_ID",
+                  "CODEX_HOME", "CODEX_THREAD_ID"):
             os.environ.pop(k, None)
         self.projects = os.path.join(self.tmp, ".claude", "projects")
         os.makedirs(self.projects)

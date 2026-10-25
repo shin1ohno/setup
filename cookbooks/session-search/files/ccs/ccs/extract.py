@@ -81,12 +81,22 @@ def iter_records(path: str):
     Only a regular file inside ~/.claude/projects is read (no symlink, FIFO or
     device): the fallback and local resume take these paths from rg and fzf.
     """
+    from . import codex
+
+    native = codex.is_path(path)
+    root = codex.sessions_dir() if native else util.projects_dir()
     try:
-        fh = os.fdopen(util.open_regular(path, util.projects_dir()), "rb")
+        fh = os.fdopen(util.open_regular(path, root), "rb")
     except (OSError, util.UnsafePath):
         return
+    entrypoint, cwd = None, None
+    if native:
+        from . import session_codex
+
+        match = codex.ROLLOUT_RE.fullmatch(os.path.basename(path))
+        index = session_codex.IndexState(match.group(1) if match else None)
     with fh:
-        for raw in fh:
+        for position, raw in enumerate(fh):
             if not raw.endswith(b"\n"):
                 break
             try:
@@ -94,14 +104,25 @@ def iter_records(path: str):
             except ValueError:
                 continue
             if isinstance(rec, dict):
+                if native:
+                    if not index.accept(rec):
+                        continue
+                    rec = session_codex.normalize(rec, position=position, entrypoint=entrypoint, cwd=cwd)
+                    entrypoint, cwd = rec.get("entrypoint"), rec.get("cwd") or cwd
                 yield rec
 
 
 class LocalSession:
     def __init__(self, path: str):
+        from . import codex
+
         self.path = path
         self.session_id = os.path.basename(path)[:-len(".jsonl")] if path.endswith(".jsonl") else ""
         self.project_dir = os.path.basename(os.path.dirname(path))
+        self.agent = "codex" if codex.is_path(path) else "claude"
+        if self.agent == "codex":
+            match = codex.ROLLOUT_RE.fullmatch(os.path.basename(path))
+            self.session_id = match.group(1) if match else ""
         self.title = ""
         self.cwd = ""
         self.cwd_candidates = []
@@ -115,7 +136,9 @@ class LocalSession:
 
     @property
     def interactive(self) -> bool:
-        return self.entrypoint in ("cli", "claude-desktop")
+        from . import session_codex
+
+        return self.entrypoint in ("cli", "claude-desktop") or self.entrypoint in session_codex.INTERACTIVE
 
     @property
     def resume_cwd(self) -> str:

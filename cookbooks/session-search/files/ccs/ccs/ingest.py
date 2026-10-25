@@ -56,6 +56,10 @@ def classify(path: str, projects: str | None = None):
     resolve inside realpath(~/.claude/projects): a symlink that points elsewhere
     is never a transcript.
     """
+    from . import codex
+
+    if codex.is_path(path):
+        return codex.classify(path)
     projects = projects or util.projects_dir()
     root = os.path.abspath(projects)
     p = os.path.abspath(path)
@@ -76,8 +80,10 @@ def classify(path: str, projects: str | None = None):
 
 def discover(projects: str | None = None):
     """Every main and subagent JSONL under ~/.claude/projects, newest first."""
+    from . import codex
+
+    out = list(codex.paths()) if projects is None else []
     projects = projects or util.projects_dir()
-    out = []
     try:
         pdirs = list(os.scandir(projects))
     except OSError:
@@ -146,6 +152,8 @@ class Shipper:
         self.deadline = None if budget is None else clock() + budget
         self.max_segment = max_segment
         self.projects = projects or util.projects_dir()
+        self.codex_ready = None
+        self.codex_deferred_logged = False
         self.stats = {"files": 0, "segments": 0, "bytes": 0, "tombstones": 0, "resyncs": 0, "errors": 0,
                       "blobs": 0, "gone": 0}
 
@@ -167,6 +175,8 @@ class Shipper:
     def build_body(self, info: dict, path: str, entry: dict, offset: int, end_offset: int, lines) -> dict:
         f = {"session_id": info["session_id"], "project_dir": info["project_dir"],
              "jsonl_path": os.path.abspath(path), "kind": info["kind"]}
+        if info.get("source"):
+            f["source"] = info["source"]
         if info["kind"] == "subagent":
             f["parent_session_id"] = info["parent_session_id"]
             f["agent_id"] = info["agent_id"]
@@ -229,8 +239,26 @@ class Shipper:
         info = classify(path, self.projects)
         if info is None:
             raise ShipError("not a transcript path under %s" % self.projects)
+        if info.get("source") == "codex":
+            # Fleet hosts update independently. An old server accepts native
+            # lines as unknown records, so never advance a cursor against it.
+            if self.codex_ready is None:
+                response = self.api.get("/status")
+                body = response.json()
+                if response.status != 200 or not isinstance(body, dict):
+                    raise ShipError("server capability check failed: HTTP %d" % response.status)
+                sources = body.get("sources")
+                self.codex_ready = isinstance(sources, list) and "codex" in sources
+            if not self.codex_ready:
+                if not self.codex_deferred_logged:
+                    util.log("INFO", "ingest: server has no Codex parser; Codex cursors held until the server is updated")
+                    self.codex_deferred_logged = True
+                return "deferred"
         # O_NOFOLLOW + fstat S_ISREG + inside realpath(projects); raises UnsafePath.
-        fd = util.open_regular(path, self.projects)
+        from . import codex
+
+        root = codex.sessions_dir() if info.get("source") == "codex" else self.projects
+        fd = util.open_regular(path, root)
         with os.fdopen(fd, "rb") as fh:
             st = os.fstat(fh.fileno())
             return self._ship_open(path, info, fh, st)
@@ -354,7 +382,7 @@ class Shipper:
 
     # --- side files and gone files ---------------------------------------
     def _ship_blobs(self, path, info, entry):
-        if info["kind"] != "main" or not entry.get("session_key"):
+        if info.get("source") == "codex" or info["kind"] != "main" or not entry.get("session_key"):
             return
         sdir = os.path.join(os.path.dirname(path), info["session_id"])
         tdir = os.path.join(sdir, "tool-results")

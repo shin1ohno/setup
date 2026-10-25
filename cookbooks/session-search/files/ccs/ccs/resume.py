@@ -36,7 +36,7 @@ import shlex
 import sys
 import tarfile
 
-from . import api as api_mod, config as config_mod, extract, picker, util
+from . import api as api_mod, codex, config as config_mod, extract, picker, util
 
 RESTORED_NOTE = "restored masked transcript (secrets appear as [REDACTED:…])"
 
@@ -45,7 +45,9 @@ class ResumeError(Exception):
     """Precondition failure -> exit 4."""
 
 
-def command_line(cwd: str, session_id: str, fork: bool) -> str:
+def command_line(cwd: str, session_id: str, fork: bool, agent: str = "claude") -> str:
+    if agent == "codex":
+        return "cd %s && codex %s %s" % (shlex.quote(cwd), "fork" if fork else "resume", shlex.quote(session_id))
     cmd = "cd %s && claude --resume %s" % (shlex.quote(cwd), shlex.quote(session_id))
     return cmd + (" --fork-session" if fork else "")
 
@@ -54,21 +56,24 @@ def claude_argv(session_id: str, fork: bool):
     return ["claude", "--resume", session_id] + (["--fork-session"] if fork else [])
 
 
-def exec_claude(cwd: str, session_id: str, fork: bool, do_print: bool, execvp=os.execvp, chdir=os.chdir,
-                out=None) -> int:
+def exec_agent(cwd: str, session_id: str, fork: bool, do_print: bool, execvp=os.execvp, chdir=os.chdir,
+                out=None, agent="claude") -> int:
     out = out or sys.stdout
     if not os.path.isdir(cwd):
         raise ResumeError("resume cwd %s does not exist on this host; not resuming from a different directory"
                           % cwd)
     if do_print:
-        out.write(command_line(cwd, session_id, fork) + "\n")
+        out.write(command_line(cwd, session_id, fork, agent) + "\n")
         return util.EXIT_OK
     validate_session_id(session_id)
     chdir(cwd)
     try:
-        execvp("claude", claude_argv(session_id, fork))
+        if agent == "codex":
+            execvp("codex", ["codex", "fork" if fork else "resume", session_id])
+        else:
+            execvp("claude", claude_argv(session_id, fork))
     except FileNotFoundError:
-        raise ResumeError("claude is not on PATH")
+        raise ResumeError("%s is not on PATH" % agent)
     return util.EXIT_OK  # only reached with a stubbed execvp
 
 
@@ -241,7 +246,7 @@ def choose_restore_cwd(meta: dict, to_dir, do_print: bool, ask=input, isatty=Non
     rc = meta.get("resume_cwd")
     if isinstance(rc, str) and rc.startswith("/") and os.path.isdir(rc):
         err.write("The session's original directory exists on this host:\n  %s\n"
-                  "Starting claude there loads that directory's .claude/ settings and hooks.\n" % rc)
+                  "Starting an agent there loads that directory's project settings and instructions.\n" % rc)
         if ask("Resume in that directory? [y/N] ").strip().lower() in ("y", "yes"):
             return os.path.realpath(rc)
     ans = ask("Directory to resume in [%s]: " % here).strip()
@@ -304,6 +309,117 @@ def restore(api, meta: dict, local_cwd: str, force: bool, session_key: str, out=
     return sid
 
 
+def restore_codex(api, meta: dict, local_cwd: str, force: bool, session_key: str, out=None) -> str:
+    """Restore native rollout history; local configuration chooses permissions.
+
+    turn_context stores the originating host's permission and cwd settings.
+    Omitting it retains response history without importing those settings.
+    """
+    import datetime
+
+    out = out or sys.stderr
+    sid = validate_session_id(meta.get("session_id"))
+    resp = api.get("/archive", params={"session_key": session_key}, timeout=120)
+    if resp.status != 200:
+        raise ResumeError("archive download answered HTTP %d" % resp.status)
+    want = (resp.header("X-Archive-Sha256") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", want) or hashlib.sha256(resp.body).hexdigest() != want:
+        raise ResumeError("archive sha256 mismatch; nothing restored")
+    lines = []
+    try:
+        from . import session_codex
+
+        records = [extract.loads_strict(raw.decode("utf-8")) for raw in resp.body.split(b"\n") if raw.strip()]
+        first = records[0]
+        if first.get("type") != "session_meta" or first["payload"].get("id") != sid:
+            raise ValueError("session metadata mismatch")
+        rebuild_display = first["payload"].get("history_mode") == "paginated"
+        has_display_events = any(isinstance(r, dict) and r.get("type") == "event_msg"
+                                 and isinstance(r.get("payload"), dict)
+                                 and r["payload"].get("type") in ("user_message", "agent_message")
+                                 for r in records)
+        index_state = session_codex.IndexState(sid)
+        own_start = None
+        for index, rec in enumerate(records):
+            if not isinstance(rec, dict):
+                raise ValueError("non-object record")
+            owned = index_state.accept(rec)
+            if index and owned and own_start is None:
+                own_start = len(lines)
+            # Forks copy the parent's metadata after their own first header.
+            # Only the first header describes the session being restored.
+            if index and rec.get("type") == "session_meta":
+                continue
+            if rec.get("type") in ("turn_context", "world_state"):
+                continue
+            if rec.get("type") == "event_msg" and isinstance(rec.get("payload"), dict) \
+                    and rec["payload"].get("type") == "thread_settings_applied":
+                continue
+            if rebuild_display and rec.get("type") == "event_msg" and isinstance(rec.get("payload"), dict) \
+                    and rec["payload"].get("type") in ("user_message", "agent_message"):
+                continue
+            if rec.get("type") == "session_meta":
+                rec["payload"].update(cwd=local_cwd, session_id=sid, history_mode="legacy",
+                                      runtime_workspace_roots=[local_cwd])
+            # Paginated rollouts mirror model-visible response items, while
+            # their display items live in SQLite. Rebuild legacy display events
+            # so a restored CLI also shows the conversation before continuing.
+            payload = rec.get("payload")
+            if (rebuild_display or not has_display_events) and rec.get("type") == "response_item" and isinstance(payload, dict) \
+                    and payload.get("type") == "message" and payload.get("role") in ("user", "assistant") \
+                    and payload.get("channel") != "analysis":
+                common = session_codex.normalize(rec)
+                text = "\n".join(b.get("text", "") for b in common.get("message", {}).get("content", []))
+                if text:
+                    event = {"type": "event_msg", "timestamp": rec.get("timestamp"),
+                             "payload": {"type": "user_message" if payload["role"] == "user" else "agent_message",
+                                         "message": text, "images": [], "local_images": [], "text_elements": []}}
+                    lines.append(event)
+            lines.append(rec)
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError):
+        raise ResumeError("invalid Codex archive; nothing restored")
+    if (first["payload"].get("forked_from_id") or "subagent_history_start_ordinal" in first["payload"]
+            or "ccs_index_start_ordinal" in first["payload"]):
+        # Restoring removes settings/ancestor headers and may add display rows.
+        # Preserve the indexing boundary in the transformed file's coordinates.
+        first["payload"]["ccs_index_start_ordinal"] = own_start if own_start is not None else len(lines)
+        if "subagent_history_start_ordinal" in first["payload"]:
+            first["payload"]["subagent_history_start_ordinal"] = first["payload"]["ccs_index_start_ordinal"]
+    for ordinal, rec in enumerate(lines):
+        rec["ordinal"] = ordinal
+    data = "\n".join(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) for rec in lines) + "\n"
+    now = datetime.datetime.now(datetime.timezone.utc)
+    root = codex.sessions_dir()
+    pdir = os.path.join(root, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"))
+    target = os.path.join(pdir, "rollout-%s-%s.jsonl" % (now.strftime("%Y-%m-%dT%H-%M-%S"), sid))
+    existing = codex.find_local(sid)
+    if existing:
+        target = existing
+        pdir = os.path.dirname(target)
+    check = pdir
+    while True:
+        if os.path.islink(check):
+            raise ResumeError("%s is a symlink; refusing to restore through it" % check)
+        if check == root:
+            break
+        check = os.path.dirname(check)
+    if os.path.lexists(target):
+        if os.path.islink(target) or not os.path.isfile(target):
+            raise ResumeError("unsafe Codex restore target")
+        if not force and _file_sha(target) != hashlib.sha256(data.encode()).hexdigest():
+            raise ResumeError("%s already exists and differs from the archive; pass --force to replace it" % target)
+    util.atomic_write(target, data)
+    out.write(RESTORED_NOTE + "\n")
+    return sid
+
+
+def codex_resume_cwd(path: str, to_dir=None) -> str:
+    cwd = to_dir or codex.metadata(path).get("cwd")
+    if not isinstance(cwd, str) or not os.path.isabs(cwd) or not os.path.isdir(cwd):
+        raise ResumeError("Codex session directory does not exist here; pass --to DIR")
+    return os.path.realpath(cwd)
+
+
 def resume(session_key: str, do_print: bool = False, fork: bool = False, to_dir: str | None = None,
            force: bool = False, api_factory=None, execvp=os.execvp, chdir=os.chdir, ask=input, isatty=None,
            out=None) -> int:
@@ -311,12 +427,18 @@ def resume(session_key: str, do_print: bool = False, fork: bool = False, to_dir:
     try:
         if session_key.startswith("local:"):
             path = session_key[len("local:"):]
+            if codex.is_path(path):
+                info = codex.classify(path)
+                if info is None:
+                    raise ResumeError("local Codex transcript is missing or unsafe")
+                return exec_agent(codex_resume_cwd(path, to_dir), info["session_id"], fork,
+                                   do_print, execvp, chdir, out, agent="codex")
             sid = os.path.basename(path)[:-len(".jsonl")] if path.endswith(".jsonl") else ""
             validate_session_id(sid)
             if not local_jsonl_ok(path, sid):
                 raise ResumeError("local transcript %s no longer exists or is not a plain file under %s"
                                   % (path, util.projects_dir()))
-            return exec_claude(local_resume_cwd(path, to_dir), sid, fork, do_print, execvp, chdir, out)
+            return exec_agent(local_resume_cwd(path, to_dir), sid, fork, do_print, execvp, chdir, out)
         try:
             cfg = config_mod.load()
         except config_mod.ConfigError as e:
@@ -335,18 +457,22 @@ def resume(session_key: str, do_print: bool = False, fork: bool = False, to_dir:
             return util.EXIT_UNREACHABLE
         meta = (resp.json() or {}).get("session") or {}
         sid = validate_session_id(meta.get("session_id"))
+        agent = "codex" if str(meta.get("entrypoint") or "").startswith("codex-") else "claude"
         if meta.get("host") == cfg.host_label:
-            local = find_local_jsonl(sid, hint=meta.get("jsonl_path"))
+            local = (codex.find_local(sid, hint=meta.get("jsonl_path")) if agent == "codex"
+                     else find_local_jsonl(sid, hint=meta.get("jsonl_path")))
             if local:
-                return exec_claude(local_resume_cwd(local, to_dir), sid, fork, do_print, execvp, chdir, out)
+                cwd = codex_resume_cwd(local, to_dir) if agent == "codex" else local_resume_cwd(local, to_dir)
+                return exec_agent(cwd, sid, fork, do_print, execvp, chdir, out, agent=agent)
         if meta.get("archived") and meta.get("archive_complete"):
             local_cwd = choose_restore_cwd(meta, to_dir, do_print, ask=ask, isatty=isatty)
             try:
-                sid = restore(api, meta, local_cwd, force, session_key)
+                restore_fn = restore_codex if agent == "codex" else restore
+                sid = restore_fn(api, meta, local_cwd, force, session_key)
             except api_mod.Unreachable as e:
                 sys.stderr.write("ccs: server unreachable: %s\n" % e)
                 return util.EXIT_UNREACHABLE
-            return exec_claude(local_cwd, sid, fork, do_print, execvp, chdir, out)
+            return exec_agent(local_cwd, sid, fork, do_print, execvp, chdir, out, agent=agent)
         raise ResumeError("view-only: %s" % (picker.view_only_reason(meta, cfg.host_label) or "not resumable"))
     except ResumeError as e:
         sys.stderr.write("ccs: %s\n" % e)
