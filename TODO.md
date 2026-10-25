@@ -1,5 +1,25 @@
 # TODO
 
+## session-search Codex follow-ups left after PR #1102 (Low)
+
+- **Failure class**: three residual edges of the Codex ingest/search path.
+  (1) An interactive `codex fork` is indexed only from the child's own
+  `thread_settings_applied` checkpoint (`session_codex.IndexState`); a fork
+  without that event drops the whole session from search silently. Only a
+  synthetic fixture covers this — no real `codex fork` rollout existed on
+  pro-dev to check against (real subagents were checked: 328→169, 484→73,
+  622→95 records kept). (2) While `/status` answers non-200,
+  `Shipper.ship_file` re-probes and raises a `ShipError` per Codex file, so
+  each sweep logs one WARN per rollout until the server recovers.
+  (3) Subagent rollouts have no user message after the inherited prefix, so
+  their title is empty in `--all` results.
+- **Why**: found while re-reviewing PR #1102 (2026-10-26); none blocked the
+  merge.
+- **First step**: run one real `codex fork <UUID>` turn on pro-dev, then
+  `ccs search` a phrase from the child's own turn and confirm the fork is
+  found with the child's title; for (2), cache a failed capability probe for
+  the rest of the run and log it once.
+
 ## AGENTS.md cites a secondary-summary backing procedure that data-collection.md does not contain (Low)
 
 - **Failure class**: `cookbooks/claude-code/files/AGENTS.md` (Domain term verification bullet and the Detail playbooks row) points to `~/.claude/docs/data-collection.md` for "procedure and verification commands" for backing secondary summaries and cited URLs, but that doc only has Failure Escalation Ladder, Transient Error Retry and Live / Time-Varying Data Research. An agent that follows the pointer finds nothing and falls back to improvising the check.
