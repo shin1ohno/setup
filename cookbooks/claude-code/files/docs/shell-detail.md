@@ -314,6 +314,7 @@ The Claude Code Bash tool executes through the user's **login zsh** on darwin, n
 3. **zsh builtins shadow `/usr/bin` commands.** `log …` hits the zsh `log` builtin (`too many arguments`), not `/usr/bin/log`. Verify with `type <cmd>`; call the full path (`/usr/bin/log show …`) when a builtin shadows the binary you meant.
 4. **A broken `.zshrc` compdef makes `aws` silently exit 1** (git/gh/curl unaffected). Wrap `aws` in `/bin/bash -c '…'` — see memory `aws-cli-needs-bash-c-wrapper`.
 5. **Inline `!` via the Bash tool can arrive mangled to `\!`** — not just jq `!=`; the 2026-06 window also corrupted a `reject!` / `!==` inside a quoted heredoc and a `printf` single-quote `<!--` written to a file (version-dependent) — see `#zsh-bang-history-expansion`.
+6. **An unquoted word starting with `=` is `=cmd` expansion.** zsh replaces `=word` with the path of the command `word`, so a separator such as `echo =====` aborts with `(eval):1: ==== not found` and the rest of a chained command never runs. Quote separators (`echo '-----'`, `printf '%s\n' '====='`) or use another character. Origin: 2026-10-07 and twice on 2026-10-24〜26 (`echo =====` / `echo ====` between file dumps).
 
 **Default policy**: observing ONE zsh-dialect error is the signal to switch the whole command to bash — do not patch it token by token. `/bin/bash -c` / quoted-heredoc wrapping fixes traps #1-#3 and does NOT help #5: the corruption happens at the harness layer, before the shell, so the reliable avoidance for a literal/script containing `!` is to place it with the Write/Edit tool.
 

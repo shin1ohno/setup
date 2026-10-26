@@ -12,7 +12,7 @@ Before presenting `! ssh/scp …`, claiming "no key" / "cannot reach", or design
 
 ## Bash Tool Runs in the User's Login zsh (darwin) — bash/Linux idiom traps
 
-zsh silently breaks bash idioms: no word-split of unquoted `$var`, unmatched globs abort, builtins shadow binaries (`/usr/bin/log`), `aws` exits 1 unless wrapped in `/bin/bash -c`, inline `!` may arrive as `\!`. Write loops / globs / multi-line commands as `/bin/bash -c '…'` or `bash -s <<'EOF'` from the start (switch on the first zsh error); place `!`-bearing content with Write/Edit. Before reporting "0 results", re-run one case without `2>/dev/null`; never attribute multi-file `grep -h` lines (use `-H` / `rg`; re-probe the one file before reporting a defect). Detail: see `~/.claude/docs/shell-detail.md#zsh-login-shell-traps`.
+zsh silently breaks bash idioms: no word-split of unquoted `$var`, unmatched globs abort, builtins shadow binaries (`/usr/bin/log`), `aws` exits 1 unless wrapped in `/bin/bash -c`, inline `!` may arrive as `\!`, an unquoted word starting with `=` is command-path expansion (quote `=====` separators). Write loops / globs / multi-line commands as `/bin/bash -c '…'` or `bash -s <<'EOF'` from the start (switch on the first zsh error); place `!`-bearing content with Write/Edit. Before reporting "0 results", re-run one case without `2>/dev/null`; never attribute multi-file `grep -h` lines (use `-H` / `rg`; re-probe the one file before reporting a defect). Detail: see `~/.claude/docs/shell-detail.md#zsh-login-shell-traps`.
 
 ## Never Chain Two `sudo` Calls in a `!` Block
 
