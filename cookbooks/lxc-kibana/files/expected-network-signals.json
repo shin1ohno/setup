@@ -62,12 +62,12 @@
       "key": "syslog_silent_rtx_itm",
       "title": "syslog silent (RTX itm)",
       "index": ["logs-rtx-default"],
-      "window_minutes": 180,
+      "window_minutes": 300,
       "comparator": "<",
       "threshold": 1,
       "exclude_previous_hits": false,
       "query": { "bool": { "filter": [ { "term": { "router": "itm" } } ] } },
-      "message": "No syslog from RTX830 itm (192.168.1.254) for {{window}} min. Window is 3 h because this router only emits 100-300 docs/day; a shorter window flaps."
+      "message": "No syslog from RTX830 itm (192.168.1.254) for {{window}} min. Window: this router only emits 100-300 docs/day and everything except IKE is event-driven (DHCP leases, filter rejects, link changes), so quiet stretches of 100-184 min are normal (7 days to 2026-10-29: longest 184 min, which fired the old 3 h window while the router was healthy, setup #1107). The only client-independent floor is the IKE rekey of the tunnel to hnd (`initiate IPsec phase` / `respond ISAKMP phase`), whose largest gap is exactly 240 min. 300 min = one 4 h rekey + 60 min margin, so any firing means at least one rekey was missed - check the itm-hnd tunnel as well as the router and the Vector source map."
     },
     {
       "key": "wireless_module_ssr",
