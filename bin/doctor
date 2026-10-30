@@ -77,11 +77,27 @@ installed it, so a fresh machine always needs TWO applies of the same recipe."
     return
   fi
 
+  # The bootstrap pair names the home-lab FLEET profile. A host whose AWS
+  # access arrives some other way has no such profile on purpose — sh1-cloud
+  # gets a short-lived federated role through a credential_process that the
+  # mercari-setup overlay (gcp-aws-federation) writes into ~/.aws/config — and
+  # its public cookbooks read the ambient credential chain, not the fleet
+  # profile. Failing on the absent profile would make bin/converge unusable on
+  # exactly those hosts, so probe the chain the cookbooks will use instead:
+  # AWS_PROFILE when set, else `default`. A profile that IS configured but
+  # cannot authenticate still fails below.
+  if ! aws configure list-profiles 2>/dev/null | grep -qxF -- "$profile"; then
+    local ambient="${AWS_PROFILE:-default}"
+    pass "aws fleet profile '$profile' is not configured here; probing the ambient profile '$ambient' the cookbooks read"
+    profile="$ambient"
+  fi
+
   arn=$(aws sts get-caller-identity --profile "$profile" --region "$region" \
     --query Arn --output text 2>/dev/null)
   if [ -z "$arn" ]; then
     fail "aws profile '$profile' cannot authenticate in $region" \
-      "aws configure --profile $profile   # then re-run bin/doctor"
+      "aws configure --profile $profile   # then re-run bin/doctor
+(on a federated host, repair the credential_process behind '$profile' instead)"
     return
   fi
   pass "aws identity ($profile) = $arn"
@@ -97,8 +113,8 @@ installed it, so a fresh machine always needs TWO applies of the same recipe."
       pass "ssm read $param"
     else
       warn "ssm read $param denied or absent" \
-        "grant this prefix (+ its KMS EncryptionContext) to $profile in
-home-monitor's pve-bootstrap-ssm IAM policy, then terraform apply"
+        "grant this prefix (+ its KMS EncryptionContext) to the IAM principal
+behind profile '$profile' in home-monitor's terraform, then terraform apply"
     fi
   done
 }
