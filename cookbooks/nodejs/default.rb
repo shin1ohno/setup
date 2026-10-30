@@ -10,20 +10,15 @@ mise_tool "node" do
   versions node[:nodejs][:versions]
 end
 
-# Install yarn globally using corepack. `which yarn` fails inside the
-# `sudo -u <user>` wrap because the wrapped shell's PATH lacks the mise
-# shim dir even when the parent mitamae process has it. Test the shim
-# file directly via Ruby File.exist? — no shell wrap involved.
-execute "export PATH=$HOME/.local/share/mise/shims:$PATH && corepack enable" do
-  user node[:setup][:user]
-  not_if { File.exist?("#{node[:setup][:home]}/.local/share/mise/shims/yarn") }
-end
-
-# Install pnpm globally using corepack
-execute "export PATH=$HOME/.local/share/mise/shims:$PATH && corepack enable pnpm" do
-  user node[:setup][:user]
-  not_if { File.exist?("#{node[:setup][:home]}/.local/share/mise/shims/pnpm") }
-end
+# yarn and pnpm are standalone mise tools, not corepack shims. Node.js
+# stopped bundling corepack in v25 (installs/node/26.x/bin has no `corepack`;
+# 24.x still has it), so the moment `lts` resolved to 26 the former
+# `corepack enable` step failed on every apply with
+# "No version is set for shim: corepack". Installing them directly also
+# decouples them from whichever node version is active, so a later lts
+# bump cannot break them again.
+mise_tool "yarn"
+mise_tool "pnpm"
 
 # Ensure npm is up to date, self-healing a prior interrupted global npm update.
 #
@@ -67,9 +62,6 @@ add_profile "nodejs" do
   bash_content <<~BASH
     # Node.js managed by mise
     export PATH="$HOME/.local/share/mise/shims:$PATH"
-
-    # Enable corepack for yarn and pnpm
-    export COREPACK_ENABLE_STRICT=0
   BASH
   priority 70
 end
