@@ -39,7 +39,17 @@ name as printed**, including any `claude.ai ` prefix.
 Scope note: a connector whose `claude mcp get` shows `Scope: claude.ai config`
 can print `Connected` in `claude mcp list` while its tools are NOT injected
 into this CLI session — judge injection by the session tool registry (source 1),
-not the list status.
+not the list status. Known case: the Google connectors
+(`*mcp.googleapis.com/mcp/v1`) answer an unauthenticated `initialize` with 200,
+so they print `Connected` even after the user disconnected them in claude.ai;
+a fresh `claude -p` session probed with ToolSearch is the only injection check.
+
+Ignore list: names in `~/.claude/mcp-health-ignore.txt` (one per line as
+`claude mcp list` prints them, case-insensitive, `#` comments and blank lines
+skipped) are connectors the user intentionally disconnected or never connected.
+The SessionStart hook drops them from its report; this skill shows them as
+`ignored` in the status table and does not re-authenticate one unless the user
+names it explicitly.
 
 Present a short status table to the user before acting.
 
@@ -93,6 +103,8 @@ Report as a transient connection failure. Optionally probe the URL once
 
 - Re-authenticate sequentially — each login opens its own browser flow.
 - Only **NEEDS-AUTH** (or DOWN confirmed 401/403) triggers `claude mcp login`.
+- A name in `~/.claude/mcp-health-ignore.txt` is skipped even when NEEDS-AUTH;
+  only an explicit user request for that connector overrides the skip.
 - Some Anthropic-hosted connectors support auth only via claude.ai connector
   settings, not local OAuth. If `claude mcp login` reports it cannot, point the
   user to claude.ai settings instead of retrying.

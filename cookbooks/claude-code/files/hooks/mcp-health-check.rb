@@ -24,17 +24,30 @@
 #   dependent).
 # - Never exit non-zero and never raise: a hook failure must not disturb the
 #   session. All failure paths fall through to silent exit 0.
+# - Ignore list: ~/.claude/mcp-health-ignore.txt (override: MCP_HEALTH_IGNORE_FILE)
+#   names connectors that must never appear in the attention report — org
+#   connectors the user intentionally disconnected (another connector serves the
+#   same tools) or never connected. One name per line exactly as `claude mcp
+#   list` prints it ("claude.ai " prefix included); `#` lines and blank lines
+#   are skipped; matching is case-insensitive. The file is unmanaged by this
+#   cookbook (a machine-local overlay or the user writes it) and is read at
+#   report time, so an edit takes effect on the next SessionStart without a
+#   cache refresh; the cache itself keeps every result unfiltered. A missing or
+#   unreadable file means "ignore nothing" — the fail-safe direction is noise.
 # - Test seams: MCP_HEALTH_FIXTURE_FILE (parse file contents instead of running
-#   `claude mcp list`, synchronously) and MCP_HEALTH_CACHE_FILE (override the
-#   cache path) keep tests from touching live auth or the production cache.
+#   `claude mcp list`, synchronously), MCP_HEALTH_CACHE_FILE (override the
+#   cache path) and MCP_HEALTH_IGNORE_FILE (override the ignore list) keep tests
+#   from touching live auth, the production cache or the real ignore list.
 
 require "json"
 require "open3"
 require "rbconfig"
+require "set"
 
 CACHE_PATH      = ENV["MCP_HEALTH_CACHE_FILE"] || File.join(Dir.home, ".claude", ".mcp-health-cache.json")
 CACHE_TTL       = 300 # seconds — skip a background refresh within this window
 REFRESH_TIMEOUT = 30  # seconds — hard cap on the background `claude mcp list`
+IGNORE_PATH     = ENV["MCP_HEALTH_IGNORE_FILE"] || File.join(Dir.home, ".claude", "mcp-health-ignore.txt")
 
 def resolve_claude
   candidate = File.join(Dir.home, ".local", "bin", "claude")
@@ -121,12 +134,31 @@ rescue StandardError
   nil
 end
 
+# Connector names listed in IGNORE_PATH (see the header), lower-cased for the
+# case-insensitive match. Any failure to read the file yields an empty set, so
+# a broken ignore list can only ADD noise, never hide a real re-auth need.
+def ignored_names
+  return Set.new unless File.file?(IGNORE_PATH)
+
+  File.readlines(IGNORE_PATH, chomp: true)
+      .map(&:strip)
+      .reject { |l| l.empty? || l.start_with?("#") }
+      .map(&:downcase)
+      .to_set
+rescue StandardError
+  Set.new
+end
+
 # Emit the SessionStart additionalContext JSON iff something needs attention.
+# The ignore list is applied here, at report time, never to the cache.
 def emit(results)
   return if results.nil?
 
-  attention = results.select { |r| %w[NEEDS-AUTH PENDING DOWN].include?(r["status"]) }
-  return if attention.empty? # all healthy → stay silent, do not bloat context
+  ignored   = ignored_names
+  attention = results
+              .reject { |r| ignored.include?(r["name"].to_s.downcase) }
+              .select { |r| %w[NEEDS-AUTH PENDING DOWN].include?(r["status"]) }
+  return if attention.empty? # all healthy (or ignored) → stay silent, do not bloat context
 
   by    = ->(k) { attention.select { |r| r["status"] == k }.map { |r| r["name"] } }
   parts = []

@@ -757,6 +757,17 @@ jobs:
         bash cookbooks/claude-code/files/hooks/test-session-ingest.sh \
           cookbooks/claude-code/files/hooks/session-ingest.rb
 
+    - name: MCP health hook regression suite
+      run: |
+        # hooks/mcp-health-check.rb (SessionStart) reports the NEEDS-AUTH /
+        # PENDING / DOWN connectors of a `claude mcp list` fixture. The suite
+        # asserts both polarities of the ignore list
+        # (~/.claude/mcp-health-ignore.txt / MCP_HEALTH_IGNORE_FILE): every name
+        # reported without one, ignored names dropped with one while the cache
+        # keeps them, and a missing or unreadable list behaving like none.
+        bash cookbooks/claude-code/files/hooks/test-mcp-health-check.sh \
+          cookbooks/claude-code/files/hooks/mcp-health-check.rb
+
     - name: Validate JSON files
       run: |
         # Check if any JSON files exist and validate them
