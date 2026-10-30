@@ -17,6 +17,7 @@ See @~/.agents/AGENTS.md
 ## Critical Rules — General
 
 - **ユーザーに渡す `!` ブロックは zsh 書式で書く**（ログインシェルは zsh 5.9）。bash 専用書式は静かに壊れる（`read -rs -p` は変数が空のまま後続が走る。zsh は `read -rs "V?x: "`）。Detail: see `~/.claude/docs/claude-md-detail.md#zsh-user-blocks`.
+- **Bash ツール自体も zsh（Linux ホストでも同じ）**: ループ・配列・glob・複数行は最初から `/bin/bash -c '…'` か `bash -s <<'EOF'` で書く。`for f in $VAR` は分割されず、glob 不一致は全体を中断し、`echo ===` の `=` 展開と `mapfile` は失敗する。zsh 由来のエラーを 1 回見たらコマンド全体を bash に切り替える。Detail: see `~/.claude/docs/shell-detail.md#zsh-login-shell-traps`.
 - **Non-trivial → plan mode**: 2+ files, 2+ repos, deploy steps, new agent/hook/skill. Exception: hardware/protocol debugging with unknown root cause → iterate hypotheses until the cause is found, then plan mode
 - **Misclassified as trivial — still need plan mode**: cross-crate enum variant, UI fix requiring contract sibling, fix requiring service restart, hardware verification loops, plugin lockfile bumps with runtime steps (`:Lazy sync`, `npm install`, parser rebuild). Detail: see `~/.claude/docs/claude-md-detail.md#plan-mode-misclassified`.
 - **Inverse — NOT new plan triggers**: a mechanical sweep of a validated fix shape across N files in one repo — unless the first instance is unvalidated, or the sweep crosses repos / adds behavior
