@@ -170,7 +170,7 @@ Shell metacharacters — `()`, `$()`, backticks, `!` history expansion, `*` glob
 
 ```
 ssh root@pve.host 'pct exec 111 -- bash -c "
-  echo === step 1.3: bin/setup (mitamae binary download) ===
+  echo '===' step 1.3: bin/setup (mitamae binary download) ===
   ...
 "'
 # Layer 2 evaluates `(mitamae binary download)` as a subshell call to
@@ -184,7 +184,7 @@ ssh root@pve.host 'pct exec 111 -- bash -c "
 ```
 ssh root@pve.host "pct exec 111 -- bash -s" <<'EOF'
 set -euo pipefail
-echo === step 1.3: bin/setup (mitamae binary download) ===
+echo '===' step 1.3: bin/setup (mitamae binary download) ===
 cd /root/setup && ./bin/setup
 EOF
 ```
@@ -195,19 +195,19 @@ Why this works:
 - `<<'EOF'` (single-quoted delimiter) tells the local shell to send the heredoc content **verbatim** with no expansion of `$VAR`, `$()`, `()`, backticks, or `!`
 - `bash -s` reads from stdin (the heredoc) instead of taking a `-c` argument, so the inner bash sees the script source character-for-character
 
-**Same trap fires for direct (non-nested) `bash -c '...'` too**: any `()` inside the single-quoted body — typically commentary parentheses in `echo === foo (bar) ===` — is interpreted as subshell grouping by the inner bash. Both forms break:
+**Same trap fires for direct (non-nested) `bash -c '...'` too**: any `()` inside the single-quoted body — typically commentary parentheses in `echo '===' foo (bar) ===` — is interpreted as subshell grouping by the inner bash. Both forms break:
 
 ```
-bash -c 'echo === foo (bar) ==='
+bash -c 'echo '===' foo (bar) ==='
 # bash: -c: line 1: syntax error near unexpected token '('
 
-ssh host 'echo === foo (bar) ==='
+ssh host 'echo '===' foo (bar) ==='
 # Same error at the remote shell, before reaching anything else
 ```
 
 Fix options (any work):
 
-- Drop the parens: `echo === foo bar ===`
+- Drop the parens: `echo '===' foo bar ===`
 - Escape: `echo "=== foo (bar) ==="` (use double quotes outside, or escape `\(\)`)
 - Heredoc: `bash <<'EOF' ... EOF` (no -c argument)
 
@@ -219,7 +219,7 @@ Fix options (any work):
 
 **Composition gate**: before writing any `bash -c '...'`, `ssh host '...'`, or `ssh host 'pct exec <vmid> -- bash -c/-s ...'`, scan the inner body for `()`, `$()`, backticks, `*`, `!`, `<<`, or quotes nested >1 level deep — **commentary parentheses in `echo` statements count** (e.g. `echo (already paused)`). Any hit → switch to the single-quoted `bash -s` heredoc before sending.
 
-Origin: 2026-05-06 / 2026-05-11 / 2026-06-07 — `syntax error near unexpected token '('` from commentary parens in `echo === ... ===` headers through three remote shells; structural, recurs per metacharacter unless heredoc + `bash -s` is the default.
+Origin: 2026-05-06 / 2026-05-11 / 2026-06-07 — `syntax error near unexpected token '('` from commentary parens in `echo '===' ... ===` headers through three remote shells; structural, recurs per metacharacter unless heredoc + `bash -s` is the default.
 
 ## awk-dollar-bash-positional-collision
 
@@ -314,6 +314,8 @@ The Claude Code Bash tool executes through the user's **login zsh** on darwin, n
 3. **zsh builtins shadow `/usr/bin` commands.** `log …` hits the zsh `log` builtin (`too many arguments`), not `/usr/bin/log`. Verify with `type <cmd>`; call the full path (`/usr/bin/log show …`) when a builtin shadows the binary you meant.
 4. **A broken `.zshrc` compdef makes `aws` silently exit 1** (git/gh/curl unaffected). Wrap `aws` in `/bin/bash -c '…'` — see memory `aws-cli-needs-bash-c-wrapper`.
 5. **Inline `!` via the Bash tool can arrive mangled to `\!`** — not just jq `!=`; the 2026-06 window also corrupted a `reject!` / `!==` inside a quoted heredoc and a `printf` single-quote `<!--` written to a file (version-dependent) — see `#zsh-bang-history-expansion`.
+6. **A bare word starting with `=` is command-path expanded.** `echo '==='` fails the whole line with `== not found` (zsh `=cmd` expansion) and aborts a compound command with it. Quote separators: `echo '==='` or `printf '%s\n' '=== label'`. Observed 2026-10-30 on sh1-cloud (Linux) — the traps in this section are not darwin-only.
+7. **`mapfile` / `readarray` are bash builtins, absent in zsh** (`command not found: mapfile`). Put array-loading scripts in a file and run `bash file.sh`, or in zsh use `arr=("${(@f)$(cmd)}")`.
 
 **Default policy**: observing ONE zsh-dialect error is the signal to switch the whole command to bash — do not patch it token by token. `/bin/bash -c` / quoted-heredoc wrapping fixes traps #1-#3 and does NOT help #5: the corruption happens at the harness layer, before the shell, so the reliable avoidance for a literal/script containing `!` is to place it with the Write/Edit tool.
 
