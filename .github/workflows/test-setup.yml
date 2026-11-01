@@ -284,7 +284,6 @@ jobs:
 
         echo -e "\nLLM Tools:"
         which claude-code && claude-code --version || echo "❌ Claude Code not found"
-        which ollama && ollama --version || echo "❌ Ollama not found"
 
         echo -e "\nSetup directories:"
         ls -la ~/.setup_shin1ohno/ 2>/dev/null || echo "❌ Setup directory not found"
@@ -497,9 +496,6 @@ jobs:
         which go && go version || echo "❌ Go not found"
         which cargo && cargo --version || echo "❌ Rust not found"
         which ruby && ruby --version || echo "❌ Ruby not found"
-
-        echo -e "\nLLM Tools:"
-        which ollama && ollama --version || echo "❌ Ollama not found"
 
         echo -e "\nSetup directories:"
         ls -la /home/runner/.setup_shin1ohno/ 2>/dev/null || echo "❌ Setup directory not found"

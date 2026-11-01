@@ -26,10 +26,8 @@
 
 include_recipe "../cookbooks/functions/default"
 
-# pro-dev specifics. Skip ollama (CPU-only LXC, install.sh 404s, no local
-# LLM runtime in scope). Pin tailscale identity to /tailscale/pro-dev-auth-key.
+# pro-dev specifics. Pin tailscale identity to /tailscale/pro-dev-auth-key.
 node.reverse_merge!(
-  llm: { skip_ollama: true },
   lxc_dev: {
     hostname: "pro-dev",
     tailscale_tag: "tag:dev-host",
