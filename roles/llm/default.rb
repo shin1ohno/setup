@@ -17,8 +17,6 @@ include_cookbook "fractal"    # plasma.ai fractal + wiki CLIs (mise pipx); CC pl
 # ccs: Claude Code session search client + sweep timer (systemd user timer on
 # Linux, launchd agent on macOS); see docs/design/claude-session-search.md
 include_platform_cookbook "session-search"
-include_platform_cookbook "ollama"  # brew formula on macOS, upstream installer on Linux
-include_cookbook "llama-3-elyza-jp"
 include_cookbook "tfmcp"
 
 # Additional Node.js tooling for LLM workflows
