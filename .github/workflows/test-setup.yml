@@ -596,6 +596,11 @@ jobs:
     - name: Chief of Staff task ledger regression suite
       run: python3 cookbooks/claude-code/files/skills/chief-of-staff/scripts/test_tasks.py
 
+    - name: Herdr caller identity and delegation policy regressions
+      run: |
+        python3 cookbooks/herdr/files/test-caller-context.py
+        python3 cookbooks/herdr/files/test-skill-policy.py
+
     - name: memory-v2 distribution units — MANIFEST complete + artifact installs and imports (ADR 0010)
       run: |
         # The cookbook deploys exactly files/{memory-mcp,memory-keeper}/MANIFEST.
