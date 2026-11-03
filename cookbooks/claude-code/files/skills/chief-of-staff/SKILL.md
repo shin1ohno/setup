@@ -36,6 +36,8 @@ The worker probes missing facts. Controller review after delivery remains allowe
 If the user requests a new agent or separate pane, create a fresh pane and start
 a fresh agent for that request; never reuse a previous worker. If dispatch is
 blocked, report the blocker instead of doing the delegated work yourself.
+Record explicit fresh-agent/pane requests with ledger `new --fresh-worker`.
+The ledger rejects agent reuse, the controller pane, and previously bound panes.
 
 Use [references/dispatch.md](references/dispatch.md) for routing, launch mechanics,
 and the worker brief. Use [scripts/tasks.py](scripts/tasks.py) for durable task
@@ -46,8 +48,8 @@ judge quality, schedule itself, or send notifications.
 
 For each new topic, extract the desired outcome, actual working directory,
 constraints/authorization, output destination, and observable acceptance criteria.
-Derive reasonable defaults from context and start independent work while any
-necessary intent question is pending. Keep criteria fixed across retries unless
+Derive reasonable defaults from conversation context and prepare the worker brief
+while any necessary intent question is pending. Keep criteria fixed across retries unless
 the user changes the goal; do not lower the bar to obtain a pass.
 
 Create a ledger task before dispatch. Keep multiple independent topics in

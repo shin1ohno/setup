@@ -56,6 +56,9 @@ python3 <skill-dir>/scripts/tasks.py show <task-id>
 ```
 
 `attempt` reserves the next attempt and a unique Herdr name before any mutation.
+When the user explicitly requests a new agent or separate pane, create the task
+with `new --fresh-worker`. Its attempt and bind operations reject reuse. Use a
+new pane returned by a fresh split, even if an old worker is idle.
 Unless the user requests a new agent or separate pane, for a correction to the same settled worker, pass `--reuse-agent` with the same
 kind/model: this consumes an attempt but retains its live name. Re-bind its
 verified existing pane, skip `agent start`, and prompt that existing name only

@@ -14,11 +14,20 @@ class PolicyTest(unittest.TestCase):
         dispatch = (root / 'cookbooks/claude-code/files/skills/chief-of-staff/references/dispatch.md').read_text()
         self.assertIn('Unless the user requests a new agent or separate pane', dispatch)
     def test_composition_replaces_unsafe_gate(self):
-        import subprocess
-        upstream = subprocess.check_output(['herdr', '--skill'], text=True)
+        upstream = '''Requires HERDR_ENV=1.
+Before issuing any control command, verify:
+test "${HERDR_ENV:-}" = 1
+## Learn the current CLI
+Herdr injects the caller's context
+Prefer --current
+Creation responses expose IDs.
+herdr pane split --current
+'''
         rendered = compose.compose(upstream, '')
         self.assertIn('caller-context.py resolve', rendered)
         self.assertNotIn('test "${HERDR_ENV:-}" = 1', rendered)
         self.assertNotIn('herdr pane split --current', rendered)
         self.assertIn('never infer caller identity from focus', rendered)
+        with self.assertRaises(ValueError):
+            compose.compose('upstream gate changed', '')
 if __name__ == '__main__': unittest.main()
