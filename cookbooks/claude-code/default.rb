@@ -372,7 +372,7 @@ end
   end
 end
 
-shared_skills = %w(writing interview verify research research-domains load-test check-services security-review feature-parity verify-mise-backend pr-ci-medic morning-triage self-heal-create self-heal-resolve network-log-audit web-crawl setup-release-plz session-search)
+shared_skills = %w(writing interview verify research research-domains load-test check-services security-review feature-parity verify-mise-backend pr-ci-medic morning-triage self-heal-create self-heal-resolve network-log-audit web-crawl setup-release-plz session-search chief-of-staff)
 
 shared_skills.each do |skill_name|
   directory "#{node[:setup][:home]}/.agents/skills/#{skill_name}" do
@@ -384,6 +384,27 @@ shared_skills.each do |skill_name|
 
   remote_file "#{node[:setup][:home]}/.agents/skills/#{skill_name}/SKILL.md" do
     source "files/skills/#{skill_name}/SKILL.md"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
+# Chief of Staff is shared by both interactive harnesses. Its ledger is local
+# runtime state; tests stay repo-side and are intentionally not deployed.
+%w(agents references scripts).each do |dir_name|
+  directory "#{node[:setup][:home]}/.agents/skills/chief-of-staff/#{dir_name}" do
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "755"
+    action :create
+  end
+end
+
+%w(agents/openai.yaml references/dispatch.md scripts/tasks.py).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.agents/skills/chief-of-staff/#{file_name}" do
+    source "files/skills/chief-of-staff/#{file_name}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "644"
