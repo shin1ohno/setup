@@ -18,6 +18,12 @@ installation's `codex debug --help`; inspect the model's supported effort fields
 Claude's current `--help` describes supported model aliases; account availability
 is confirmed by actual startup, not by an alias appearing in help. Do not pin
 obsolete model versions in this skill or claim one provider is universally best.
+Inspect startup/response errors as well: an installed CLI can still be out of
+quota or unauthenticated. Record the observed unavailable harness and any stated
+reset time, route feasible work to the other harness, and do not try several
+models against the same account-wide limit. Recheck once the stated reset has
+passed or the user reports restored access. Do not purchase credits or alter
+authentication to complete a retry without the necessary authorization.
 
 Leave permission/sandbox settings at the user's configured policy. Never add
 `--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`,

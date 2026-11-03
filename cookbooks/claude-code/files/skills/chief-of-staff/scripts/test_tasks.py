@@ -131,6 +131,16 @@ class TasksTest(unittest.TestCase):
         self.call("attempt", self.task, "--kind", "claude", "--model", "default",
                   "--reason", "Mismatched reuse", "--reuse-agent", ok=False)
 
+    def test_context_block_before_dispatch_cannot_invent_an_attempt(self):
+        self.update("needs-user", evidence=False)
+        self.update("starting", ok=False)
+        self.assertEqual(self.call("show", self.task)["task"]["attempts"], [])
+        self.call("attempt", self.task, "--kind", "codex", "--model", "default",
+                  "--reason", "Live controller context restored")
+        self.update("needs-user", evidence=False)
+        self.update("starting")
+        self.call("bind", self.task, "--pane", "w1:p2")
+
 
 if __name__ == "__main__":
     unittest.main()

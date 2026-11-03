@@ -191,6 +191,8 @@ def run(args, root):
             raise ValueError("invalid transition: " + task["state"] + " -> " + args.state)
         if args.state in {"starting", "running", "reviewing", "accepted", "retry"} and not args.evidence:
             raise ValueError("this transition requires observed evidence")
+        if args.state == "starting" and not task["attempts"]:
+            raise ValueError("reserve an attempt before resuming startup")
         if args.state in {"running", "reviewing", "accepted"}:
             if not task["attempts"] or task["attempts"][-1]["pane"] is None:
                 raise ValueError("bind the observed pane before recording execution")
