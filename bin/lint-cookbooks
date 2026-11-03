@@ -488,6 +488,12 @@ end
 cc_default = "cookbooks/claude-code/default.rb"
 if File.file?(cc_default)
   cc_src = File.read(cc_default)
+  # Follow literal local subrecipes too: narrow skill-only convergence uses
+  # the same resource definitions as the full cookbook.
+  cc_skill_src = cc_src.dup
+  cc_src.scan(/^include_recipe "([a-z0-9_-]+\.rb)"$/).flatten.each do |name|
+    cc_skill_src << "\n" << File.read(File.join(File.dirname(cc_default), name))
+  end
   # Tie each %w(...) list DIRECTLY to the files/<dir>/ it sources, by matching
   # the fixed 3-line block shape (%w line, remote_file line, source line). This
   # avoids a greedy match grabbing an earlier unrelated %w (e.g. the hooks list).
@@ -537,15 +543,15 @@ if File.file?(cc_default)
     # (a) the per-skill loops deploy one SKILL.md per named skill: the shared
     # list (`shared_skills = %w(...)`, deployed under ~/.agents/skills) and the
     # Claude-only `%w(...).each do |skill_name|` list (under ~/.claude/skills)
-    cc_src.scan(/shared_skills = %w\(([^)]*)\)|%w\(([^)]*)\)\.each do \|skill_name\|/) do |shared, only|
+    cc_skill_src.scan(/shared_skills = %w\(([^)]*)\)|%w\(([^)]*)\)\.each do \|skill_name\|/) do |shared, only|
       (shared || only).split.each { |s| shipped << "#{s}/SKILL.md" }
     end
     # (b) %w() lists whose source is files/skills/<prefix>/#{file_name}
-    cc_src.scan(
+    cc_skill_src.scan(
       /%w\(([^)]*)\)\.each do \|file_name\|\s*\n\s*remote_file[^\n]*\n\s*source "files\/skills\/([^"]*)\/\#\{file_name\}"/,
     ) { |names, prefix| names.split.each { |n| shipped << "#{prefix}/#{n}" } }
     # (c) single-file remote_file blocks (literal path, no interpolation)
-    cc_src.scan(/source "files\/skills\/([^"\#]+)"/) { |(path)| shipped << path }
+    cc_skill_src.scan(/source "files\/skills\/([^"\#]+)"/) { |(path)| shipped << path }
 
     Dir.glob("#{skills_root}/**/*")
        .select { |p| File.file?(p) }

@@ -56,7 +56,10 @@ python3 <skill-dir>/scripts/tasks.py show <task-id>
 ```
 
 `attempt` reserves the next attempt and a unique Herdr name before any mutation.
-For a correction to the same settled worker, pass `--reuse-agent` with the same
+When the user explicitly requests a new agent or separate pane, create the task
+with `new --fresh-worker`. Its attempt and bind operations reject reuse. Use a
+new pane returned by a fresh split, even if an old worker is idle.
+Unless the user requests a new agent or separate pane, for a correction to the same settled worker, pass `--reuse-agent` with the same
 kind/model: this consumes an attempt but retains its live name. Re-bind its
 verified existing pane, skip `agent start`, and prompt that existing name only
 after confirming it is ready. Changing harness/model uses a fresh worker.
@@ -88,13 +91,13 @@ IDs and pass shell arguments with a file-based subprocess argv list or correct
 shell quoting; user topics are data, never shell commands.
 
 ```text
-herdr pane layout --current
-herdr pane split --current --direction right --cwd <task-cwd> --no-focus
-herdr agent start <reserved-agent-name> --kind codex --pane <returned-id>
-herdr agent prompt <reserved-agent-name> <brief-text> --wait --timeout 30000
-herdr agent get <reserved-agent-name>
-herdr agent read <reserved-agent-name> --source recent-unwrapped --lines 200
-herdr agent wait <reserved-agent-name> --timeout 30000
+herdr --session <verified-session> pane layout --pane <verified-caller-pane>
+herdr --session <verified-session> pane split --pane <verified-caller-pane> --direction right --cwd <task-cwd> --no-focus
+herdr --session <verified-session> agent start <reserved-agent-name> --kind codex --pane <returned-id>
+herdr --session <verified-session> agent prompt <reserved-agent-name> <brief-text> --wait --timeout 30000
+herdr --session <verified-session> agent get <reserved-agent-name>
+herdr --session <verified-session> agent read <reserved-agent-name> --source recent-unwrapped --lines 200
+herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 30000
 ```
 
 For explicit model selection, append native options **after** `--`, e.g.

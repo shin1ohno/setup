@@ -23,18 +23,21 @@ Read the installed `herdr` skill before controlling terminals. Its topology,
 delivery, trust, and permission rules apply. Use the installed CLI's help rather
 than copying flags from memory. In particular, CLI flags and model aliases change.
 
-Require `HERDR_ENV=1` **and** resolve `herdr pane current --current`; compare the
-returned pane/workspace with the caller. A stale inherited ID is not permission
-to use the focused pane. If resolution fails, explain the observed error and
-continue preparing the brief, but leave dispatch blocked until the user supplies
-an intended live Herdr context. Never select an unrelated pane automatically.
-Record the endpoint/socket from `herdr status` along with controller pane and
-workspace. Use that endpoint + controller pane as the ledger's `--owner` key;
-IDs and names alone are not unique across Herdr servers.
+Resolve caller identity using the installed Herdr skill's managed helper. Use its
+verified session, socket and pane explicitly; `--current`, focus, inherited IDs
+alone and user assertions are not caller proof. If verification fails, dispatch
+is blocked; report the observed failure without selecting another pane. Record
+the verified socket + controller pane as the ledger's `--owner` key.
 
-Inspect both CLI versions/help and available integrations. Probe relevant local
-repositories and connected sources before asking the user for facts. Questions
-are for consequential intent ambiguity or actual authorization gaps.
+Before dispatch, the controller may inspect only skills, routing and capability,
+Herdr context/topology, and its ledger. Do not investigate the task repository,
+connected sources, or implement the task before a worker receives the brief.
+The worker probes missing facts. Controller review after delivery remains allowed.
+If the user requests a new agent or separate pane, create a fresh pane and start
+a fresh agent for that request; never reuse a previous worker. If dispatch is
+blocked, report the blocker instead of doing the delegated work yourself.
+Record explicit fresh-agent/pane requests with ledger `new --fresh-worker`.
+The ledger rejects agent reuse, the controller pane, and previously bound panes.
 
 Use [references/dispatch.md](references/dispatch.md) for routing, launch mechanics,
 and the worker brief. Use [scripts/tasks.py](scripts/tasks.py) for durable task
@@ -45,8 +48,8 @@ judge quality, schedule itself, or send notifications.
 
 For each new topic, extract the desired outcome, actual working directory,
 constraints/authorization, output destination, and observable acceptance criteria.
-Derive reasonable defaults from context and start independent work while any
-necessary intent question is pending. Keep criteria fixed across retries unless
+Derive reasonable defaults from conversation context and prepare the worker brief
+while any necessary intent question is pending. Keep criteria fixed across retries unless
 the user changes the goal; do not lower the bar to obtain a pass.
 
 Create a ledger task before dispatch. Keep multiple independent topics in

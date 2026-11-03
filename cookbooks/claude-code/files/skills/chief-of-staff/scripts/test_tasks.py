@@ -61,6 +61,24 @@ class TasksTest(unittest.TestCase):
         self.assertEqual(len(task["attempts"]), 1)
         self.assertEqual(task["attempts"][0]["pane"], "w1:p2")
 
+    def test_explicit_fresh_worker_rejects_controller_old_pane_and_reuse(self):
+        self.attempt()
+        fresh = self.call("new", "--owner", "/socket#w1:p1", "--topic", "New agent",
+                          "--cwd", self.tmp.name, "--scope", "Local", "--acceptance", "Pass",
+                          "--fresh-worker")["task"]["id"]
+        self.task = fresh
+        reserve = ("attempt", fresh, "--kind", "codex", "--model", "default", "--reason", "Fresh")
+        self.call(*reserve)
+        self.call("bind", fresh, "--pane", "w1:p1", ok=False)
+        self.call("bind", fresh, "--pane", "w1:p2", ok=False)
+        self.call("bind", fresh, "--pane", "w1:p3")
+        self.update("reviewing")
+        self.update("retry")
+        self.call(*reserve, "--reuse-agent", ok=False)
+        self.call(*reserve)
+        self.call("bind", fresh, "--pane", "w1:p3", ok=False)
+        self.call("bind", fresh, "--pane", "w1:p4")
+
     def test_budget_and_explicit_extension_preserve_original_criteria(self):
         names = []
         for kind in ("codex", "claude", "codex"):

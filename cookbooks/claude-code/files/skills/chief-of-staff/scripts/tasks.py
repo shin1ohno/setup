@@ -101,6 +101,8 @@ def parser():
         new.add_argument("--" + field, required=True, type=nonempty)
     new.add_argument("--acceptance", action="append", required=True, type=nonempty)
     new.add_argument("--max-attempts", type=positive, default=3)
+    new.add_argument("--fresh-worker", action="store_true",
+                     help="User requires a fresh agent and pane; prohibit worker reuse")
     ls = sub.add_parser("list", help="List only this controller's tasks")
     ls.add_argument("--owner", required=True, type=nonempty)
     ls.add_argument("--all", action="store_true", help="Include terminal tasks")
@@ -138,6 +140,7 @@ def run(args, root):
             "cwd": str(cwd.resolve()), "scope": args.scope,
             "acceptance": args.acceptance, "state": "queued",
             "max_attempts": args.max_attempts, "attempts": [], "history": [],
+            "fresh_worker": args.fresh_worker,
             "created_at": now(), "last_report": None, "report_pending": False,
         }
         event(task, "Task created")
@@ -160,6 +163,8 @@ def run(args, root):
         if len(task["attempts"]) >= task["max_attempts"]:
             raise ValueError("attempt budget exhausted; explicit user extension required")
         previous = task["attempts"][-1] if task["attempts"] else None
+        if args.reuse_agent and task.get("fresh_worker"):
+            raise ValueError("user requires a fresh worker; agent reuse is forbidden")
         if args.reuse_agent and (previous is None or previous["kind"] != args.kind
                                  or previous["model"] != args.model):
             raise ValueError("reuse requires the previous worker's same kind and model")
@@ -180,6 +185,15 @@ def run(args, root):
         if task["state"] not in {"starting", "running", "reviewing"}:
             raise ValueError("bind requires a live attempt")
         attempt = task["attempts"][-1]
+        if task.get("fresh_worker") and attempt["pane"] is None:
+            socket, _, controller = task["owner"].rpartition("#")
+            if args.pane == controller:
+                raise ValueError("fresh worker cannot use the controller pane")
+            for path in root.glob("*/task.json"):
+                other = json.loads(path.read_text(encoding="utf-8"))
+                if other["owner"].rpartition("#")[0] == socket:
+                    if any(a.get("pane") == args.pane for a in other["attempts"]):
+                        raise ValueError("fresh worker cannot use a previously bound pane")
         if attempt["pane"] is not None and attempt["pane"] != args.pane:
             raise ValueError("pane already bound; reconcile a move before changing identity")
         attempt["pane"] = args.pane
