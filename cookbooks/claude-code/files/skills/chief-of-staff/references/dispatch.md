@@ -50,6 +50,10 @@ python3 <skill-dir>/scripts/tasks.py show <task-id>
 ```
 
 `attempt` reserves the next attempt and a unique Herdr name before any mutation.
+For a correction to the same settled worker, pass `--reuse-agent` with the same
+kind/model: this consumes an attempt but retains its live name. Re-bind its
+verified existing pane, skip `agent start`, and prompt that existing name only
+after confirming it is ready. Changing harness/model uses a fresh worker.
 Keep the JSON output: it includes `agent` and `attempt`. Save the full worker
 brief to a private task-local file under the returned task directory using a
 file-write tool. It is a controller handoff record, not a requirement for the
@@ -64,6 +68,12 @@ once its blocker is resolved, within the existing budget. Explicit user budget
 extensions use `extend <task-id> --max-attempts <N> --note <user-instruction>`.
 Use `update --state cancelled` for cancellation. Use `update --state needs-user`
 for an actual external/authorization blocker or stopped supervision.
+To resume monitoring the same worker, use `update --state running` (or
+`starting`/`reviewing` matching the observed state) with new live evidence;
+do not create another attempt just because the controller was interrupted.
+The default `list` includes unreported terminal results. Only call `reported`
+after actually delivering the update; it clears `report_pending`. Earlier status
+updates do not hide a subsequently accepted result.
 
 ## Launch example
 

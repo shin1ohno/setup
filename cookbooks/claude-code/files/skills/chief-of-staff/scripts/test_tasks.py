@@ -49,6 +49,8 @@ class TasksTest(unittest.TestCase):
         self.assertEqual(result["task"]["state"], "accepted")
         self.call("attempt", self.task, "--kind", "claude", "--model", "default",
                   "--reason", "Duplicate", ok=False)
+        self.assertEqual(len(self.call("list", "--owner", "/socket#w1:p1")["tasks"]), 1)
+        self.call("reported", self.task, "--note", "Verified result delivered")
         self.assertEqual(self.call("list", "--owner", "/socket#w1:p1")["tasks"], [])
 
     def test_no_duplicate_attempt_during_ambiguous_startup(self):
@@ -105,6 +107,29 @@ class TasksTest(unittest.TestCase):
         self.update("reviewing")
         self.update("cancelled", evidence=False)
         self.update("reviewing", ok=False)
+
+    def test_interrupted_supervision_resumes_without_new_attempt(self):
+        original = self.attempt()
+        self.update("running")
+        self.update("needs-user", evidence=False)
+        self.update("running", evidence=False, ok=False)
+        result = self.update("running")
+        self.assertEqual(result["task"]["attempts"][0]["agent"], original["agent"])
+        self.assertEqual(len(result["task"]["attempts"]), 1)
+
+    def test_correction_keeps_live_agent_name_but_consumes_budget(self):
+        original = self.attempt()
+        self.update("reviewing")
+        self.update("retry")
+        result = self.call("attempt", self.task, "--kind", "codex", "--model", "default",
+                           "--reason", "Correct the failing criterion", "--reuse-agent")
+        self.assertEqual(result["attempt"]["agent"], original["agent"])
+        self.assertEqual(result["attempt"]["number"], 2)
+        self.call("bind", self.task, "--pane", "w1:p2")
+        self.update("reviewing")
+        self.update("retry")
+        self.call("attempt", self.task, "--kind", "claude", "--model", "default",
+                  "--reason", "Mismatched reuse", "--reuse-agent", ok=False)
 
 
 if __name__ == "__main__":

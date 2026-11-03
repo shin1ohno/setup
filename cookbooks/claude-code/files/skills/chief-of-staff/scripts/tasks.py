@@ -20,7 +20,7 @@ TRANSITIONS = {
     "running": {"reviewing", "retry", "needs-user", "cancelled"},
     "reviewing": {"accepted", "retry", "needs-user", "cancelled"},
     "retry": {"needs-user", "cancelled"},
-    "needs-user": {"reviewing", "retry", "cancelled"},
+    "needs-user": {"starting", "running", "reviewing", "retry", "cancelled"},
     "accepted": set(),
     "cancelled": set(),
 }
@@ -111,6 +111,8 @@ def parser():
             cmd.add_argument("--kind", choices=("claude", "codex"), required=True)
             cmd.add_argument("--model", required=True, type=nonempty)
             cmd.add_argument("--reason", required=True, type=nonempty)
+            cmd.add_argument("--reuse-agent", action="store_true",
+                             help="Reuse the previous settled worker's identity")
         elif name == "bind":
             cmd.add_argument("--pane", required=True, type=nonempty)
             cmd.add_argument("--model", type=nonempty)
@@ -136,7 +138,7 @@ def run(args, root):
             "cwd": str(cwd.resolve()), "scope": args.scope,
             "acceptance": args.acceptance, "state": "queued",
             "max_attempts": args.max_attempts, "attempts": [], "history": [],
-            "created_at": now(), "last_report": None,
+            "created_at": now(), "last_report": None, "report_pending": False,
         }
         event(task, "Task created")
         save_task(root, task)
@@ -145,7 +147,8 @@ def run(args, root):
         tasks = [json.loads(path.read_text(encoding="utf-8"))
                  for path in sorted(root.glob("*/task.json"))]
         return {"tasks": [task for task in tasks if task["owner"] == args.owner
-                          and (args.all or task["state"] not in TERMINAL)]}
+                          and (args.all or task["state"] not in TERMINAL
+                               or task.get("report_pending", True))]}
 
     task = read_task(root, args.task_id)
     result = {}
@@ -156,12 +159,19 @@ def run(args, root):
             raise ValueError("reconcile the existing attempt before reserving another")
         if len(task["attempts"]) >= task["max_attempts"]:
             raise ValueError("attempt budget exhausted; explicit user extension required")
+        previous = task["attempts"][-1] if task["attempts"] else None
+        if args.reuse_agent and (previous is None or previous["kind"] != args.kind
+                                 or previous["model"] != args.model):
+            raise ValueError("reuse requires the previous worker's same kind and model")
         attempt = {
             "number": len(task["attempts"]) + 1,
             "agent": "cos-" + task["id"] + "-" + str(len(task["attempts"]) + 1),
             "kind": args.kind, "model": args.model, "reason": args.reason,
             "pane": None, "created_at": now(),
+            "reuse": args.reuse_agent,
         }
+        if args.reuse_agent:
+            attempt["agent"] = previous["agent"]
         task["attempts"].append(attempt)
         task["state"] = "starting"
         event(task, args.reason)
@@ -179,7 +189,7 @@ def run(args, root):
     elif args.command == "update":
         if args.state not in TRANSITIONS[task["state"]]:
             raise ValueError("invalid transition: " + task["state"] + " -> " + args.state)
-        if args.state in {"running", "reviewing", "accepted", "retry"} and not args.evidence:
+        if args.state in {"starting", "running", "reviewing", "accepted", "retry"} and not args.evidence:
             raise ValueError("this transition requires observed evidence")
         if args.state in {"running", "reviewing", "accepted"}:
             if not task["attempts"] or task["attempts"][-1]["pane"] is None:
@@ -187,9 +197,12 @@ def run(args, root):
         task["state"] = args.state
         if args.state == "retry" and len(task["attempts"]) >= task["max_attempts"]:
             task["state"] = "needs-user"
+        if task["state"] in TERMINAL or task["state"] == "needs-user":
+            task["report_pending"] = True
         event(task, args.note, args.evidence)
     elif args.command == "reported":
         task["last_report"] = {"at": now(), "note": args.note}
+        task["report_pending"] = False
         event(task, "Reported to user: " + args.note)
     elif args.command == "extend":
         if task["state"] in TERMINAL:

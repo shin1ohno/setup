@@ -92,7 +92,11 @@ report the exact approval needed. Do not call it a quality failure and retry it.
 
 If the user interrupts to add a topic, preserve and reconcile pending tasks on
 the next turn. Across compaction/restart, inspect the ledger **and** Herdr live
-state before sending input. The same owner may resume; another controller must
+state before sending input. Inspect accepted/cancelled tasks with
+`report_pending=true` too: a completed result may not yet have been reported.
+If a `needs-user` task's existing worker is still running after resumption,
+record `running` with current live evidence without consuming another attempt.
+The same owner may resume; another controller must
 not adopt tasks without an explicit handoff. Saved pane IDs can become stale.
 
 This skill has no independent daemon. Monitoring runs while this controller
