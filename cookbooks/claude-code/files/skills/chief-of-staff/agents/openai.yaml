@@ -1,0 +1,4 @@
+interface:
+  display_name: "Chief of Staff"
+  short_description: "Claude と Codex へ仕事を振り分け、進捗監視・成果評価・再試行まで担います"
+  default_prompt: "Use $chief-of-staff as my point of contact: delegate topics through Herdr, supervise progress, and report verified results."
