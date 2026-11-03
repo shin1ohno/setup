@@ -593,6 +593,9 @@ jobs:
         sudo apt-get install -y -qq zsh
         bash cookbooks/herdr/files/test-hr.sh cookbooks/herdr/files/hr.sh
 
+    - name: Chief of Staff task ledger regression suite
+      run: python3 cookbooks/claude-code/files/skills/chief-of-staff/scripts/test_tasks.py
+
     - name: memory-v2 distribution units — MANIFEST complete + artifact installs and imports (ADR 0010)
       run: |
         # The cookbook deploys exactly files/{memory-mcp,memory-keeper}/MANIFEST.
