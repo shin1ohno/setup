@@ -1,6 +1,6 @@
 #!/bin/bash
 # SessionStart hook (Claude Code cloud only): converge herdr + the Chief of
-# Staff skill via cloud.rb. Idempotent; the fast path costs a few sha256sums.
+# Staff skill via claude-code-cloud.rb. Idempotent; the fast path costs a few sha256sums.
 set -euo pipefail
 
 # Cloud sessions only; never touch a developer's own machine.
@@ -18,7 +18,7 @@ mkdir -p "$state_dir"
 # Inputs that decide what gets installed.
 inputs=(
   .claude/hooks/session-start.sh
-  cloud.rb
+  claude-code-cloud.rb
   cookbooks/herdr/default.rb
   cookbooks/herdr/agent-skill.rb
   cookbooks/herdr/files/compose-skill.py
@@ -48,5 +48,5 @@ converged && exit 0
 rm -f "$hashes"
 cd "$root"
 [ -x bin/mitamae ] || ./bin/setup
-./bin/mitamae local cloud.rb
+./bin/mitamae local claude-code-cloud.rb
 sha256sum "${inputs[@]}" > "$hashes"
