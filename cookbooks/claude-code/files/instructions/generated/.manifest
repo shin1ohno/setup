@@ -1,0 +1,171 @@
+8ea6cc04f97335e494189b635f14899f674cdcfca6712cde25f0fd20aaa3233a  cookbooks/claude-code/files/AGENTS.md
+1f4a7fcea93c6b10077b7deb1a93a078a9aa375a7f996fa81b3dda766d32747a  cookbooks/claude-code/files/CLAUDE.md
+101481f886cc929c86f1a50d96ec086a4d2cef8f4efe8754f5344ef1e54cc65d  cookbooks/claude-code/files/docs/knowledge-persistence.md
+c5a2913fe92c72042a64eca73074d502f1ca650232206c8fdd3fa72eca887c1c  cookbooks/claude-code/files/instructions/generated/common.claude.md
+a5bdbe96e250ef3e5e2371d7d7a91581f5308cbde0df596dfb4a7bea0e6939f4  cookbooks/claude-code/files/instructions/generated/common.codex.md
+99d272b7754ad69ed0d6da5b74a845be8d9d07a6a3b7122ccbbf9aadca2d03c3  cookbooks/claude-code/files/instructions/generated/cos.claude.md
+5323af17f497e195b32483893eb9f203f0ca06e49a9169ddf89a3d9005158349  cookbooks/claude-code/files/instructions/generated/cos.codex.md
+cd816b52c8eb9de8a91fbc2ea7255041180390422292704fcd380ea9f5e7fda3  cookbooks/claude-code/files/instructions/generated/dev.claude.md
+74df20f6cbb4558c0ceb630e8e8306df2980e42fe14b673f583e4706622198a1  cookbooks/claude-code/files/instructions/generated/dev.codex.md
+c7079abb4395ee165e87973b2a18c3c93253b9e7f3859c3c9f4347730862ec51  cookbooks/claude-code/files/instructions/generated/writing.claude.md
+3913b731ad57636818fb0f0ad2f917d7cd1d48fdc6a50f08c34124dcca338702  cookbooks/claude-code/files/instructions/generated/writing.codex.md
+25ab6b0fc3d8756f28e377377b56e234ed860b65ec6588e18a93e9f33eab15b5  cookbooks/claude-code/files/rules/adversarial-review.md
+2de9f2121b3a27b15ec7d169b5b36b8f2cded9ba2dc4cfaa7f61691bad67dcfc  cookbooks/claude-code/files/rules/ask-user-question.md
+aa2a745751cee20ec10f0db31e1098ffc55501ac79171fee74874eb69242d769  cookbooks/claude-code/files/rules/debugging.md
+546aa2e0ea14b9788617feda0cc6c4e3191f67d42a9e71e106f1caf610566d08  cookbooks/claude-code/files/rules/editing.md
+6923ed2e149f82b82d14c73903f04826272b25c40467b9145a43039706204a39  cookbooks/claude-code/files/rules/git-commit.md
+a67bbb2551aa84984d0ccc5f6fc2d0af2f956cef563e57e67a9d21bb4aec45e7  cookbooks/claude-code/files/rules/mcp-config.md
+fc9240ce35e05442bccb6a766b6348326f12911dca25b2269d6b86a278170247  cookbooks/claude-code/files/rules/planning.md
+338755bab90eef825e3b3eff3bea9b0b3637e1a54d786cced4b57222ebb77e08  cookbooks/claude-code/files/rules/sub-agents.md
+section adversarial-review dev rules/adversarial-review.md 0010 neutral n
+section agents-bp-denominator-claim-source common AGENTS.md 0220 neutral n
+section agents-bp-domain-term-verification common AGENTS.md 0190 neutral n
+section agents-bp-event-mechanism-check common AGENTS.md 0200 neutral n
+section agents-bp-hotfix-layering dev AGENTS.md 0170 neutral n
+section agents-bp-issue-completion-comment common AGENTS.md 0140 neutral n
+section agents-bp-no-terminal-speculation common AGENTS.md 0130 neutral n
+section agents-bp-selection-bias-survey common AGENTS.md 0210 neutral n
+section agents-bp-step-by-step-verification cos AGENTS.md 0180 neutral n
+section agents-bp-verify-before-done common AGENTS.md 0150 neutral n
+section agents-bp-verify-functional-state dev AGENTS.md 0160 neutral n
+section agents-bp-zero-hedge common AGENTS.md 0120 neutral n
+section agents-detail-playbooks dev AGENTS.md 0360 neutral n
+section agents-general-aws-terraform dev AGENTS.md 0090 neutral n
+section agents-general-codebase-local-clone common AGENTS.md 0100 neutral n
+section agents-general-commit-immediately dev AGENTS.md 0110 neutral n
+section agents-general-japanese-output common AGENTS.md 0080 neutral n
+section agents-japanese-output-banned-phrases cos AGENTS.md 0050 neutral n
+section agents-japanese-output-concreteness cos AGENTS.md 0060 neutral n
+section agents-japanese-output-english-rule-names cos AGENTS.md 0070 neutral n
+section agents-japanese-output-intro cos AGENTS.md 0030 neutral n
+section agents-japanese-output-style cos AGENTS.md 0040 neutral n
+section agents-planning-execution dev AGENTS.md 0230 neutral n
+section agents-preamble common AGENTS.md 0010 neutral n
+section agents-probe-capability-claims common AGENTS.md 0270 neutral n
+section agents-probe-decision-scope common AGENTS.md 0330 neutral n
+section agents-probe-decision-status common AGENTS.md 0320 neutral n
+section agents-probe-discipline common AGENTS.md 0240 neutral n
+section agents-probe-existing-facility dev AGENTS.md 0260 neutral n
+section agents-probe-internal-service-status common AGENTS.md 0310 neutral n
+section agents-probe-negative-search common AGENTS.md 0340 neutral n
+section agents-probe-new-cli-side-effects dev AGENTS.md 0290 neutral n
+section agents-probe-structured-response-fields common AGENTS.md 0300 neutral n
+section agents-probe-trigger-timing common AGENTS.md 0280 neutral n
+section agents-probe-verify-before-ask common AGENTS.md 0250 neutral n
+section agents-tool-mapping common AGENTS.md 0020 neutral n
+section agents-writing writing AGENTS.md 0350 neutral n
+section ask-user-question-core cos rules/ask-user-question.md 0010 claude n
+section ask-user-question-pause-and-labels cos rules/ask-user-question.md 0030 claude n
+section ask-user-question-pause-destructive common rules/ask-user-question.md 0020 claude n
+section claude-bp-act-try-propose common CLAUDE.md 0170 neutral n
+section claude-bp-background-batch-progress cos CLAUDE.md 0250 claude n
+section claude-bp-blocked-on-manual cos CLAUDE.md 0210 claude n
+section claude-bp-completion-signal-probe cos CLAUDE.md 0190 claude n
+section claude-bp-long-running-polls common CLAUDE.md 0240 claude n
+section claude-bp-no-regret-execution common CLAUDE.md 0180 claude n
+section claude-bp-progress-ledger-stale-facts common CLAUDE.md 0230 claude n
+section claude-bp-scope-before-done common CLAUDE.md 0200 claude n
+section claude-bp-stale-wakeup-guard common CLAUDE.md 0220 claude n
+section claude-compaction common CLAUDE.md 0340 claude n
+section claude-cr-general-bash-tool-zsh dev CLAUDE.md 0040 claude n
+section claude-cr-general-conversation-start common CLAUDE.md 0080 neutral n
+section claude-cr-general-deferred-work-todo common CLAUDE.md 0090 neutral n
+section claude-cr-general-dual-managed-files dev CLAUDE.md 0140 neutral n
+section claude-cr-general-every-conclusion common CLAUDE.md 0110 neutral n
+section claude-cr-general-file-memory-mirror common CLAUDE.md 0120 claude n
+section claude-cr-general-first-turn-ambiguity cos CLAUDE.md 0100 claude n
+section claude-cr-general-misclassified-trivial dev CLAUDE.md 0060 claude n
+section claude-cr-general-no-co-authored-by dev CLAUDE.md 0130 claude y
+section claude-cr-general-not-plan-triggers dev CLAUDE.md 0070 claude n
+section claude-cr-general-plan-mode dev CLAUDE.md 0050 claude n
+section claude-cr-general-zsh-blocks dev CLAUDE.md 0030 claude n
+section claude-critical-askuserquestion cos CLAUDE.md 0010 claude n
+section claude-detail-playbooks common CLAUDE.md 0270 claude n
+section claude-japanese-output-pointer cos CLAUDE.md 0160 neutral n
+section claude-knowledge-persistence common CLAUDE.md 0350 claude n
+section claude-planning-execution dev CLAUDE.md 0260 claude n
+section claude-plugins cos CLAUDE.md 0290 claude n
+section claude-rule-placement cos CLAUDE.md 0150 claude n
+section claude-session-retrospective common CLAUDE.md 0330 claude n
+section claude-shared-instructions common CLAUDE.md 0020 claude n
+section claude-sub-agent-pointer cos CLAUDE.md 0280 claude n
+section claude-writing-deliverable-to-file writing CLAUDE.md 0300 neutral n
+section claude-writing-medium-shape writing CLAUDE.md 0310 claude n
+section claude-writing-self-review-pass writing CLAUDE.md 0320 claude n
+section debugging-adapter-layer-tests dev rules/debugging.md 0070 neutral n
+section debugging-auth-boundary-errors dev rules/debugging.md 0080 neutral n
+section debugging-auth-gate-live-token dev rules/debugging.md 0050 neutral n
+section debugging-chain-verify-fix dev rules/debugging.md 0150 claude n
+section debugging-failure-class dev rules/debugging.md 0130 claude n
+section debugging-fix-loop-escalation dev rules/debugging.md 0100 claude n
+section debugging-no-repro-push dev rules/debugging.md 0090 neutral n
+section debugging-noisy-non-failure dev rules/debugging.md 0030 neutral n
+section debugging-observation-tooling dev rules/debugging.md 0060 neutral n
+section debugging-read-source-first dev rules/debugging.md 0120 neutral n
+section debugging-remediation-feasible dev rules/debugging.md 0140 claude n
+section debugging-silent-failure dev rules/debugging.md 0020 neutral n
+section debugging-state-evidence dev rules/debugging.md 0040 neutral n
+section debugging-summary dev rules/debugging.md 0010 neutral n
+section debugging-suspected-driver-deployed dev rules/debugging.md 0160 neutral n
+section debugging-wire-protocol dev rules/debugging.md 0110 neutral n
+section editing-git-mv-reread dev rules/editing.md 0010 claude y
+section editing-same-file-edits dev rules/editing.md 0020 claude n
+section git-commit-body-file-stdin dev rules/git-commit.md 0220 claude y
+section git-commit-branch-check dev rules/git-commit.md 0060 neutral y
+section git-commit-branch-check-config-edits dev rules/git-commit.md 0070 neutral n
+section git-commit-branch-check-pr-create dev rules/git-commit.md 0080 neutral y
+section git-commit-branch-cleanup dev rules/git-commit.md 0170 neutral y
+section git-commit-branch-overlap dev rules/git-commit.md 0150 claude y
+section git-commit-cherry-pick dev rules/git-commit.md 0140 neutral y
+section git-commit-cross-repo-propagation dev rules/git-commit.md 0100 neutral n
+section git-commit-deferred-stubs dev rules/git-commit.md 0020 neutral y
+section git-commit-format dev rules/git-commit.md 0010 neutral y
+section git-commit-gh-sandbox dev rules/git-commit.md 0240 claude y
+section git-commit-gpg-signing dev rules/git-commit.md 0250 claude y
+section git-commit-index-lock dev rules/git-commit.md 0160 neutral y
+section git-commit-merge-execution dev rules/git-commit.md 0040 claude y
+section git-commit-message-file dev rules/git-commit.md 0120 neutral y
+section git-commit-multi-repo dev rules/git-commit.md 0090 neutral y
+section git-commit-post-merge-cleanup dev rules/git-commit.md 0050 claude y
+section git-commit-pr-body-file dev rules/git-commit.md 0210 neutral y
+section git-commit-pr-branch dev rules/git-commit.md 0030 claude y
+section git-commit-pr-review-comments dev rules/git-commit.md 0180 neutral y
+section git-commit-recheck-after-background dev rules/git-commit.md 0110 claude y
+section git-commit-sibling-worktree dev rules/git-commit.md 0130 claude y
+section git-commit-stacked-pr-guard dev rules/git-commit.md 0190 neutral y
+section git-commit-tag-release dev rules/git-commit.md 0200 neutral y
+section git-commit-tmpdir-isolation dev rules/git-commit.md 0230 claude y
+section git-commit-working-dir-git-check dev rules/git-commit.md 0260 neutral n
+section knowledge-persistence common docs/knowledge-persistence.md 0010 claude n
+section mcp-config-connected-not-auth dev rules/mcp-config.md 0020 claude y
+section mcp-config-mcp-json dev rules/mcp-config.md 0010 claude n
+section planning-architecture-first dev rules/planning.md 0090 claude n
+section planning-autonomous-execution dev rules/planning.md 0030 claude n
+section planning-cross-repo-design dev rules/planning.md 0080 claude n
+section planning-design-to-plan dev rules/planning.md 0020 claude n
+section planning-intro dev rules/planning.md 0010 claude n
+section planning-parallel-stream dev rules/planning.md 0060 claude n
+section planning-requested-partition-fidelity common rules/planning.md 0050 claude n
+section planning-research-to-plan dev rules/planning.md 0040 claude n
+section planning-sdk-vs-consumer dev rules/planning.md 0100 neutral n
+section planning-standard-mechanism-first dev rules/planning.md 0070 claude n
+section planning-ux-plan-structure dev rules/planning.md 0110 claude n
+section sub-agents-60-second-rule common rules/sub-agents.md 0190 claude n
+section sub-agents-analysis-only-scope cos rules/sub-agents.md 0040 claude n
+section sub-agents-auto-review-agent cos rules/sub-agents.md 0070 claude n
+section sub-agents-background-progress cos rules/sub-agents.md 0170 claude n
+section sub-agents-bulk-research cos rules/sub-agents.md 0130 claude n
+section sub-agents-delegation-blocks cos rules/sub-agents.md 0120 neutral n
+section sub-agents-destructive-scope cos rules/sub-agents.md 0030 claude n
+section sub-agents-file-exclusivity cos rules/sub-agents.md 0020 claude n
+section sub-agents-fleet-status cos rules/sub-agents.md 0090 neutral n
+section sub-agents-long-running common rules/sub-agents.md 0160 claude n
+section sub-agents-principles cos rules/sub-agents.md 0010 claude n
+section sub-agents-production-boundary common rules/sub-agents.md 0050 neutral n
+section sub-agents-review-out-of-scope dev rules/sub-agents.md 0080 claude n
+section sub-agents-scratch-files cos rules/sub-agents.md 0110 claude n
+section sub-agents-synthesis cos rules/sub-agents.md 0150 neutral n
+section sub-agents-team-messaging cos rules/sub-agents.md 0060 claude n
+section sub-agents-tool-selection cos rules/sub-agents.md 0180 claude n
+section sub-agents-toolsearch common rules/sub-agents.md 0100 claude n
+section sub-agents-verify-dedup cos rules/sub-agents.md 0140 neutral n
