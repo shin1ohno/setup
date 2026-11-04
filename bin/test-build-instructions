@@ -1,0 +1,606 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# Tests for bin/build-instructions, mostly negative ones. Each case copies
+# bin/build-instructions and cookbooks/claude-code/files into a fresh temp dir,
+# breaks one thing there, runs the generator on the copy and asserts its exit
+# code and message. The repo itself is never written.
+#
+# Case 1 runs --check on an unmodified copy, so it fails when the repo's
+# generated files are stale. The other cases start from a copy rebuilt with
+# --force, so they test the generator, not the state of the working tree.
+#
+# Usage:
+#   bin/test-build-instructions   # one line per case; exit 1 if any case fails
+#
+# CRuby stdlib only (no gems); runs on the Ruby that runs this script.
+
+require "digest"
+require "fileutils"
+require "open3"
+require "rbconfig"
+require "tmpdir"
+
+REPO_ROOT = File.expand_path("..", __dir__)
+SCRIPT = "bin/build-instructions"
+FILES_DIR = "cookbooks/claude-code/files"
+LAYER_DIR = "#{FILES_DIR}/instructions".freeze
+GENERATED_DIR = "#{LAYER_DIR}/generated".freeze
+MANIFEST = "#{GENERATED_DIR}/.manifest".freeze
+CODEX_LIMIT = 32_768
+MARKER_RE = /\A<!-- section id=(\S+) file=(\S+) order=(\d{4}) harness=(\S+) lazy=(\S+) -->\n\z/
+
+Marker = Struct.new(:index, :id, :file, :order, :harness, :lazy, :layer)
+
+def utf8(bytes)
+  bytes.dup.force_encoding(Encoding::UTF_8).scrub
+end
+
+def layer_rel(layer)
+  "#{LAYER_DIR}/#{layer}.md"
+end
+
+# A scratch copy of the generator and its inputs.
+class Sandbox
+  attr_reader :root
+
+  def initialize(root)
+    @root = root
+  end
+
+  def path(rel)
+    File.join(root, rel)
+  end
+
+  def read(rel)
+    File.binread(path(rel))
+  end
+
+  def write(rel, content)
+    File.binwrite(path(rel), content)
+  end
+
+  def delete(rel)
+    File.delete(path(rel))
+  end
+
+  def markers(layer)
+    read(layer_rel(layer)).lines.each_with_index.map do |line, index|
+      match = MARKER_RE.match(line)
+      match && Marker.new(index, match[1], match[2], match[3], match[4], match[5], layer)
+    end.compact
+  end
+
+  def all_markers
+    %w[cos dev common writing].flat_map { |layer| markers(layer) }
+  end
+
+  # Yields the lines of a layer file as a mutable array and writes them back.
+  def edit_layer(layer)
+    content_lines = read(layer_rel(layer)).lines
+    yield content_lines
+    write(layer_rel(layer), content_lines.map(&:b).join)
+  end
+
+  # Replaces the line of `marker` with the block's result.
+  def edit_marker(marker)
+    edit_layer(marker.layer) { |lines| lines[marker.index] = yield(lines[marker.index]) }
+  end
+
+  def run(*args)
+    out, err, status = Open3.capture3(RbConfig.ruby, path(SCRIPT), *args, chdir: root)
+    [status.exitstatus, utf8(out), utf8(err)]
+  end
+
+  def snapshot
+    Dir.glob(File.join(path(FILES_DIR), "**", "*"), File::FNM_DOTMATCH).sort.each_with_object({}) do |file, digests|
+      digests[file] = Digest::SHA256.file(file).hexdigest if File.file?(file)
+    end
+  end
+end
+
+# Collects assertion failures for one case.
+class Expect
+  attr_reader :failures
+
+  def initialize
+    @failures = []
+  end
+
+  def exit_code(result, code, label)
+    status, out, err = result
+    return if status == code
+
+    @failures << "#{label}: exit #{status.inspect}, expected #{code} (stderr: #{excerpt(err)}; stdout: #{excerpt(out)})"
+  end
+
+  def stderr(result, needle, label)
+    err = result[2]
+    found = needle.is_a?(Regexp) ? err.match?(needle) : err.include?(needle)
+    @failures << "#{label}: stderr lacks #{needle.inspect} (stderr: #{excerpt(err)})" unless found
+  end
+
+  def stdout(result, needle, label)
+    out = result[1]
+    @failures << "#{label}: stdout lacks #{needle.inspect} (stdout: #{excerpt(out)})" unless out.include?(needle)
+  end
+
+  def no_stderr(result, needle, label)
+    @failures << "#{label}: stderr unexpectedly has #{needle.inspect}" if result[2].include?(needle)
+  end
+
+  def truth(value, message)
+    @failures << message unless value
+  end
+
+  private
+
+  def excerpt(text)
+    flat = text.strip.gsub(/\s*\n\s*/, " | ")
+    flat.size > 600 ? "#{flat[0, 600]}..." : flat
+  end
+end
+
+# Runs the default mode and --check on a broken copy: both must exit 1, name
+# `rel:line_no:` and every needle, and leave every file as it was.
+def expect_rejected(box, expect, rel, line_no, needles = [])
+  before = box.snapshot
+  [[], ["--check"]].each do |args|
+    label = args.empty? ? "default run" : "--check"
+    result = box.run(*args)
+    expect.exit_code(result, 1, label)
+    expect.stderr(result, line_no ? "#{rel}:#{line_no}:" : rel, label)
+    needles.each { |needle| expect.stderr(result, needle, label) }
+  end
+  expect.truth(box.snapshot == before, "a rejected run changed files on disk")
+end
+
+def first_pair_in_same_file(markers)
+  markers.each_cons(2).find { |first, second| first.file == second.file }
+end
+
+def unused_order(box, file)
+  used = box.all_markers.select { |marker| marker.file == file }.map(&:order)
+  (1..9999).map { |number| format("%04d", number) }.reverse.find { |order| !used.include?(order) }
+end
+
+# Index of the first body line of `marker` that holds an ASCII letter.
+def body_line_with_letter(box, marker)
+  lines = box.read(layer_rel(marker.layer)).lines
+  next_marker = box.markers(marker.layer).find { |other| other.index > marker.index }
+  stop = next_marker ? next_marker.index : lines.size
+  ((marker.index + 1)...stop).find { |index| lines[index].match?(/[A-Za-z]/) }
+end
+
+def flip_one_byte(line)
+  position = line.index(/[A-Za-z]/)
+  replacement = line[position] == "x" ? "y" : "x"
+  line[0, position] + replacement.b + line[(position + 1)..-1]
+end
+
+def hand_edit_message(rel, layer)
+  "#{rel} was edited by hand since the last build. Move the change into the layer file that owns it " \
+    "(#{LAYER_DIR}/#{layer}.md), or rerun with --force to discard the hand edit."
+end
+
+# Each case: [name, lambda(box, expect)]. The box is a fresh copy of the
+# rebuilt template.
+CASES = []
+
+def test_case(name, &block)
+  CASES << [name, block]
+end
+
+# Replaces `from` (a String, or a Regexp with `to` able to use \1) in the
+# second marker of dev.md with `to` and expects both modes to reject that line
+# (with every needle in stderr).
+def damaged_marker_case(name, from, to, needles = [])
+  test_case(name) do |box, expect|
+    marker = box.markers("dev")[1]
+    original = box.read(layer_rel("dev"))
+    box.edit_marker(marker) { |line| line.sub(from, to.b) }
+    expect.truth(box.read(layer_rel("dev")) != original, "mutation did not apply")
+    expect_rejected(box, expect, layer_rel("dev"), marker.index + 1, needles)
+  end
+end
+
+DAMAGED = "damaged section or layer marker"
+# String#inspect escapes a non-ASCII character only when the locale is not
+# UTF-8, so the error shows either form.
+FULL_WIDTH_BANG = /\\uFF01|\u{FF01}/.freeze
+FULL_WIDTH_LT = /\\uFF1C|\u{FF1C}/.freeze
+
+test_case("clean copy: default run writes nothing") do |box, expect|
+  before = box.snapshot
+  result = box.run
+  expect.exit_code(result, 0, "default run")
+  expect.stdout(result, "0 written", "default run")
+  expect.truth(box.snapshot == before, "a no-op run changed files on disk")
+end
+
+test_case("one-byte layer edit: --check fails, names the outputs, writes nothing") do |box, expect|
+  marker = box.markers("dev")[0]
+  index = body_line_with_letter(box, marker)
+  box.edit_layer("dev") { |lines| lines[index] = flip_one_byte(lines[index]) }
+  before = box.snapshot
+  result = box.run("--check")
+  expect.exit_code(result, 1, "--check")
+  expect.stderr(result, "differs: #{FILES_DIR}/#{marker.file}\n", "--check")
+  expect.stderr(result, "differs: #{GENERATED_DIR}/dev.claude.md\n", "--check")
+  expect.stderr(result, "differs: #{MANIFEST} ", "--check")
+  expect.truth(box.snapshot == before, "--check changed files on disk")
+end
+
+test_case("one-byte layer edit: default run regenerates (no hand-edit refusal), then --check passes") do |box, expect|
+  marker = box.markers("dev")[0]
+  index = body_line_with_letter(box, marker)
+  edited = nil
+  box.edit_layer("dev") { |lines| edited = lines[index] = flip_one_byte(lines[index]) }
+  result = box.run
+  expect.exit_code(result, 0, "default run")
+  expect.stdout(result, "wrote #{FILES_DIR}/#{marker.file}", "default run")
+  expect.stdout(result, "wrote #{MANIFEST}", "default run")
+  expect.truth(box.read("#{FILES_DIR}/#{marker.file}").include?(edited), "the edit did not reach #{marker.file}")
+  expect.exit_code(box.run("--check"), 0, "--check after the build")
+end
+
+test_case("swapped order values: --check fails") do |box, expect|
+  first, second = first_pair_in_same_file(box.markers("dev"))
+  box.edit_marker(first) { |line| line.sub("order=#{first.order} ", "order=#{second.order} ") }
+  box.edit_marker(second) { |line| line.sub("order=#{second.order} ", "order=#{first.order} ") }
+  result = box.run("--check")
+  expect.exit_code(result, 1, "--check")
+  expect.stderr(result, "differs: #{FILES_DIR}/#{first.file}\n", "--check")
+end
+
+test_case("duplicate id: rejected with file:line") do |box, expect|
+  first, second = box.markers("dev")
+  box.edit_marker(second) { |line| line.sub("id=#{second.id} ", "id=#{first.id} ") }
+  expect_rejected(box, expect, layer_rel("dev"), second.index + 1, ["duplicate id #{first.id.inspect}"])
+end
+
+test_case("duplicate id across layers: rejected with file:line") do |box, expect|
+  first = box.markers("cos")[0]
+  second = box.markers("writing")[0]
+  box.edit_marker(second) { |line| line.sub("id=#{second.id} ", "id=#{first.id} ") }
+  expect_rejected(box, expect, layer_rel("writing"), second.index + 1, ["duplicate id #{first.id.inspect}"])
+end
+
+test_case("duplicate (file, order): rejected with file:line") do |box, expect|
+  first, second = first_pair_in_same_file(box.markers("dev"))
+  box.edit_marker(second) { |line| line.sub("order=#{second.order} ", "order=#{first.order} ") }
+  expect_rejected(box, expect, layer_rel("dev"), second.index + 1, ["duplicate (file, order)"])
+end
+
+test_case("malformed marker (no closing -->): rejected with file:line") do |box, expect|
+  marker = box.markers("dev")[1]
+  box.edit_marker(marker) { |line| line.sub(" -->", "") }
+  expect_rejected(box, expect, layer_rel("dev"), marker.index + 1, ["malformed section marker"])
+end
+
+test_case("unknown harness value: rejected with file:line") do |box, expect|
+  marker = box.markers("dev")[1]
+  box.edit_marker(marker) { |line| line.sub("harness=#{marker.harness} ", "harness=codex ") }
+  expect_rejected(box, expect, layer_rel("dev"), marker.index + 1, ['unknown harness "codex"'])
+end
+
+damaged_marker_case("misspelled keyword `<!-- sectoin`: rejected with file:line", "<!-- section ", "<!-- sectoin ")
+damaged_marker_case("miscased keyword `<!-- Section`: rejected with file:line", "<!-- section ", "<!-- Section ")
+damaged_marker_case("miscased keyword `<!-- SECTION`: rejected with file:line", "<!-- section ", "<!-- SECTION ")
+damaged_marker_case("damaged opener `<!- section`: rejected with file:line", "<!-- section ", "<!- section ")
+damaged_marker_case("damaged opener `< !-- section`: rejected with file:line", "<!-- section ", "< !-- section ")
+damaged_marker_case("damaged opener `<!--- section`: rejected with file:line", "<!-- section ", "<!--- section ")
+damaged_marker_case("damaged opener `<!— section` (em dash): rejected with file:line", "<!-- section ",
+                    "<!— section ")
+damaged_marker_case("damaged opener and keyword `<! sectoin`: rejected with file:line", "<!-- section ",
+                    "<! sectoin ")
+damaged_marker_case("indented marker outside a fence: rejected with file:line", "<!-- section ", "  <!-- section ")
+damaged_marker_case("marker in the middle of a line: rejected with file:line", "<!-- section ",
+                    "see <!-- section ")
+# Openers without an ASCII `<` or `!`: each would merge the section into the
+# previous one (another legacy file and harness) if it were accepted.
+damaged_marker_case("damaged opener `<-- section` (! deleted): rejected with file:line", "<!-- section ",
+                    "<-- section ", [DAMAGED])
+damaged_marker_case("damaged opener `!-- section` (< deleted): rejected with file:line", "<!-- section ",
+                    "!-- section ", [DAMAGED])
+damaged_marker_case("damaged opener `<！-- section` (full-width !): rejected with file:line", "<!-- section ",
+                    "<！-- section ", [DAMAGED, FULL_WIDTH_BANG])
+damaged_marker_case("damaged opener `＜!-- section` (full-width <): rejected with file:line", "<!-- section ",
+                    "＜!-- section ", [DAMAGED, FULL_WIDTH_LT])
+damaged_marker_case("damaged opener `<1-- section` (missed Shift): rejected with file:line", "<!-- section ",
+                    "<1-- section ", [DAMAGED])
+damaged_marker_case("damaged opener `&lt;!-- section` (HTML entity): rejected with file:line", "<!-- section ",
+                    "&lt;!-- section ", [DAMAGED])
+damaged_marker_case("opener deleted (`section id=...`): rejected with file:line", "<!-- section ", "section ",
+                    [DAMAGED])
+damaged_marker_case("opener and keyword deleted (`id=... file=...`): rejected with file:line", "<!-- section ", "",
+                    [DAMAGED])
+# The tail of a marker whose head was deleted (vim d0, insert-mode Ctrl-U, a
+# mouse selection that ends mid-marker): at most two keys and no `<!--` left.
+damaged_marker_case("marker head deleted (`harness=... lazy=... -->`): rejected with file:line",
+                    /\A.* (?=harness=)/, "", [DAMAGED, "ending in `-->`"])
+damaged_marker_case("marker head deleted but `<!` (`<!lazy=... -->`): rejected with file:line",
+                    /\A<!.* (?=lazy=)/, "<!", [DAMAGED])
+damaged_marker_case("marker head replaced by prose (`text. harness=... lazy=... -->`): rejected with file:line",
+                    /\A.* (?=harness=)/, "Previous paragraph text. ", [DAMAGED])
+damaged_marker_case("marker head deleted, smart-dash closer (`lazy=... —>`): rejected with file:line",
+                    /\A.* (lazy=\S+) -->/, '\1 —>', [DAMAGED])
+damaged_marker_case("marker remnant `<!` alone on the line: rejected with file:line", /\A.*-->/, "<!", [DAMAGED])
+damaged_marker_case("marker remnant `<!>` alone on the line: rejected with file:line", /\A.*-->/, "<!>", [DAMAGED])
+damaged_marker_case("marker remnant `->` alone on the line: rejected with file:line", /\A.*-->/, "->", [DAMAGED])
+
+test_case("content line naming two marker keys outside a fence: ordinary content") do |box, expect|
+  marker = box.markers("dev")[1]
+  note = "Set the id= and file= of a section in its marker.\n"
+  box.edit_layer("dev") { |lines| lines.insert(marker.index + 1, note) }
+  result = box.run
+  expect.exit_code(result, 0, "default run")
+  expect.truth(box.read("#{FILES_DIR}/#{marker.file}").include?(note.b), "the line is not in #{marker.file}")
+  expect.exit_code(box.run("--check"), 0, "--check after the build")
+end
+
+test_case("column-0 marker inside a fence: rejected with file:line") do |box, expect|
+  marker = box.markers("dev")[0]
+  probe = "<!-- section id=fence-probe file=#{marker.file} order=#{unused_order(box, marker.file)} " \
+          "harness=neutral lazy=n -->\n"
+  box.edit_layer("dev") { |lines| lines.insert(marker.index + 1, "```\n", probe, "```\n") }
+  expect_rejected(box, expect, layer_rel("dev"), marker.index + 2, ["ends inside an open code fence"])
+end
+
+test_case("HTML comment in content: rejected with file:line") do |box, expect|
+  marker = box.markers("dev")[1]
+  box.edit_layer("dev") { |lines| lines.insert(marker.index + 1, "<!-- note -->\n") }
+  expect_rejected(box, expect, layer_rel("dev"), marker.index + 2,
+                  ['HTML comment "<!-- note -->\n"',
+                   "HTML comments are not allowed in instruction content outside code fences"])
+end
+
+test_case("blockquote `>` lines, a bare `-` list item, `---` and an inline `->`: ordinary content") do |box, expect|
+  marker = box.markers("dev")[1]
+  content = ["> quoted line\n", ">\n", "> more of the quote\n", "\n", "-\n", "\n", "---\n", "\n",
+             "Step A -> step B, then stop.\n"]
+  box.edit_layer("dev") { |lines| lines.insert(marker.index + 1, *content) }
+  result = box.run
+  expect.exit_code(result, 0, "default run")
+  expect.truth(box.read("#{FILES_DIR}/#{marker.file}").include?(content.join.b), "the lines are not in #{marker.file}")
+  expect.exit_code(box.run("--check"), 0, "--check after the build")
+end
+
+test_case("HTML comment, indented marker and damaged opener inside a fence: ordinary content") do |box, expect|
+  marker = box.markers("dev")[1]
+  quoted = [
+    "```text\n", "<!-- note -->\n",
+    "    <!-- section id=quoted file=CLAUDE.md order=0001 harness=neutral lazy=n -->\n",
+    "<!- section id=quoted file=CLAUDE.md\n",
+    "＜!-- section id=quoted file=CLAUDE.md order=0001 harness=neutral lazy=n -->\n", "```\n"
+  ]
+  box.edit_layer("dev") { |lines| lines.insert(marker.index + 1, *quoted) }
+  result = box.run
+  expect.exit_code(result, 0, "default run")
+  expect.truth(box.read("#{FILES_DIR}/#{marker.file}").include?(quoted.join.b), "the fenced block is not in #{marker.file}")
+  expect.exit_code(box.run("--check"), 0, "--check after the build")
+end
+
+test_case("CRLF marker: rejected, shown with \\r\\n") do |box, expect|
+  marker = box.markers("dev")[1]
+  box.edit_marker(marker) { |line| line.sub(/\n\z/, "\r\n") }
+  expect_rejected(box, expect, layer_rel("dev"), marker.index + 1, ['-->\r\n"'])
+end
+
+test_case("marker without a final newline at EOF: rejected, shown without \\n") do |box, expect|
+  lines = box.read(layer_rel("writing")).lines
+  expect.truth(lines.last.end_with?("\n"), "writing.md does not end with a newline")
+  marker = "<!-- section id=eof-probe file=CLAUDE.md order=#{unused_order(box, 'CLAUDE.md')} harness=neutral lazy=n -->"
+  box.write(layer_rel("writing"), lines.join + marker.b)
+  expect_rejected(box, expect, layer_rel("writing"), lines.size + 1, ['lazy=n -->"'])
+end
+
+test_case("missing layer file: rejected") do |box, expect|
+  box.delete(layer_rel("writing"))
+  expect_rejected(box, expect, "#{layer_rel('writing')}: layer file is missing", nil)
+end
+
+test_case("empty layer file (0 bytes): rejected") do |box, expect|
+  box.write(layer_rel("writing"), "")
+  expect_rejected(box, expect, "#{layer_rel('writing')}: layer file has no sections", nil)
+end
+
+test_case("layer file truncated to its header line: rejected") do |box, expect|
+  header = box.read(layer_rel("writing")).lines.first
+  expect.truth(header.start_with?("<!-- layer=writing:"), "line 1 of writing.md is not the layer header")
+  box.write(layer_rel("writing"), header)
+  expect_rejected(box, expect, "#{layer_rel('writing')}: layer file has no sections", nil)
+end
+
+test_case("*.md in instructions/ that is not a layer: rejected") do |box, expect|
+  box.write("#{LAYER_DIR}/ops.md",
+            "<!-- section id=ops-new-rule file=CLAUDE.md order=9990 harness=neutral lazy=n -->\n- NEW OPS RULE\n")
+  expect_rejected(box, expect, "#{LAYER_DIR}/ops.md: not a layer file (LAYERS = cos dev common writing)", nil)
+end
+
+test_case("editor leftovers in instructions/ (dev.md~, .dev.md.swp, .#dev.md): ignored") do |box, expect|
+  %w[dev.md~ .dev.md.swp .#dev.md].each { |name| box.write("#{LAYER_DIR}/#{name}", "junk\n") }
+  expect.exit_code(box.run, 0, "default run")
+  expect.exit_code(box.run("--check"), 0, "--check")
+end
+
+test_case("hand edit of legacy files: default run refuses, names the owning layer, writes nothing") do |box, expect|
+  markers = box.all_markers
+  first_claude = markers.select { |marker| marker.file == "CLAUDE.md" }.min_by(&:order)
+  last_agents = markers.select { |marker| marker.file == "AGENTS.md" }.max_by(&:order)
+  box.write("#{FILES_DIR}/CLAUDE.md", "HAND EDIT\n".b + box.read("#{FILES_DIR}/CLAUDE.md"))
+  box.write("#{FILES_DIR}/AGENTS.md", box.read("#{FILES_DIR}/AGENTS.md") + "HAND EDIT\n".b)
+  before = box.snapshot
+  result = box.run
+  expect.exit_code(result, 1, "default run")
+  expect.stderr(result, hand_edit_message("#{FILES_DIR}/CLAUDE.md", first_claude.layer), "default run")
+  expect.stderr(result, hand_edit_message("#{FILES_DIR}/AGENTS.md", last_agents.layer), "default run")
+  expect.truth(box.snapshot == before, "a refused run changed files on disk")
+  check = box.run("--check")
+  expect.exit_code(check, 1, "--check")
+  expect.stderr(check, "differs: #{FILES_DIR}/CLAUDE.md (edited by hand since the last build)", "--check")
+end
+
+test_case("hand edit of a legacy file: --force discards it, then --check passes") do |box, expect|
+  pristine = box.read("#{FILES_DIR}/CLAUDE.md")
+  box.write("#{FILES_DIR}/CLAUDE.md", pristine + "HAND EDIT\n".b)
+  result = box.run("--force")
+  expect.exit_code(result, 0, "--force")
+  expect.stdout(result, "wrote #{FILES_DIR}/CLAUDE.md", "--force")
+  expect.truth(box.read("#{FILES_DIR}/CLAUDE.md") == pristine, "--force did not restore CLAUDE.md")
+  expect.exit_code(box.run("--check"), 0, "--check after --force")
+end
+
+test_case("hand edit of a view: default run refuses, names the view's layer") do |box, expect|
+  rel = "#{GENERATED_DIR}/cos.claude.md"
+  box.write(rel, box.read(rel) + "HAND EDIT\n".b)
+  result = box.run
+  expect.exit_code(result, 1, "default run")
+  expect.stderr(result, hand_edit_message(rel, "cos"), "default run")
+end
+
+test_case("missing manifest: --check fails") do |box, expect|
+  box.delete(MANIFEST)
+  result = box.run("--check")
+  expect.exit_code(result, 1, "--check")
+  expect.stderr(result, "missing: #{MANIFEST}", "--check")
+end
+
+test_case("missing manifest: default run has no guard, rebuilds and recreates it") do |box, expect|
+  manifest = box.read(MANIFEST)
+  pristine = box.read("#{FILES_DIR}/CLAUDE.md")
+  box.delete(MANIFEST)
+  box.write("#{FILES_DIR}/CLAUDE.md", pristine + "HAND EDIT\n".b)
+  result = box.run
+  expect.exit_code(result, 0, "default run")
+  expect.stdout(result, "wrote #{MANIFEST}", "default run")
+  expect.truth(box.read("#{FILES_DIR}/CLAUDE.md") == pristine, "CLAUDE.md was not rebuilt")
+  expect.truth(box.read(MANIFEST) == manifest, "the recreated manifest differs from the original")
+  expect.exit_code(box.run("--check"), 0, "--check after the build")
+end
+
+test_case("manifest that does not match the outputs: --check fails, default run repairs it") do |box, expect|
+  manifest = box.read(MANIFEST)
+  box.write(MANIFEST, (manifest[0] == "0" ? "1" : "0").b + manifest[1..-1])
+  result = box.run("--check")
+  expect.exit_code(result, 1, "--check")
+  expect.stderr(result, "differs: #{MANIFEST}", "--check")
+  expect.exit_code(box.run, 0, "default run")
+  expect.truth(box.read(MANIFEST) == manifest, "the default run did not repair the manifest")
+end
+
+test_case("stray file in generated/: --check fails, default run warns and keeps it") do |box, expect|
+  stray = "#{GENERATED_DIR}/old.claude.md"
+  box.write(stray, "left over\n")
+  result = box.run("--check")
+  expect.exit_code(result, 1, "--check")
+  expect.stderr(result, "stray: #{stray}", "--check")
+  build = box.run
+  expect.exit_code(build, 0, "default run")
+  expect.stderr(build, "WARN: #{stray} is not produced by bin/build-instructions", "default run")
+  expect.truth(File.file?(box.path(stray)), "the default run deleted the stray file")
+end
+
+test_case("oversized codex view: default run warns, --check fails") do |box, expect|
+  marker = box.markers("writing").find { |candidate| candidate.harness == "neutral" }
+  filler = Array.new(CODEX_LIMIT / 60 + 1) { |number| format("filler line %05d for the codex size limit test, not an instruction\n", number) }
+  box.edit_layer("writing") { |lines| lines.insert(marker.index + 1, *filler) }
+  build = box.run
+  expect.exit_code(build, 0, "default run")
+  expect.stdout(build, "OVER LIMIT", "default run")
+  expect.truth(box.read("#{GENERATED_DIR}/writing.codex.md").bytesize >= CODEX_LIMIT, "the view is not oversized")
+  result = box.run("--check")
+  expect.exit_code(result, 1, "--check")
+  expect.stderr(result, "too large: #{GENERATED_DIR}/writing.codex.md", "--check")
+  expect.stderr(result, CODEX_LIMIT.to_s, "--check")
+  expect.no_stderr(result, "differs:", "--check")
+end
+
+test_case("unknown argument and --check --force: usage error, exit 2") do |box, expect|
+  expect.exit_code(box.run("--bogus"), 2, "--bogus")
+  expect.exit_code(box.run("--check", "--force"), 2, "--check --force")
+end
+
+test_case("deleted section marker: refused as a vanished section; --force accepts the removal") do |box, expect|
+  marker = box.markers("dev")[1]
+  box.edit_layer("dev") { |lines| lines.delete_at(marker.index) }
+  expect_rejected(box, expect, layer_rel("dev"), nil, ["section #{marker.id} ", "no longer parses"])
+  expect.exit_code(box.run("--force"), 0, "--force")
+  expect.exit_code(box.run("--check"), 0, "--check after --force")
+end
+
+test_case("marker hidden behind a code fence at the end of the previous section: refused") do |box, expect|
+  marker = box.markers("dev")[1]
+  box.edit_layer("dev") { |lines| lines[marker.index] = "```\ncode\n```".b + lines[marker.index] }
+  expect_rejected(box, expect, layer_rel("dev"), nil)
+end
+
+test_case("AGENTS.md at or above the Codex limit: default run warns, --check fails") do |box, expect|
+  marker = box.markers("common").find { |candidate| candidate.file == "AGENTS.md" }
+  box.edit_layer("common") { |lines| lines.insert(marker.index + 1, "#{'a' * CODEX_LIMIT}\n".b) }
+  built = box.run
+  expect.exit_code(built, 0, "default run")
+  expect.stderr(built, "#{FILES_DIR}/AGENTS.md is ", "default run")
+  checked = box.run("--check")
+  expect.exit_code(checked, 1, "--check")
+  expect.stderr(checked, "too large: #{FILES_DIR}/AGENTS.md is ", "--check")
+end
+
+def copy_inputs(destination)
+  FileUtils.mkdir_p(File.join(destination, "bin"))
+  FileUtils.cp(File.join(REPO_ROOT, SCRIPT), File.join(destination, SCRIPT))
+  FileUtils.mkdir_p(File.dirname(File.join(destination, FILES_DIR)))
+  FileUtils.cp_r(File.join(REPO_ROOT, FILES_DIR), File.join(destination, FILES_DIR))
+end
+
+def report(number, name, failures)
+  if failures.empty?
+    puts format("PASS %2d %s", number, name)
+  else
+    puts format("FAIL %2d %s", number, name)
+    failures.each { |failure| puts "        #{failure}" }
+  end
+  failures.empty?
+end
+
+def main
+  results = []
+  Dir.mktmpdir("test-build-instructions-") do |tmp|
+    template = File.join(tmp, "template")
+    copy_inputs(template)
+
+    raw = Sandbox.new(File.join(tmp, "raw"))
+    FileUtils.cp_r(template, raw.root)
+    expect = Expect.new
+    before = raw.snapshot
+    expect.exit_code(raw.run("--check"), 0, "--check")
+    expect.truth(raw.snapshot == before, "--check changed files on disk")
+    results << report(1, "unmodified copy of the repo: --check passes", expect.failures)
+
+    rebuild = Sandbox.new(template).run("--force")
+    unless rebuild[0].zero?
+      puts "FAIL    cannot rebuild the template copy (exit #{rebuild[0].inspect}): #{rebuild[2]}"
+      return 1
+    end
+
+    CASES.each_with_index do |(name, block), offset|
+      box = Sandbox.new(File.join(tmp, format("case-%02d", offset + 2)))
+      FileUtils.cp_r(template, box.root)
+      expect = Expect.new
+      begin
+        block.call(box, expect)
+      rescue StandardError => e
+        expect.failures << "raised #{e.class}: #{e.message} (#{e.backtrace.first})"
+      end
+      results << report(offset + 2, name, expect.failures)
+      FileUtils.rm_rf(box.root)
+    end
+  end
+
+  failed = results.count(false)
+  puts
+  puts "#{results.size - failed}/#{results.size} cases passed"
+  failed.zero? ? 0 : 1
+end
+
+exit main

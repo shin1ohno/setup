@@ -94,11 +94,10 @@ Use AskUserQuestion to let the user select which proposals to implement (multiSe
 
 For each approved proposal, implement the change. Follow existing patterns:
 - Hooks: Ruby scripts in `cookbooks/claude-code/files/hooks/`, registered in `settings.json`
-- Rules: Markdown files in `cookbooks/claude-code/files/rules/` with appropriate frontmatter
+- Rules, CLAUDE.md, AGENTS.md: `cookbooks/claude-code/files/{CLAUDE.md,AGENTS.md,rules/*.md}` are generated — edit the source of truth, the layer file of the rule's audience in `cookbooks/claude-code/files/instructions/{cos,dev,common,writing}.md`, as a section whose marker `file=` is the target (a new target file is first added to `LEGACY_FILES` in `bin/build-instructions` and to the rules deploy list in `cookbooks/claude-code/default.rb`; a rule's `paths:` frontmatter, if any, goes in that file's lowest-`order` section), then run `bin/build-instructions` and commit layers and outputs together
 - Agents: Markdown files in `cookbooks/claude-code/files/agents/`
 - Skills: `SKILL.md` in `cookbooks/claude-code/files/skills/<name>/`
-- CLAUDE.md: edit source of truth at `cookbooks/claude-code/files/CLAUDE.md`
-- Tool-agnostic rules (read by Claude and Codex): edit `cookbooks/claude-code/files/AGENTS.md` (deploys to `~/.agents/AGENTS.md`; CLAUDE.md imports it). Claude-only rules stay in CLAUDE.md or `rules/`; permission-boundary wording stays verbatim in CLAUDE.md / `rules/`
+- Tool-agnostic rules (read by Claude and Codex): a `harness=neutral` section with `file=AGENTS.md` (deploys to `~/.agents/AGENTS.md`; CLAUDE.md imports it). Claude-only rules stay in CLAUDE.md or `rules/`; permission-boundary wording stays verbatim in CLAUDE.md / `rules/`
 
 After implementation, sync deploy targets and commit.
 

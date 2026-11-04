@@ -67,6 +67,6 @@ Ask the user to choose which proposals to implement, allowing multiple selection
 
 For each selected proposal:
 1. Present the plan first and get approval if the combined changes are non-trivial (2+ files) (Claude Code: plan mode)
-2. Implement following existing patterns (skills in `cookbooks/claude-code/files/skills/`, agents in `agents/`, etc.; in another repo or environment, follow its own configuration layout — Claude Code: ~/.claude rules and skills; Codex: AGENTS.md and ~/.agents/skills)
+2. Implement following existing patterns (skills in `cookbooks/claude-code/files/skills/`, agents in `agents/`, etc.; rules / CLAUDE.md / AGENTS.md go in as sections of the layer files `instructions/{cos,dev,common,writing}.md` followed by `bin/build-instructions`, because those outputs are generated; in another repo or environment, follow its own configuration layout — Claude Code: ~/.claude rules and skills; Codex: AGENTS.md and ~/.agents/skills)
 3. Run `./bin/mitamae local linux.rb --dry-run` to verify (when the target is this repo; otherwise the target's own checks)
 4. Commit with descriptive message

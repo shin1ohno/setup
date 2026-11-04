@@ -530,6 +530,26 @@ jobs:
         echo "Checking Ruby syntax for all .rb files..."
         find . -name "*.rb" -exec ruby -c {} \;
 
+    - name: Check generated instruction files
+      run: |
+        # cookbooks/claude-code/files/instructions/{cos,dev,common,writing}.md are
+        # the source of truth for CLAUDE.md, AGENTS.md, docs/knowledge-persistence.md,
+        # rules/*.md and the per-layer views in instructions/generated/. Fails when a
+        # generated file was edited directly or a layer edit was not regenerated,
+        # when generated/.manifest is stale, when generated/ holds a stray file,
+        # when a .codex.md view reaches Codex's 32 KiB project_doc_max_bytes, or
+        # when a layer file has a damaged marker, has no sections, or is a *.md
+        # in instructions/ that is not one of the four layers.
+        ruby bin/build-instructions --check
+
+    - name: Test instruction generator
+      run: |
+        # Runs bin/build-instructions on scratch copies with broken markers,
+        # duplicates, fenced markers, HTML comments, CRLF, empty or unknown layer
+        # files, hand edits, stray files and an oversized view, and asserts each
+        # exit code and message.
+        ruby bin/test-build-instructions
+
     - name: Check for common issues
       run: |
         # Check for syntax errors in main files

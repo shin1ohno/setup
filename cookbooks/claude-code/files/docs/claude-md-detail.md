@@ -16,6 +16,8 @@ Origin: 2026-05-01 AstroNvim ^5→^6 missed cross-machine cleanup — a plugin l
 
 ## dual-managed-files
 
+The repo copies of `CLAUDE.md`, `AGENTS.md`, `rules/*.md` and `docs/knowledge-persistence.md` are no longer a second source: `bin/build-instructions` generates them from the layer files `cookbooks/claude-code/files/instructions/{cos,dev,common,writing}.md`, refuses to overwrite a hand-edited output, and CI fails on one (`--check`). A change made on a deployed copy goes back into the layer-file section whose marker has the matching `file=`, then `bin/build-instructions`; never into the generated file.
+
 Why diff the deploy copy before hand-editing it: when deploy is waiting on an apply, editing on top of it produces a hybrid that carries the new section and is missing the older one. Origin: 2026-09-16 — `rules/git-commit.md` ended up in exactly that state.
 
 ## user-reported-completion-probe
