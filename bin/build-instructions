@@ -585,7 +585,10 @@ def check(outputs, sections)
   unless oversized.empty?
     warn "A view that is too large: mark sections of that layer harness=claude or move them to another layer."
   end
-  warn "AGENTS.md too large: mark AGENTS.md sections harness=claude or move them out." if agents_too_large
+  if agents_too_large
+    warn "AGENTS.md too large: every file=AGENTS.md section is deployed, whatever its harness; move " \
+         "Claude-only sections to file=CLAUDE.md or a rules/ file, or shorten them."
+  end
   1
 end
 

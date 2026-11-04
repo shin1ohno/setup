@@ -20,6 +20,8 @@ Full discipline: rules/ask-user-question.md（常時ロード）。probe gates �
 | `~/.claude/docs/<topic>.md` (on-demand via Read) | Task playbook or the detail/origin half of a split rule; reached via a playbooks row or `Detail: see …`; opens with `Load when …` |
 | Project-scoped rules (`<repo>/.claude/rules/` + project `CLAUDE.md` からの `@` import) | その repo のセッションのみ常時ロード |
 
+The global CLAUDE.md, AGENTS.md and `rules/` targets are generated: a new or moved rule goes into the layer file of its audience (`~/ManagedProjects/setup/cookbooks/claude-code/files/instructions/{cos,dev,common,writing}.md`) as a section whose `file=` is the target (a new target file first joins `LEGACY_FILES` in `bin/build-instructions` and the rules deploy list in `cookbooks/claude-code/default.rb`), followed by `bin/build-instructions`.
+
 `docs/knowledge-persistence.md` is the one `@`-imported (always-loaded) `docs/` file. An agent definition with `omitClaudeMd: true` inherits no CLAUDE.md or rules, so it must carry its own discipline.
 
 Default to `docs/`; promote to `rules/` only if it fires in most sessions, to CLAUDE.md only for 1-3 sentence steering rules. Split a rule past ~10 lines or with 3+ task-divergent sub-cases into `docs/<name>-detail.md` (summary keeps rule + `Detail: see …`).

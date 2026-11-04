@@ -9,6 +9,6 @@ puts <<~MSG
   1. AskUserQuestion: every ambiguity, every analysis must end with a question
   2. Communicate in Japanese
   3. Preserve: current plan state, modified file paths, test commands, AskUserQuestion decisions
-  4. CLAUDE.md source of truth: cookbooks/claude-code/files/CLAUDE.md
-  5. Shared Claude+Codex layer (imported by CLAUDE.md): cookbooks/claude-code/files/AGENTS.md → ~/.agents/AGENTS.md
+  4. CLAUDE.md, AGENTS.md, rules/*.md source of truth: cookbooks/claude-code/files/instructions/{cos,dev,common,writing}.md → bin/build-instructions (never hand-edit the generated files)
+  5. Shared Claude+Codex layer (imported by CLAUDE.md): generated cookbooks/claude-code/files/AGENTS.md → ~/.agents/AGENTS.md
 MSG
