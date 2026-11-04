@@ -22,7 +22,7 @@ const SETUP_REPO = ARGS.setupRepo || '~/ManagedProjects/setup'
 const CTX = `
 ## 背景（自己完結コンテキスト）
 このマシンの現行ユーザーの Claude Code グローバル設定の定期改善監査タスクの一部です。パス中の ~ はあなた自身のシェルで解決してください（必要なら echo $HOME で確認）。/Users/<name> のようなユーザー名前提のパスは書かないこと。
-- 設定の source of truth: ${SETUP_REPO}/cookbooks/claude-code/files/ （CLAUDE.md, AGENTS.md, rules/, docs/, hooks/, skills/, agents/, settings.json）。~/.claude/ へ mitamae でデプロイされる（AGENTS.md は ~/.agents/AGENTS.md へ。Claude と Codex の共通層で、CLAUDE.md が @-import し、~/.codex/AGENTS.md はそこへの link）。デプロイ対象は default.rb 内の明示 %w() リストで管理（files/ に置くだけでは配線されない）。
+- 設定の source of truth: ${SETUP_REPO}/cookbooks/claude-code/files/ （instructions/{cos,dev,common,writing}.md, docs/, hooks/, skills/, agents/, settings.json）。CLAUDE.md・AGENTS.md・rules/*.md・docs/knowledge-persistence.md は bin/build-instructions が層ファイル instructions/*.md から生成する生成物で、手編集しない（ルールの追加・変更先は層ファイルの section。section marker の file= が配置先）。~/.claude/ へ mitamae でデプロイされる（AGENTS.md は ~/.agents/AGENTS.md へ。Claude と Codex の共通層で、CLAUDE.md が @-import し、~/.codex/AGENTS.md はそこへの link）。デプロイ対象は default.rb 内の明示 %w() リストで管理（files/ に置くだけでは配線されない）。
 - ~/.claude/rules/*.md は Claude Code が全ファイル毎セッション自動ロードする（要再確認: バージョンで変わりうる。ls と現セッションのロード状況から確認せよ）。on-demand 置き場は ~/.claude/docs/（@-import した分のみロード）。
 - セッション transcripts: ~/.claude/projects/<project-dir>/<uuid>.jsonl（JSONL、1行1メッセージ）。subagents/ サブディレクトリはサブエージェントログなので対象外。
 - ユーザーは主に日本語でやりとりする。
@@ -76,7 +76,7 @@ const EXTRACT = {
           category: { type: 'string', enum: ['correction', 'repeated-instruction', 'friction', 'preference', 'rule-violation', 'new-gotcha'] },
           evidence: { type: 'array', minItems: 1, items: { type: 'object', additionalProperties: false, properties: { session: { type: 'string' }, quote: { type: 'string', maxLength: 300 } }, required: ['session', 'quote'] } },
           proposed_rule: { type: 'string', description: 'CLAUDE.md/rules に足すべきルールの具体的文面案' },
-          target: { type: 'string', description: '追加先: CLAUDE.md | AGENTS.md（Claude/Codex 共通） | rules/<file>.md | docs/<file>.md | new:<name>.md | hook | skill' },
+          target: { type: 'string', description: '追加先: CLAUDE.md | AGENTS.md（Claude/Codex 共通） | rules/<file>.md | docs/<file>.md | new:<name>.md | hook | skill。CLAUDE.md・AGENTS.md・rules/ は生成物なので、編集先の層ファイルを付けて「<layer>.md → <配置先>」で書く（layer = cos|dev|common|writing。例: dev.md → rules/debugging.md）。new: で rules/ に新規ファイルを作る場合は bin/build-instructions の LEGACY_FILES と default.rb の rules 配置リストへの追加も含める' },
           already_covered_by: { type: 'string', description: '既存ルールで部分的にカバーされている場合その場所' },
           confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
         },

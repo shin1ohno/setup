@@ -1,0 +1,699 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# Build the Claude Code / Codex instruction files from the layer sources.
+#
+# Source of truth: cookbooks/claude-code/files/instructions/{cos,dev,common,writing}.md.
+# Each layer file is a sequence of sections. A section starts with a marker line
+#
+#   <!-- section id=<slug> file=<legacy path> order=<NNNN> harness=<neutral|claude> lazy=<y|n> -->
+#
+# followed by the section's exact bytes. `file` is relative to
+# cookbooks/claude-code/files/ and names the legacy file the section belongs to.
+# An optional first line `<!-- layer=<name>: source of truth. ... -->` labels the
+# file. Marker rules:
+#   - A line that starts with `<!-- section ` at column 0 always starts a new
+#     section and must be a well-formed marker, even inside a code fence, so a
+#     fence can never hide a section boundary. To quote a marker as an example,
+#     indent it inside a fence.
+#   - Outside a code fence, HTML comments are not allowed in instruction content:
+#     a line whose left-stripped form starts with `<!--` must be a well-formed
+#     section marker or the line-1 layer header. A line that looks like a damaged
+#     marker is an error too. The test is case-insensitive and runs on the NFKC
+#     form of the line, so the full-width `＜` and `！` an IME produces count as
+#     `<` and `!`. A line looks like a damaged marker when it has:
+#       * `section` or `layer=` right after a damaged opener such as `<!-`,
+#         `< !--` or `<!—`;
+#       * `section id=` anywhere (an opener deleted or mistyped as `<--`, `!--`,
+#         `<1--`, `&lt;!--`, ...);
+#       * three or more of the keys id= file= order= harness= lazy=;
+#       * a `<` and a `!` followed by two of those keys;
+#       * a marker closer `-->` (or `—>`) at the end of the line, the tail left
+#         when the head of a marker is deleted (vim d0, insert-mode Ctrl-U, a
+#         mouse selection that ends mid-marker); or
+#       * nothing but marker punctuation with a `<`, or a dash before a `>`:
+#         `<`, `<!`, `<!-`, `<>`, `<!>`, `->`.
+#     This catches typos that would otherwise merge a section into the previous
+#     one, and so move it into another legacy file and harness. A bare `>`
+#     (blockquote) or `-` (list item) line is ordinary content.
+#   - Inside a code fence such lines are ordinary content.
+#   - Every code fence (``` or ~~~) must close in the section that opens it.
+#   - Every layer file must exist and hold at least one section, and
+#     instructions/ may hold no other *.md file: a layer that is not in LAYERS
+#     would reach no output.
+#
+# Outputs:
+#   (a) the legacy files (CLAUDE.md, AGENTS.md, docs/knowledge-persistence.md,
+#       rules/*.md): each one's sections concatenated in `order`. These are the
+#       files cookbooks/claude-code/default.rb deploys, unchanged.
+#   (b) per-layer views in instructions/generated/: <layer>.claude.md holds every
+#       section of the layer and <layer>.codex.md only the harness=neutral ones,
+#       both in layer-file order with the markers stripped.
+#   (c) instructions/generated/.manifest: one `<sha256>  <path>` line per output
+#       of (a) and (b), sorted by path, paths relative to the repo root
+#       (`sha256sum -c` format), then one
+#       `section <id> <layer> <file> <order> <harness> <lazy>` line per section,
+#       sorted by id. It records what the last build wrote and which sections it
+#       was made of, so a hand edit of an output can be told apart from a layer
+#       change, and a section that vanished can be told apart from a removal.
+#
+# Section-loss guard: a section recorded in the manifest that no longer parses
+# is refused by the default run and reported by --check, whatever made it
+# vanish (a deleted, damaged or hidden marker merges the section into its
+# neighbour; a deleted section disappears). An intended removal is committed
+# with --force, which rewrites the manifest.
+#
+# Usage:
+#   bin/build-instructions          # write the outputs that changed and the
+#                                   # manifest, print view sizes. Refuses (exit 1,
+#                                   # writes nothing) when an output it would
+#                                   # overwrite differs from both the manifest and
+#                                   # the new content, i.e. was edited by hand.
+#                                   # Without a manifest (first run) there is no
+#                                   # such guard.
+#                                   # Also refuses when a section recorded in the
+#                                   # manifest no longer parses.
+#   bin/build-instructions --force  # the same, but overwrite hand edits and
+#                                   # accept removed sections
+#   bin/build-instructions --check  # write nothing; exit 1 if an output or the
+#                                   # manifest is missing or stale, a recorded
+#                                   # section is gone, generated/ holds a file
+#                                   # this script does not produce, or AGENTS.md
+#                                   # or a .codex.md view is 32768 bytes or more
+#
+# Exit codes: 0 success, 1 a check or validation failed (nothing written),
+# 2 usage error.
+#
+# Edit the layer files, never the generated files: CI runs --check.
+# Negative tests: bin/test-build-instructions.
+
+require "digest"
+require "fileutils"
+
+REPO_ROOT = File.expand_path("..", __dir__)
+FILES_DIR = "cookbooks/claude-code/files"
+LAYER_DIR = "#{FILES_DIR}/instructions".freeze
+GENERATED_DIR = "#{LAYER_DIR}/generated".freeze
+MANIFEST = "#{GENERATED_DIR}/.manifest".freeze
+USAGE = "usage: bin/build-instructions [--check | --force]"
+
+LAYERS = %w[cos dev common writing].freeze
+HARNESSES = %w[neutral claude].freeze
+LAZY_VALUES = %w[y n].freeze
+# Canonical legacy-file order; also the order sections are expected in within a
+# layer file (then by `order`).
+LEGACY_FILES = %w[
+  CLAUDE.md
+  AGENTS.md
+  docs/knowledge-persistence.md
+  rules/adversarial-review.md
+  rules/ask-user-question.md
+  rules/debugging.md
+  rules/editing.md
+  rules/git-commit.md
+  rules/mcp-config.md
+  rules/planning.md
+  rules/sub-agents.md
+].freeze
+# Codex reads at most project_doc_max_bytes (default 32 KiB) of instructions and
+# drops the rest without a warning.
+CODEX_LIMIT = 32_768
+
+MARKER_KEYS = %w[id file order harness lazy].freeze
+SECTION_START_RE = /\A<!-- section /
+SECTION_CANDIDATE_RE = /\A\s*<!--\s*section\b/i
+SECTION_MARKER_RE = /\A<!-- section (.+) -->\n\z/
+LAYER_CANDIDATE_RE = /\A\s*<!--\s*layer\s*=/i
+HTML_COMMENT_RE = /\A\s*<!--/
+# `section` or `layer=` right after an opener with a missing, extra or look-alike
+# dash (en/em dash, minus sign, full-width hyphen) or stray spaces.
+DAMAGED_OPENER_RE = /<\s*![\s\-‐-―−－]*(?:section|layer\s*=)/i
+# The keyword and first key of a marker whose opener was deleted or mistyped.
+SECTION_ID_RE = /\bsection\s+id\s*=/i
+# A marker closer at the end of a line: `-->`, or `>` after a look-alike dash
+# (smart-dash autocorrect turns `--` into an en or em dash).
+DAMAGED_CLOSER_RE = /(?:-\s*-|[‐-―−])\s*>\s*\z/
+# A line of nothing but marker punctuation that holds a `<`, or a dash before a
+# `>`: what is left when most of a marker line was deleted (`<`, `<!`, `<!-`,
+# `<>`, `<!->`, `->`). A bare `>` (blockquote) or `-` (list item) does not match.
+MARKER_PUNCTUATION_RE = /\A[\s<!>\-‐-―−]+\z/
+MARKER_REMNANT_RE = /<|[\-‐-―−]\s*>/
+MARKER_KEY_RE = /(?<![A-Za-z0-9_])(id|file|order|harness|lazy)\s*=/i
+ID_RE = /\A[a-z0-9]+(?:-[a-z0-9]+)*\z/
+ORDER_RE = /\A\d{4}\z/
+MANIFEST_LINE_RE = /\A([0-9a-f]{64})  (.+)\n?\z/
+MANIFEST_SECTION_RE = /\Asection (\S+) (\S+) (\S+) (\d{4}) (\S+) (\S+)\n?\z/
+AGENTS_MD = "#{FILES_DIR}/AGENTS.md".freeze
+# CommonMark fence line: a run of 3+ backticks or tildes, then the rest of the line.
+FENCE_RE = /\A[ \t]*(`{3,}|~{3,})(.*)\z/
+
+Section = Struct.new(:id, :file, :order, :harness, :lazy, :layer, :body, :where)
+Fence = Struct.new(:char, :length, :where)
+
+def layer_header(layer)
+  "<!-- layer=#{layer}: source of truth. Edit here, then run bin/build-instructions. " \
+    "Do not edit the generated files. -->\n"
+end
+
+def utf8(bytes)
+  bytes.dup.force_encoding(Encoding::UTF_8).scrub
+end
+
+# String#inspect keeps a CR, a missing final newline and other invisible bytes visible.
+def display(line)
+  utf8(line).inspect
+end
+
+def sha256(bytes)
+  Digest::SHA256.hexdigest(bytes)
+end
+
+# Returns marker attributes, or nil after recording why the marker is invalid.
+def parse_marker(line, where, errors)
+  match = SECTION_MARKER_RE.match(line)
+  unless match
+    errors << "#{where}: malformed section marker #{display(line)}; expected exactly " \
+              "`<!-- section id=<slug> file=<path> order=<NNNN> harness=<neutral|claude> lazy=<y|n> -->` " \
+              "at column 0 on its own LF-terminated line (to keep a marker-like line as ordinary content, " \
+              "put it in a code fence and indent it)"
+    return nil
+  end
+
+  pairs = match[1].split(/ /, -1)
+  keys = pairs.map { |pair| pair.split("=", 2).first }
+  unless keys == MARKER_KEYS && pairs.all? { |pair| pair.include?("=") }
+    errors << "#{where}: section marker must carry exactly #{MARKER_KEYS.map { |k| "#{k}=" }.join(' ')} " \
+              "in that order, single-space separated; got #{display(line)}"
+    return nil
+  end
+
+  attrs = pairs.to_h { |pair| pair.split("=", 2) }
+  problems = []
+  problems << "id #{attrs['id'].inspect} is not kebab-case [a-z0-9-]" unless attrs["id"].match?(ID_RE)
+  unless LEGACY_FILES.include?(attrs["file"])
+    problems << "file #{attrs['file'].inspect} is not a known legacy file (#{LEGACY_FILES.join(', ')})"
+  end
+  problems << "order #{attrs['order'].inspect} is not a 4-digit zero-padded integer" unless attrs["order"].match?(ORDER_RE)
+  problems << "unknown harness #{attrs['harness'].inspect} (#{HARNESSES.join('|')})" unless HARNESSES.include?(attrs["harness"])
+  problems << "unknown lazy #{attrs['lazy'].inspect} (#{LAZY_VALUES.join('|')})" unless LAZY_VALUES.include?(attrs["lazy"])
+  unless problems.empty?
+    problems.each { |problem| errors << "#{where}: #{problem}" }
+    return nil
+  end
+
+  {
+    id: attrs["id"], file: attrs["file"], order: Integer(attrs["order"], 10),
+    harness: attrs["harness"], lazy: attrs["lazy"]
+  }
+end
+
+def marker_key_count(text)
+  text.scan(MARKER_KEY_RE).flatten.map(&:downcase).uniq.size
+end
+
+# A damaged opener before `section`/`layer=`, `section id=` anywhere, three or
+# more distinct marker keys, a `<` and a `!` followed by two of them, a marker
+# closer at the end of the line, or a line that is only an opener or closer
+# fragment. Tested on the NFKC form, which folds the full-width `＜` `！` `ｉｄ＝`
+# `－－＞` of an IME to ASCII. Only meaningful outside a code fence.
+def damaged_marker?(line)
+  text = utf8(line)
+  text = text.unicode_normalize(:nfkc) unless text.ascii_only?
+  return true if text.match?(DAMAGED_OPENER_RE) || text.match?(SECTION_ID_RE)
+  return true if marker_key_count(text) >= 3
+  # A line that starts with `<!--` is rejected as an HTML comment anyway, with
+  # a message that fits a comment better.
+  unless line.match?(HTML_COMMENT_RE)
+    return true if text.match?(DAMAGED_CLOSER_RE)
+    return true if text.match?(MARKER_PUNCTUATION_RE) && text.match?(MARKER_REMNANT_RE)
+  end
+  return false unless text.include?("<") && text.include?("!")
+
+  start = [text.index("<"), text.index("!")].max
+  marker_key_count(text[start..-1]) >= 2
+end
+
+def check_layer_header(line, layer, index, where, errors)
+  if index.positive?
+    errors << "#{where}: a layer header is only allowed on line 1 (inside a code fence it is ordinary content); " \
+              "got #{display(line)}"
+  elsif line != layer_header(layer)
+    errors << "#{where}: malformed layer header #{display(line)}; expected exactly #{display(layer_header(layer))}"
+  end
+end
+
+# Returns the Fence a line opens, or nil. A backtick fence's info string may not
+# contain a backtick (CommonMark), so "```foo``` text" is inline code, not a fence.
+def fence_opened_by(line, where)
+  match = FENCE_RE.match(line.chomp)
+  return nil unless match
+  return nil if match[1].start_with?("`") && match[2].include?("`")
+
+  Fence.new(match[1][0], match[1].size, where)
+end
+
+# A closing fence uses the opening character, is at least as long, and carries
+# nothing but whitespace after the run.
+def closes_fence?(line, fence)
+  match = FENCE_RE.match(line.chomp)
+  !match.nil? && match[1][0] == fence.char && match[1].size >= fence.length && match[2].strip.empty?
+end
+
+def check_fence_closed(current, fence, end_desc, errors)
+  return unless fence && current.is_a?(Section)
+
+  errors << "#{fence.where}: section #{current.id.inspect} ends inside an open code fence (opened here, " \
+            "still open at #{end_desc}); close the fence in the same section. A line that starts with " \
+            "`<!-- section ` always starts a new section, even inside a fence: indent it to quote a marker"
+end
+
+def parse_layer(layer, errors)
+  rel = "#{LAYER_DIR}/#{layer}.md"
+  path = File.join(REPO_ROOT, rel)
+  unless File.file?(path)
+    errors << "#{rel}: layer file is missing"
+    return []
+  end
+
+  sections = []
+  current = nil # Section, :invalid (body of a rejected marker), or nil (before the first marker)
+  fence = nil   # Fence open in the current body, or nil
+  stray_reported = false
+  markers_seen = 0 # marker lines, valid or rejected
+  File.binread(path).lines.each_with_index do |line, index|
+    where = "#{rel}:#{index + 1}"
+    if line.match?(SECTION_START_RE)
+      markers_seen += 1
+      # A section boundary wherever it appears: fences never hide one.
+      check_fence_closed(current, fence, "the next section marker at #{where}", errors)
+      fence = nil
+      attrs = parse_marker(line, where, errors)
+      if attrs
+        current = Section.new(attrs[:id], attrs[:file], attrs[:order], attrs[:harness], attrs[:lazy],
+                              layer, String.new, where)
+        sections << current
+      else
+        current = :invalid
+      end
+      next
+    end
+
+    if fence
+      # Inside a fence every line is content, marker-like or not.
+      fence = nil if closes_fence?(line, fence)
+    elsif line.match?(LAYER_CANDIDATE_RE)
+      check_layer_header(line, layer, index, where, errors)
+      next
+    elsif line.match?(SECTION_CANDIDATE_RE)
+      # Starts like a section marker, but not with exactly `<!-- section ` at
+      # column 0: a typo, never content.
+      markers_seen += 1
+      parse_marker(line, where, errors)
+      current = :invalid
+      next
+    elsif damaged_marker?(line)
+      markers_seen += 1
+      errors << "#{where}: damaged section or layer marker #{display(line)}; a section marker is exactly " \
+                "`<!-- section id=<slug> file=<path> order=<NNNN> harness=<neutral|claude> lazy=<y|n> -->` " \
+                "at column 0 (HTML comments are not allowed in instruction content outside code fences). " \
+                "Outside a code fence these lines count as a damaged marker: a line with `section id=`, a line with " \
+                "three or more of the keys id= file= order= harness= lazy=, a line ending in `-->` (a marker whose " \
+                "head was deleted), and a line of nothing but marker punctuation such as `<!`, `<!>` or `->`. " \
+                "To keep one as ordinary content, put it in a code fence"
+      current = :invalid
+      next
+    elsif line.match?(HTML_COMMENT_RE)
+      errors << "#{where}: HTML comment #{display(line)}: HTML comments are not allowed in instruction content " \
+                "outside code fences (instruction content contains none today; only section markers and the " \
+                "line-1 layer header start with `<!--`). Fix the marker if it was meant to be one, otherwise " \
+                "remove the comment or put it in a code fence"
+      next
+    else
+      fence = fence_opened_by(line, where)
+    end
+
+    if current.is_a?(Section)
+      current.body << line
+    elsif current.nil? && !stray_reported
+      errors << "#{where}: content before the first section marker"
+      stray_reported = true
+    end
+  end
+  check_fence_closed(current, fence, "the end of the file", errors)
+  if markers_seen.zero?
+    # An empty or truncated layer file would silently drop its sections from
+    # the legacy files and empty both of its views.
+    errors << "#{rel}: layer file has no sections (every layer file holds at least one " \
+              "`<!-- section ... -->` marker; was it truncated? Restore it, e.g. with git restore)"
+  end
+  sections
+end
+
+# A *.md file in instructions/ that is not a layer file would reach no output.
+# Dotfiles (editor lock files such as .#dev.md) are not layer candidates.
+def check_unknown_layer_files(errors)
+  dir = File.join(REPO_ROOT, LAYER_DIR)
+  return unless File.directory?(dir)
+
+  expected = LAYERS.map { |layer| "#{layer}.md" }
+  Dir.children(dir).sort.each do |name|
+    next if name.start_with?(".") || !name.match?(/\.md\z/i) || expected.include?(name)
+
+    errors << "#{LAYER_DIR}/#{name}: not a layer file (LAYERS = #{LAYERS.join(' ')}), so its sections would " \
+              "reach no output; move its sections into a layer file, or add the layer to LAYERS in bin/build-instructions"
+  end
+end
+
+def validate(sections, errors)
+  seen_ids = {}
+  seen_slots = {}
+  sections.each do |section|
+    if (other = seen_ids[section.id])
+      errors << "#{section.where}: duplicate id #{section.id.inspect} (first at #{other})"
+    else
+      seen_ids[section.id] = section.where
+    end
+
+    slot = [section.file, section.order]
+    if (other = seen_slots[slot])
+      errors << "#{section.where}: duplicate (file, order) = (#{section.file}, #{format('%04d', section.order)}) " \
+                "(first at #{other})"
+    else
+      seen_slots[slot] = section.where
+    end
+
+    errors << "#{section.where}: section #{section.id.inspect} has an empty body" if section.body.empty?
+  end
+
+  LEGACY_FILES.each do |file|
+    in_file = sections.select { |section| section.file == file }.sort_by(&:order)
+    if in_file.empty?
+      errors << "legacy file #{file} has no sections in any layer file"
+      next
+    end
+    # A body without a final newline can only be the last bytes of a layer file;
+    # anywhere but the end of its legacy file it would fuse two lines.
+    in_file[0...-1].each do |section|
+      next if section.body.empty? || section.body.end_with?("\n")
+
+      errors << "#{section.where}: section #{section.id.inspect} does not end with a newline " \
+                "but is not the last section of #{file}"
+    end
+  end
+end
+
+def warn_noncanonical_order(sections)
+  rank = LEGACY_FILES.each_with_index.to_h
+  sections.group_by(&:layer).each do |layer, in_layer|
+    in_layer.each_cons(2) do |previous, section|
+      next if ([rank[previous.file], previous.order] <=> [rank[section.file], section.order]).negative?
+
+      warn "WARN: #{LAYER_DIR}/#{layer}.md: section #{section.id.inspect} is out of canonical order " \
+           "(legacy file, then order); views follow layer-file order"
+    end
+  end
+end
+
+# Returns [outputs, sources]: output path => bytes, and output path => the
+# sections it is made of, in output order.
+def render(sections)
+  outputs = {}
+  sources = {}
+  add = lambda do |rel, parts|
+    outputs[rel] = parts.map(&:body).join.b
+    sources[rel] = parts
+  end
+  LEGACY_FILES.each do |file|
+    add.call("#{FILES_DIR}/#{file}", sections.select { |section| section.file == file }.sort_by(&:order))
+  end
+  LAYERS.each do |layer|
+    in_layer = sections.select { |section| section.layer == layer }
+    add.call("#{GENERATED_DIR}/#{layer}.claude.md", in_layer)
+    add.call("#{GENERATED_DIR}/#{layer}.codex.md", in_layer.select { |section| section.harness == "neutral" })
+  end
+  [outputs, sources]
+end
+
+def on_disk(rel)
+  path = File.join(REPO_ROOT, rel)
+  File.file?(path) ? File.binread(path) : nil
+end
+
+def manifest_section_line(section)
+  order = format("%04d", Integer(section.order.to_s, 10))
+  "section #{section.id} #{section.layer} #{section.file} #{order} #{section.harness} #{section.lazy}\n"
+end
+
+def manifest_for(outputs, sections)
+  hashes = outputs.keys.sort.map { |rel| "#{sha256(outputs[rel])}  #{rel}\n" }
+  listed = sections.sort_by(&:id).map { |section| manifest_section_line(section) }
+  (hashes + listed).join.b
+end
+
+# { hashes: path => sha256, sections: id => [layer, file, order] } as recorded
+# by the last build, or nil when there is no manifest. `sections` is nil for a
+# manifest that lists no sections, so the section-loss guard starts with the
+# next build instead of refusing every section.
+def read_manifest
+  text = on_disk(MANIFEST)
+  return nil unless text
+
+  hashes = {}
+  sections = {}
+  text.each_line do |line|
+    if (match = MANIFEST_LINE_RE.match(line))
+      hashes[match[2]] = match[1]
+    elsif (match = MANIFEST_SECTION_RE.match(line))
+      sections[match[1]] = [match[2], match[3], match[4]]
+    end
+  end
+  { hashes: hashes, sections: sections.empty? ? nil : sections }
+end
+
+# True when the bytes on disk are not what the last build wrote. An output the
+# manifest does not list counts as edited by hand.
+def edited_by_hand?(rel, current, manifest)
+  !manifest.nil? && sha256(current) != manifest[:hashes][rel]
+end
+
+# Messages for the sections the manifest records but the layer files no longer
+# hold. A deleted, damaged or hidden marker merges its section into the
+# previous one, so the section's id vanishes; no marker check can catch every
+# such edit, but the vanished id always shows.
+def vanished_sections(manifest, sections)
+  return [] if manifest.nil? || manifest[:sections].nil?
+
+  present = sections.map(&:id)
+  manifest[:sections].reject { |id, _| present.include?(id) }.sort.map do |id, (layer, file, order)|
+    "section #{id} (#{file} order #{order}, layer #{layer}) was in the last build but no longer parses: " \
+      "its marker was deleted, damaged or hidden (its body then joins the previous section), or the " \
+      "section was removed. Restore the marker in #{LAYER_DIR}/#{layer}.md, or run bin/build-instructions " \
+      "--force if the removal is intended."
+  end
+end
+
+def agents_md_too_large(outputs)
+  size = outputs.fetch(AGENTS_MD).bytesize
+  return nil if size < CODEX_LIMIT
+
+  "#{AGENTS_MD} is #{size} bytes; Codex reads it as ~/.codex/AGENTS.md and silently truncates instructions " \
+    "above project_doc_max_bytes (#{CODEX_LIMIT})"
+end
+
+def common_prefix_length(left, right)
+  limit = [left.bytesize, right.bytesize].min
+  index = 0
+  index += 1 while index < limit && left.getbyte(index) == right.getbyte(index)
+  index
+end
+
+# The layer of the section that holds the first byte where the file on disk and
+# the new content part.
+def owner_layer(rel, current, content, sources)
+  offset = common_prefix_length(current, content)
+  owner = nil
+  section_end = 0
+  sources.fetch(rel, []).each do |section|
+    owner = section
+    section_end += section.body.bytesize
+    break if offset < section_end
+  end
+  owner ? owner.layer : File.basename(rel).split(".").first
+end
+
+def hand_edit_message(rel, layer)
+  "#{rel} was edited by hand since the last build. Move the change into the layer file that owns it " \
+    "(#{LAYER_DIR}/#{layer}.md), or rerun with --force to discard the hand edit."
+end
+
+def stray_files(outputs)
+  dir = File.join(REPO_ROOT, GENERATED_DIR)
+  return [] unless File.directory?(dir)
+
+  expected = outputs.keys.select { |rel| File.dirname(rel) == GENERATED_DIR }.map { |rel| File.basename(rel) }
+  expected << File.basename(MANIFEST)
+  (Dir.children(dir) - expected).sort.map { |name| "#{GENERATED_DIR}/#{name}" }
+end
+
+def oversized_views(outputs)
+  outputs.select { |rel, content| rel.end_with?(".codex.md") && content.bytesize >= CODEX_LIMIT }
+end
+
+def check(outputs, sections)
+  manifest = read_manifest
+  problems = []
+  vanished = vanished_sections(manifest, sections)
+  vanished.each { |message| problems << "section gone: #{message}" }
+  outputs.each do |rel, content|
+    current = on_disk(rel)
+    if current.nil?
+      problems << "missing: #{rel}"
+    elsif current != content
+      note = edited_by_hand?(rel, current, manifest) ? " (edited by hand since the last build)" : ""
+      problems << "differs: #{rel}#{note}"
+    end
+  end
+  recorded = on_disk(MANIFEST)
+  if recorded.nil?
+    problems << "missing: #{MANIFEST}"
+  elsif recorded != manifest_for(outputs, sections)
+    problems << "differs: #{MANIFEST} (does not match the generated outputs and sections)"
+  end
+  strays = stray_files(outputs)
+  strays.each { |rel| problems << "stray: #{rel} (not produced by bin/build-instructions)" }
+  oversized = oversized_views(outputs)
+  oversized.each do |rel, content|
+    problems << "too large: #{rel} is #{content.bytesize} bytes; Codex silently truncates instructions " \
+                "above project_doc_max_bytes (#{CODEX_LIMIT}), so a .codex.md view must stay under it"
+  end
+  agents_too_large = agents_md_too_large(outputs)
+  problems << "too large: #{agents_too_large}" if agents_too_large
+
+  if problems.empty?
+    puts "build-instructions --check: OK (#{outputs.size} generated files and the manifest up to date)"
+    return 0
+  end
+
+  warn "build-instructions --check: #{problems.size} problem(s):"
+  problems.each { |problem| warn "  #{problem}" }
+  warn "Edit the layer files in #{LAYER_DIR}/, run bin/build-instructions, and commit the result."
+  if problems.any? { |problem| problem.include?("edited by hand") }
+    warn "A file edited by hand: move the change into the layer file that owns it first; " \
+         "bin/build-instructions refuses to overwrite a hand edit unless run with --force."
+  end
+  warn "A stray file: delete it." unless strays.empty?
+  unless oversized.empty?
+    warn "A view that is too large: mark sections of that layer harness=claude or move them to another layer."
+  end
+  if agents_too_large
+    warn "AGENTS.md too large: every file=AGENTS.md section is deployed, whatever its harness; move " \
+         "Claude-only sections to file=CLAUDE.md or a rules/ file, or shorten them."
+  end
+  1
+end
+
+def write(outputs, sources, sections, force)
+  pending = outputs.reject { |rel, content| on_disk(rel) == content }
+  manifest = force ? nil : read_manifest
+  vanished = vanished_sections(manifest, sections)
+  refused = pending.map do |rel, content|
+    current = on_disk(rel)
+    next if current.nil? || !edited_by_hand?(rel, current, manifest)
+
+    hand_edit_message(rel, owner_layer(rel, current, content, sources))
+  end.compact
+  unless vanished.empty? && refused.empty?
+    warn "build-instructions: refusing to build; nothing was written:"
+    vanished.each { |message| warn "  #{message}" }
+    refused.each { |message| warn "  #{message}" }
+    return 1
+  end
+
+  written = []
+  pending.each do |rel, content|
+    path = File.join(REPO_ROOT, rel)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.binwrite(path, content)
+    written << rel
+  end
+  manifest_text = manifest_for(outputs, sections)
+  unless on_disk(MANIFEST) == manifest_text
+    path = File.join(REPO_ROOT, MANIFEST)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.binwrite(path, manifest_text)
+    written << MANIFEST
+  end
+
+  total = outputs.size + 1
+  puts "build-instructions: #{written.size} written, #{total - written.size} unchanged"
+  written.each { |rel| puts "  wrote #{rel}" }
+  stray_files(outputs).each do |rel|
+    warn "WARN: #{rel} is not produced by bin/build-instructions; delete it (--check fails while it exists)"
+  end
+  agents_too_large = agents_md_too_large(outputs)
+  warn "WARN: #{agents_too_large}; --check fails until it shrinks" if agents_too_large
+  puts
+  print_view_table(outputs, sections)
+  0
+end
+
+def print_view_table(outputs, sections)
+  rows = LAYERS.flat_map do |layer|
+    in_layer = sections.select { |section| section.layer == layer }
+    [
+      ["#{layer}.claude.md", outputs["#{GENERATED_DIR}/#{layer}.claude.md"].bytesize, in_layer.size, false],
+      ["#{layer}.codex.md", outputs["#{GENERATED_DIR}/#{layer}.codex.md"].bytesize,
+       in_layer.count { |section| section.harness == "neutral" }, true]
+    ]
+  end
+  puts format("%-20s %8s %9s", "view", "bytes", "sections")
+  over = 0
+  rows.each do |name, bytes, count, codex|
+    flag = codex && bytes >= CODEX_LIMIT ? "  OVER LIMIT (>= #{CODEX_LIMIT} bytes)" : ""
+    over += 1 unless flag.empty?
+    puts format("%-20s %8d %9d%s", name, bytes, count, flag)
+  end
+  puts
+  if over.zero?
+    puts "Every .codex.md view is under #{CODEX_LIMIT} bytes."
+  else
+    puts "WARN: #{over} .codex.md view(s) at or above #{CODEX_LIMIT} bytes; --check fails until they shrink."
+  end
+end
+
+def main(argv)
+  mode = :write
+  force = false
+  argv.each do |arg|
+    case arg
+    when "--check" then mode = :check
+    when "--force" then force = true
+    when "-h", "--help"
+      puts USAGE
+      return 0
+    else
+      warn "#{USAGE} (unknown argument #{arg.inspect})"
+      return 2
+    end
+  end
+  if mode == :check && force
+    warn "#{USAGE} (--check writes nothing, so --force does not apply)"
+    return 2
+  end
+
+  errors = []
+  check_unknown_layer_files(errors)
+  sections = LAYERS.flat_map { |layer| parse_layer(layer, errors) }
+  validate(sections, errors)
+  unless errors.empty?
+    warn "build-instructions: #{errors.size} error(s) in the layer files; nothing was written:"
+    errors.each { |error| warn "  #{error}" }
+    return 1
+  end
+  warn_noncanonical_order(sections)
+
+  outputs, sources = render(sections)
+  mode == :check ? check(outputs, sections) : write(outputs, sources, sections, force)
+end
+
+exit main(ARGV)
