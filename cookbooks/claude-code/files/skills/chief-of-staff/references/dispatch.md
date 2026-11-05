@@ -43,12 +43,12 @@ python3 <skill-dir>/scripts/tasks.py new --owner <socket#controller-pane> \
   --acceptance <criterion> [--acceptance <criterion> ...]
 python3 <skill-dir>/scripts/tasks.py attempt <task-id> --owner <verified-owner> \
   --kind codex --model <verified-model> --effort <verified-effort> --reason <routing-or-repair-reason>
-python3 <skill-dir>/scripts/tasks.py bind <task-id> --pane <returned-pane-id>
-python3 <skill-dir>/scripts/tasks.py update <task-id> --state running \
+python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id>
+python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state running \
   --note <observed-start> --evidence <observed-working-transition>
-python3 <skill-dir>/scripts/tasks.py update <task-id> --state reviewing \
+python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state reviewing \
   --note <result-received> --evidence <result-location>
-python3 <skill-dir>/scripts/tasks.py update <task-id> --state accepted \
+python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state accepted \
   --note <criterion-by-criterion-verdict> --evidence <independent-check>
 python3 <skill-dir>/scripts/tasks.py reported <task-id> --owner <verified-owner> --note <message-sent>
 python3 <skill-dir>/scripts/tasks.py list --owner <socket#controller-pane>
@@ -103,7 +103,9 @@ herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 30
 
 For explicit model selection, append native options **after** `--`, e.g.
 `-- --model <verified-model>`, and record the resulting effective model/effort.
-Update the attempt's observed model with `bind --pane <id> --model <actual-model>`.
+After startup evidence, record both observed selections with
+`bind <task-id> --owner <verified-owner> --pane <id> --model <actual-model> --effort <actual-effort>`.
+A pre-start bind records only identity; repeat it after observing the selections.
 Wait for an actual shell/agent prompt rather than a fixed startup sleep. Do not
 prompt a working agent or send slash commands as if they were normal task text.
 For envelope-v1 tasks do not escalate to full pane history. Request the missing
