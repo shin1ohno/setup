@@ -80,11 +80,12 @@ Fresh-session `/context` and required-tool spot checks must decide whether each
 lever removes definitions or only disables use. Claude quota/access has not been
 retested here; no model session was launched.
 
-`bin/instruction-usage` consumes supplied JSONL. For Claude it adds first-call
+`bin/instruction-usage` consumes supplied JSONL. For Claude it adds first reported API
 input, cache creation and cache read once; for Codex it does not double-count
-cached input already included in input_tokens. It stops at the first reported
-model call, so duplicate blocks and later `/context` output cannot inflate that
-reading. Byte lengths and prompt JSON lengths are not token measurements.
+cached input already included in input_tokens. Codex `turn.completed` reports a turn aggregate, which may include several model
+calls; it is not proof of first-API-call input. The helper stops at the first
+reported usage event, so duplicate blocks and later output do not inflate it.
+Retain a separate first-call runtime trace before comparing initial API costs. Byte lengths and prompt JSON lengths are not token measurements.
 
 Record one fresh reading per profile, host, CLI version, applied commit and
 connector state. Preserve source transcript references outside the repository.

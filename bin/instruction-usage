@@ -26,7 +26,8 @@ def first_usage(lines, harness):
         if any(type(n) is not int or n < 0 for n in [total, cached, output]) or cached > total:
             raise ValueError("invalid token counts")
         return dict(context_input_tokens=total, cached_input_tokens=cached,
-                    output_tokens=output, scope="first reported model call only")
+                    output_tokens=output, scope=("first reported turn; may contain multiple model calls" if harness == "codex"
+                           else "first reported assistant API usage"))
     raise ValueError("no first-call usage found; byte counts are not token measurements")
 
 

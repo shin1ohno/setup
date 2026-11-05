@@ -152,13 +152,13 @@ def read_envelope(path, task, root):
     expected = {"task_id", "attempt", "status", "summary", "artifacts", "criteria", "open_questions"}
     if not isinstance(envelope, dict) or set(envelope) != expected:
         raise ValueError("invalid envelope fields")
-    if envelope["task_id"] != task["id"] or envelope["attempt"] != len(task["attempts"]):
+    if (envelope["task_id"] != task["id"] or type(envelope["attempt"]) is not int
+            or envelope["attempt"] != len(task["attempts"])):
         raise ValueError("stale or foreign envelope")
     if envelope["status"] not in {"done", "blocked", "failed"}:
         raise ValueError("invalid envelope status")
     if not isinstance(envelope["summary"], str) or len(envelope["summary"].encode("utf-8")) > 1200:
         raise ValueError("summary exceeds 1200 bytes")
-    roots = [Path(task["cwd"]).resolve(), task_path(root, task["id"]).parent.resolve()]
     def artifact(value):
         if not isinstance(value, str) or len(value) > 4096:
             raise ValueError("invalid evidence path")

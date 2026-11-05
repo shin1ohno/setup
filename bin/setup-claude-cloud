@@ -28,6 +28,6 @@ fi
 git -C "$destination" fetch --depth=1 origin "$revision"
 git -C "$destination" checkout --detach FETCH_HEAD
 test -f "$destination/claude-cloud.rb"
-bash "$destination/bin/setup"
+(cd "$destination" && bash bin/setup)
 "$destination/bin/mitamae" local "$destination/claude-cloud.rb"
 printf 'Cloud instruction setup complete at %s\n' "$(git -C "$destination" rev-parse HEAD)"

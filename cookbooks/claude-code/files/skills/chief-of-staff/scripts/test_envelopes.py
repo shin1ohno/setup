@@ -84,7 +84,7 @@ class EnvelopeTest(unittest.TestCase):
 
     def test_unverified_stale_oversized_and_escaped_artifacts(self):
         self.start()
-        for updates in [dict(attempt=0), dict(summary="x" * 17000),
+        for updates in [dict(attempt=0), dict(attempt=True), dict(summary="x" * 17000),
                         dict(criteria=[dict(criterion="fixture check", status="unverified",
                                             evidence=str(self.evidence))]),
                         dict(artifacts=["/etc/passwd"])]:

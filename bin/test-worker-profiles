@@ -80,6 +80,7 @@ class ProfileTest(unittest.TestCase):
         event = dict(type="turn.completed", usage=dict(input_tokens=100, cached_input_tokens=80, output_tokens=5))
         usage = USAGE["first_usage"]([json.dumps(event)], "codex")
         self.assertEqual(usage["context_input_tokens"], 100)
+        self.assertIn("may contain multiple model calls", usage["scope"])
 
     def test_claude_cache_categories_are_added_once_for_the_first_api_call(self):
         event = dict(type="assistant", message=dict(id="same-call", usage=dict(
