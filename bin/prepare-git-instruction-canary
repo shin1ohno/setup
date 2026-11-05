@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Prepare an unapplied procedural Git split; preserve original section bodies."""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+import shlex
+import os
+
+ROOT = Path(__file__).resolve().parent.parent
+# Keep branch, merge, verification, signing and attribution policy always loaded.
+PROCEDURES = frozenset("message-file sibling-worktree cherry-pick index-lock branch-cleanup pr-review-comments stacked-pr-guard tag-release pr-body-file body-file-stdin tmpdir-isolation gh-sandbox".split())
+MARKER = re.compile(r"^<!-- section id=(\S+) file=(\S+) order=\S+ harness=(\S+) lazy=\S+ -->\n", re.M)
+
+
+def split(source):
+    matches = list(MARKER.finditer(source))
+    selected = []
+    for index, marker in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
+        selected.append((marker.group(1), marker.group(2), marker.group(3), source[marker.end():end]))
+    removed = [row for row in selected if row[0].removeprefix("git-commit-") in PROCEDURES and row[1] == "rules/git-commit.md"]
+    if {row[0].removeprefix("git-commit-") for row in removed} != PROCEDURES:
+        raise ValueError("source procedure inventory changed; review the split")
+    return selected, removed
+
+
+def prepare(destination):
+    if not destination.is_absolute() or destination.exists() or destination.is_symlink():
+        raise ValueError("destination must be a new absolute private directory")
+    source = (ROOT / "cookbooks/claude-code/files/instructions/dev.md").read_text()
+    sections, removed = split(source)
+    omit = {row[0] for row in removed}
+    documents = "".join(row[3] for row in removed)
+    common = (ROOT / "cookbooks/claude-code/files/instructions/generated/common.claude.md").read_text()
+    safety = "".join(row[3] for row in sections if row[0] not in omit)
+    pointer = "\nBefore a mutating Git or GitHub command, read the full Git procedures in " + str(destination / "git-operations.md") + ". The GIT_PROCEDURE_PREFLIGHT hook response supplies that document before the first operation; it is an instruction preflight, not permission approval. All permission and safety checks still apply.\n"
+    destination.mkdir(mode=0o700)
+    hook = ROOT / "cookbooks/claude-code/files/hooks/git-procedure-preflight.rb"
+    command = shlex.join(["ruby", str(hook), "--document", str(destination / "git-operations.md"), "--state-directory", str(destination / "state")])
+    outputs = {
+        "git-operations.md": documents,
+        "profile.md": common + "\n" + safety + pointer,
+        "hook-candidate.json": json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": command}]}]}}, indent=2) + "\n",
+        "review.json": json.dumps(dict(applied=False, runtime_verified=False,
+            removed_ids=sorted(omit), removed_bytes=len(documents.encode()),
+            source_sha256=hashlib.sha256(source.encode()).hexdigest(),
+            note="Merge candidate hooks with existing safety hooks; never replace live settings. Native consumption and first-call usage remain unmeasured."), indent=2) + "\n",
+    }
+    for name, text in outputs.items():
+        path = destination / name
+        path.write_text(text)
+        os.chmod(path, 0o600)
+    return dict(directory=str(destination), removed_bytes=len(documents.encode()), runtime_verified=False)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--directory", required=True, type=Path)
+    args = parser.parse_args()
+    try:
+        print(json.dumps(prepare(args.directory)))
+    except (OSError, ValueError) as error:
+        parser.exit(1, str(error) + "\n")
