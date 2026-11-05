@@ -114,3 +114,6 @@ class GitCommandFlowTest < Minitest::Test
     assert_equal ["/explicit"], result.commits.map(&:dir).uniq
   end
 end
+
+# Keep the AND continuation regressions in their own topic file.
+require_relative "test-git-command-and"

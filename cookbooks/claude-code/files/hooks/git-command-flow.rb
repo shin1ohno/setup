@@ -86,12 +86,12 @@ module GitCommand
         take
         node = sequence(["}"])
         expect("}")
-        [:brace, node]
+        redirected([:brace, node])
       elsif peek == "("
         take
         node = sequence([")"])
         expect(")")
-        [:group, node]
+        redirected([:group, node])
       else
         tokens = []
         until peek.nil? || (["&&", "||", ")"] + SEPARATORS).include?(peek) ||
@@ -102,6 +102,12 @@ module GitCommand
 
         [:command, tokens]
       end
+    end
+
+    def redirected(node)
+      redirections = []
+      redirections << take while @tokens[@index] && @tokens[@index][0] == :redir
+      redirections.empty? ? node : [:redirected, node, redirections]
     end
 
     def expect(value)
@@ -138,6 +144,8 @@ module GitCommand
 
         prefix = a[0...-1].inject([[]]) { |paths, child| join(paths, project(child, nil)) }
         join(prefix, project(a.last, status))
+      when :redirected
+        project(a, status).map { |path| path + b }
       when :brace
         project(a, status).map do |path|
           [[:word, Word.new("{", "{", [], [], [])]] + path +
@@ -150,9 +158,6 @@ module GitCommand
                 join(project(a, false), project(c, status))
         bounded(paths)
       when "&&", "||"
-        # Ordinary success chains retain the established evaluator's policy.
-        return join(project(a, nil), project(b, nil)) if status.nil? && kind == "&&" && !alternative?(node)
-
         if status.nil?
           bounded(project(node, true) + project(node, false))
         elsif kind == "&&"
@@ -163,10 +168,6 @@ module GitCommand
             join(project(a, false), project(b, false))
         end
       end
-    end
-
-    def alternative?(node)
-      node[0] == "||" || node.drop(1).any? { |child| child.is_a?(Array) && alternative?(child) }
     end
   end
 end

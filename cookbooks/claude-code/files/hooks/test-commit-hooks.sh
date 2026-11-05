@@ -50,7 +50,7 @@ trap 'rm -rf "$D"' EXIT
 pass=0; fail=0
 
 mkdir -p "$D/home" "$D/work" "$D/repo" "$D/bin" "$D/failrepo" "$D/passrepo" "$D/tmp" \
-  "$D/gitrepo/sub" "$D/gitfail/sub"
+  "$D/gitrepo/sub" "$D/gitfail/sub" "$D/passrepo/sub"
 
 BAD_T='Co-Authored-By: Claude <noreply@anthropic.com>'
 OK_T='Reviewed-by: Alice <alice@example.com>'
@@ -472,7 +472,7 @@ dirs "tilde in cd" 'cd ~/r && git commit' "/h/r"
 dirs "unknown \$VAR dir" 'cd "$X" && git commit' "?"
 dirs "commit-tree is not commit" 'git commit-tree HEAD^{tree} -m x' ""
 dirs "git commit in \$(...)" 'echo "$(git -C /s commit -m x)"' "/s"
-dirs "variable in cd and -C" 'R=/r; cd "$R" && S=sub; git -C "${S}" commit' "/r/sub"
+dirs "variable in cd and -C" "R=\"$D/passrepo\"; cd \"\$R\" && S=sub; git -C \"\${S}\" commit" "$D/passrepo/sub"
 dirs "assignment in a subshell does not leak" '(R=/r); git -C "$R" commit' "?"
 dirs "assignment in a pipeline does not persist" 'R=/r | true; git -C "$R" commit' "?"
 dirs "prefix assignment applies to that command only" 'R=/r true; git -C "$R" commit' "?"

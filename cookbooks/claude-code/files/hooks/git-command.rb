@@ -890,7 +890,9 @@ module GitCommand
     def initialize(home)
       @home = home
       @runs = 0
+      @directory_state_known = true
       @invocations = []
+      @seen_invocations = {}
       @writes = {}
       @vars = {}
       @assigned = {} # every name any modeled form set, in any scope
@@ -922,7 +924,7 @@ module GitCommand
           @invocations.concat(GitCommand.fallback_scan(src, cwd).invocations)
           return cwd
         end
-      if tokens.any? { |type, value| type == :op && value == "||" } ||
+      if tokens.any? { |type, value| type == :op && ["&&", "||"].include?(value) } ||
          tokens.any? { |type, word| type == :word && word.raw == "if" }
         begin
           paths = FlowPaths.new(tokens.dup).paths
@@ -931,13 +933,22 @@ module GitCommand
           return nil
         end
         saved_vars = @vars.dup
+        known_directories = @directory_state_known
         variable_states = []
+        directory_states = []
         directories = paths.flat_map do |path|
           @vars = saved_vars.dup
+          @directory_state_known = known_directories
+          @unreachable_path = false
           after = run_tokens(path, cwd, depth)
+          next [] if @unreachable_path
+
           variable_states << @vars.dup
+          directory_states << @directory_state_known
           after.is_a?(Array) ? after : [after]
         end.uniq
+        @unreachable_path = false
+        @directory_state_known = directory_states.all?
         @vars = common_variables(variable_states)
         return bounded_directories(directories)
       end
@@ -962,6 +973,8 @@ module GitCommand
           cur.async = true if val == "&"
           before = cwd
           cwd = finish(cur, cwd, dirstack, depth) unless blank?(cur)
+          return nil if @unreachable_path
+
           collect_output(groups.last, cur, before)
           @flow_failed = false
           closed = nil
@@ -1040,6 +1053,8 @@ module GitCommand
     def nested_run(src, cwd, depth, env = {})
       saved = @vars
       saved_failure = @flow_failed
+      saved_unreachable = @unreachable_path
+      @unreachable_path = false
       @flow_failed = false
       @vars = @vars.dup
       env.each { |name, text| set_var(name, text, [], exported: true) }
@@ -1047,6 +1062,7 @@ module GitCommand
     ensure
       @vars = saved
       @flow_failed = saved_failure
+      @unreachable_path = saved_unreachable
     end
 
     def new_command(pipe_prev)
@@ -1080,13 +1096,22 @@ module GitCommand
     def finish(cmd, cwd, dirstack, depth)
       if cwd.is_a?(Array)
         saved_vars = @vars.dup
+        known_directories = @directory_state_known
         variable_states = []
+        directory_states = []
         directories = cwd.flat_map do |directory|
           @vars = saved_vars.dup
+          @directory_state_known = known_directories
+          @unreachable_path = false
           after = finish(cmd, directory, dirstack.dup, depth)
+          next [] if @unreachable_path
+
           variable_states << @vars.dup
+          directory_states << @directory_state_known
           after.is_a?(Array) ? after : [after]
         end.uniq
+        @unreachable_path = directories.empty?
+        @directory_state_known = directory_states.all?
         @vars = common_variables(variable_states)
         return bounded_directories(directories)
       end
@@ -1103,8 +1128,21 @@ module GitCommand
       return cwd if words.empty?
 
       name = command_name(words[0])
+      # Unknown programs can create/remove a later cd target. Only prune an
+      # impossible failure while the directory snapshot is still usable.
+      stable = %w(cd pushd popd true false : echo printf pwd test [ [[ eval) + SHELLS
+      @directory_state_known = false unless stable.include?(name)
+      @directory_state_known = false if cmd.words.any? { |word| %w[su sudo runuser].include?(command_name(word)) }
       case name
-      when "cd" then isolated?(cmd) || @flow_failed ? cwd : cd_target(words, dir)
+      when "cd"
+        target = cd_target(words, dir)
+        if @flow_failed && @directory_state_known && target &&
+           words.none? { |word| word.value.split("/").include?("..") } &&
+           File.directory?(target) && File.executable?(target)
+          @unreachable_path = true
+          return cwd
+        end
+        isolated?(cmd) || @flow_failed ? cwd : target
       when "pushd"
         return cwd if isolated?(cmd) || @flow_failed
 
@@ -1122,7 +1160,7 @@ module GitCommand
         find_commands(cmd, words, dir, depth)
         cwd
       when "git"
-        @invocations << git_invocation(cmd, words, dir, cwd, exported_env.merge(env))
+        record_invocation(cmd, git_invocation(cmd, words, dir, cwd, exported_env.merge(env)))
         cwd
       else
         unless isolated?(cmd)
@@ -1149,6 +1187,16 @@ module GitCommand
       word.value.sub(%r{\A.*/}m, "")
     end
 
+    def record_invocation(cmd, invocation)
+      # A call site can occur on several projected paths. Keep distinct cwd
+      # and argument states, but do not report the same call/state twice.
+      key = [cmd.words.map(&:object_id), Marshal.dump(invocation)]
+      return if @seen_invocations[key]
+
+      @seen_invocations[key] = true
+      @invocations << invocation
+    end
+
     # An unlisted wrapper can carry an explicit shell entry point or a git
     # commit. Do not interpret a whole quoted argument as arbitrary shell code.
     def wrapped_git(cmd, words, dir, cwd, env, name, depth)
@@ -1169,7 +1217,7 @@ module GitCommand
         inv = git_invocation(cmd, words[idx..], remote ? nil : dir, cwd, env, remote: remote)
         next unless inv.commit?
 
-        @invocations << inv
+        record_invocation(cmd, inv)
         return
       end
     end

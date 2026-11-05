@@ -48,9 +48,9 @@ done
 precommit "find shell failing target" 2 "find . -exec sh -c 'git -C @D@/failrepo commit -m x' sh {} \;" "$D/work" "FAILING-SUITE-MARKER"
 precommit "find shell passing target" 0 "find . -exec sh -c 'git -C @D@/passrepo commit -m x' sh {} \;" "$D/work"
 
-# Both possible successful directories must be guarded, independent of order.
+# Guard reachable alternatives; the fallback follows a cd that can fail.
 precommit "cd OR first target fails" 2 'cd @D@/failrepo 2>/dev/null || cd @D@/passrepo; git commit -m x' "$D/work" "FAILING-SUITE-MARKER"
-precommit "cd OR second target fails" 2 'cd @D@/passrepo || cd @D@/failrepo; git commit -m x' "$D/work" "FAILING-SUITE-MARKER"
+precommit "cd OR second target fails" 2 'cd @D@/missing || cd @D@/failrepo; git commit -m x' "$D/work" "FAILING-SUITE-MARKER"
 precommit "cd OR both clean" 0 'cd @D@/passrepo || cd @D@/repo; git commit -m x' "$D/work"
 precommit "if then target fails" 2 'if test -d @D@/failrepo; then cd @D@/failrepo; else cd @D@/passrepo; fi; git commit -m x' "$D/work" "FAILING-SUITE-MARKER"
 precommit "if else target fails" 2 'if test -d @D@/passrepo; then cd @D@/passrepo; else cd @D@/failrepo; fi; git commit -m x' "$D/work" "FAILING-SUITE-MARKER"
