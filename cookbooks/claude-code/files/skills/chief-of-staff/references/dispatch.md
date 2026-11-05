@@ -168,7 +168,11 @@ original criterion exactly once. Artifacts and evidence must be existing files
 inside the task directory or checkout (including symlink resolution). A summary
 is at most 1200 UTF-8 bytes; at most 12 artifacts and 8 open questions.
 `receive <id> --owner <owner> --file <absolute-envelope>` rejects stale attempts,
-foreign tasks, path escapes and `done` with unverified criteria. It records
+foreign tasks, path escapes and `done` with unverified criteria. Envelope input
+must be a regular file: FIFOs, sockets, directories and devices are rejected.
+Contained symlinks resolve once; descriptor traversal then refuses symlink
+replacements, and a pinned descriptor bounds the read to 16 KiB plus one byte.
+Every descriptor closes on rejection, releasing the ledger lock. It records
 reviewing, not accepted. Acceptance also needs independent review evidence and
 observed model/effort matching the request; file existence proves no quality.
 

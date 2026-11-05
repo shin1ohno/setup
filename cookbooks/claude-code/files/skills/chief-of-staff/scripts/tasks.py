@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 import uuid
@@ -139,15 +140,50 @@ def parser():
     return cli
 
 
+def envelope_bytes(path, roots):
+    """Pin a contained regular file without blocking on FIFOs or following swaps."""
+    if not path.is_absolute():
+        raise ValueError("envelope must be inside the task or checkout")
+    # Resolve legitimate contained symlinks once, then refuse symlinks during
+    # descriptor traversal. A later replacement cannot redirect this read.
+    resolved = path.resolve(strict=True)
+    allowed = next((root for root in roots if resolved.is_relative_to(root)), None)
+    if allowed is None:
+        raise ValueError("envelope must be inside the task or checkout")
+    descriptors = []
+    try:
+        directory = os.open(resolved.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        descriptors.append(directory)
+        parts = resolved.parts[1:]
+        if not parts:
+            raise ValueError("envelope must be a regular file")
+        for part in parts[:-1]:
+            directory = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
+                                os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory)
+            descriptors.append(directory)
+        if not stat.S_ISREG(os.stat(parts[-1], dir_fd=directory, follow_symlinks=False).st_mode):
+            raise ValueError("envelope must be a regular file")
+        descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK |
+                             os.O_CLOEXEC | os.O_NOCTTY, dir_fd=directory)
+        descriptors.append(descriptor)
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("envelope must be a regular file")
+        if info.st_size > 16384:
+            raise ValueError("envelope exceeds 16 KiB")
+        data = os.read(descriptor, 16385)
+        if len(data) > 16384:
+            raise ValueError("envelope exceeds 16 KiB")
+        return data
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
 def read_envelope(path, task, root):
     """Validate structure and evidence locations; never claim artifact quality."""
     roots = [Path(task["cwd"]).resolve(), task_path(root, task["id"]).parent.resolve()]
-    if not path.is_absolute() or not any(path.resolve().is_relative_to(r) for r in roots):
-        raise ValueError("envelope must be inside the task or checkout")
-    with path.open("rb") as stream:
-        data = stream.read(16385)
-    if len(data) > 16384:
-        raise ValueError("envelope exceeds 16 KiB")
+    data = envelope_bytes(path, roots)
     envelope = json.loads(data.decode("utf-8"))
     expected = {"task_id", "attempt", "status", "summary", "artifacts", "criteria", "open_questions"}
     if not isinstance(envelope, dict) or set(envelope) != expected:
