@@ -11,6 +11,13 @@ execute "update fzf-tab" do
   only_if "test -d #{node[:setup][:root]}/fzf-tab"
 end
 
+# The priority migration must remove its old output too. Otherwise zsh-defer
+# reloads fzf-tab after autosuggestions has wrapped its widgets, replacing the
+# wrapper and leaving POSTDISPLAY unchanged on completion (SH1-96).
+file "#{node[:setup][:root]}/profile.d/50-fzf-tab.sh" do
+  action :delete
+end
+
 add_profile "fzf-tab" do
   # priority 15: load AFTER compinit (10-dot-zsh.sh) but BEFORE sheldon
   # (20-sheldon.sh), which sources zsh-autosuggestions + fast-syntax-highlighting.
