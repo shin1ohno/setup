@@ -25,6 +25,8 @@ herdr pane split --current
 '''
         rendered = compose.compose(upstream, '')
         self.assertIn('caller-context.py resolve', rendered)
+        self.assertIn('print that exact marker in an assistant commentary message', rendered)
+        self.assertIn('Tool output alone is insufficient', rendered)
         self.assertNotIn('test "${HERDR_ENV:-}" = 1', rendered)
         self.assertNotIn('herdr pane split --current', rendered)
         self.assertIn('never infer caller identity from focus', rendered)
