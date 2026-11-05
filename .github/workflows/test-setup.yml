@@ -617,7 +617,7 @@ jobs:
         bash cookbooks/herdr/files/test-hr.sh cookbooks/herdr/files/hr.sh
 
     - name: Chief of Staff task ledger regression suite
-      run: python3 cookbooks/claude-code/files/skills/chief-of-staff/scripts/test_tasks.py
+      run: python3 -m unittest discover -s cookbooks/claude-code/files/skills/chief-of-staff/scripts -p "test_*.py"
 
     - name: Herdr caller identity and delegation policy regressions
       run: |
