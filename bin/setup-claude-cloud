@@ -1,0 +1,33 @@
+#!/bin/bash
+# Provision only a dedicated cloud environment, before its first agent session.
+set -euo pipefail
+
+destination="${SETUP_CLOUD_CHECKOUT:-${HOME}/ManagedProjects/setup}"
+revision="${1:-main}"
+remote="https://github.com/shin1ohno/setup"
+
+for tool in git bash curl tar openssl; do
+  command -v "$tool" >/dev/null || { echo "Missing required tool: $tool" >&2; exit 1; }
+done
+case "$destination" in /*) ;; *) echo "Checkout must be an absolute path" >&2; exit 1 ;; esac
+case "$revision" in -*) echo "Revision must not be an option" >&2; exit 1 ;; esac
+
+if [ ! -e "$destination" ]; then
+  mkdir -p "$(dirname "$destination")"
+  git clone --filter=blob:none "$remote" "$destination"
+fi
+actual_remote="$(git -C "$destination" remote get-url origin)"
+if [ "$actual_remote" != "$remote" ] && [ "$actual_remote" != "${remote}.git" ]; then
+  echo "Refusing to update an unrelated checkout: $destination" >&2
+  exit 1
+fi
+if [ -n "$(git -C "$destination" status --porcelain)" ]; then
+  echo "Refusing to overwrite local cloud checkout changes" >&2
+  exit 1
+fi
+git -C "$destination" fetch --depth=1 origin "$revision"
+git -C "$destination" checkout --detach FETCH_HEAD
+test -f "$destination/claude-cloud.rb"
+bash "$destination/bin/setup"
+"$destination/bin/mitamae" local "$destination/claude-cloud.rb"
+printf 'Cloud instruction setup complete at %s\n' "$(git -C "$destination" rev-parse HEAD)"

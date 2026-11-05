@@ -1,0 +1,102 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Evaluate resource declarations, never resource bodies or shell commands.
+require "digest"
+require "json"
+require "tmpdir"
+
+ROOT = File.expand_path("..", __dir__)
+COOKBOOK = File.join(ROOT, "cookbooks/claude-code")
+
+class Resource
+  attr_reader :attributes
+  def initialize(context)
+    @context = context
+    @attributes = {}
+  end
+
+  def node
+    @context.node
+  end
+
+  def method_missing(name, *args, &block)
+    @attributes[name.to_s] = block ? "guard-block" : args
+  end
+
+  def respond_to_missing?(*_args)
+    true
+  end
+end
+
+class Graph
+  attr_reader :rows
+  def initialize(home)
+    @home = home
+    @rows = []
+    @node = {setup: {home: home, root: "#{home}/.setup_shin1ohno",
+                     user: "fixture-user", group: "fixture-group"}}
+  end
+
+  def node
+    @node
+  end
+
+  def evaluate(text, path)
+    previous = @path
+    @path = path
+    instance_eval(text, path, 1)
+  ensure
+    @path = previous
+  end
+
+  def include_recipe(path)
+    path = File.expand_path(path, File.dirname(@path))
+    evaluate(File.read(path), path)
+  end
+
+  def include_platform_cookbook(name)
+    @rows << ["platform-cookbook", name, {}]
+  end
+
+  def agents_skill_link(name)
+    @rows << ["agents-skill-link", name, {}]
+  end
+
+  %i[directory file remote_file execute].each do |kind|
+    define_method(kind) do |name, &block|
+      resource = Resource.new(self)
+      resource.instance_eval(&block)
+      @rows << [kind.to_s, name, resource.attributes]
+    end
+  end
+
+  def normalized
+    @rows.map { |row| JSON.generate(row).gsub(@home, "[HOME]") }.sort
+  end
+end
+
+Dir.mktmpdir("distribution-graph-") do |home|
+  old = Graph.new(home)
+  old.evaluate(File.read(File.join(COOKBOOK, "testdata/default-before-distribution-split.rb")),
+               File.join(COOKBOOK, "default.rb"))
+  current = Graph.new(home)
+  current.evaluate(File.read(File.join(COOKBOOK, "default.rb")), File.join(COOKBOOK, "default.rb"))
+  raise "local resource graph changed" unless old.normalized == current.normalized
+
+  cloud = Graph.new(home)
+  %w[instructions skills agents].each do |name|
+    path = File.join(COOKBOOK, "#{name}.rb")
+    cloud.evaluate(File.read(path), path)
+  end
+  cloud.rows.each do |kind, name, _attributes|
+    raise "non-distribution resource: #{kind} #{name}" unless
+      kind == "agents-skill-link" ||
+      (%w[directory remote_file file].include?(kind) && name.start_with?("#{home}/.claude", "#{home}/.agents"))
+    raise "hooks/settings leaked into cloud" if name.include?("/hooks") || name.end_with?("settings.json", "sources.yaml")
+  end
+  raise "cloud missed agent definitions" unless cloud.rows.any? { |_, name, _| name.include?("/.claude/agents/") }
+  raise "cloud missed shared skill" unless cloud.rows.any? { |_, name, _| name.include?("chief-of-staff/SKILL.md") }
+  puts "Local resource declarations match the pre-split fixture (including every hook)."
+  puts "Cloud declares only instruction, skill and agent distribution."
+end

@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Run the real setup entry with fake git and distribution executables only."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+SCRIPT = Path(__file__).with_name("setup-claude-cloud")
+
+
+class CloudSetupTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.fakebin = self.root / "tools"
+        self.fakebin.mkdir()
+        self.checkout = self.root / "checkout with spaces"
+        (self.checkout / "bin").mkdir(parents=True)
+        (self.checkout / "claude-cloud.rb").write_text("# fixture")
+        self.log = self.root / "calls.jsonl"
+        git = self.fakebin / "git"
+        git.write_text("""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+args=sys.argv[1:]
+with open(os.environ['FIXTURE_LOG'],'a') as f: f.write(json.dumps(args)+'\\n')
+if 'get-url' in args: print(os.environ.get('FIXTURE_REMOTE','https://github.com/shin1ohno/setup'))
+elif 'status' in args and os.environ.get('FIXTURE_DIRTY'): print(' M preserve-me')
+elif 'rev-parse' in args: print('fixture-commit')
+""")
+        git.chmod(0o755)
+        for name in ["setup", "mitamae"]:
+            f = self.checkout / "bin" / name
+            f.write_text('#!/bin/bash\nprintf "fixture %s\\n" "$*" >> "$FIXTURE_ACTIONS"\n')
+            f.chmod(0o755)
+        self.env = dict(os.environ, SETUP_CLOUD_CHECKOUT=str(self.checkout),
+                        FIXTURE_LOG=str(self.log), FIXTURE_ACTIONS=str(self.root / "actions"),
+                        PATH=str(self.fakebin) + os.pathsep + os.environ["PATH"])
+
+    def run_entry(self, ref="main", ok=True):
+        result = subprocess.run(["bash", str(SCRIPT), ref], env=self.env,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0 if ok else 1, result.stderr)
+        return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def test_revision_is_one_argv_value_and_only_distribution_runs(self):
+        marker = self.root / "must-not-exist"
+        ref = "main; touch " + str(marker)
+        calls = self.run_entry(ref)
+        self.assertIn(["-C", str(self.checkout), "fetch", "--depth=1", "origin", ref], calls)
+        self.assertFalse(marker.exists())
+        actions = (self.root / "actions").read_text()
+        self.assertIn("claude-cloud.rb", actions)
+        self.assertNotIn("darwin.rb", actions)
+
+    def test_dirty_and_unrelated_checkouts_are_preserved(self):
+        self.env["FIXTURE_DIRTY"] = "1"
+        self.run_entry(ok=False)
+        self.assertFalse((self.root / "actions").exists())
+        self.env.pop("FIXTURE_DIRTY")
+        self.env["FIXTURE_REMOTE"] = "https://example.invalid/other"
+        self.run_entry(ok=False)
+        self.assertFalse((self.root / "actions").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
