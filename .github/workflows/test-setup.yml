@@ -792,6 +792,20 @@ jobs:
         bash cookbooks/claude-code/files/hooks/test-mcp-health-check.sh \
           cookbooks/claude-code/files/hooks/mcp-health-check.rb
 
+    - name: Commit guard hooks regression suite
+      run: |
+        # hooks/block-co-authored-by.rb and hooks/pre-commit-test.rb find every
+        # git commit in a Bash command through hooks/git-command.rb (git -C /
+        # -c, add/commit chains, env / command wrappers, bash -c, heredoc
+        # stdin, $HOME / $TMPDIR / $(mktemp) message paths, -F <(...), group
+        # output, $(git rev-parse --show-toplevel)) — SH1-79. Each
+        # Co-Authored-By message source runs as a pair
+        # (trailer blocks, clean line allows) plus the trailer outside any
+        # commit; pre-commit-test must run a failing repo's tests from another
+        # cwd and call no make when the command has no commit.
+        bash cookbooks/claude-code/files/hooks/test-commit-hooks.sh \
+          cookbooks/claude-code/files/hooks
+
     - name: Validate JSON files
       run: |
         # Check if any JSON files exist and validate them
