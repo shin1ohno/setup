@@ -49,6 +49,9 @@ jobs:
       with:
         ruby-version: '4.0'
 
+    - name: Test shell completion profile migration
+      run: python3 bin/test-shell-completion
+
     - name: Check bin scripts are executable
       run: |
         test -x bin/setup
