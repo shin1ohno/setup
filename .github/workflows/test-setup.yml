@@ -620,6 +620,7 @@ jobs:
       run: |
         ruby bin/test-claude-distribution
         python3 bin/test-cloud-setup
+        python3 bin/test-worker-profiles
 
     - name: Chief of Staff task ledger regression suite
       run: python3 -m unittest discover -s cookbooks/claude-code/files/skills/chief-of-staff/scripts -p "test_*.py"
