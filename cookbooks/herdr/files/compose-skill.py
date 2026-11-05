@@ -14,10 +14,16 @@ def compose(upstream, local):
 python3 ~/.agents/skills/herdr/caller-context.py resolve
 ```
 
-If inherited foreground ancestry cannot be verified (including shared Codex
-app-server tools without HERDR_*), run `prepare`, then `verify` in **two separate
-tool calls**. The first call displays a one-use session challenge; the second
-matches it against live Codex pane output and unchanged foreground processes.
+The helper first checks inherited foreground ancestry, then a unique live
+`codex resume <CODEX_SESSION_ID>` foreground process for app-server requests.
+It rechecks the process and topology before returning; duplicate sessions fail
+closed. This route does not depend on commentary being rendered in the TUI.
+If neither route can verify the caller, run `prepare`, then `verify` in **two separate
+tool calls**. `prepare` returns a one-use session challenge. **Before calling
+`verify`, print that exact marker in an assistant commentary message**, on its
+own line. Tool output alone is insufficient: the Codex TUI may collapse or omit
+it, especially with the shared app server. The second call matches the visible
+assistant message against live Codex pane output and unchanged foreground processes.
 Do not copy the challenge to any other pane. Verification expires after 120
 seconds; absent, duplicate, stale or replaced callers fail closed. It sends no
 terminal input. A failed check means **caller unverified**, not “outside Herdr”.
