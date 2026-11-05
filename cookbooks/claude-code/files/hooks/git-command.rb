@@ -54,11 +54,14 @@
 # target (`done < <(ls)`), scanned so their quotes and heredocs do not break
 # the outer split and searched for git calls themselves; leading VAR=value
 # assignments; the wrappers env, command, nohup, time, timeout, nice, exec,
-# sudo, noglob, nocorrect; bash / sh / zsh / dash / ksh -c strings, `bash -s`
-# / `bash` reading a heredoc, and eval. Any other command (xargs, mise exec
-# --, flock, find -exec, stdbuf, ...) is searched for a later `git` word that
+# sudo, su, runuser, flock, xargs, script, find -exec, noglob, nocorrect; bash / sh / zsh / dash / ksh -c strings, `bash -s`
+# / `bash` reading a heredoc, and eval. Other commands (mise exec --,
+# stdbuf, ...) are searched for a later shell entry point or `git` word that
 # starts a commit, unless it is a data command (echo, grep, ...); behind ssh /
 # docker / pct ... that commit gets dir nil (not this host's).
+#
+# Conditional lists retain each reachable cwd (up to 32 paths), rather than
+# treating the last cd in an if/else or OR list as the only directory.
 #
 # Variables: NAME=value commands, export / declare / local / readonly / typeset
 # NAME=value, `read [-d ''] NAME` from a heredoc / here-string / `< file`,
@@ -87,6 +90,9 @@
 #
 # CRuby stdlib only (Ruby 2.6 compatible: no filter_map / tally): hooks run
 # under CRuby via ruby-shim, not mitamae's mruby.
+
+require_relative "git-command-flow"
+require_relative "git-command-wrappers"
 
 module GitCommand
   class ParseError < StandardError; end
@@ -193,11 +199,11 @@ module GitCommand
   # scan runs on a binary copy, where MatchData offsets are byte offsets (on a
   # UTF-8 string each #begin counts characters from the start), and every cut
   # falls on an ASCII byte, so each piece converts back to valid UTF-8.
-  def self.fallback_scan(command, cwd)
+  def self.fallback_scan(command, cwd, track_cwd: true)
     code, bodies = fallback_split_heredocs(command.to_s.scrub.b)
     seps = fallback_separators(code)
     body_pos = bodies.map(&:first)
-    cds = code.to_enum(:scan, FALLBACK_CD_RE).map { [Regexp.last_match.begin(0), Regexp.last_match[1]] }
+    cds = track_cwd ? code.to_enum(:scan, FALLBACK_CD_RE).map { [Regexp.last_match.begin(0), Regexp.last_match[1]] } : []
     cd_pos = cds.map(&:first)
     matches = code.to_enum(:scan, FALLBACK_RE).map { Regexp.last_match }
     invocations = matches.each_with_index.map do |m, idx|
@@ -848,7 +854,9 @@ module GitCommand
   # shell variables through the chain and its subshells, and records git
   # invocations and literal file writes.
   class Evaluator
+    include Wrappers
     MAX_DEPTH = 8
+    MAX_RUNS = 256
     SHELLS = %w[bash sh zsh dash ksh].freeze
     RESERVED_SKIP = %w[! { if then elif else do while until].freeze
     RESERVED_STOP = %w[} fi done esac for case select function in].freeze
@@ -874,12 +882,14 @@ module GitCommand
                        readonly] + ["[", "[["]).freeze
     # Wrappers that run their command on another host or in another root: a
     # commit behind them is still found, but its directory is not this one.
+    SHELL_READERS = %w[cat less more head tail wc sort uniq cut tr tee diff cmp file ls].freeze
     REMOTE_COMMANDS = %w[ssh mosh docker podman kubectl lxc lxc-attach incus pct qm vagrant
                          multipass distrobox toolbox chroot schroot nsenter machinectl
                          systemd-run].freeze
 
     def initialize(home)
       @home = home
+      @runs = 0
       @invocations = []
       @writes = {}
       @vars = {}
@@ -896,6 +906,11 @@ module GitCommand
     def run(src, cwd, depth)
       return cwd if depth > MAX_DEPTH
 
+      @runs += 1
+      if @runs > MAX_RUNS
+        @invocations.concat(GitCommand.fallback_scan(src, nil, track_cwd: false).invocations)
+        return nil
+      end
       tokens =
         begin
           Lexer.new(src).tokenize
@@ -907,12 +922,37 @@ module GitCommand
           @invocations.concat(GitCommand.fallback_scan(src, cwd).invocations)
           return cwd
         end
+      if tokens.any? { |type, value| type == :op && value == "||" } ||
+         tokens.any? { |type, word| type == :word && word.raw == "if" }
+        begin
+          paths = FlowPaths.new(tokens.dup).paths
+        rescue ParseError
+          @invocations.concat(GitCommand.fallback_scan(src, nil, track_cwd: false).invocations)
+          return nil
+        end
+        saved_vars = @vars.dup
+        variable_states = []
+        directories = paths.flat_map do |path|
+          @vars = saved_vars.dup
+          after = run_tokens(path, cwd, depth)
+          variable_states << @vars.dup
+          after.is_a?(Array) ? after : [after]
+        end.uniq
+        @vars = common_variables(variable_states)
+        return bounded_directories(directories)
+      end
+      run_tokens(tokens, cwd, depth)
+    end
+
+    def run_tokens(tokens, cwd, depth)
       scopes = []
       groups = []
       dirstack = []
       cur = new_command(nil)
       tokens.each do |type, val|
         case type
+        when :outcome
+          @flow_failed = val == false
         when :word
           brace(groups, cur, val)
           cur.words << val
@@ -923,6 +963,7 @@ module GitCommand
           before = cwd
           cwd = finish(cur, cwd, dirstack, depth) unless blank?(cur)
           collect_output(groups.last, cur, before)
+          @flow_failed = false
           closed = nil
           case val
           when "("
@@ -973,6 +1014,10 @@ module GitCommand
     # Adds cmd's literal stdout to the open group, unless it goes into a pipe
     # or a file instead. A member whose output is not literal adds nothing.
     def collect_output(group, cmd, cwd)
+      if cwd.is_a?(Array)
+        cwd.each { |directory| collect_output(group, cmd, directory) }
+        return
+      end
       return if group.nil? || cmd.piped_out || stdout_redirected?(cmd)
 
       out = literal_output(cmd, cwd)
@@ -992,12 +1037,16 @@ module GitCommand
 
     # A child shell or substitution: it sees the variables, its own do not
     # come back.
-    def nested_run(src, cwd, depth)
+    def nested_run(src, cwd, depth, env = {})
       saved = @vars
+      saved_failure = @flow_failed
+      @flow_failed = false
       @vars = @vars.dup
+      env.each { |name, text| set_var(name, text, [], exported: true) }
       run(src, cwd, depth)
     ensure
       @vars = saved
+      @flow_failed = saved_failure
     end
 
     def new_command(pipe_prev)
@@ -1012,9 +1061,35 @@ module GitCommand
       redir.op == "<<" || redir.op == "<<-"
     end
 
+    # Widen excess alternatives to an unknown cwd; an absolute git -C can
+    # still identify its checkout without retaining an unbounded cross product.
+    def bounded_directories(directories)
+      return nil if directories.size > FlowPaths::MAX_PATHS
+
+      directories.size == 1 ? directories.first : directories
+    end
+
+    def common_variables(states)
+      return {} if states.empty?
+
+      states.first.select { |name, value| states.all? { |state| state[name] == value } }
+    end
+
     # Evaluates one simple command; returns the cwd for the next one. The
     # caller sets the `|` / `&` flags before calling, so isolated? sees them.
     def finish(cmd, cwd, dirstack, depth)
+      if cwd.is_a?(Array)
+        saved_vars = @vars.dup
+        variable_states = []
+        directories = cwd.flat_map do |directory|
+          @vars = saved_vars.dup
+          after = finish(cmd, directory, dirstack.dup, depth)
+          variable_states << @vars.dup
+          after.is_a?(Array) ? after : [after]
+        end.uniq
+        @vars = common_variables(variable_states)
+        return bounded_directories(directories)
+      end
       cmd.words.each { |w| w.substs.each { |body| nested_run(body, cwd, depth + 1) } }
       cmd.redirs.each do |r|
         r.target.substs.each { |body| nested_run(body, cwd, depth + 1) } unless heredoc?(r)
@@ -1029,19 +1104,22 @@ module GitCommand
 
       name = command_name(words[0])
       case name
-      when "cd" then isolated?(cmd) ? cwd : cd_target(words, dir)
+      when "cd" then isolated?(cmd) || @flow_failed ? cwd : cd_target(words, dir)
       when "pushd"
-        return cwd if isolated?(cmd)
+        return cwd if isolated?(cmd) || @flow_failed
 
         dirstack.push(cwd)
         cd_target(words, dir, pushd: true)
-      when "popd" then isolated?(cmd) || dirstack.empty? ? cwd : dirstack.pop
+      when "popd" then isolated?(cmd) || @flow_failed || dirstack.empty? ? cwd : dirstack.pop
       when "eval"
         after = run(words[1..].map(&:value).join(" "), dir, depth + 1)
         isolated?(cmd) ? cwd : after
       when *SHELLS
         script = shell_script(cmd, words, cwd)
-        nested_run(script, dir, depth + 1) if script
+        nested_run(script, dir, depth + 1, env) if script
+        cwd
+      when "find"
+        find_commands(cmd, words, dir, depth)
         cwd
       when "git"
         @invocations << git_invocation(cmd, words, dir, cwd, exported_env.merge(env))
@@ -1052,7 +1130,7 @@ module GitCommand
           read_into(cmd, words, cwd) if name == "read"
           printf_into(words, cwd) if name == "printf"
         end
-        wrapped_git(cmd, words, dir, cwd, exported_env.merge(env), name)
+        wrapped_git(cmd, words, dir, cwd, exported_env.merge(env), name, depth)
         cwd
       end
     end
@@ -1071,15 +1149,22 @@ module GitCommand
       word.value.sub(%r{\A.*/}m, "")
     end
 
-    # A command this parser does not know (xargs, mise exec --, flock, find
-    # -exec, stdbuf ...): the first later `git` word that starts a commit is
-    # taken as the command it runs. Only commits are recorded from here.
-    def wrapped_git(cmd, words, dir, cwd, env, name)
+    # An unlisted wrapper can carry an explicit shell entry point or a git
+    # commit. Do not interpret a whole quoted argument as arbitrary shell code.
+    def wrapped_git(cmd, words, dir, cwd, env, name, depth)
       return if DATA_COMMANDS.include?(name)
 
       remote = REMOTE_COMMANDS.include?(name)
       (1...words.size).each do |idx|
-        next unless command_name(words[idx]) == "git"
+        candidate = command_name(words[idx])
+        # Inspect an explicit shell entry point, not arbitrary quoted text.
+        # File readers do not execute a later shell word or their stdin.
+        if !remote && !SHELL_READERS.include?(name) && SHELLS.include?(candidate)
+          script = shell_script(cmd, words[idx..], cwd)
+          nested_run(script, dir, depth + 1, env) if script
+          return if script
+        end
+        next unless candidate == "git"
 
         inv = git_invocation(cmd, words[idx..], remote ? nil : dir, cwd, env, remote: remote)
         next unless inv.commit?
@@ -1444,6 +1529,18 @@ module GitCommand
           ws.shift
           skip_options(ws, %w[-s -k --signal --kill-after])
           ws.shift # the duration
+        when "su", "runuser"
+          name = command_name(ws.shift)
+          dir = unwrap_su(ws, dir, runuser: name == "runuser")
+        when "flock"
+          ws.shift
+          unwrap_flock(ws)
+        when "xargs"
+          ws.shift
+          unwrap_xargs(ws)
+        when "script"
+          ws.shift
+          unwrap_script(ws)
         when "sudo"
           ws.shift
           dir = skip_sudo(ws, dir, env)
@@ -1511,30 +1608,6 @@ module GitCommand
           break
         end
       end
-      dir
-    end
-
-    def skip_sudo(ws, dir, env)
-      while (o = ws.first&.value)
-        if o == "--"
-          ws.shift
-          break
-        elsif ["-D", "--chdir"].include?(o)
-          ws.shift
-          target = ws.shift
-          dir = target && resolve_path(dir, target.value, target.raw)
-        elsif o.start_with?("--chdir=")
-          ws.shift
-          dir = resolve_path(dir, o.delete_prefix("--chdir="))
-        elsif SUDO_VALUED.include?(o)
-          ws.shift(2)
-        elsif o.start_with?("-") && o.length > 1
-          ws.shift
-        else
-          break
-        end
-      end
-      add_env(env, ws.shift) while ws.first && ws.first.raw.match?(ASSIGNMENT)
       dir
     end
 

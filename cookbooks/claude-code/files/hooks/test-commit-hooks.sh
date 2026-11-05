@@ -515,5 +515,8 @@ precommit "2.6: plain git commit in failing cwd" 2 'git commit -m x' "$D/failrep
 precommit "2.6: git -C failrepo commit from another cwd" 2 'git -C @D@/failrepo commit -m x' "$D/work" "FAILING-SUITE-MARKER"
 PRELOAD=()
 
+# Root-cause regressions live separately from the original SH1-79 baseline.
+source "$(dirname "${BASH_SOURCE[0]}")/test-commit-hooks-sh1-86.sh"
+
 echo "---- pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

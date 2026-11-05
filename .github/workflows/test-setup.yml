@@ -808,6 +808,7 @@ jobs:
         # cwd and call no make when the command has no commit.
         bash cookbooks/claude-code/files/hooks/test-commit-hooks.sh \
           cookbooks/claude-code/files/hooks
+        ruby cookbooks/claude-code/files/hooks/test-git-command-flow.rb
 
     - name: Validate JSON files
       run: |
