@@ -44,10 +44,13 @@ python3 <skill-dir>/scripts/tasks.py new --owner <socket#controller-pane> \
 python3 <skill-dir>/scripts/tasks.py attempt <task-id> --owner <verified-owner> \
   --kind codex --model <verified-model> --effort <verified-effort> --reason <routing-or-repair-reason>
 python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id>
+# Launch through the verified route, then observe startup selections.
+python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id> \
+  --model <observed-model> --effort <observed-effort>
 python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state running \
   --note <observed-start> --evidence <observed-working-transition>
-python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state reviewing \
-  --note <result-received> --evidence <result-location>
+python3 <skill-dir>/scripts/tasks.py receive <task-id> --owner <verified-owner> \
+  --file <absolute-envelope-file>
 python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state accepted \
   --note <criterion-by-criterion-verdict> --evidence <independent-check>
 python3 <skill-dir>/scripts/tasks.py reported <task-id> --owner <verified-owner> --note <message-sent>
