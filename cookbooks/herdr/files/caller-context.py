@@ -2,7 +2,9 @@
 """Resolve a local caller without consulting Herdr's focused pane.
 
 Shared app-server tools have no terminal ancestry. In that case, use a short
-two-call visual challenge, bound to CODEX_SESSION_ID. No terminal input is sent.
+two-call visual challenge, bound to CODEX_SESSION_ID. The assistant must display
+the challenge in commentary; tool output may be hidden by the TUI.
+No terminal input is sent.
 """
 import argparse
 import json
@@ -55,6 +57,13 @@ def identity(pane):
     return (pane["socket"], pane["pane_id"], pane["workspace_id"], pane["tab_id"])
 
 
+def codex_foreground(pane, info):
+    foreground = info["foreground_processes"]
+    return (pane.get("agent") == "codex" and bool(foreground)
+            and all(p.get("argv") and Path(p["argv"][0]).name == "codex"
+                    for p in foreground))
+
+
 def inherited(panes, env, parent_pids, get_process=process):
     if env.get("HERDR_ENV") != "1" or not env.get("HERDR_PANE_ID"):
         return None
@@ -81,14 +90,14 @@ def challenge_match(panes, state, session_id, now, read, get_process=process):
         raise ValueError("expired or unrelated session challenge; prepare again")
     matches = []
     for pane in panes:
-        if state["marker"] not in read(pane):
+        # The TUI itself can insert hard line breaks when laying out assistant
+        # text. recent-unwrapped only removes terminal soft wraps, not these.
+        if state["marker"] not in "".join(read(pane).split()):
             continue
         info = get_process(pane)
         foreground = info["foreground_processes"]
-        if pane.get("agent") != "codex" or not foreground:
+        if not codex_foreground(pane, info):
             raise ValueError("challenge found outside a live Codex pane")
-        if not all(Path(p["argv"][0]).name == "codex" for p in foreground):
-            raise ValueError("challenge foreground process changed")
         if state["processes"].get(pane["socket"] + "#" + pane["pane_id"]) != [p["pid"] for p in foreground]:
             raise ValueError("challenge pane occupant replaced since prepare")
         matches.append((pane, tuple(p["pid"] for p in foreground)))
@@ -105,6 +114,41 @@ def state_path(session_id):
     return root / (session_id + ".json")
 
 
+def resumed_session(panes, session_id, get_process=process):
+    """Bind a daemon request to a unique live `codex resume <UUID>` client.
+
+    Session identity comes from the harness, not pane focus or transcript text.
+    Do not match UUID substrings, --last, or an option's value as a resume ID.
+    """
+    try:
+        if str(uuid.UUID(session_id)) != session_id:
+            return None
+    except (ValueError, AttributeError):
+        return None
+    matches = []
+    for pane in panes:
+        info = get_process(pane)
+        if not codex_foreground(pane, info):
+            continue
+        foreground = info["foreground_processes"]
+        if all(p["argv"][1:3] == ["resume", session_id] for p in foreground):
+            matches.append((pane, tuple(p["pid"] for p in foreground)))
+    if len(matches) > 1:
+        raise ValueError("ambiguous live Codex resume session")
+    return matches[0] if matches else None
+
+
+def recheck(pane, pids):
+    live = [p for p in inventory() if identity(p) == identity(pane)]
+    if len(live) != 1:
+        raise ValueError("caller changed during verification")
+    info = process(live[0])
+    if (not codex_foreground(live[0], info)
+            or tuple(p["pid"] for p in info["foreground_processes"]) != pids):
+        raise ValueError("caller changed during verification")
+    return live[0], info
+
+
 def emit(pane, method):
     print(json.dumps({"verified": True, "method": method,
                       **{k: pane[k] for k in ("session", "socket", "pane_id", "workspace_id", "tab_id")}}))
@@ -115,9 +159,19 @@ def main():
     parser.add_argument("action", choices=["resolve", "prepare", "verify"])
     args = parser.parse_args()
     if args.action == "resolve":
-        pane = inherited(inventory(), os.environ, ancestors())
+        panes = inventory()
+        pane = inherited(panes, os.environ, ancestors())
         if pane is None:
-            raise ValueError("no verified inherited caller; use prepare then verify in separate tool calls")
+            session_id = os.environ.get("CODEX_SESSION_ID", "")
+            match = resumed_session(panes, session_id, process)
+            if match is None:
+                raise ValueError("no verified caller; use prepare then verify in separate tool calls")
+            pane, pids = match
+            live, info = recheck(pane, pids)
+            if resumed_session([live], session_id, lambda _: info) is None:
+                raise ValueError("caller session changed during verification")
+            emit(live, "foreground-resume-session")
+            return
         emit(pane, "foreground-ancestry")
         return
     session_id = os.environ.get("CODEX_SESSION_ID", "")
@@ -126,8 +180,13 @@ def main():
         processes = {}
         for pane in inventory():
             if pane.get("agent") == "codex":
-                processes[pane["socket"] + "#" + pane["pane_id"]] = [
-                    p["pid"] for p in process(pane)["foreground_processes"]]
+                info = process(pane)
+                if codex_foreground(pane, info):
+                    processes[pane["socket"] + "#" + pane["pane_id"]] = [
+                        p["pid"] for p in info["foreground_processes"]]
+        if not processes:
+            raise ValueError("no live Codex foreground pane in running Herdr 1 sessions; "
+                             "cannot prepare visual proof (Herdr 2/ACP chats are separate)")
         state = {"session_id": session_id, "created": time.time(),
                  "marker": "HERDR-CALLER-PROOF-" + secrets.token_hex(24), "processes": processes}
         # Private, atomic state, with no environment values or transcript.
@@ -137,17 +196,18 @@ def main():
             json.dump(state, stream)
         os.replace(tmp, path)
         print(state["marker"], flush=True)
-        print("Run verify in the next separate tool call, within 120 seconds. Do not copy this proof into another pane.")
+        print("Display the marker above on its own line in assistant commentary BEFORE verify. "
+              "Tool output alone may be hidden by the TUI. Then run verify in a separate "
+              "tool call within 120 seconds. Do not copy this proof into another pane.")
         return
     state = json.loads(path.read_text())
     def read(pane):
         return run("herdr", "--session", pane["session"], "pane", "read", pane["pane_id"],
                    "--source", "recent-unwrapped", "--lines", "1000")
-    pane, pids = challenge_match(inventory(), state, session_id, time.time(), read)
+    pane, pids = challenge_match(inventory(), state, session_id, time.time(), read,
+                               get_process=process)
     # Recheck live topology/processes after collecting the snapshots.
-    live = [p for p in inventory() if identity(p) == identity(pane)]
-    if len(live) != 1 or tuple(p["pid"] for p in process(live[0])["foreground_processes"]) != pids:
-        raise ValueError("caller changed during verification")
+    recheck(pane, pids)
     if time.time() - state["created"] > TTL:
         raise ValueError("challenge expired during verification")
     path.unlink()  # one use; future operations must revalidate
