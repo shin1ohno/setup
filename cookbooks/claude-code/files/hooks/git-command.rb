@@ -857,6 +857,8 @@ module GitCommand
     include Wrappers
     MAX_DEPTH = 8
     MAX_RUNS = 256
+    MAX_CD_PROBES = 8
+    CD_PROBE_SECONDS = 0.25
     SHELLS = %w[bash sh zsh dash ksh].freeze
     RESERVED_SKIP = %w[! { if then elif else do while until].freeze
     RESERVED_STOP = %w[} fi done esac for case select function in].freeze
@@ -890,7 +892,9 @@ module GitCommand
     def initialize(home)
       @home = home
       @runs = 0
-      @directory_state_known = true
+      @directory_state_known = ENV["BASH_ENV"].to_s.empty? && !ENV.key?("BASH_FUNC_cd%%")
+      @cd_context = true
+      @cd_probes = {}
       @invocations = []
       @seen_invocations = {}
       @writes = {}
@@ -924,6 +928,11 @@ module GitCommand
           @invocations.concat(GitCommand.fallback_scan(src, cwd).invocations)
           return cwd
         end
+      # A definition can replace cd even when its body uses only builtins.
+      definitions = tokens.each_cons(3).any? do |first, second, third|
+        first[0] == :word && second == [:op, "("] && third == [:op, ")"]
+      end
+      @directory_state_known = false if definitions || tokens.any? { |type, word| type == :word && word.raw == "function" }
       if tokens.any? { |type, value| type == :op && ["&&", "||"].include?(value) } ||
          tokens.any? { |type, word| type == :word && word.raw == "if" }
         begin
@@ -1050,10 +1059,12 @@ module GitCommand
 
     # A child shell or substitution: it sees the variables, its own do not
     # come back.
-    def nested_run(src, cwd, depth, env = {})
+    def nested_run(src, cwd, depth, env = {}, cd_context: @cd_context)
       saved = @vars
       saved_failure = @flow_failed
       saved_unreachable = @unreachable_path
+      saved_cd_context = @cd_context
+      @cd_context = cd_context
       @unreachable_path = false
       @flow_failed = false
       @vars = @vars.dup
@@ -1063,6 +1074,7 @@ module GitCommand
       @vars = saved
       @flow_failed = saved_failure
       @unreachable_path = saved_unreachable
+      @cd_context = saved_cd_context
     end
 
     def new_command(pipe_prev)
@@ -1135,10 +1147,8 @@ module GitCommand
       @directory_state_known = false if cmd.words.any? { |word| %w[su sudo runuser].include?(command_name(word)) }
       case name
       when "cd"
-        target = cd_target(words, dir)
-        if @flow_failed && @directory_state_known && target &&
-           words.none? { |word| word.value.split("/").include?("..") } &&
-           File.directory?(target) && File.executable?(target)
+        target = cd_target(words, dir, cdpath: env.fetch("CDPATH") { @vars["CDPATH"]&.text || env_value("CDPATH", dir) })
+        if @flow_failed && cd_success_observed?(cmd, words, dir, target)
           @unreachable_path = true
           return cwd
         end
@@ -1154,7 +1164,7 @@ module GitCommand
         isolated?(cmd) ? cwd : after
       when *SHELLS
         script = shell_script(cmd, words, cwd)
-        nested_run(script, dir, depth + 1, env) if script
+        nested_run(script, dir, depth + 1, env, cd_context: false) if script
         cwd
       when "find"
         find_commands(cmd, words, dir, depth)
@@ -1209,7 +1219,7 @@ module GitCommand
         # File readers do not execute a later shell word or their stdin.
         if !remote && !SHELL_READERS.include?(name) && SHELLS.include?(candidate)
           script = shell_script(cmd, words[idx..], cwd)
-          nested_run(script, dir, depth + 1, env) if script
+          nested_run(script, dir, depth + 1, env, cd_context: false) if script
           return if script
         end
         next unless candidate == "git"
@@ -1222,7 +1232,68 @@ module GitCommand
       end
     end
 
-    def cd_target(words, base, pushd: false)
+    # Probe only an exact direct builtin invocation. Redirections, wrappers,
+    # unknown shell contexts and CDPATH searches cannot establish this proof.
+    def cd_success_observed?(cmd, words, base, target)
+      return false unless @directory_state_known && @cd_context && target.is_a?(String)
+      return false unless cmd.redirs.empty? && !isolated?(cmd) && cmd.words.first&.value == "cd"
+
+      args = words[1..].map(&:value)
+      index = 0
+      index += 1 while args[index]&.match?(/\A-[LPe@]+\z/)
+      index += 1 if args[index] == "--"
+      operand = args[index]
+      return false unless operand && operand.start_with?("/")
+      return false if operand.split("/").include?("..")
+      return false unless File.expand_path(operand) == target
+
+      key = Marshal.dump(args)
+      return @cd_probes[key] if @cd_probes.key?(key)
+      return false if @cd_probes.size >= MAX_CD_PROBES
+
+      @cd_probes[key] = probe_bash_cd(args)
+    end
+
+    # The checked operand is absolute, so use a fixed safe cwd and no inherited
+    # shell startup, CDPATH or credentials. Never interpolate a command string.
+    def probe_bash_cd(args, spawn: Process.method(:spawn))
+      pid = spawn.call({}, "/bin/bash", "--noprofile", "--norc", "-c",
+                          'builtin cd "$@"', "git-command-cd", *args,
+                          chdir: "/", unsetenv_others: true,
+                          in: File::NULL, out: File::NULL, err: File::NULL)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + CD_PROBE_SECONDS
+      loop do
+        result = Process.waitpid2(pid, Process::WNOHANG)
+        if result
+          pid = nil
+          return result[1].success? && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+        end
+        return false if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+        sleep 0.001
+      end
+    rescue Errno::ECHILD
+      pid = nil
+      false
+    rescue SystemCallError, ArgumentError
+      false
+    ensure
+      if pid
+        begin
+          Process.kill("KILL", pid)
+        rescue Errno::ESRCH
+          nil
+        ensure
+          begin
+            Process.waitpid(pid)
+          rescue Errno::ECHILD
+            nil
+          end
+        end
+      end
+    end
+
+    def cd_target(words, base, pushd: false, cdpath: nil)
       i = 1
       i += 1 while words[i] && words[i].value.match?(/\A-[LPe@]+\z/)
       i += 1 if words[i]&.value == "--"
@@ -1230,7 +1301,19 @@ module GitCommand
       return nil if word && word.value == "-"
       return (pushd ? nil : @home && File.expand_path(@home)) if word.nil?
 
-      resolve_path(base, word.value, word.raw)
+      target = resolve_path(base, word.value, word.raw)
+      first = word.value.split("/").first
+      return target if pushd || word.value.start_with?("/") || %w[. ..].include?(first)
+      return target if word.raw.start_with?("~") || cdpath.to_s.empty?
+
+      prefixes = cdpath.split(":", -1)
+      return nil if prefixes.size >= FlowPaths::MAX_PATHS
+
+      candidates = prefixes.map do |prefix|
+        directory = prefix.empty? ? base : resolve_path(base, prefix)
+        resolve_path(directory, word.value, word.raw)
+      end
+      bounded_directories((candidates + [target]).uniq)
     end
 
     def resolve_path(base, value, raw = value)

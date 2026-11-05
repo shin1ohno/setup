@@ -117,3 +117,5 @@ end
 
 # Keep the AND continuation regressions in their own topic file.
 require_relative "test-git-command-and"
+
+require_relative "test-git-command-cd-proof"
