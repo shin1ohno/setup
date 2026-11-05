@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""SH1-96: profile migration and opt-in local-plugin PTY regression.
+
+Run with --plugins to exercise the locally installed plugins without changing
+the user's shell configuration. Raw bytes and BUFFER snapshots stay in --output.
+Only fixture directories are completed; no command line is submitted.
+"""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import pty
+import select
+import signal
+import struct
+import subprocess
+import tempfile
+import termios
+import time
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+def recipe_profiles(root):
+    # Evaluate the real cookbook, recording only file/profile resources.
+    script = r'''
+require 'json'
+class Resource
+  attr_reader :operation
+  def action(value); @operation = value; end
+  def method_missing(*); end
+end
+def node; {setup: {root: '/fixture'}}; end
+def git_clone(*); end
+def execute(*); end
+def file(path, &block)
+  resource = Resource.new
+  resource.instance_eval(&block)
+  @files[path] = resource.operation
+end
+def add_profile(name, &block)
+  @priority = 50
+  instance_eval(&block)
+  @profiles["#{@priority}-#{name}.sh"] = @content
+end
+def priority(value); @priority = value; end
+def bash_content(value); @content = value; end
+@files = {}; @profiles = {}
+load ARGV[0]
+puts JSON.generate({files: @files, profiles: @profiles})
+'''
+    result = subprocess.check_output(
+        ['ruby', '-e', script, str(root / 'cookbooks/fzf-tab/default.rb')], text=True)
+    return json.loads(result)
+
+
+def migration_test(root):
+    result = recipe_profiles(REPO)
+    assert result['files'].get('/fixture/profile.d/50-fzf-tab.sh') == 'delete', result
+    assert '15-fzf-tab.sh' in result['profiles'], result
+    template = (REPO / 'roles/foundation/templates/profile').read_text()
+    profile_dir = root / 'profile.d'
+    profile_dir.mkdir()
+    (root / 'cache').mkdir()
+    profile = root / 'profile'
+    profile.write_text(template.replace('<%= node[:setup][:root] %>', str(root)))
+    current = profile_dir / '15-current.sh'
+    stale = profile_dir / '50-stale.sh'
+    current.write_text('CURRENT=1\n')
+    stale.write_text('STALE=1\n')
+    env = dict(os.environ, XDG_CACHE_HOME=str(root / 'cache'))
+    bundle = root / 'cache/setup-profile-bundle.zsh'
+    command = ['zsh', '-f', '-c',
+               '. "$1"; printf "%s:%s" "$CURRENT" "${STALE:-absent}"',
+               '_', str(profile)]
+    assert subprocess.check_output(command, env=env, text=True) == '1:1'
+    # Make both files older than the cache, then remove only the stale entry.
+    old = time.time() - 10
+    os.utime(current, (old, old))
+    os.utime(stale, (old, old))
+    stale.unlink()
+    # Model a directory-entry change after an otherwise unchanged bundle.
+    future = time.time() + 2
+    os.utime(profile_dir, (future, future))
+    assert subprocess.check_output(command, env=env, text=True) == '1:absent'
+    assert 'STALE=1' not in bundle.read_text()
+    print('PASS: cookbook removes the old profile; zsh bundle drops deleted entries')
+
+
+def plugin_case(root, legacy, width, term, token, prompt, rprompt):
+    root.mkdir()
+    (root / f'ManagedProjects/{token}').mkdir(parents=True)
+    home = Path.home()
+    plugins = home / '.local/share/sheldon/repos/github.com'
+    fzf = home / '.setup_shin1ohno/fzf-tab/fzf-tab.plugin.zsh'
+    sources = [fzf, plugins / 'romkatv/zsh-defer/zsh-defer.plugin.zsh',
+               plugins / 'zsh-users/zsh-autosuggestions/zsh-autosuggestions.zsh',
+               plugins / 'zdharma-continuum/fast-syntax-highlighting/fast-syntax-highlighting.plugin.zsh']
+    assert all(p.is_file() for p in sources), sources
+    rc = '''autoload -Uz compinit
+compinit -D
+bindkey -v
+HISTFILE=/dev/null
+fc -p
+zmodload zsh/parameter
+'''
+    rc += f"print -s 'cd ManagedProjects/{token}'\nPROMPT=$'{prompt}'\nRPROMPT='{rprompt}'\n"
+    rc += f'source "{sources[0]}"\nsource "{sources[1]}"\n'
+    rc += 'ZSH_AUTOSUGGEST_MANUAL_REBIND=1\n'
+    rc += ''.join(f'zsh-defer source "{p}"\n' for p in sources[2:])
+    if legacy:
+        rc += f'zsh-defer source "{fzf}"\n'
+    rc += '''ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(snapshot)
+function snapshot() {
+  print -r -- "${(qqq)BUFFER}|$CURSOR|${(qqq)POSTDISPLAY}" >> "$ZDOTDIR/buffer.txt"
+}
+zle -N snapshot
+bindkey '^Xb' snapshot
+bindkey '^Xr' redisplay
+'''
+    (root / '.zshrc').write_text(rc)
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.chdir(root)
+        env = dict(HOME=str(root), ZDOTDIR=str(root), PATH=os.environ['PATH'],
+                   TERM=term, LANG='en_US.UTF-8')
+        os.execvpe('zsh', ['zsh', '-d', '-i'], env)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, width, 0, 0))
+    def drain():
+        data = b''
+        deadline = time.monotonic() + 0.8
+        while time.monotonic() < deadline:
+            if select.select([fd], [], [], 0.05)[0]:
+                data += os.read(fd, 65536)
+        return data
+    try:
+        raw = b''
+        steps = [('initial', b''), ('typed', ('cd ManagedProjects/' + token[0]).encode()),
+                 ('before', b'\x18b'), ('complete', b'\t'), ('after', b'\x18b'),
+                 ('repaint', b'\x18r'), ('repaint-buffer', b'\x18b')]
+        for label, keys in steps:
+            os.write(fd, keys)
+            data = drain()
+            (root / (label + '.bin')).write_bytes(data)
+            raw += data
+        (root / 'all.bin').write_bytes(raw)
+        rows = (root / 'buffer.txt').read_text().splitlines()
+        suffix = token[1:] if legacy else ''
+        expected = f'"cd ManagedProjects/{token}/"|{len("cd ManagedProjects/" + token + "/")}|"{suffix}"'
+        assert rows[1:] == [expected, expected], (root.name, rows, expected)
+        assert rows[0].endswith(f'|"{token[1:]}"'), rows
+        print(f'PASS: {root.name}: {rows[1]}')
+    finally:
+        os.kill(pid, signal.SIGKILL)
+        os.close(fd)
+        # Close the master before reaping: a macOS PTY child may otherwise
+        # remain in exit while its terminal output cannot drain.
+        deadline = time.monotonic() + 3
+        while os.waitpid(pid, os.WNOHANG)[0] == 0:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f'fixture child {pid} did not exit')
+            time.sleep(0.05)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--plugins', action='store_true')
+    parser.add_argument('--output', type=Path)
+    args = parser.parse_args()
+    output = args.output or Path(tempfile.mkdtemp(prefix='sh1-96-'))
+    output.mkdir(exist_ok=True)
+    migration_test(output)
+    if args.plugins:
+        cases = [(80, 'xterm-256color', 'setup', r'~ on \ue0b0 qa@example.test\n❯ ', ''),
+                 (40, 'screen-256color', 'setup', r'日本語 · Ω \ue0b0\n❯ ', '右'),
+                 (80, 'xterm-256color', '日本語', r'❯ ', '')]
+        for i, (width, term, token, prompt, rprompt) in enumerate(cases):
+            for legacy in (True, False):
+                plugin_case(output / f'case-{i}-{"legacy" if legacy else "fixed"}',
+                            legacy, width, term, token, prompt, rprompt)
+    print(f'Evidence: {output}')
+
+
+if __name__ == '__main__':
+    main()

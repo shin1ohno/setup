@@ -3,7 +3,7 @@
 # bundle directly. Avoids the per-file source overhead of the prior
 # loop (32 files × ~5ms each = ~160ms saved).
 #
-# Bundle is rebuilt when any profile.d/*.sh is newer than the bundle.
+# Rebuild for changed files and directory entries (including deleted profiles).
 _sh1_bundle="${XDG_CACHE_HOME:-$HOME/.cache}/setup-profile-bundle.zsh"
 _sh1_profile_dir="<%= node[:setup][:root] %>/profile.d"
 
@@ -19,7 +19,7 @@ else
   _sh1_newest=$(ls -1t "$_sh1_profile_dir"/*.sh 2>/dev/null | head -1)
 fi
 
-if [ ! -s "$_sh1_bundle" ] || { [ -n "$_sh1_newest" ] && [ "$_sh1_newest" -nt "$_sh1_bundle" ]; }; then
+if [ ! -s "$_sh1_bundle" ] || [ "$_sh1_profile_dir" -nt "$_sh1_bundle" ] || { [ -n "$_sh1_newest" ] && [ "$_sh1_newest" -nt "$_sh1_bundle" ]; }; then
   # Trailing newline per file — some profile.d entries omit it (e.g.
   # 50-cargo.sh ends in `source "$HOME/.cargo/env"` with no LF) and
   # naively `cat`ing them merges the last token of one file with the
