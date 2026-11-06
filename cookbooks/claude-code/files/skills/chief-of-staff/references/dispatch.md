@@ -115,8 +115,6 @@ For envelope-v1 tasks do not escalate to full pane history. Request the missing
 envelope or delegate an artifact read. The installed Herdr skill's legacy
 file-output fallback remains the rule for old tasks; the new explicit artifact
 contract is an opt-in protocol, not a reason to alter an active legacy session.
-Review the two skill contracts together before deployment. No installed skill
-or live controller ledger is changed by adopting this source proposal.
 
 ## Worker brief
 
