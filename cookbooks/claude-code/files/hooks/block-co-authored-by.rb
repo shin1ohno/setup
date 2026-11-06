@@ -4,13 +4,48 @@
 # PreToolUse (Bash) hook: block a git commit whose message carries a
 # Co-Authored-By trailer (matched case-insensitively).
 #
+# A safety check, so it fails closed on what the command shows: where the
+# parser (git-command.rb) cannot tell where a commit runs or whether a string
+# is a script, this hook still checks, against every possibility the command
+# names. pre-commit-test.rb, a convenience, skips the same commits instead.
+#
 # Every git commit in the command is found by git-command.rb, not only a
 # command containing the literal "git commit": `git -C <dir> commit`, chains
 # such as `test -d X && git -C X add -A && git -C X commit -F msg`, global
 # options (`git -c k=v commit`), wrappers (`env VAR=1 git commit`, `command git
-# commit`, timeout / nice / sudo, and any other command followed by `git ...
-# commit`: xargs, mise exec --, flock, find -exec ...) and `bash -c '...'`
-# strings. For each one the message sources are checked:
+# commit`, timeout / nice, sudo with its option clusters (-iu USER, -Hu), and
+# any other command followed by `git ... commit`: xargs, mise exec --, flock,
+# find -exec ...), `bash -c '...'` / `bash -s` / `bash <<EOF` scripts, also
+# behind su / runuser (-c, or the shell reading a heredoc), `sudo -s` / `sudo
+# -i` reading a heredoc, `script -qc`, and any other command whose later word
+# starts a shell (`flock L bash -c`, `xargs sh -c`, `find -exec sh -c`, `ssh
+# host bash -s <<EOF`) or is su / sudo / runuser / script (`flock L su - U
+# -c`, `pct exec 104 -- su - U -c`, `setsid -w su U <<EOF`); ssh's remote
+# command string, which the remote shell runs reading ssh's stdin (`ssh host
+# 'bash -s' <<EOF`, `ssh pve "pct exec 104 -- bash -s" <<EOF`, `ssh host
+# 'cd x && git commit ...'`, `ssh host <<EOF`); `NAME() { ...; }` bodies; a
+# pipe or && split across lines; a for loop over several static items (each
+# item is its own commit); and, uncertain, a commit inside any argv word of
+# a non-data command that lexes as a script naming git commit (a nested
+# command string): `flock L -c '...'`, `flock --command`, `sg G -c`, `watch
+# '...'`, `parallel ::: '...'`, `tmux send-keys '...'`, `trap '...' EXIT`,
+# `git rebase -x '...'`, the VALUE of a `--NAME=VALUE` word (`git rebase
+# --exec='...'`), a shell script's own arguments (`bash -c 'eval "$1"' _
+# '...'`), `osascript -e 'do shell script "..."'` and any wrapper no table
+# lists. A relative message file such a string reads is checked where its
+# command runs (the session cwd, or its env -C / git -C directory): what the
+# command wrote there (`cat > m <<'EOF'` + `flock L -c 'git commit -F m'`,
+# also `-m "$(cat m)"`, `-F - < m`, `-F ./m`) and the file on disk unless
+# the command overwrote it first; behind ssh / docker only what was written
+# on that host counts. The message says when the commit was found in a
+# nested command string. An interpreter's program (`python3 -c P`, `ruby -e
+# P`, `perl -e P`, `node -e P`) is not shell and is not scanned, so
+# `python3 -c 'print("git commit ... Co-Authored-By ...")'` passes. Data
+# commands are not scanned (echo / printf / cat / tee, grep / rg, sed / awk,
+# jq, gh / glab bodies, curl / wget, logger, git log / show / notes / grep, and
+# in a wrapper's argv the words after such a command), so a documented
+# example such as `gh pr create --body '... git commit ... Co-Authored-By
+# ...'` passes. For each commit the message sources are checked:
 #   -m / --message   separate, = and attached forms, and a short-option
 #                    cluster such as -am "msg"; unique abbreviations (--mess)
 #   --trailer        separate and = forms
@@ -19,47 +54,118 @@
 #                    then -C), MAX_MESSAGE_FILE_BYTES cap; a file that the
 #                    same command writes first with literal output (`cat >
 #                    msg <<'EOF'`, printf, echo, tee, a { ...; } / ( ... )
-#                    group) is checked before it exists. The path is expanded
+#                    group) is checked before it exists, and `cat src > msg`
+#                    checks src; once the same command has truncated the file
+#                    with literal output before the commit (`printf 'fix\n' >
+#                    msg && git commit -F msg`, outside any if / || branch),
+#                    the stale copy on disk is not checked. The path is expanded
 #                    the way the parser keys those writes (GitCommand.path_key):
 #                    $HOME, $PWD, $(pwd), environment variables such as
 #                    $TMPDIR / $CLAUDE_PROJECT_DIR and ${NAME:-default}; a path
 #                    that stays unresolved, such as F=$(mktemp), matches a
-#                    write to the same text (`cat > "$F"` + `-F "$F"`)
+#                    write to the same text (`cat > "$F"` + `-F "$F"`). When
+#                    the cwd is unknown, a relative path is checked under
+#                    every directory the commit can be in
+#                    (Invocation#dir_candidates: each branch of `cd A
+#                    2>/dev/null || cd B`, if / else, case arms or a loop, and
+#                    the entry directory), and against what the same command
+#                    wrote under that same unknown cwd (`cd "$(mktemp -d)"`,
+#                    `cd "$UNSET"`, `cd -`, a shell behind ssh / docker / pct:
+#                    `ssh host bash -s <<EOF` + `cat > m <<MSG` +
+#                    `git commit -F m`); a remote commit's relative file is on
+#                    that host, so only those writes are checked, and so is a
+#                    cwd with more than MAX_CANDIDATES possible directories
+#                    (GitCommand::Evaluator, a parse-time bound reached only
+#                    by stacking several `cd a || cd b` with relative targets)
 #   -F <(...)        the substitution's literal output (also --file=<(...),
 #                    -F<(...), and -F - < <(...))
 #   -F - (and /dev/stdin, /dev/fd/0, /proc/self/fd/0)
 #                    stdin, when the command itself shows it: a heredoc or
 #                    here-string on the commit (`git commit -F - <<'EOF'`, any
-#                    quotes inside the body), `< file`, or the literal output
-#                    on the left of a pipe: echo / printf / `cat <<EOF` / `cat
-#                    file`, or a { ...; } / ( ... ) group of them
-#                    (`{ echo fix; echo; echo "..."; } | git commit -F -`)
+#                    quotes inside the body; an unquoted `<<EOF` with the
+#                    static variables the command set substituted; `<<<
+#                    "$(cat f)"` reads f), `< file`, or the literal output on
+#                    the left of a pipe: echo / printf / `cat <<EOF` / `cat
+#                    file`, or a { ...; } / ( ... ) group of them (`{ echo fix;
+#                    echo; echo "..."; } | git commit -F -`); with none of
+#                    these, the stdin of the -c script or nested command
+#                    string the commit is in (`bash -c 'git commit -F -'
+#                    <<EOF`, `flock L -c 'git commit -F -' <<EOF`, `ssh host
+#                    'git commit -F -' <<EOF`)
 # A value may come through a variable the same command sets (MSG=...; export,
 # declare, local, `read -d '' MSG <<'EOF'`, `printf -v`, `for M in ...`) and
 # through a literal $(...): `-m "$(cat msg)"` and `-m "$(< msg)"` read that
 # file (relative to the shell's cwd, as the substitution runs before -C). A
-# $NAME the parser cannot resolve still blocks when the command names NAME
-# elsewhere (an assignment it does not model) and carries the trailer.
+# variable reassigned in an if / case / loop / `||` branch is checked with the
+# value it had before too, since the branch may not run. The source text of
+# a $(...) / `...` is not the message: only its literal output is checked, so
+# `MSG=$(git log -1 --format=%B | grep -v '^Co-Authored-By:')` + `git commit
+# --amend -m "$MSG"` passes. A $NAME the parser cannot resolve still blocks
+# when some command names NAME as an unquoted word or an assignment head
+# (`mapfile -t NAME`, an assignment form it does not model; text inside
+# another quoted string does not count) and the command carries the trailer.
 # Input the parser cannot read (an unterminated quote) is checked as text:
 # anything after `git ... commit` in that command segment that mentions the
 # trailer blocks.
 #
-# Residual holes — the CLAUDE.md rule ("Co-Authored-By トレーラーは付けない") is
-# the enforcement there:
-#   - a message built by a program: `-F -` fed by a pipe whose left side is
-#     not literal (`gen-msg | git commit -F -`, `cat m | sed ... |`),
-#     `-m "$(gen-msg)"`, `-F <(gen-msg)`, and a file a program fills
-#     (`gen-msg > "$F"`, `git interpret-trailers --in-place`).
-#   - a reused message (-c / -C / --reuse-message, --fixup=amend:), git aliases
-#     (`git ci`), and a commit inside a quoted remote command (`ssh host '...'`).
-# Conservative: two unresolved paths with the same text (two `$(mktemp)`
-# variables) share one key, so the trailer written into either one blocks a
-# commit that reads the other.
+# Residual holes — values this hook cannot see in the command text; the
+# CLAUDE.md rule ("Co-Authored-By トレーラーは付けない") is the enforcement there:
+#   - run-time values: a message a program prints (`gen-msg | git commit -F
+#     -`, `cat m | sed ... |`, `-m "$(gen-msg)"`, also `-m "$(gen | sed
+#     's/$/ Co-Authored-By: x/')"`, `-F <(gen-msg)`), a for loop over a glob
+#     or $(...), a message reused from an existing commit (-c / -C /
+#     --reuse-message, --fixup=amend:), and a remote commit's file on that
+#     host.
+#   - files created or filled by programs the command does not show: `gen-msg
+#     > "$F"`, `git interpret-trailers --in-place`, a copy made by `cp`, a
+#     script file run by name (`bash x.sh`, `./x.sh`, `make`, `npm run`), git
+#     hooks and templates.
+#   - aliases and indirection outside the command: git aliases (`git ci`),
+#     shell aliases and functions defined before this command, a commit in
+#     the first command of a `function NAME { ...; }` body (`function ci {
+#     git commit ...; }`, skipped with the definition), and a program that
+#     assembles its own argv (`subprocess.run(["git", "commit", ...])`).
+#   - kept open by decision (TODO.md): (a) a relative cd on the right of
+#     `L || R` (`cd a 2>/dev/null || cd b; git commit -F m`): R is read from
+#     where L ended, so m is looked for under a, a/b and the entry but not
+#     entry/b; (b) a script that is the literal output of a command
+#     substitution (`bash -c "$(cat <<'EOF' ... EOF)"`, ssh / eval / flock -c
+#     of such output): only the substitution's body is parsed, where `cat
+#     <<EOF` is data; (c) an interpreter's program (ruby / perl -e, python
+#     -c, node -e / -p / --eval): the commit its os.system / system /
+#     execSync call runs (`python3 -c 'import os; os.system("git commit
+#     ...")'`) is not parsed.
+#   - word-splitting and spelling tricks: the hook exits before parsing
+#     unless the command contains "commit", so `git com\mit`, `git "com"mit`
+#     and `git $'\x63ommit'` pass; so does an unquoted $VAR that bash splits
+#     into several words (`X="commit -m"; git $X "..."`).
+#   - a script read from stdin by something that is not a shell taking it as
+#     its script: a non-shell program (`python3 - <<EOF`, `newgrp G <<EOF`)
+#     and a shell whose name directly follows an option, which is taken as
+#     that option's value so `shellcheck -s bash - <<EOF` stays data
+#     (`setsid -w bash <<EOF`, `unshare -r bash <<EOF`, `nsenter -t 1 -a sh
+#     <<EOF`; their -c form is still parsed).
+#   - scope: only the `commit` subcommand is checked; `git merge -m`, `git
+#     tag -m` and `git commit-tree -m` pass.
+# Conservative (fail closed): two unresolved paths with the same text (two
+# `$(mktemp)` variables, two `cd "$X"`) share one key, so the trailer written
+# into either one blocks a commit that reads the other; a nested command
+# string is checked even when the program treats it as data (`linear ...
+# --description "git commit -m '...Co-Authored-By...'"`, `claude -p "..."`,
+# the arguments of an interpreter's program: `ruby -e 'puts ARGV[0]' "git
+# commit ..."`); a commit behind ssh / docker ... reads an absolute message
+# path from this host; ssh's command string the remote shell would reject
+# (`ssh host git commit -m "x <a@b>"`, where `<a@b>` turns into a
+# redirection) is checked as text; su / sudo after an option
+# (`--become-method su <<EOF`) is still taken as su reading the heredoc; a
+# for loop's body runs for every item (break / continue are not modeled).
 # History: the -F <path> check came from a 2026-09-16 audit (the -F route,
 # which CLAUDE.md recommends for messages with glob characters, passed
-# unchecked); SH1-79 replaced the literal "git commit" match with the parser.
+# unchecked); SH1-79 replaced the literal "git commit" match with the parser;
+# SH1-86 made the unknown cwd and nested command strings fail closed.
 #
-# Fail-open: any internal error exits 0; only a found trailer exits 2.
+# Fail-open on its own errors: any internal error exits 0; only a found
+# trailer exits 2.
 
 require "json"
 
@@ -101,11 +207,17 @@ def trailer?(text)
   !text.nil? && text.to_s.b.downcase.include?(TRAILER)
 end
 
+# Set per commit: an uncertain one (found in a nested command string, see
+# GitCommand::Invocation#certain) says so in the message.
+$nested_commit = false
+
 def block!(where = nil)
-  if where
-    warn "ERROR: Do not include Co-Authored-By in git commits (found in #{where})."
-  else
+  nested = $nested_commit ? "a nested command string" : nil
+  found = [where, nested].compact.join(", in ")
+  if found.empty?
     warn "ERROR: Do not include Co-Authored-By in git commits."
+  else
+    warn "ERROR: Do not include Co-Authored-By in git commits (found in #{found})."
   end
   exit 2
 end
@@ -169,47 +281,75 @@ rescue SystemCallError, IOError
   false
 end
 
-# A message file: what the same command writes into it first, then the file
-# as it is on disk now.
-def check_path(full, label, writes)
-  block!(label) if writes.fetch(full, []).any? { |text| trailer?(text) }
-  block!(label) if file_has_trailer?(full)
+# A message file by its path key: what the same command writes into it
+# first, the files it copies into it (`cat src > msg`), then the file as it
+# is on disk now unless the command truncated it with literal output before
+# this commit (rewritten: that invocation's Invocation#rewritten). The key
+# of an unknown directory ("<?3>/msg", GitCommand::UnknownDir) names the
+# same file under each directory that cwd can be (Result#local_paths); a
+# key with an unresolved $ / ` or a remote directory is matched against the
+# writes only.
+def check_path(key, label, result, rewritten, seen)
+  return if key.nil? || seen[key]
+
+  seen[key] = true
+  block!(label) if result.writes.fetch(key, []).any? { |text| trailer?(text) }
+  (result.copies || {}).fetch(key, []).each { |src| check_path(src, label, result, rewritten, seen) }
+  return if rewritten.include?(key)
+
+  if key.start_with?("/")
+    block!(label) if file_has_trailer?(key)
+  else
+    result.local_paths(key).each { |path| check_path(path, label, result, rewritten, seen) }
+  end
 end
 
 # The parser already expanded the value ($HOME, $TMPDIR, variables the command
 # set); path_key resolves it the way the parser keyed the command's writes, so
-# `cat > "$F"` and `-F "$F"` meet even when F holds "$(mktemp)".
-def check_message_file(path, inv, writes)
-  full = GitCommand.path_key(inv.dir, path)
-  check_path(full, path, writes) if full
+# `cat > "$F"` and `-F "$F"` meet even when F holds "$(mktemp)", and a file
+# written and read under the same unknown cwd meets through its key. Then
+# the path under each directory the commit can be in (dir_candidates: the
+# branches of `cd A || cd B`, if / case arms ...), unless the command just
+# rewrote the file this commit reads.
+def check_message_file(path, inv, result)
+  rewritten = inv.rewritten || []
+  seen = {}
+  key = GitCommand.path_key(inv.base, path)
+  check_path(key, path, result, rewritten, seen)
+  return if key && rewritten.include?(key)
+
+  (inv.dir_candidates || []).each do |dir|
+    check_path(GitCommand.path_key(dir, path), path, result, rewritten, seen)
+  end
 end
 
-def check_stdin(inv, writes, label)
+def check_stdin(inv, result, label)
   block!("stdin of -F #{label}") if trailer?(inv.stdin)
-  inv.stdin_files.each { |path| check_path(path, path, writes) }
+  inv.stdin_files.each { |path| check_path(path, path, result, inv.rewritten || [], {}) }
 end
 
-# A $NAME the parser could not resolve: the command names NAME somewhere other
-# than as $NAME / ${NAME} (an assignment form it does not model) and carries
-# the trailer.
-def unresolved_var_trailer?(name, cmd)
-  trailer?(cmd) && cmd.match?(/(?<![$\w{])#{Regexp.escape(name)}(?!\w)/)
+# A $NAME the parser could not resolve: some command names NAME as an unquoted
+# word or assignment head (an assignment form the parser does not model, such
+# as `mapfile -t NAME`) and the command carries the trailer.
+def unresolved_var_trailer?(name, cmd, result)
+  trailer?(cmd) && (result.names || {}).key?(name)
 end
 
 # What the parser found behind one arg: $(...) / <(...) output (text or a
 # file it reads) and unresolved variables. Files and text count only when they
 # are the message (kind :text); a -F / -t path is checked as a path.
-def check_extras(extras, kind, cmd, writes, label)
+def check_extras(inv, extras, kind, cmd, result, label)
   extras.each do |type, value|
     case type
     when :text then block!(label) if kind != :path && trailer?(value)
-    when :file then check_path(value, value, writes) if kind != :path
-    when :var then block!("$#{value}") if unresolved_var_trailer?(value, cmd)
+    when :file then check_path(value, value, result, inv.rewritten || [], {}) if kind != :path
+    when :var then block!("$#{value}") if unresolved_var_trailer?(value, cmd, result)
     end
   end
 end
 
-def check_commit(inv, cmd, writes)
+def check_commit(inv, cmd, result)
+  $nested_commit = inv.certain == false
   block! if inv.fallback && trailer?(inv.raw)
 
   extras = inv.arg_extras || []
@@ -217,31 +357,36 @@ def check_commit(inv, cmd, writes)
     content = %i[message trailer].include?(kind)
     label = "$(...)"
     case kind
-    when :message, :trailer then block! if trailer?(value)
+    when :message, :trailer
+      # A $(...) left in the value is source text, not message text; its
+      # literal output is in extras.
+      block! if trailer?(GitCommand.without_substitutions(value))
     when :file, :template
       if STDIN_PATHS.include?(value)
-        check_stdin(inv, writes, value)
+        check_stdin(inv, result, value)
         content = true
       elsif value.start_with?("<(")
         # -F <(printf ...): the message is what the substitution prints.
         content = true
         label = "-F #{value[0, 2]}...)"
       else
-        check_message_file(value, inv, writes)
+        check_message_file(value, inv, result)
       end
     end
-    check_extras(extras[index] || [], content ? :text : :path, cmd, writes, label)
+    check_extras(inv, extras[index] || [], content ? :text : :path, cmd, result, label)
   end
 end
 
 begin
   data = JSON.parse($stdin.read)
   cmd = data.dig("tool_input", "command").to_s
+  # Quick exit before parsing: a commit not spelled with the literal word
+  # (`git com\mit`, `git "com"mit`, an alias) is not checked (see above).
   exit 0 unless cmd.include?("commit")
 
   cwd = data["cwd"].is_a?(String) && File.directory?(data["cwd"]) ? data["cwd"] : Dir.pwd
   result = GitCommand.parse(cmd, cwd: cwd)
-  result.commits.each { |inv| check_commit(inv, cmd, result.writes) }
+  result.commits.each { |inv| check_commit(inv, cmd, result) }
 rescue StandardError, SystemStackError
   # A hook must never break the commit path over its own error.
   exit 0

@@ -5,12 +5,36 @@
 # It is a library, not a hook: deployed next to them by the claude-code
 # cookbook and NOT wired in settings.json.
 #
+# Where the parser cannot tell (which directory a command is in, whether a
+# string is a script), it reports that uncertainty instead of collapsing it
+# to "unknown, skip": each hook then decides. pre-commit-test (a convenience)
+# acts only on what is certain and definite, so it never tests the wrong
+# repo; block-co-authored-by (a safety check) checks every invocation,
+# certain or not, against every directory it can be in.
+#
 # GitCommand.parse(command, cwd:) splits a Bash command string into the git
 # invocations it runs and returns a Result:
 #   invocations   one Invocation per git call, in execution order
 #     dir           effective directory: cwd, then `cd` / pushd / popd in the
 #                   chain, then each -C (relative to the previous one); nil when
-#                   it is not knowable statically ("$VAR", `cd -`)
+#                   it is not one knowable local directory (see "Unknown
+#                   directories" below), and always nil for an uncertain call
+#     dir_candidates every local directory the call can be in: [dir] when dir
+#                   is known; for a cwd left unknown by a branch the end
+#                   directory of each branch of `||`, if / elif / else, case or
+#                   a loop plus the entry directory (where failed cds leave
+#                   the shell), with later relative cds applied; [] when
+#                   nothing is knowable (an unresolved cd target, a remote
+#                   call, an uncertain call) or when there would be more than
+#                   Evaluator::MAX_CANDIDATES. Never a directory the command
+#                   cannot be in, but for one known gap: the right side of
+#                   `L || R` is evaluated from where L ended (see "Control
+#                   flow" below).
+#     base          what the call's relative paths are keyed against
+#                   (GitCommand.path_key): dir, or an UnknownDir token
+#     certain       false for a call found inside a nested command string
+#                   (see "Nested command strings" below): it may not run at
+#                   all, and where it runs is not known
 #     globals       [[option, value], ...] consumed before the subcommand
 #                   (-C, -c k=v, --git-dir[=], --work-tree[=], --no-pager, -P,
 #                   --bare, --namespace[=], --exec-path[=], --config-env, ...)
@@ -18,21 +42,33 @@
 #     args          the subcommand's arguments, quotes removed, with the
 #                   variables this command assigned substituted (see below)
 #     arg_extras    one list per arg of what its text alone does not show:
-#                   [:text, s] / [:file, path] for the literal output of a
+#                   [:text, s] / [:file, path key] for the literal output of a
 #                   $(...) in it (`-m "$(cat msg)"`, `$(< msg)`, also through
-#                   a variable), [:var, NAME] for a $NAME that no form below
-#                   assigned anywhere in the command (so set some other way)
+#                   a variable), [:text, s] for a value a variable had before
+#                   a branch reassigned it, [:var, NAME] for a $NAME that no
+#                   form below assigned anywhere in the command (so set some
+#                   other way)
 #     env           {NAME => value} the call runs with: leading NAME=value
 #                   words, `env NAME=value`, and variables exported earlier
 #     work_tree     --work-tree (or GIT_WORK_TREE) resolved against dir; nil
-#                   when absent or not static
-#     stdin         fd 0 text when the command itself shows it: a heredoc or
-#                   here-string on the git call, `< <(...)`, or the literal
-#                   output of what is on the left of a pipe (see "Literal
-#                   output" below)
+#                   when absent, not static or remote
+#     stdin         fd 0 text when the command itself shows it: a heredoc
+#                   (an unquoted `<<EOF` with the static variables this
+#                   command set substituted) or here-string (with the
+#                   literal output of its $(...)) on the git call, `<
+#                   <(...)`, the literal output of what is on the left of a
+#                   pipe (see "Literal output" below), or with none of
+#                   these the stdin of the -c script or nested command
+#                   string the call is in (`bash -c '...' <<EOF`, `flock L
+#                   -c '...' <<EOF`)
 #     stdin_source  :heredoc, :herestring, :file, :process, :pipe,
 #                   :pipe_unknown or nil
-#     stdin_files   files whose content reaches fd 0 (`< f`, `cat f |`)
+#     stdin_files   path keys of files whose content reaches fd 0 (`< f`,
+#                   `cat f |`, `<<< "$(cat f)"`)
+#     rewritten     path keys the command truncated with literal output (`> f`,
+#                   `>| f`, `&> f`, tee without -a) before this call, outside
+#                   any if / case / loop / `||` branch and any nested command
+#                   string, so the file on disk now is not what this call reads
 #     fallback      true when the regex fallback produced this entry
 #     raw           (fallback only) the rest of that command segment after
 #                   `commit`, plus the heredoc bodies it introduces
@@ -40,45 +76,181 @@
 #                 file somewhere in the command (`> f`, `>> f`, `tee f`), so
 #                 `cat > msg <<'EOF' ... EOF` + `git commit -F msg` is visible
 #                 before the file exists. The key is GitCommand.path_key: the
-#                 absolute path, or for a path that is not static the expanded
-#                 text itself (`F=$(mktemp)` makes both `> "$F"` and
-#                 `-F "$F"` the key "$(mktemp)")
+#                 absolute path; for a path that is not static the expanded
+#                 text itself (`F=$(mktemp)` makes both `> "$F"` and `-F "$F"`
+#                 the key "$(mktemp)"); for a relative path under an unknown
+#                 cwd the token's key joined with it ("<?3>/msg")
+#   copies        {path key => [path key, ...]}: files whose content is copied
+#                 into that file the same way (`cat src > msg`, `cat < src >
+#                 msg`, `cat src | tee msg`); `cp` is not followed
+#   names         {NAME => true} for every NAME that some command the parser
+#                 evaluated has as an unquoted word or an assignment head
+#                 (`mapfile -t MSG`, `MSG[0]=x`), nested shells included
+#   unknown_dirs  {"<?N>" => [candidate directory, ...]} for each unknown cwd
+#                 that has candidates; Result#local_paths(key) maps a path
+#                 key to the local paths it can name ("<?3>/m" -> m under
+#                 each candidate)
 #   fallback      true when the command could not be parsed
 #
-# Understood: && || ; | |& & and newlines outside quotes; ( ) subshells and
+# Unknown directories: where the cwd is not knowable statically, it is an
+# UnknownDir token rather than nil, one per scope, so a file written and read
+# under the same unknown cwd in one command still meet as one path key. A
+# branch merge (`cd A 2>/dev/null || cd B`, if / else, case arms, a loop body
+# whose end differs from its entry) mints "<?N>" with the branches' ends and
+# the entry as candidates, or with none when there would be more than
+# MAX_CANDIDATES (stacked merges with relative cds multiply them: `cd a1 ||
+# cd b1; cd a2 || cd b2; ...`), so a parse stays linear in the command's
+# length; an unresolved cd target (`cd "$X"`, `cd "$(mktemp -d)"`) is a
+# token rooted at that text, which `-F "$X/m"` keys the same way;
+# `cd -`, `pushd` with no operand and a popd past an unknown dirstack entry
+# mint a token with no candidates; a relative cd from a token joins it
+# (`<?3>/sub`), an absolute one is known again. Inside a shell on another
+# host (ssh, docker, pct ...) the cwd starts as a new token and its absolute
+# directories are tokens under REMOTE_ROOT, which no local directory backs.
+#
+# Understood: && || ; | |& & and newlines outside quotes (a newline right
+# after | |& || && continues the command, as bash reads it, so `a |` + newline
+# + `git commit -F -` is one pipeline); ( ) subshells and
 # { ...; } groups (a cd or assignment inside a subshell does not leak out; one
-# inside a pipeline or `&` does not count); single, double and $'...' quoting,
-# backslash escapes, comments; heredocs (<<EOF, <<'EOF', <<"EOF", <<-EOF) and
-# here-strings, attached to the command that owns them; $(...), `...` and
-# <(...) / >(...), also inside a word (`--file=<(...)`) and as a redirection
-# target (`done < <(ls)`), scanned so their quotes and heredocs do not break
-# the outer split and searched for git calls themselves; leading VAR=value
-# assignments; the wrappers env, command, nohup, time, timeout, nice, exec,
-# sudo, noglob, nocorrect; bash / sh / zsh / dash / ksh -c strings, `bash -s`
-# / `bash` reading a heredoc, and eval. Any other command (xargs, mise exec
-# --, flock, find -exec, stdbuf, ...) is searched for a later `git` word that
-# starts a commit, unless it is a data command (echo, grep, ...); behind ssh /
-# docker / pct ... that commit gets dir nil (not this host's).
+# inside a pipeline or `&` does not count); `NAME() { ...; }` bodies, read
+# where they are defined (a `function NAME { ...` command is skipped up to
+# the body's first ; && || | or newline, so `function f { cd x; }` moves no
+# cwd; the body's later commands are read like a NAME() body); single,
+# double and $'...' quoting, backslash escapes, comments; heredocs (<<EOF,
+# <<'EOF', <<"EOF", <<-EOF) and here-strings, attached to the command that
+# owns them;
+# $(...), `...` and <(...) / >(...), also inside a word (`--file=<(...)`) and
+# as a redirection target (`done < <(ls)`), scanned so their quotes and
+# heredocs do not break the outer split and searched for git calls
+# themselves; leading VAR=value assignments; the wrappers env, command,
+# nohup, time, timeout, nice, exec, noglob, nocorrect and sudo (option
+# clusters such as -iu USER / -Hu / -uUSER, -D DIR; -i starts in the target
+# user's home; -s / -i with no command run their stdin); su and runuser (-c /
+# --command / --session-command, a login form starting in the user's home,
+# no -c: the shell reads stdin; runuser -u USER [--] COMMAND runs COMMAND) and
+# util-linux `script -c` (-qc); bash / sh / zsh / dash / ksh -c strings, `bash
+# -s` / `bash` reading a heredoc, here-string or literal pipe, and eval. In a
+# -c script (also su -c, script -c, an ssh command string), a command with no
+# stdin redirection or pipe of its own reads the shell's stdin (`bash -c 'git
+# commit -F -' <<EOF`); a script read from stdin has used it up. A child
+# shell's HOME (from su, sudo -i / -H, `HOME=x bash -c`) is its ~ and $HOME.
+# A script that is itself the output of a $(...) (`bash -c "$(cat <<'EOF'
+# ... EOF)"`, and ssh / eval / flock -c of such output) is not parsed: only
+# the $(...) body is, and a `cat <<EOF` there is data.
+#
+# Any other command (xargs, mise exec --, flock, find -exec, stdbuf, setsid,
+# ionice, pct exec, ...) is searched for the command it runs; a word that
+# starts with "-" is an option, never that command: a later `git` word that
+# starts a commit; a later su / runuser / sudo / script / env / timeout /
+# nice / nohup word (TAIL_WRAPPERS), unwrapped as above and its command taken
+# the same way (`flock L su - U -c S`, `pct exec 104 -- su - U -c S`,
+# `setsid -w su U <<EOF`, `xargs sudo -iu U git ...`); a later ssh word (not
+# right after an option, as in `rsync -e ssh`), see below; and a later shell
+# word (by basename, no whitespace, followed only by bash's own options, so
+# `--label bash` is data) whose -c string, or stdin when it has -s or no
+# operands, is parsed like `bash -c`. A shell does not take that stdin as its
+# script when it is the stdin of xargs / parallel (their own data), when a
+# shell before it in the command already took it, or when the shell word
+# directly follows an option, whose value it then is (`shellcheck -s bash -`,
+# `bat -l sh`, `--shell bash`; so `setsid -w bash <<EOF` and `unshare -r
+# bash <<EOF` are not parsed either). Every other word is a candidate nested
+# command string (below). These explicit models give certain invocations.
+#
+# Nested command strings: instead of modelling each program that runs a
+# string (flock -c, sg -c, watch, parallel, nsenter, tmux send-keys, ...), any
+# argv word that no model above consumed, of a command that is not a data
+# command, is parsed as a script when its text lexes and names git and
+# commit: the unconsumed words of an unknown command (also after a later git
+# word that is not a commit), the arguments of a shell's script ($1 ...), the
+# words of a git subcommand other than commit and GIT_DATA (`git rebase -x
+# S`, `git submodule foreach S`), the VALUE of such a word that is
+# `--NAME=VALUE` (`git rebase --exec=S`), and inside such a string any
+# string in command position (`lua -e 'os.execute("git commit ...")'`).
+# Everything found in it is uncertain (certain false, dir nil, no
+# dir_candidates) and starts in a new UnknownDir whose candidates are those
+# of the directory the command runs in (the outer cwd, or its env -C / sudo
+# -D / git -C directory; none when the command runs on another host), so a
+# relative file it reads meets what the command wrote there and what is on
+# disk there (`cat > m <<EOF` + `flock L -c 'git commit -F m'`); it reads the
+# command's stdin unless that is the command's own data (xargs / parallel),
+# and none of its writes marks a file rewritten. Text that does not lex is
+# not a script any shell would run, and is skipped. An interpreter's program
+# (INTERPRETERS, by basename: ruby -e, perl -e / -E, python / python3 /
+# pythonN.N -c, node -e / -p / --eval / --print, also later in an argv as in
+# `xargs python3 -c P`) is code in that language, not shell, and is not
+# scanned: a commit run by its os.system / system / execSync call is not
+# found. The interpreter's other words (its program's arguments) still are.
+# Data commands are not scanned at all: DATA_COMMANDS (echo, printf, cat,
+# tee, grep / rg, sed / awk programs, jq, gh / glab with their --body /
+# --title / -b / -F, curl / wget, logger, read / export ...; osascript -e is
+# a script, not data), the GIT_DATA subcommands (log, show, notes, grep), and
+# in a wrapper's argv every word after a data command word (`xargs echo S`,
+# `find -exec grep S {} +`), while the explicit models above still apply
+# there. So `gh pr create --body` with a commit example is text, and so is
+# `tee docs/su <<EOF`.
+#
+# ssh [options] DEST [options] [--] [COMMAND ...], first or later in an argv:
+# sshd hands the remote shell the COMMAND words joined with spaces (their
+# quotes removed, as sshd receives them), and that string is parsed as a -c
+# script reading ssh's stdin (`ssh host 'bash -s' <<EOF`, `ssh pve "pct exec
+# 104 -- bash -s" <<EOF`, `ssh host sudo -s <<EOF`, `ssh host 'cd x && git
+# commit ...'`); with no COMMAND the login shell reads stdin as its script; -n
+# (or xargs) leaves it no stdin; -N / -O / -W / -s run no command. From a
+# ssh / docker / pct ... word (REMOTE_COMMANDS) on, at the start of a command
+# or later in its argv (`xargs ssh`, `caffeinate -i ssh`, `stdbuf docker
+# exec`), every commit found, also in a shell started there, gets dir nil and
+# no dir_candidates (not this host's), and so does a fallback scan of a
+# remote string the lexer rejects; its writes and reads still meet under the
+# remote tokens.
+#
+# Control flow: if / elif / else / fi, case / esac (patterns are not
+# commands), while / until / for / select ... do / done, and `a || b`. Each
+# branch starts from the cwd its construct was entered with (a loop body may
+# run zero times, a case may match no arm, b runs only when a fails); after
+# the construct the cwd is that shared end directory, or an UnknownDir with
+# the ends and the entry as candidates when they differ, so `cd /A 2>/dev/null
+# || cd /B; git commit` and `if ...; then cd A; else cd B; fi; git commit` give
+# dir nil and dir_candidates [A, B, entry]. A known gap (TODO.md): b of `a ||
+# b` starts where a ended, as if a's cds succeeded, not in the directory
+# before a, so a relative cd in b joins a's end: `cd a 2>/dev/null || cd b`
+# from /w gives /w/a, /w/a/b and /w, and misses /w/b (starting b before a
+# instead turns `cd a || exit 1` into an unknown cwd). `a && b` applies b's
+# cd as if a succeeded. A variable assigned in a branch keeps its last
+# assignment as its value and the value it had before as an extra, since the
+# branch may not run. `for NAME in` 2 to MAX_FOR_ITEMS static items (no $,
+# `, glob or brace left after expansion) runs its body once per item, NAME
+# set to it and each run starting from the cwd the one before ended in, as
+# bash runs it (at most MAX_REPLAYS extra runs per parse; break / continue
+# are not modeled, so every item runs); after `done` that end is merged with
+# the entry like any loop's.
 #
 # Variables: NAME=value commands, export / declare / local / readonly / typeset
 # NAME=value, `read [-d ''] NAME` from a heredoc / here-string / `< file`,
-# `printf -v NAME` and `for NAME in ...` are tracked like the cwd (a subshell
-# does not leak them). In later words, cd / -C targets and redirection
+# `printf -v NAME` and `for NAME in ...` (each item, see above; other loops:
+# the items joined, so a single item resolves) are tracked like the cwd (a
+# subshell does not leak them). In later words, cd / -C targets and redirection
 # targets, $NAME, ${NAME} and ${NAME:-default} (also -, := and =) take, in
 # order: the value this command assigned; $PWD the shell's cwd at that point
-# and $HOME the home directory; any other variable the command never assigns
-# from the hook's own environment, which Claude Code's Bash tool shares
-# ($TMPDIR, $CLAUDE_PROJECT_DIR); else the default. Two command substitutions
-# with a knowable output are replaced too: $(pwd) and $(git [-C dir] rev-parse
-# --show-toplevel) (the nearest ancestor holding .git). Anything else stays as
-# written, so the same unresolved text on both sides still matches as a path
-# key. Globs are not matched and git aliases (`git ci`) are not resolved.
+# (when known) and $HOME the home directory; any other variable the command
+# never assigns from the hook's own environment, which Claude Code's Bash
+# tool shares ($TMPDIR, $CLAUDE_PROJECT_DIR); else the default. Two command
+# substitutions with a knowable output are replaced too: $(pwd) and $(git [-C
+# dir] rev-parse --show-toplevel) (the nearest ancestor holding .git).
+# Anything else stays as written, so the same unresolved text on both sides
+# still matches as a path key. An unquoted heredoc that is data (a message,
+# the content of a file being written, a `read` value, a pipe) gets $NAME /
+# ${NAME} of the variables this command set to a static value substituted, as
+# bash does; one holding $(...) source stays as written (the files its output
+# reads still count), and a heredoc that is a shell's own script keeps them
+# for that shell to resolve. Globs are not matched and git aliases (`git ci`)
+# are not resolved.
 #
 # Literal output (pipe input, `> file` content, $(...) / <(...) values): echo,
 # printf, `cat <<EOF` / `cat f` / `cat <(...)`, tee passing its stdin on, and
 # a { ...; } / ( ... ) group or a $(...) / <(...) list of commands, whose
 # output is that of its members that are not piped or redirected elsewhere
-# (members whose output is not literal are left out).
+# (members whose output is not literal are left out). Text goes into writes;
+# the files `cat f` copies go into copies, not writes.
 #
 # Never raises to the caller: input it cannot parse (an unterminated quote,
 # nesting deeper than Lexer::MAX_NEST) falls back to a regex scan that still
@@ -92,16 +264,66 @@ module GitCommand
   class ParseError < StandardError; end
 
   Invocation = Struct.new(:dir, :globals, :subcommand, :args, :arg_extras, :env, :work_tree,
-                          :stdin, :stdin_source, :stdin_files, :fallback, :raw,
-                          keyword_init: true) do
+                          :stdin, :stdin_source, :stdin_files, :rewritten, :fallback, :raw,
+                          :dir_candidates, :base, :certain, keyword_init: true) do
     def commit?
       subcommand == "commit"
     end
   end
 
-  Result = Struct.new(:invocations, :writes, :fallback, keyword_init: true) do
+  # The root of an UnknownDir key minted for an unknown cwd ("<?3>"); keys
+  # under it are "<?3>/rel/path". REMOTE_ROOT is the shared root of the
+  # directories a command names on another host.
+  UNKNOWN_ROOT = /\A<\?\d+>/.freeze
+  REMOTE_ROOT = "<remote>"
+
+  Result = Struct.new(:invocations, :writes, :copies, :names, :fallback, :unknown_dirs,
+                      keyword_init: true) do
     def commits
       invocations.select(&:commit?)
+    end
+
+    # The directories on this host a path key can name: the key itself when
+    # it is absolute, each candidate of an UnknownDir root under it
+    # ("<?3>/m" with candidates /a and /b gives /a/m and /b/m), else none.
+    def local_paths(key)
+      key = key.to_s
+      return [key] if key.start_with?("/")
+
+      root = key[UNKNOWN_ROOT]
+      return [] unless root
+
+      rest = key[root.length..]
+      (unknown_dirs || {}).fetch(root, []).map { |dir| File.expand_path(".#{rest}", dir) }
+    rescue ArgumentError
+      []
+    end
+  end
+
+  # A working directory that is not knowable statically: a branch merge
+  # (`cd A || cd B`), an unresolved cd target, a shell on another host, a
+  # nested command string. root is a minted "<?N>" (its candidates are in
+  # Result#unknown_dirs), REMOTE_ROOT, or the unresolved target text itself
+  # (`cd "$(mktemp -d)"` gives "$(mktemp -d)", which `-F "$D/m"` also keys);
+  # segs are the relative steps taken from it since (`cd sub`, `cd ..`).
+  UnknownDir = Struct.new(:root, :segs) do
+    def key
+      ([root] + segs).join("/")
+    end
+
+    # The directory a static relative path names from here.
+    def join(rel)
+      out = segs.dup
+      rel.to_s.split("/").each do |seg|
+        next if seg.empty? || seg == "."
+
+        if seg == ".." && !out.empty? && out.last != ".."
+          out.pop
+        else
+          out << seg
+        end
+      end
+      UnknownDir.new(root, out)
     end
   end
 
@@ -127,6 +349,15 @@ module GitCommand
   Output = Struct.new(:text, :files)
   # An open ( ... ) / { ...; } / $(...) list collecting its members' Output.
   Group = Struct.new(:kind, :text, :files, :known)
+  # An open control construct in Evaluator#run: kind :if, :case, :loop, :or
+  # (the command after `||`), or a :paren / :brace marker. entry / stack: the
+  # cwd and dirstack each branch starts from; ends: [cwd, dirstack] where each
+  # finished branch ended; state: :cond / :elif / :body (if), :head / :pattern
+  # / :arm (case); otherwise: an else / `*)` arm was seen; replay (a for
+  # loop over static items): [NAME, [[value, extras], ...] still to run, index
+  # of the first body token]; origin (`||`): the cwd before the command on its
+  # left, where the shell stays when every cd in the list fails.
+  Flow = Struct.new(:kind, :state, :entry, :stack, :ends, :otherwise, :replay, :origin)
 
   def self.parse(command, cwd: Dir.pwd, home: ENV.fetch("HOME", nil))
     Evaluator.new(home).run_top(command.to_s.scrub, cwd)
@@ -134,10 +365,20 @@ module GitCommand
     fallback_scan(command, cwd)
   end
 
+  # text with each $(...) / `...` span removed (quotes and heredocs inside a
+  # span honoured); from an unterminated one on, the rest is kept.
+  def self.without_substitutions(text)
+    Lexer.new(text.to_s).without_substitutions
+  rescue StandardError, SystemStackError
+    text.to_s
+  end
+
   # The absolute path an (expanded) word names, relative to base, or nil when
-  # it is not static (an unresolved $ or `, or a relative path with base nil).
-  # raw is the word's source text: a leading ~ expands only when unquoted.
+  # it is not static (an unresolved $ or `, or a relative path whose base is
+  # nil or an UnknownDir). raw is the word's source text: a leading ~ expands
+  # only when unquoted.
   def self.resolve_path(base, value, raw = value, home: ENV.fetch("HOME", nil))
+    base = nil unless base.is_a?(String)
     v = value.to_s.dup
     if v.start_with?("~")
       if !raw.to_s.start_with?("~")
@@ -159,15 +400,18 @@ module GitCommand
   end
 
   # The key a file is known by in Result#writes and arg_extras: the resolved
-  # path, or for a path that is not static (`"$(mktemp)"`, `"$(mktemp
+  # path; for a path that is not static (`"$(mktemp)"`, `"$(mktemp
   # -d)/msg"`, `"$UNSET/m"`) its expanded text, so the write and the read of
-  # the same variable-held path meet. nil for an empty value, or a relative
-  # static path whose base is not known.
+  # the same variable-held path meet; for a static relative path under an
+  # UnknownDir base the base's key joined with it ("<?3>/msg"), so a file
+  # written and read under the same unknown cwd meets too. nil for an empty
+  # value, or a relative static path whose base is nil.
   def self.path_key(base, value, raw = value, home: ENV.fetch("HOME", nil))
     return nil if value.nil? || value.empty?
 
     resolve_path(base, value, raw, home: home) ||
-      (value.include?("$") || value.include?("`") ? value : nil)
+      (value.include?("$") || value.include?("`") ? value : nil) ||
+      (base.is_a?(UnknownDir) && !value.start_with?("~") ? base.join(value).key : nil)
   end
 
   QUOTED_OR_BARE = %q{(?:"[^"]*"|'[^']*'|[^\s;&|()]+)}
@@ -213,11 +457,14 @@ module GitCommand
       Invocation.new(dir: dir, globals: [], subcommand: "commit",
                      args: raw.split(/\s+/).reject(&:empty?).map { |a| a.delete(%q{"'}) },
                      arg_extras: [], env: {}, work_tree: nil,
-                     stdin: nil, stdin_source: nil, stdin_files: [], fallback: true, raw: raw)
+                     stdin: nil, stdin_source: nil, stdin_files: [], rewritten: [],
+                     fallback: true, raw: raw, dir_candidates: dir ? [dir] : [], base: dir,
+                     certain: true)
     end
-    Result.new(invocations: invocations, writes: {}, fallback: true)
+    Result.new(invocations: invocations, writes: {}, copies: {}, names: {}, fallback: true,
+               unknown_dirs: {})
   rescue StandardError, SystemStackError
-    Result.new(invocations: [], writes: {}, fallback: true)
+    Result.new(invocations: [], writes: {}, copies: {}, names: {}, fallback: true, unknown_dirs: {})
   end
 
   def self.utf8(bytes)
@@ -291,6 +538,8 @@ module GitCommand
   # stored on the Redir that introduced them.
   class Lexer
     META = [" ", "\t", "\n", ";", "&", "|", "(", ")", "<", ">"].freeze
+    # Operators a newline does not end the command after.
+    CONTINUED = %w[| |& || &&].freeze
     ESCAPES = {
       "n" => "\n", "t" => "\t", "r" => "\r", "a" => "\a", "b" => "\b", "e" => "\e",
       "E" => "\e", "f" => "\f", "v" => "\v", "\\" => "\\", "'" => "'", "\"" => "\"", "?" => "?"
@@ -326,6 +575,26 @@ module GitCommand
       new(src).tokenize.select { |type, _| type == :word }.map(&:last)
     end
 
+    # The source with each $(...) / `...` span cut out (see
+    # GitCommand.without_substitutions).
+    def without_substitutions
+      out = +""
+      i = 0
+      while i < @n
+        if @c[i] == "$" && @c[i + 1] == "("
+          i = scan_parens(i + 1)[0]
+        elsif @c[i] == "`"
+          i = scan_backtick(i)[0]
+        else
+          out << @c[i]
+          i += 1
+        end
+      end
+      out
+    rescue ParseError
+      out << @c[i..].join
+    end
+
     private
 
     def step
@@ -338,7 +607,9 @@ module GitCommand
       elsif ch == "\n"
         @i += 1
         read_heredoc_bodies
-        @tokens << [:op, "\n"]
+        # A newline after | |& || && continues the command (bash's linebreak
+        # rule); heredoc bodies are still read here.
+        @tokens << [:op, "\n"] unless @tokens.last&.first == :op && CONTINUED.include?(@tokens.last.last)
       elsif ch == "#"
         @i += 1 while @i < @n && @c[@i] != "\n"
       elsif ch == "&"
@@ -858,102 +1129,386 @@ module GitCommand
     GIT_VALUED = %w[-C -c --git-dir --work-tree --namespace --config-env --super-prefix
                     --attr-source].freeze
     GIT_META = { "-h" => "help", "--help" => "help", "-v" => "version", "--version" => "version" }.freeze
-    SUDO_VALUED = %w[-u -g -C -h -p -r -t -T -U --user --group --close-from --host --prompt
-                     --role --type --command-timeout --other-user].freeze
+    # Options that take a value: short letters (as the last letter of a
+    # cluster they take the next word) and long names (without `=`, the next
+    # word). sudo -h takes only an attached value (-hHOST).
+    SUDO_SHORT_VALUED = "aCcDgpRrTtUu"
+    SUDO_LONG_VALUED = %w[--user --group --close-from --host --prompt --role --type --chdir --chroot
+                          --command-timeout --other-user --auth-type --login-class].freeze
+    SU_SHORT_VALUED = "cgGsuw" # -u: runuser
+    SU_LONG_VALUED = %w[--command --session-command --group --supp-group --shell --user
+                        --whitelist-environment].freeze
+    SCRIPT_SHORT_VALUED = "cTIOBEmo"
+    SCRIPT_LONG_VALUED = %w[--command --log-timing --log-in --log-out --log-io --echo
+                            --logging-format --output-limit].freeze
     STDIN_OPS = %w[<< <<- <<< <].freeze
+    # Operators that end the command after `||`, and those that end a case arm.
+    OR_END_OPS = ["&&", "||", ";", "\n", "&", ";;", ";&", ";;&", ")"].freeze
+    CASE_ARM_OPS = [";;", ";&", ";;&"].freeze
+    # Flow kinds whose commands may not run (a write there may not happen).
+    CONDITIONAL = %i[if case loop or].freeze
+    # An unquoted word or assignment head naming a variable (Result#names).
+    NAMED_WORD = /\A([A-Za-z_][A-Za-z0-9_]*)(?:\z|\+?=|\[)/.freeze
     # Operators a $(...) / <(...) body may use and still have a literal output.
     SUBST_OPS = ["\n", ";", "&&", "||", "|"].freeze
     WRITE_OPS = %w[> >> >|].freeze
     DECLARE = %w[export declare typeset local readonly].freeze
     READ_VALUED = "adinNptu"
     # Commands whose later words are data, never a command they run, so a
-    # `git` among them is not searched for (`echo git commit`, `which git`).
+    # `git` among them is not searched for (`echo git commit`, `which git`)
+    # and no word of theirs is scanned as a nested command string (a gh
+    # --body / -b / -F, a jq --arg, a sed / awk program, a curl -d / wget
+    # --post-data, a logger message). osascript -e is a script, not data.
     DATA_COMMANDS = (%w[echo printf print grep egrep fgrep zgrep rg ag ack sed awk jq man info
                        help whatis apropos tldr which type whereis hash alias unalias test
                        : true false printenv set unset read export declare typeset local
-                       readonly] + ["[", "[["]).freeze
+                       readonly gh glab cat tee curl wget logger] + ["[", "[["]).freeze
+    # git subcommands whose arguments are text to search or show, never a
+    # command git runs; the others (`rebase -x`, `submodule foreach`, ...)
+    # have their words scanned.
+    GIT_DATA = %w[log show notes grep].freeze
+    # Wrappers strip_prefix models that may also come later in an argv
+    # (`flock L su - U -c`, `pct exec 104 -- su -c`, `xargs sudo -iu U`).
+    TAIL_WRAPPERS = %w[env nice nohup timeout sudo su runuser script].freeze
+    # ssh options that take a value (as the last letter of a cluster, the next
+    # word), and those after which it runs no remote command.
+    SSH_SHORT_VALUED = "BbcDEeFIiJLlmOoPpRSWw"
+    SSH_NO_COMMAND = %w[-N -O -W -s].freeze
+    # A for loop over at most MAX_FOR_ITEMS static items runs its body once
+    # per item; MAX_REPLAYS caps the extra body runs in one parse.
+    MAX_FOR_ITEMS = 16
+    MAX_REPLAYS = 64
+    # The most candidate directories one unknown cwd keeps. Each branch merge
+    # with distinct relative cds can triple the set (`cd a1 || cd b1; cd a2 ||
+    # cd b2; ...`, if / case arms) and a chain of cds into the same name grows
+    # it by one per link, so past the cap the cwd is a token with no
+    # candidates: its key still meets the writes made under it, and only the
+    # on-disk lookups are lost.
+    MAX_CANDIDATES = 64
+    # Commands that read their own stdin as data: a shell they start does not
+    # get it as its script.
+    ARGS_FROM_STDIN = %w[xargs parallel].freeze
+    SHELL_LONG_OPTIONS = %w[--login --noprofile --norc --posix --restricted --verbose --noediting
+                            --debugger --dump-strings --dump-po-strings --pretty-print --protected
+                            --wordexp].freeze
     # Wrappers that run their command on another host or in another root: a
     # commit behind them is still found, but its directory is not this one.
     REMOTE_COMMANDS = %w[ssh mosh docker podman kubectl lxc lxc-attach incus pct qm vagrant
                          multipass distrobox toolbox chroot schroot nsenter machinectl
                          systemd-run].freeze
+    # Interpreters whose program option takes code in their own language,
+    # which no shell reads (`python3 -c P`, `ruby -e P`, `perl -lne P`, `node
+    # -e P` / `-p P` / `--eval=P`): that word is not scanned as a nested
+    # command string (interpreter_programs). Short option letters per
+    # interpreter: program (its value is the program), valued (a value
+    # attached, or else the next word), rest (the rest of the word is its
+    # value), digits (attached octal / hex digits), ends (no option follows);
+    # attached: a program may be attached (`-e'P'`, `-cP`; node has none, its
+    # `-pe` is `-p -e`); long: options whose value is the program;
+    # long_valued: long options whose value may be the next word.
+    Interpreter = Struct.new(:program, :valued, :rest, :digits, :ends, :attached, :long, :long_valued)
+    INTERPRETERS = {
+      "ruby" => Interpreter.new("e", "CEIr", "FiKWx", "0", "", true, [],
+                                %w[--encoding --external-encoding --internal-encoding]),
+      "perl" => Interpreter.new("eE", "I", "CdDFimMx", "0l", "", true, [], []),
+      "python" => Interpreter.new("c", "mWX", "", "", "cm", true, [], []),
+      "node" => Interpreter.new("ep", "rC", "", "", "", false, %w[--eval --print],
+                                %w[--require --import --loader --experimental-loader --input-type
+                                   --conditions --env-file]),
+    }.freeze
+    # ruby, perl, node, python, python3, python3.12 (by basename).
+    INTERPRETER_NAME = /\A(ruby|perl|node|python)(?:\d+(?:\.\d+)*)?\z/.freeze
+    # A `--NAME=VALUE` word: in a nested command string scan, VALUE is the
+    # candidate script (`git rebase --exec='git commit ...'`).
+    LONG_OPTION_VALUE = /\A--[A-Za-z0-9][A-Za-z0-9-]*=/.freeze
 
     def initialize(home)
       @home = home
       @invocations = []
       @writes = {}
+      @copies = {}
+      @rewritten = []
+      @names = {}
       @vars = {}
       @assigned = {} # every name any modeled form set, in any scope
+      @remote = 0 # > 0 inside a shell run behind ssh / docker ...
+      @conditional = 0 # open if / case / loop / `||` frames, all runs
+      @inherit = nil # [text, source, files]: the stdin of the shell running this script
+      @pending_for = nil # replay of the for header just evaluated, for its `do`
+      @replays = MAX_REPLAYS
+      @uncertain = 0 # > 0 inside a command string scanned as a nested script
+      @unknown_seq = 0
+      @unknown_dirs = {} # "<?N>" => the directories that unknown cwd can be
     end
 
     def run_top(src, cwd)
       run(src, cwd, 0)
-      Result.new(invocations: @invocations, writes: @writes, fallback: false)
+      Result.new(invocations: @invocations, writes: @writes, copies: @copies, names: @names,
+                 fallback: false, unknown_dirs: @unknown_dirs)
     end
 
     private
 
-    def run(src, cwd, depth)
+    # tokens: src already lexed (a nested command string, see scan_nested).
+    def run(src, cwd, depth, tokens = nil)
       return cwd if depth > MAX_DEPTH
 
-      tokens =
+      tokens ||=
         begin
           Lexer.new(src).tokenize
         rescue ParseError
           raise if depth.zero?
 
           # A nested string (bash -c, $(...), eval) bash itself would reject:
-          # scan just that string, keep everything parsed around it.
-          @invocations.concat(GitCommand.fallback_scan(src, cwd).invocations)
+          # scan just that string, keep everything parsed around it. Behind
+          # ssh / docker ... its cd targets are not this host's.
+          fallback_nested(src, cwd)
           return cwd
         end
       scopes = []
       groups = []
       dirstack = []
+      flow = []
       cur = new_command(nil)
-      tokens.each do |type, val|
+      pos = 0
+      while pos < tokens.size
+        type, val = tokens[pos]
+        pos += 1
+        top = flow.last
+        pattern = top&.kind == :case && top.state == :pattern
         case type
         when :word
-          brace(groups, cur, val)
+          if pattern
+            # A case pattern is not a command; `esac` ends the case.
+            top.otherwise = true if val.raw == "*"
+            next unless val.raw == "esac"
+
+            cwd = close_flow(flow, :case, cwd, dirstack)
+          elsif top&.kind == :case && top.state == :head && val.raw == "in"
+            top.state = :pattern
+            top.entry = cwd
+            top.stack = dirstack.dup
+          elsif keyword?(cur, val)
+            if val.value == "done"
+              cwd = close_or(flow, cwd, dirstack)
+              if (body = next_item(flow.last))
+                # The next item: the body again, from where this run ended.
+                pos = body
+                cur = new_command(nil)
+                next
+              end
+            end
+            cwd = flow_keyword(flow, val.value, cwd, dirstack)
+            attach_replay(flow.last, pos) if val.value == "do"
+            brace(groups, flow, cur, val)
+          end
           cur.words << val
         when :redir then cur.redirs << val
         else
+          if pattern && val != "\n"
+            next unless val == ")" # `a|b)`, `(a)`
+
+            cwd = finish(cur, cwd, dirstack, depth) unless blank?(cur) # `case x in`
+            top.state = :arm
+            cur = new_command(nil)
+            next
+          end
           cur.piped_out = true if val == "|" || val == "|&"
           cur.async = true if val == "&"
           before = cwd
           cwd = finish(cur, cwd, dirstack, depth) unless blank?(cur)
           collect_output(groups.last, cur, before)
+          cwd = flow_op(flow, val, cwd, dirstack, before)
           closed = nil
           case val
           when "("
             scopes.push([cwd, dirstack.dup, @vars.dup])
             groups.push(new_group(:paren))
+            push_flow(flow, :paren)
           when ")"
             cwd, dirstack, @vars = scopes.pop unless scopes.empty?
+            pop_to(flow, :paren)
             closed = close_group(groups, :paren)
           end
           cur = new_command(cur.piped_out ? (blank?(cur) && cur.group.nil? ? :unknown : cur) : nil)
           cur.group = closed
         end
       end
-      return cwd if blank?(cur)
-
-      cwd = finish(cur, cwd, dirstack, depth)
-      collect_output(groups.last, cur, cwd)
+      unless blank?(cur)
+        before = cwd
+        cwd = finish(cur, cwd, dirstack, depth)
+        collect_output(groups.last, cur, before)
+      end
+      cwd = close_or(flow, cwd, dirstack)
+      pop_flow(flow) until flow.empty?
+      @pending_for = nil # a for header with no `do`
       cwd
+    end
+
+    # An unquoted word that starts a command (after `!`, `{`, then ...).
+    def keyword?(cur, word)
+      word.raw == word.value && drop_reserved(cur.words).empty?
     end
 
     # `{` / `}` as the first word of a command opens / closes a brace group;
     # the `}` command then stands for the group (its output, redirections and
     # pipe).
-    def brace(groups, cur, word)
-      return unless word.raw == word.value && drop_reserved(cur.words).empty?
-
+    def brace(groups, flow, cur, word)
       if word.value == "{"
         groups.push(new_group(:brace))
+        push_flow(flow, :brace)
       elsif word.value == "}"
+        pop_to(flow, :brace)
         cur.group = close_group(groups, :brace)
       end
+    end
+
+    # ---- control flow -----------------------------------------------------
+
+    def push_flow(flow, kind, state = nil, entry = nil, stack = nil)
+      @conditional += 1 if CONDITIONAL.include?(kind)
+      flow.push(Flow.new(kind, state, entry, stack, [], false))
+    end
+
+    def pop_flow(flow)
+      f = flow.pop
+      @conditional -= 1 if f && CONDITIONAL.include?(f.kind)
+      f
+    end
+
+    # Pops up to and including the innermost frame of that kind, if any.
+    def pop_to(flow, kind)
+      idx = flow.rindex { |f| f.kind == kind }
+      pop_flow(flow) while idx && flow.size > idx
+    end
+
+    # The cwd after a construct whose branches ended at ends ([cwd, dirstack]
+    # pairs): their shared directory, or else a new UnknownDir whose
+    # candidates are every directory those ends and the construct's entry
+    # (where a failed cd leaves the shell) can be, none past MAX_CANDIDATES;
+    # the dirstack likewise (unknown entries are nil, so a later popd gives an
+    # unknown cwd).
+    def merge_ends(ends, dirstack, entry = nil)
+      stacks = ends.map(&:last).uniq
+      dirstack.replace(stacks.size == 1 ? stacks[0] : Array.new(stacks.map(&:size).max))
+      cwds = ends.map(&:first).uniq
+      return cwds[0] if cwds.size == 1
+
+      unknown_dir(merged_candidates(cwds + [entry]))
+    end
+
+    # The candidates of dirs, each once; none as soon as there would be more
+    # than MAX_CANDIDATES (see there), so a merge costs at most that many
+    # lookups per end, never the product of the merges before it.
+    def merged_candidates(dirs)
+      seen = {}
+      dirs.each do |dir|
+        candidates_of(dir).each do |c|
+          seen[c] = true
+          return [] if seen.size > MAX_CANDIDATES
+        end
+      end
+      seen.keys
+    end
+
+    # Ends the commands after `||` still open at the top: either they ran or
+    # the cwd stayed where the `||` found it.
+    def close_or(flow, cwd, dirstack)
+      while flow.last&.kind == :or
+        f = pop_flow(flow)
+        cwd = merge_ends([[f.entry, f.stack], [cwd, dirstack.dup]], dirstack, f.origin)
+      end
+      cwd
+    end
+
+    # After an operator: `||` opens a branch, one of OR_END_OPS ends the open
+    # one, and ;; / ;& / ;;& ends a case arm (the next arm starts afresh).
+    # before: the cwd before the command that ended at op.
+    def flow_op(flow, op, cwd, dirstack, before = cwd)
+      return cwd unless OR_END_OPS.include?(op)
+
+      cwd = close_or(flow, cwd, dirstack)
+      top = flow.last
+      if op == "||"
+        push_flow(flow, :or, nil, cwd, dirstack.dup)
+        flow.last.origin = before
+      elsif CASE_ARM_OPS.include?(op) && top&.kind == :case && top.state == :arm
+        top.ends << [cwd, dirstack.dup]
+        top.state = :pattern
+        dirstack.replace(top.stack)
+        cwd = top.entry
+      end
+      cwd
+    end
+
+    # if / then / elif / else / fi, while / until / for / select ... do /
+    # done and case / esac at the start of a command (see the header).
+    def flow_keyword(flow, word, cwd, dirstack)
+      top = flow.last
+      case word
+      when "if" then push_flow(flow, :if, :cond)
+      when "case" then push_flow(flow, :case, :head)
+      when "while", "until", "for", "select" then push_flow(flow, :loop, :cond, cwd, dirstack.dup)
+      when "then"
+        if top&.kind == :if
+          if top.state == :cond # the first condition always runs
+            top.entry = cwd
+            top.stack = dirstack.dup
+          end
+          top.state = :body
+        end
+      when "elif", "else"
+        if top&.kind == :if && top.stack
+          top.ends << [cwd, dirstack.dup]
+          top.otherwise = true if word == "else"
+          top.state = word == "elif" ? :elif : :body
+          dirstack.replace(top.stack)
+          return top.entry
+        end
+      when "do"
+        if top&.kind == :loop
+          top.entry = cwd
+          top.stack = dirstack.dup
+        end
+      when "fi" then return close_flow(flow, :if, cwd, dirstack)
+      when "done" then return close_flow(flow, :loop, cwd, dirstack)
+      when "esac" then return close_flow(flow, :case, cwd, dirstack)
+      end
+      cwd
+    end
+
+    # `do` of the for loop whose header for_loop just evaluated: the items
+    # still to run and where its body starts.
+    def attach_replay(top, pos)
+      pending = @pending_for
+      @pending_for = nil
+      top.replay = [pending[0], pending[1], pos] if pending && top&.kind == :loop
+    end
+
+    # At the `done` of a for loop with items left: NAME takes the next one
+    # and the body index is returned; nil closes the loop as usual.
+    def next_item(top)
+      return nil unless top&.kind == :loop && top.replay && !top.replay[1].empty?
+
+      text, extras = top.replay[1].shift
+      set_var(top.replay[0], text, extras)
+      top.replay[2]
+    end
+
+    # fi / done / esac: the branches' ends, plus the entry itself when no
+    # branch has to run (no else, a loop body, a case without `*)`).
+    def close_flow(flow, kind, cwd, dirstack)
+      cwd = close_or(flow, cwd, dirstack)
+      return cwd unless flow.last&.kind == kind
+
+      f = pop_flow(flow)
+      return cwd unless f.stack # `if x; fi`: no branch was entered
+
+      ends = f.ends.dup
+      ends << [cwd, dirstack.dup] unless f.kind == :case && f.state == :pattern # after `;;`
+      ends << [f.entry, f.stack] unless f.otherwise
+      return cwd if ends.empty? # `case x in esac`
+      merge_ends(ends, dirstack, f.entry)
     end
 
     def new_group(kind)
@@ -992,10 +1547,10 @@ module GitCommand
 
     # A child shell or substitution: it sees the variables, its own do not
     # come back.
-    def nested_run(src, cwd, depth)
+    def nested_run(src, cwd, depth, tokens = nil)
       saved = @vars
       @vars = @vars.dup
-      run(src, cwd, depth)
+      run(src, cwd, depth, tokens)
     ensure
       @vars = saved
     end
@@ -1015,7 +1570,11 @@ module GitCommand
     # Evaluates one simple command; returns the cwd for the next one. The
     # caller sets the `|` / `&` flags before calling, so isolated? sees them.
     def finish(cmd, cwd, dirstack, depth)
-      cmd.words.each { |w| w.substs.each { |body| nested_run(body, cwd, depth + 1) } }
+      cmd.words.each do |w|
+        m = NAMED_WORD.match(w.raw)
+        @names[m[1]] = true if m
+        w.substs.each { |body| nested_run(body, cwd, depth + 1) }
+      end
       cmd.redirs.each do |r|
         r.target.substs.each { |body| nested_run(body, cwd, depth + 1) } unless heredoc?(r)
       end
@@ -1024,6 +1583,7 @@ module GitCommand
       return for_loop(core, cwd) if for_loop?(core)
 
       words, dir, env = strip_prefix(expand_words(cmd.words, cwd), cwd)
+      dir = here(dir)
       record_writes(cmd, cwd)
       return cwd if words.empty?
 
@@ -1035,16 +1595,22 @@ module GitCommand
 
         dirstack.push(cwd)
         cd_target(words, dir, pushd: true)
-      when "popd" then isolated?(cmd) || dirstack.empty? ? cwd : dirstack.pop
+      when "popd" then isolated?(cmd) || dirstack.empty? ? cwd : here(dirstack.pop)
       when "eval"
         after = run(words[1..].map(&:value).join(" "), dir, depth + 1)
         isolated?(cmd) ? cwd : after
       when *SHELLS
-        script = shell_script(cmd, words, cwd)
-        nested_run(script, dir, depth + 1) if script
+        script, used = shell_script(cmd, words, cwd)
+        run_shell(script, dir, exported_env.merge(env), depth, used.positive? ? stdin_of(cmd, cwd) : nil) if script
+        # Its other words are the script's arguments ($1 ...), which it may run.
+        scan_words(cmd, words, 1, cwd, depth, !(script && used.zero?), used.positive? ? used : nil, dir: dir)
         cwd
       when "git"
-        @invocations << git_invocation(cmd, words, dir, cwd, exported_env.merge(env))
+        inv = git_invocation(cmd, words, dir, cwd, exported_env.merge(env))
+        @invocations << inv
+        # `git rebase -x CMD`, `git submodule foreach CMD`: a string git runs
+        # (from its -C directory).
+        scan_words(cmd, words, 1, cwd, depth, dir: inv.base) unless inv.commit? || GIT_DATA.include?(inv.subcommand)
         cwd
       else
         unless isolated?(cmd)
@@ -1052,9 +1618,23 @@ module GitCommand
           read_into(cmd, words, cwd) if name == "read"
           printf_into(words, cwd) if name == "printf"
         end
-        wrapped_git(cmd, words, dir, cwd, exported_env.merge(env), name)
+        wrapped(cmd, words, dir, cwd, exported_env.merge(env), name, depth)
         cwd
       end
+    end
+
+    # A child shell's script, run in dir; a HOME in its environment (su,
+    # sudo -i / -H, `HOME=x bash -c`) is its ~ and $HOME, nil when unknown.
+    # stdin: the shell's own stdin ([text, source, files]) for a -c script,
+    # which every command in it without a stdin of its own reads; nil for a
+    # script read from stdin, which has used it up.
+    def run_shell(script, dir, env, depth, stdin = nil)
+      saved = [@home, @inherit]
+      @home = env["HOME"] if env.key?("HOME")
+      @inherit = stdin
+      nested_run(script, dir, depth + 1)
+    ensure
+      @home, @inherit = saved
     end
 
     # A cd in a pipeline element or a background job runs in a subshell.
@@ -1072,21 +1652,223 @@ module GitCommand
     end
 
     # A command this parser does not know (xargs, mise exec --, flock, find
-    # -exec, stdbuf ...): the first later `git` word that starts a commit is
-    # taken as the command it runs. Only commits are recorded from here.
-    def wrapped_git(cmd, words, dir, cwd, env, name)
+    # -exec, stdbuf, setsid ...), scanned for the command it runs; a word
+    # that starts with "-" is an option, never that command:
+    #   - the first later `git` word that starts a commit (only commits are
+    #     recorded from here);
+    #   - a later TAIL_WRAPPERS word (su, sudo, runuser, script, env, ...),
+    #     unwrapped by strip_prefix, whose command is then taken the same way
+    #     (wrapped_command);
+    #   - a later ssh word: its remote command string (ssh_command);
+    #   - a later shell word (only real shell options after it, so `--label
+    #     bash` is not one): its -c string is parsed, or its stdin (-s, or no
+    #     operands) unless the command reads stdin itself (xargs), a shell
+    #     before it in the same command already ran, or the word directly
+    #     follows an option, whose value it then is (`shellcheck -s bash -`,
+    #     `bat -l sh`).
+    #   - an interpreter's program (`python3 -c P`, `xargs ruby -e P`; see
+    #     interpreter_programs): skipped, code in that language, not shell;
+    #   - any other word: scanned as a nested command string (scan_nested),
+    #     which is how `flock L -c S`, `sg G -c S`, `watch S`, `parallel :::
+    #     S`, `tmux send-keys S` and wrappers no table lists are covered;
+    #     not once a data command word (DATA_COMMANDS, or git with a GIT_DATA
+    #     subcommand) came before it, whose text the rest of the argv is
+    #     (`xargs echo S`, `find -exec grep S {} +`).
+    # From a REMOTE_COMMANDS word on, at words[0] or later, all of them run
+    # remote (dir nil). A data command at words[0] is not scanned at all.
+    def wrapped(cmd, words, dir, cwd, env, name, depth, remote: false, stdin_free: true)
       return if DATA_COMMANDS.include?(name)
+      return ssh_command(cmd, words, cwd, env, depth, stdin_free) if name == "ssh"
 
-      remote = REMOTE_COMMANDS.include?(name)
-      (1...words.size).each do |idx|
-        next unless command_name(words[idx]) == "git"
-
-        inv = git_invocation(cmd, words[idx..], remote ? nil : dir, cwd, env, remote: remote)
-        next unless inv.commit?
-
-        @invocations << inv
-        return
+      remote ||= REMOTE_COMMANDS.include?(name)
+      stdin_free &&= !ARGS_FROM_STDIN.include?(name)
+      # Inside a nested command string, a string with blanks in command
+      # position is a script some program runs (`lua -e 'os.execute("git
+      # commit ...")'`).
+      if @uncertain.positive? && words[0].value.match?(/\s/)
+        scan_nested(cmd, words[0], cwd, depth, stdin_free, dir: dir, remote: remote)
       end
+      data = false # a data command word was passed: the words after it are its text
+      code = interpreter_programs(words, 0) # {index => true} of an interpreter's program words
+      idx = 1
+      while idx < words.size
+        word = words[idx]
+        if code[idx] # `python3 -c P`: code in that language, not shell
+          idx += 1
+          next
+        end
+        cname = word.value.start_with?("-") ? "" : command_name(word)
+        remote ||= REMOTE_COMMANDS.include?(cname)
+        optval = option_value?(words[idx - 1])
+        if DATA_COMMANDS.include?(cname)
+          data = true # `xargs echo S`, `find -exec grep S {} +`
+        elsif cname == "git"
+          inv = git_invocation(cmd, words[idx..], dir, cwd, env, remote: remote)
+          if inv.commit?
+            @invocations << inv
+            return
+          end
+          data ||= GIT_DATA.include?(inv.subcommand) # `xargs git log --grep S`
+        elsif cname == "ssh" && !optval # not `rsync -e ssh`
+          return ssh_command(cmd, words[idx..], cwd, env, depth, stdin_free)
+        elsif TAIL_WRAPPERS.include?(cname)
+          rest, wdir, wenv = strip_prefix(words[idx..], dir)
+          unless rest.empty? || rest[0].equal?(word)
+            return wrapped_command(cmd, rest, remote ? unknown_dir : here(wdir), cwd, env.merge(wenv), depth,
+                                   remote, stdin_free)
+          end
+        elsif shell_word?(word)
+          script, used = shell_script(cmd, words[idx..], cwd, stdin: stdin_free && !optval, strict: true)
+          if script
+            wrapped_shell(cmd, script, used, dir, cwd, env, depth, remote, stdin_free)
+            stdin_free = false
+            idx += used
+          end
+        elsif INTERPRETER_NAME.match?(cname)
+          code.merge!(interpreter_programs(words, idx)) # `xargs python3 -c P`
+        elsif !data
+          scan_nested(cmd, word, cwd, depth, stdin_free, dir: dir, remote: remote)
+        end
+        idx += 1
+      end
+    end
+
+    # {index => true} for the words after words[at], an interpreter by
+    # basename (INTERPRETERS), that are its program: the value of a program
+    # option (`-e P`, `-c P`, `-lne P`, `-e'P'`, `--eval=P`), up to the first
+    # word that is not an option (its script file, or the program's
+    # arguments).
+    def interpreter_programs(words, at)
+      m = INTERPRETER_NAME.match(command_name(words[at]))
+      spec = m && INTERPRETERS[m[1]]
+      found = {}
+      return found unless spec
+
+      i = at + 1
+      while (w = words[i]) && w.value.start_with?("-") && !["-", "--"].include?(w.value)
+        opt = w.value
+        i = opt.start_with?("--") ? long_program(spec, opt, i + 1, found) : short_program(spec, opt, i + 1, found)
+        break if i.nil?
+      end
+      found
+    end
+
+    # A long option at words[i - 1]: records a program word in found; returns
+    # the index of the next option word.
+    def long_program(spec, opt, i, found)
+      name, eq, = opt.partition("=")
+      if spec.long.include?(name)
+        found[eq.empty? ? i : i - 1] = true
+        return eq.empty? ? i + 1 : i
+      end
+      eq.empty? && spec.long_valued.include?(name) ? i + 1 : i
+    end
+
+    # A short option cluster at words[i - 1] (`-lne`, `-rjson`, `-0777`):
+    # records a program word in found; returns the index of the next option
+    # word, or nil when no option follows (python's -c / -m).
+    def short_program(spec, opt, i, found)
+      j = 1
+      while j < opt.length
+        ch = opt[j]
+        j += 1
+        if spec.program.include?(ch)
+          attached = j < opt.length && spec.attached
+          found[attached ? i - 1 : i] = true
+          i += 1 unless attached
+          return spec.ends.include?(ch) ? nil : i
+        elsif spec.valued.include?(ch)
+          i += 1 if j == opt.length
+          return spec.ends.include?(ch) ? nil : i
+        elsif spec.rest.include?(ch)
+          return i
+        elsif spec.digits.include?(ch)
+          j += opt[j..][/\A(?:[xX]\h*|[0-7]*)/].length
+        end
+      end
+      i
+    end
+
+    # What a TAIL_WRAPPERS word later in an argv runs, words[0] being its
+    # command (`flock L su root -c S` gives [sh -c S]): a git commit, a shell,
+    # or a command scanned like any other.
+    def wrapped_command(cmd, words, dir, cwd, env, depth, remote, stdin_free)
+      name = command_name(words[0])
+      if name == "git"
+        inv = git_invocation(cmd, words, dir, cwd, env, remote: remote)
+        @invocations << inv if inv.commit?
+      elsif shell_word?(words[0])
+        script, used = shell_script(cmd, words, cwd, stdin: stdin_free, strict: true)
+        wrapped_shell(cmd, script, used, dir, cwd, env, depth, remote, stdin_free) if script
+      else
+        wrapped(cmd, words, dir, cwd, env, name, depth, remote: remote, stdin_free: stdin_free)
+      end
+    end
+
+    # A shell found inside another command's argv: a -c script reads the
+    # command's stdin unless that is the command's own data (xargs).
+    def wrapped_shell(cmd, script, used, dir, cwd, env, depth, remote, stdin_free)
+      stdin = used.positive? && stdin_free ? stdin_of(cmd, cwd) : nil
+      remote_run(remote) { run_shell(script, remote ? unknown_dir : here(dir), env, depth, stdin) }
+    end
+
+    # ssh [options] DEST [options] [--] [COMMAND ...]: sshd hands the remote
+    # shell the COMMAND words joined with spaces (their quotes already
+    # removed here), and that shell reads ssh's stdin (none with -n or under
+    # xargs); with no COMMAND the login shell reads stdin as its script. -N /
+    # -O / -W / -s run no command. Everything in it runs remote (dir nil).
+    def ssh_command(cmd, words, cwd, env, depth, stdin_free)
+      ws = words.drop(1)
+      dest = nil
+      ended = false
+      until ws.empty?
+        w = ws.first
+        if !ended && w.value.start_with?("-") && w.value.length > 1
+          ws.shift
+          if w.value == "--"
+            ended = true
+            next
+          end
+
+          names = option_values(w, ws, SSH_SHORT_VALUED, []).map(&:first)
+          return if names.any? { |n| SSH_NO_COMMAND.include?(n) }
+
+          stdin_free = false if names.include?("-n")
+        elsif dest.nil?
+          dest = ws.shift
+        else
+          break
+        end
+      end
+      return unless dest
+
+      script = ws.map(&:value).join(" ")
+      stdin = stdin_free ? stdin_of(cmd, cwd) : nil
+      if script.strip.empty?
+        script = stdin && stdin[0]
+        stdin = nil
+      end
+      remote_run(true) { run_shell(script, unknown_dir, env, depth, stdin) } if script
+    end
+
+    # bash, /bin/sh ... as a whole word (not text that ends in one, nor an
+    # option such as --shell=/bin/bash).
+    def shell_word?(word)
+      SHELLS.include?(command_name(word)) && !word.value.match?(/\s/) && !word.value.start_with?("-")
+    end
+
+    # The word before is an option (not `-` / `--` / --name=value), so the
+    # word after it is most likely that option's value.
+    def option_value?(prev)
+      v = prev.value
+      v.start_with?("-") && !["-", "--"].include?(v) && !v.include?("=")
+    end
+
+    def remote_run(remote)
+      @remote += 1 if remote
+      yield
+    ensure
+      @remote -= 1 if remote
     end
 
     def cd_target(words, base, pushd: false)
@@ -1094,10 +1876,133 @@ module GitCommand
       i += 1 while words[i] && words[i].value.match?(/\A-[LPe@]+\z/)
       i += 1 if words[i]&.value == "--"
       word = words[i]
-      return nil if word && word.value == "-"
-      return (pushd ? nil : @home && File.expand_path(@home)) if word.nil?
+      return unknown_dir if word && word.value == "-"
+      return (pushd ? unknown_dir : here(@home && File.expand_path(@home))) if word.nil?
 
-      resolve_path(base, word.value, word.raw)
+      chdir(base, word.value, word.raw)
+    end
+
+    # ---- unknown directories ---------------------------------------------
+
+    # The directory a cd / -C / env -C / sudo -D to value leaves the shell
+    # in: the resolved path; for a target that stays unresolved (`"$X"`,
+    # `"$(mktemp -d)"`) an UnknownDir rooted at that text; for a static
+    # relative path under an unknown cwd that cwd joined with it; else a new
+    # UnknownDir. remote: the directory is on another host (see here).
+    def chdir(base, value, raw = value, remote = @remote.positive?)
+      path = resolve_path(base, value, raw)
+      return here(path, remote) if path
+      return UnknownDir.new(value, []) if value.include?("$") || value.include?("`")
+      return base.join(value) if base.is_a?(UnknownDir) && !value.empty? && !value.start_with?("~")
+
+      unknown_dir
+    end
+
+    # dir as the cwd of a command: nil (not knowable) becomes a new
+    # UnknownDir; a path while remote (inside a shell behind ssh / docker
+    # ...) names a directory on that host, so it becomes an UnknownDir under
+    # REMOTE_ROOT, which no local candidate backs.
+    def here(dir, remote = @remote.positive?)
+      return unknown_dir if dir.nil?
+      return dir unless remote && dir.is_a?(String)
+
+      UnknownDir.new(REMOTE_ROOT, dir.split("/").reject(&:empty?))
+    end
+
+    # A new UnknownDir; candidates: the local directories it can be, kept in
+    # Result#unknown_dirs (none when nothing is knowable).
+    def unknown_dir(candidates = [])
+      @unknown_seq += 1
+      root = "<?#{@unknown_seq}>"
+      @unknown_dirs[root] = candidates unless candidates.empty?
+      UnknownDir.new(root, [])
+    end
+
+    # The local directories a cwd can be: itself when it is a path; the
+    # candidates of an UnknownDir's root with its relative steps applied.
+    def candidates_of(dir)
+      case dir
+      when String then [dir]
+      when UnknownDir
+        roots = @unknown_dirs.fetch(dir.root, [])
+        return roots if dir.segs.empty?
+
+        rel = dir.segs.join("/")
+        # join already dropped "." and inner ".."; only a leading ".." needs
+        # expand_path, so the rest is plain string work.
+        return roots.map { |c| File.expand_path(rel, c) } if dir.segs.first == ".."
+
+        roots.map { |c| c == "/" ? "/#{rel}" : "#{c}/#{rel}" }
+      else []
+      end
+    end
+
+    # ---- nested command strings -------------------------------------------
+
+    # words[from..] (but not words[skip]) each scanned by scan_nested.
+    def scan_words(cmd, words, from, cwd, depth, stdin_free = true, skip = nil, dir: cwd)
+      (from...words.size).each do |i|
+        scan_nested(cmd, words[i], cwd, depth, stdin_free, dir: dir) unless i == skip
+      end
+    end
+
+    # An argv word that no explicit model consumed, of a command that is not
+    # a data command: when its text lexes and names git and commit, it is
+    # parsed as a script some program may run (`flock L -c S`, `watch S`,
+    # `tmux send-keys S`, `git rebase -x S`); of a `--NAME=VALUE` word, the
+    # VALUE (`git rebase --exec=S`). Everything found in it is uncertain
+    # (Invocation#certain false, dir nil, no dir_candidates): it starts in a
+    # new UnknownDir whose candidates are those of dir, the directory the
+    # command runs in (none when it runs remote: remote, or a shell behind
+    # ssh / docker ...), so a relative file it reads is looked up where the
+    # command wrote it or has it on disk; it reads the command's stdin unless
+    # that is the command's own data (stdin_free false), and a truncating
+    # write in it does not count as having happened (rewritten). Text that
+    # does not lex is not a script any shell would run. A word that names
+    # them only inside its own $(...) / <(...) is skipped: finish already ran
+    # those bodies.
+    def scan_nested(cmd, word, cwd, depth, stdin_free, dir: cwd, remote: false)
+      text = word.value.sub(LONG_OPTION_VALUE, "")
+      return unless names_commit?(text)
+
+      rest = text.dup
+      word.substs.each { |body| ["$(#{body})", "<(#{body})", ">(#{body})"].find { |src| rest.sub!(src, "") } }
+      return unless names_commit?(rest)
+
+      tokens = Lexer.new(text).tokenize
+      saved = @inherit
+      @inherit = stdin_free ? stdin_of(cmd, cwd) : nil
+      @uncertain += 1
+      @conditional += 1
+      begin
+        candidates = remote || @remote.positive? ? [] : merged_candidates([dir])
+        nested_run(text, unknown_dir(candidates), depth + 1, tokens)
+      ensure
+        @uncertain -= 1
+        @conditional -= 1
+        @inherit = saved
+      end
+    rescue ParseError
+      nil
+    end
+
+    def names_commit?(text)
+      text.include?("commit") && text.include?("git")
+    end
+
+    # The regex scan of a nested string the lexer rejects (see run), its
+    # invocations marked the way git_invocation marks them here.
+    def fallback_nested(src, cwd)
+      found = GitCommand.fallback_scan(src, cwd.is_a?(String) ? cwd : nil).invocations
+      found.each do |inv|
+        inv.certain = @uncertain.zero?
+        next unless @remote.positive? || !inv.certain
+
+        inv.dir = nil
+        inv.dir_candidates = []
+        inv.base = unknown_dir
+      end
+      @invocations.concat(found)
     end
 
     def resolve_path(base, value, raw = value)
@@ -1164,7 +2069,7 @@ module GitCommand
     def env_value(name, cwd)
       case name
       when "HOME" then @home
-      when "PWD" then cwd
+      when "PWD" then cwd.is_a?(String) ? cwd : nil
       when "OLDPWD" then nil
       else
         value = ENV.fetch(name, nil)
@@ -1176,7 +2081,7 @@ module GitCommand
     # `pwd` (the cwd) and `git [-C dir] rev-parse --show-toplevel` (the
     # nearest ancestor of that directory holding .git); nil for anything else.
     def static_subst(body, cwd)
-      return nil if cwd.nil?
+      return nil unless cwd.is_a?(String)
 
       tokens = Lexer.new(body).tokenize
       return nil if tokens.any? { |type, val| (type == :op && val != "\n") || (type == :redir && val.fd != "2") }
@@ -1185,7 +2090,7 @@ module GitCommand
       return nil unless words.any? { |w| STATIC_SUBST_COMMANDS.include?(command_name(w)) }
 
       words, dir, env = strip_prefix(expand_words(words, cwd), cwd)
-      return nil if words.empty? || dir.nil?
+      return nil if words.empty? || !dir.is_a?(String)
 
       case command_name(words[0])
       when "pwd" then words[1..].all? { |w| w.value.match?(/\A-[LP]+\z/) } ? dir : nil
@@ -1205,7 +2110,7 @@ module GitCommand
           return nil unless words[i + 1]
 
           dir = resolve_path(dir, words[i + 1].value, words[i + 1].raw) unless words[i + 1].value.empty?
-          return nil if dir.nil?
+          return nil unless dir.is_a?(String)
 
           i += 2
         when "-c" then i += 2
@@ -1309,12 +2214,17 @@ module GitCommand
       set_var(name, text, word_extras(word, cwd), exported: exported, append: append)
     end
 
+    # An assignment inside an if / case / loop / `||` branch may not run, so
+    # the value before it stays possible: its text (without $(...) source)
+    # and extras are kept as extras of the new value.
     def set_var(name, text, extras, exported: false, append: false)
       @assigned[name] = true
       old = @vars[name]
       if append && old
         text = old.text + text
         extras = old.extras + extras
+      elsif old && @conditional.positive?
+        extras = extras + [[:text, GitCommand.without_substitutions(old.text)]] + old.extras
       end
       @vars[name] = Var.new(text, extras, exported || (old ? old.exported : false))
     end
@@ -1336,12 +2246,25 @@ module GitCommand
       core[0]&.raw == "for" && core[1]&.value&.match?(NAME) && core[2]&.raw == "in"
     end
 
-    # for NAME in WORDS: NAME holds the words joined (one word: that word), so
-    # a message or directory given as the only item resolves.
+    # for NAME in WORDS: with 2..MAX_FOR_ITEMS static items (no $, `, glob or
+    # brace left after expansion) and replays left, NAME takes the first and
+    # its `do` replays the body for the rest (each from the cwd the previous
+    # run ended in, as bash runs it); otherwise NAME holds the words joined
+    # (one word: that word), so a message or directory given as the only
+    # item resolves.
     def for_loop(core, cwd)
       items = expand_words(core[3..], cwd)
-      set_var(core[1].value, items.map(&:value).join(" "),
-              items.flat_map { |w| word_extras(w, cwd) })
+      name = core[1].value
+      @pending_for = nil
+      if items.size.between?(2, MAX_FOR_ITEMS) && items.size - 1 <= @replays &&
+         items.none? { |w| w.value.match?(/[$`*?\[{]/) }
+        @replays -= items.size - 1
+        pairs = items.map { |w| [w.value, word_extras(w, cwd)] }
+        set_var(name, *pairs.shift)
+        @pending_for = [name, pairs]
+      else
+        set_var(name, items.map(&:value).join(" "), items.flat_map { |w| word_extras(w, cwd) })
+      end
       cwd
     end
 
@@ -1384,7 +2307,7 @@ module GitCommand
       end
       names = words[i..].to_a.map(&:value).select { |n| n.match?(NAME) }
       names = ["REPLY"] if names.empty?
-      text, _source, files = stdin_of(cmd, cwd)
+      text, _source, files = stdin_of(cmd, cwd, expand: true)
       return if text.nil? && files.empty?
 
       value = text ? text.split(delim, 2).first.to_s : ""
@@ -1447,11 +2370,61 @@ module GitCommand
         when "sudo"
           ws.shift
           dir = skip_sudo(ws, dir, env)
+        when "su", "runuser"
+          ws.shift
+          dir = skip_su(ws, dir, env)
+        when "script"
+          script = script_command(ws)
+          return [ws, dir, env] unless script # BSD `script file cmd ...`
+
+          ws.replace([synthetic("sh"), synthetic("-c"), script])
         else
           return [ws, dir, env]
         end
       end
       [ws, dir, env]
+    end
+
+    def synthetic(text)
+      Word.new(text, text, [], [], nil)
+    end
+
+    # The home directory of a user name on this host, or nil.
+    def user_home(name)
+      name && !name.empty? ? Dir.home(name) : nil
+    rescue ArgumentError, SystemCallError
+      nil
+    end
+
+    # The option word w (already shifted off ws) as [[name, value Word or
+    # nil], ...]: `--name=value`, `--name value` for a name in long, and a
+    # -xyz cluster where a letter in short takes the rest of the word or, as
+    # the last letter, the next word (a letter in optional only takes an
+    # attached value).
+    def option_values(w, ws, short, long, optional = "")
+      o = w.value
+      if o.start_with?("--")
+        name, eq, val = o.partition("=")
+        return [[name, synthetic(val)]] unless eq.empty?
+
+        return [[name, long.include?(name) ? ws.shift : nil]]
+      end
+      opts = []
+      j = 1
+      while j < o.length
+        ch = o[j]
+        if short.include?(ch) || optional.include?(ch)
+          rest = o[(j + 1)..]
+          # raw: the whole option, so a ~ in -D~/x stays literal as in bash.
+          val = if !rest.empty? then Word.new(rest, o, [], [], nil)
+                elsif short.include?(ch) then ws.shift
+                end
+          return opts << ["-#{ch}", val]
+        end
+        opts << ["-#{ch}", nil]
+        j += 1
+      end
+      opts
     end
 
     def add_env(env, word)
@@ -1489,13 +2462,13 @@ module GitCommand
         elsif ["-C", "--chdir"].include?(o)
           ws.shift
           target = ws.shift
-          dir = target && resolve_path(dir, target.value, target.raw)
+          dir = target ? chdir(dir, target.value, target.raw) : nil
         elsif o.start_with?("--chdir=")
           ws.shift
-          dir = resolve_path(dir, o.delete_prefix("--chdir="))
+          dir = chdir(dir, o.delete_prefix("--chdir="))
         elsif o.start_with?("-C") && o.length > 2
           ws.shift
-          dir = resolve_path(dir, o[2..])
+          dir = chdir(dir, o[2..])
         elsif ["-S", "--split-string"].include?(o) || o.start_with?("--split-string=") || o.start_with?("-S")
           ws.shift
           text = if o.include?("=") then o.split("=", 2)[1]
@@ -1514,34 +2487,104 @@ module GitCommand
       dir
     end
 
+    # sudo [options] [NAME=value ...] [command]: -i (--login) runs in the
+    # target user's home and, like -H, sets HOME to it; -s / -i with no command
+    # run a shell reading stdin, so the command becomes a bare `sh`.
     def skip_sudo(ws, dir, env)
-      while (o = ws.first&.value)
-        if o == "--"
-          ws.shift
-          break
-        elsif ["-D", "--chdir"].include?(o)
-          ws.shift
-          target = ws.shift
-          dir = target && resolve_path(dir, target.value, target.raw)
-        elsif o.start_with?("--chdir=")
-          ws.shift
-          dir = resolve_path(dir, o.delete_prefix("--chdir="))
-        elsif SUDO_VALUED.include?(o)
-          ws.shift(2)
-        elsif o.start_with?("-") && o.length > 1
-          ws.shift
-        else
-          break
+      user = "root"
+      login = shell = set_home = false
+      workdir = :none
+      while (w = ws.first) && w.value.start_with?("-") && w.value.length > 1
+        ws.shift
+        break if w.value == "--"
+
+        option_values(w, ws, SUDO_SHORT_VALUED, SUDO_LONG_VALUED, "h").each do |name, val|
+          case name
+          when "-u", "--user" then user = val&.value
+          when "-D", "--chdir" then workdir = val ? chdir(dir, val.value, val.raw) : nil
+          when "-i", "--login" then login = true
+          when "-s", "--shell" then shell = true
+          when "-H", "--set-home" then set_home = true
+          end
         end
       end
       add_env(env, ws.shift) while ws.first && ws.first.raw.match?(ASSIGNMENT)
-      dir
+      env["HOME"] = user_home(user) if login || set_home
+      ws.push(synthetic("sh")) if ws.empty? && (login || shell)
+      return workdir unless workdir == :none # -D wins over -i
+
+      login ? env["HOME"] : dir
     end
 
-    # The script a shell runs: the -c string, or its stdin for `bash -s` and a
-    # bare `bash` (a heredoc / here-string / literal pipe). nil for a script
-    # file, which cannot be inspected.
-    def shell_script(cmd, words, cwd)
+    # su / runuser [options] [-] [USER [ARG ...]]: the -c / --command /
+    # --session-command string, or with no -c the shell reading stdin, so the
+    # words become [sh -c SCRIPT] or [sh]; HOME is the user's home, and a
+    # login form (-, -l, --login) runs there. runuser -u USER [--] COMMAND
+    # leaves COMMAND in ws.
+    def skip_su(ws, dir, env)
+      user = "root"
+      script = nil
+      login = named = direct = false
+      until ws.empty?
+        w = ws.first
+        o = w.value
+        if o == "--"
+          ws.shift
+          break
+        elsif o == "-"
+          ws.shift
+          login = true
+        elsif o.start_with?("-") && o.length > 1
+          ws.shift
+          option_values(w, ws, SU_SHORT_VALUED, SU_LONG_VALUED).each do |name, val|
+            case name
+            when "-c", "--command", "--session-command" then script = val
+            when "-l", "--login" then login = true
+            when "-u", "--user"
+              user = val&.value
+              direct = true
+            end
+          end
+        elsif named || direct
+          break
+        else
+          ws.shift
+          user = o
+          named = true
+        end
+      end
+      return dir if direct
+
+      user = ws.shift.value if !named && ws.first # su -- USER
+      home = user_home(user)
+      env["HOME"] = home
+      ws.replace(script ? [synthetic("sh"), synthetic("-c"), script] : [synthetic("sh")])
+      login ? home : dir
+    end
+
+    # The -c / --command string of util-linux `script` (options may follow its
+    # file operand), or nil.
+    def script_command(ws)
+      rest = ws.drop(1)
+      until rest.empty?
+        w = rest.shift
+        next unless w.value.start_with?("-") && w.value.length > 1
+        break if w.value == "--"
+
+        option_values(w, rest, SCRIPT_SHORT_VALUED, SCRIPT_LONG_VALUED, "t").each do |name, val|
+          return val if val && ["-c", "--command"].include?(name)
+        end
+      end
+      nil
+    end
+
+    # [script, index of the -c string in words (0 for stdin)] for what a
+    # shell runs: the -c string, or with stdin: true its stdin for `bash -s`
+    # and a bare `bash` (a heredoc / here-string / literal pipe). [nil, 0] for
+    # a script file, which cannot be inspected.
+    # strict: words[0] is only an argument that names a shell (`--label bash`)
+    # unless every long option after it is one bash has.
+    def shell_script(cmd, words, cwd, stdin: true, strict: false)
       i = 1
       cflag = false
       sflag = false
@@ -1553,6 +2596,8 @@ module GitCommand
         elsif %w[-o +o -O +O --rcfile --init-file].include?(o)
           i += 2
         elsif o.start_with?("--")
+          return [nil, 0] if strict && !SHELL_LONG_OPTIONS.include?(o)
+
           i += 1
         elsif o.match?(/\A[-+][A-Za-z]+\z/)
           cflag ||= o.start_with?("-") && o.include?("c")
@@ -1562,17 +2607,25 @@ module GitCommand
           break
         end
       end
-      return words[i]&.value if cflag
-      return nil unless sflag || i >= words.size
+      return [words[i]&.value, i] if cflag
+      return [nil, 0] unless stdin && (sflag || i >= words.size)
 
-      stdin_of(cmd, cwd)[0]
+      [stdin_of(cmd, cwd)[0], 0]
     end
 
     # ---- git --------------------------------------------------------------
 
-    # remote: the call runs on another host / root (ssh, docker ...), so -C and
-    # --work-tree name directories there and dir stays nil.
+    # remote: the call runs on another host / root (ssh, docker ..., or inside
+    # a shell started behind one), so -C and --work-tree name directories
+    # there and dir stays nil. base is what its relative paths are keyed
+    # against: dir, or an UnknownDir (a remote wrapper on this command line,
+    # `docker exec c git`, starts in that host's cwd, not ours). Inside a
+    # nested command string (@uncertain) the call is uncertain: dir nil, no
+    # dir_candidates.
     def git_invocation(cmd, words, dir, cwd, env, remote: false)
+      remote ||= @remote.positive?
+      certain = @uncertain.zero?
+      base = remote && @remote.zero? ? unknown_dir : here(dir, remote)
       globals = []
       sub = nil
       work_tree = nil # [value, raw]
@@ -1586,7 +2639,7 @@ module GitCommand
         elsif GIT_VALUED.include?(o)
           val = words[i + 1]
           globals << [o, val&.value]
-          dir = resolve_path(dir, val.value, val.raw) if o == "-C" && val && !val.value.empty? && !remote
+          base = chdir(base, val.value, val.raw, remote) if o == "-C" && val && !val.value.empty?
           work_tree = [val.value, val.raw] if o == "--work-tree" && val
           i += 2
         elsif o.start_with?("-")
@@ -1601,23 +2654,33 @@ module GitCommand
         end
       end
       work_tree ||= [env["GIT_WORK_TREE"], env["GIT_WORK_TREE"]] if env.key?("GIT_WORK_TREE")
-      text, source, files = stdin_of(cmd, cwd)
+      text, source, files = stdin_of(cmd, cwd, expand: true)
       args = sub ? words[i..] : []
-      Invocation.new(dir: dir, globals: globals, subcommand: sub,
+      local = certain && !remote
+      Invocation.new(dir: local && base.is_a?(String) ? base : nil, globals: globals, subcommand: sub,
                      args: args.map(&:value), arg_extras: args.map { |w| word_extras(w, cwd) },
-                     env: env, work_tree: work_tree && !remote ? resolve_path(dir, *work_tree) : nil,
+                     env: env, work_tree: work_tree && !remote ? resolve_path(base, *work_tree) : nil,
                      stdin: text, stdin_source: source, stdin_files: files,
-                     fallback: false, raw: nil)
+                     rewritten: @rewritten.dup, fallback: false, raw: nil,
+                     dir_candidates: local ? candidates_of(base) : [], base: base, certain: certain)
     end
 
     # ---- stdin and literal output -----------------------------------------
 
     # [text, source, files] for what reaches fd 0 of cmd. Redirections are
-    # resolved against the shell's cwd (not env -C / git -C).
-    def stdin_of(cmd, cwd)
+    # resolved against the shell's cwd (not env -C / git -C). A command with
+    # neither a stdin redirection nor a pipe into it reads the stdin of the
+    # -c script it is in (`bash -c '...' <<EOF`, `ssh host 'bash -s' <<EOF`).
+    # expand: the text is data (a message, a file's content), so an unquoted
+    # heredoc gets the variables it names substituted (heredoc_text); a
+    # script keeps them for the shell that runs it to resolve.
+    def stdin_of(cmd, cwd, expand: false)
       redir = cmd.redirs.reverse.find { |r| (r.fd.nil? || r.fd == "0") && STDIN_OPS.include?(r.op) }
       if redir
-        return [redir.body.to_s, :heredoc, []] if heredoc?(redir)
+        if heredoc?(redir)
+          text, files = expand ? heredoc_text(redir) : [redir.body.to_s, []]
+          return [text, :heredoc, files]
+        end
 
         if redir.op == "<" && process_substitution?(redir.target)
           out = subst_output(redir.target.substs.first, cwd) # `< <(printf ...)`
@@ -1625,17 +2688,47 @@ module GitCommand
         end
 
         target = expand_word(redir.target, cwd)
-        return ["#{target.value}\n", :herestring, []] if redir.op == "<<<"
+        return herestring(target, cwd) if redir.op == "<<<"
 
         path = path_key(cwd, target.value, target.raw)
         return [nil, :file, path ? [path] : []]
       end
       prev = cmd.pipe_prev
-      return [nil, nil, []] if prev.nil?
+      return @inherit ? [@inherit[0], @inherit[1], @inherit[2].dup] : [nil, nil, []] if prev.nil?
       return [nil, :pipe_unknown, []] if prev == :unknown
 
       out = literal_output(prev, cwd)
       out ? [out.text, :pipe, out.files] : [nil, :pipe_unknown, []]
+    end
+
+    # `<<< "text $(...)"`: the text with each $(...) replaced by its literal
+    # output (appended; the source of a substitution is not the text), and
+    # the files those outputs copy (`<<< "$(cat f)"`).
+    def herestring(target, cwd)
+      extras = word_extras(target, cwd)
+      text = GitCommand.without_substitutions(target.value)
+      outputs = extras.select { |type, _| type == :text }.map(&:last)
+      text += "\n#{outputs.join}" unless outputs.empty?
+      ["#{text}\n", :herestring, extras.select { |type, _| type == :file }.map(&:last)]
+    end
+
+    # [text, files] of a heredoc: with an unquoted delimiter (`<<EOF`) the
+    # shell expands $NAME / ${NAME} in the body, so a variable this command
+    # set to a static value is substituted, as bash would; one holding $(...)
+    # source stays as written, and the files its output reads are returned.
+    def heredoc_text(redir)
+      body = redir.body.to_s
+      return [body, []] if !body.include?("$") || redir.target.raw.match?(/['"\\]/)
+
+      files = []
+      text = body.gsub(/\\[\\$`]|\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)/) do |match|
+        var = @vars[Regexp.last_match(1) || Regexp.last_match(2)]
+        next match unless var
+
+        var.extras.each { |type, value| files << value if type == :file }
+        var.text.include?("$") || var.text.include?("`") ? match : var.text
+      end
+      [text, files]
     end
 
     # The Output a command writes to stdout when that is literal in the
@@ -1685,27 +2778,38 @@ module GitCommand
 
     # cat with no file / tee: stdout is whatever reaches stdin.
     def passthrough(cmd, cwd)
-      text, _source, files = stdin_of(cmd, cwd)
+      text, _source, files = stdin_of(cmd, cwd, expand: true)
       text.nil? && files.empty? ? nil : Output.new(text, files)
     end
 
     # Literal output redirected into a file (`> f`, `>> f`, `tee f`), keyed by
-    # path_key.
+    # path_key: its text into writes, the files it copies into copies. A
+    # truncating write outside any conditional branch also marks the file
+    # rewritten for the git calls after it.
     def record_writes(cmd, cwd)
       targets = cmd.redirs.select { |r| [nil, "1", "&"].include?(r.fd) && WRITE_OPS.include?(r.op) }
-                   .map { |r| expand_word(r.target, cwd) }
-                   .map { |t| path_key(cwd, t.value, t.raw) }.compact
+                   .map do |r|
+                     t = expand_word(r.target, cwd)
+                     [path_key(cwd, t.value, t.raw), r.op != ">>"]
+                   end
       words, dir = strip_prefix(expand_words(cmd.words, cwd), cwd)
       if words.first && command_name(words.first) == "tee"
-        targets += words[1..].reject { |w| w.value.start_with?("-") }
-                             .map { |w| path_key(dir, w.value, w.raw) }.compact
+        args = words[1..]
+        append = args.any? { |w| w.value == "--append" || w.value.match?(/\A-[^-]*a/) }
+        targets += args.reject { |w| w.value.start_with?("-") }
+                       .map { |w| [path_key(dir, w.value, w.raw), !append] }
       end
+      targets.select!(&:first)
       return if targets.empty?
 
-      text = literal_output(cmd, cwd)&.text
-      return unless text
+      out = literal_output(cmd, cwd)
+      return unless out && (out.text || !out.files.empty?)
 
-      targets.each { |t| (@writes[t] ||= []) << text }
+      targets.each do |key, truncate|
+        (@writes[key] ||= []) << out.text if out.text
+        (@copies[key] ||= []).concat(out.files) unless out.files.empty?
+        @rewritten << key if truncate && @conditional.zero? && !@rewritten.include?(key)
+      end
     end
   end
 end

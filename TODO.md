@@ -1,5 +1,72 @@
 # TODO
 
+## Commit hooks skip tests for commits behind unmodelled wrappers (Low)
+
+- **Failure class**: `cookbooks/claude-code/files/hooks/git-command.rb`
+  marks a `git commit` found only inside an unmodelled wrapper's string
+  (`flock -c`, `sg -c`, `watch`, `parallel`, `tmux send-keys`, `trap`,
+  `git rebase -x` / `--exec=`, a script's arguments) as uncertain, with no
+  directory. The string now starts under the directory its command runs in
+  (`scan_nested` roots it at the outer cwd's candidates), so
+  `block-co-authored-by.rb` reads its relative message files there, but the
+  commit stays uncertain: `pre-commit-test.rb` skips it, also under a
+  definite cwd (`cd X && flock L -c 'git commit ...'`), so the commit lands
+  without the project tests. The block hook's own residual holes (run-time
+  values, files written by programs it does not model, aliases, stdin
+  scripts to non-shell programs, `git merge/tag/commit-tree -m`) are listed
+  in its header; the three it keeps open by decision are the next entry.
+- **Why**: accepted scope of SH1-86 / PR #1130 (2026-11-06). The actor is a
+  cooperating Claude following the harness attribution line, so wrapper
+  hunting stops at shapes it really emits, and testing a guessed directory
+  is worse than skipping.
+- **First step**: model `flock [options] LOCK -c S` / `--command S` and `sg
+  GROUP -c S` (the unmodelled forms Claude emits) explicitly in
+  `GitCommand::Evaluator#wrapped`, running S through `run_shell` like
+  `script -c`, so their commits are certain with the inherited directory and
+  `pre-commit-test.rb` tests them; then flip the `flock L -c` NOMAKE cases in
+  `test-commit-hooks.sh` to tested ones (rc 2 on failrepo).
+
+## Co-Authored-By hook misses three command shapes kept open by decision (Low)
+
+- **Failure class**: `cookbooks/claude-code/files/hooks/block-co-authored-by.rb`
+  (through `git-command.rb`) lets a Co-Authored-By trailer through in three
+  shapes. (a) `L || R` with a relative `cd` in R: triggers when a failed
+  relative cd picks the cwd, as in `cd a 2>/dev/null || cd b; git commit -F
+  m` with the trailer in `b/m` (also `-m "$(cat m)"`, `-F - < m`). R is
+  evaluated from where L ended, so `m` is looked for under `a`, `a/b` and
+  the entry directory, never `b`. (b) a script that is the literal output
+  of a command substitution: triggers on `bash -c "$(cat <<'EOF' ... EOF)"`,
+  `S=$(cat <<'EOF' ... EOF); bash -c "$S"` and ssh / eval / `flock -c` of
+  such output. Only the substitution's body is parsed, where `cat <<EOF` is
+  data, so the commit is never seen. (c) an interpreter's program: triggers
+  on `python3 -c 'import os; os.system("git commit -m x -m \"Co-Authored-By:
+  ...\"")'`, `ruby -e 'system(...)'` or backticks, `perl -e 'system ...'`,
+  `node -e 'execSync(...)'`. The -e / -E / -c / -p / --eval program is not
+  scanned at all.
+- **Why**: accepted by the owner for SH1-86 / PR #1130 (2026-11-06); the
+  actor is a cooperating Claude and the CLAUDE.md rule is the enforcement
+  there. (a): the naive fix, starting R in the directory before L, turned
+  `cd a || exit 1; git commit` into an unknown cwd, which costs
+  `pre-commit-test.rb` its most common guard form. (b) and (c) need a model
+  the parser does not have; scanning interpreter programs as shell blocked
+  `print("...")` one-liners and the hook's own payload builders (`python3 -c
+  'print(json.dumps(...))' | ruby block-co-authored-by.rb`).
+- **First step**: (a) make a right side that ends in `exit` / `return` drop
+  out of the merge in `Evaluator#close_or` (it never reaches the next
+  command), then start R from `Flow#origin` (already recorded by
+  `flow_op`), with a `cands` case in `test-commit-hooks.sh` showing `cd a ||
+  exit 1; git commit` keeps `/w/a` while `cd a 2>/dev/null || cd b` gains
+  `/w/b`. (b) where a script word is taken (`Evaluator#shell_script`,
+  `ssh_command`, the `eval` branch of `finish`, `scan_nested`), use the
+  literal output of a word that is exactly one `$(...)` (`subst_output`,
+  also through a variable) as the script, with a `pair` for `bash -c "$(cat
+  <<'EOF' ... EOF)"`. (c) scan the string literals passed to known
+  shell-out calls (`os.system(`, `subprocess.*(..., shell=True)`, Ruby
+  `system(` / backticks / `%x{`, perl `system` / `qx`, node `execSync(`) of
+  an `interpreter_programs` word as nested command strings, starting with
+  `os.system`, and flip the `python3 -c 'os.system(...)'` case in
+  `test-commit-hooks.sh` back to BLOCK.
+
 ## session-search Codex follow-ups left after PR #1102 (Low)
 
 - **Failure class**: three residual edges of the Codex ingest/search path.
