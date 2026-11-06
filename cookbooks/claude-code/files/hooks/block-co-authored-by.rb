@@ -65,7 +65,10 @@
 #                    `cd "$UNSET"`, `cd -`, a shell behind ssh / docker / pct:
 #                    `ssh host bash -s <<EOF` + `cat > m <<MSG` +
 #                    `git commit -F m`); a remote commit's relative file is on
-#                    that host, so only those writes are checked
+#                    that host, so only those writes are checked, and so is a
+#                    cwd with more than MAX_CANDIDATES possible directories
+#                    (GitCommand::Evaluator, a parse-time bound reached only
+#                    by stacking several `cd a || cd b` with relative targets)
 #   -F <(...)        the substitution's literal output (also --file=<(...),
 #                    -F<(...), and -F - < <(...))
 #   -F - (and /dev/stdin, /dev/fd/0, /proc/self/fd/0)

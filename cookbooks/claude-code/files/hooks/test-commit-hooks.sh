@@ -67,8 +67,12 @@
 # bash -c '...'` stays tested.
 #
 # The git-command.rb sections check each commit's effective directory, its
-# dir_candidates / certain flags, and the path keys of writes under an
-# unknown cwd.
+# dir_candidates / certain flags, the path keys of writes under an
+# unknown cwd, and the MAX_CANDIDATES cap; then both hooks must decide
+# within FAST_LIMIT seconds on stacked branch merges (20 `cd aN || cd bN`,
+# case arms, ifs, a 5000-link `cd a || cd a ...` chain), which grew
+# exponentially before the cap, and a heredoc message past the cap still
+# blocks through its token key.
 #
 # The last section reruns key cases with filter_map / tally removed, the way
 # CRuby 2.6 lacks them.
@@ -984,6 +988,81 @@ keys() { # keys <name> <command> <expected space-joined write keys>
 keys "write under an unknown cwd: its token key" $'cd /a || cd /b; echo x > m; cd sub && echo y > ./n/../o' "<?1>/m <?1>/sub/o"
 keys "write under an unresolved cd: the target text" $'cd "$(mktemp -d)" && echo x > m' '$(mktemp -d)/m'
 keys "write in a remote shell: the remote root" "ssh h 'cd /srv && echo x > m'" "<remote>/srv/m"
+# Each `if [ -d sN ]; then cd sN; fi` doubles the candidates: 6 reach
+# MAX_CANDIDATES (64), a 7th would exceed it, so that cwd has none.
+IF6=$(for i in 1 2 3 4 5 6; do printf 'if [ -d s%s ]; then cd s%s; fi; ' "$i" "$i"; done)
+IF7="${IF6}if [ -d s7 ]; then cd s7; fi; "
+ncands() { # ncands <name> <command> <expected candidate count per commit, space-joined>
+  local got
+  got=$("$RUBY" -r"$HOOKS/git-command.rb" -e '
+    puts GitCommand.parse(ARGV[0], cwd: "/w", home: "/h").commits.map { |i| i.dir_candidates.size }.join(" ")' "$2" 2>&1)
+  if [ "$got" = "$3" ]; then ok "$1" "$got"; else bad "$1" "want='$3' got='$got'"; fi
+}
+ncands "6 ifs with relative cds: 64 candidates (MAX_CANDIDATES)" "${IF6}git commit" "64"
+cands "7 ifs: past MAX_CANDIDATES, no candidates" "${IF7}git commit" "?||certain"
+cands "past the cap: a later cd || cd has its own candidates" "${IF7}cd /x 2>/dev/null || cd /y; git commit" \
+  "?|/x /y|certain"
+cands "past the cap: an absolute cd is known again" "${IF7}cd /b && git commit" "/b|/b|certain"
+keys "past the cap: a write still keys under the token" "${IF7}echo x > m" "<?7>/m"
+
+echo "== both hooks: stacked branch merges stay linear (MAX_CANDIDATES)"
+# fast <name> <script> <want-rc> <command> <cwd>: the hook must exit want-rc
+# within FAST_LIMIT seconds; it is killed past that (rc=124). Without the cap
+# 20 stacked merges take hours and the 5000-link chain minutes; with it, well
+# under a second.
+FAST_LIMIT=2
+fast() {
+  local json res secs
+  json=$("$RUBY" -rjson -e 'print JSON.generate("session_id" => "t", "tool_name" => "Bash",
+    "tool_input" => { "command" => ARGV[0] }, "cwd" => ARGV[1])' "$4" "$5")
+  res=$(cd "$5" && printf '%s' "$json" | HOME="$D/home" TMPDIR="$D/tmp" CLAUDE_PROJECT_DIR="$D/repo" \
+    PATH="$D/bin:$PATH" "$RUBY" -e '
+      limit, errf, *cmd = ARGV
+      clock = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+      t0 = clock.call
+      pid = Process.spawn(*cmd, out: File::NULL, err: errf)
+      status = nil
+      until (status = Process.wait2(pid, Process::WNOHANG)&.last)
+        if clock.call - t0 > Float(limit)
+          Process.kill(:KILL, pid)
+          Process.wait(pid)
+          break
+        end
+        sleep 0.01
+      end
+      printf("%d %.2f", status ? status.exitstatus.to_i : 124, clock.call - t0)' \
+    "$FAST_LIMIT" "$D/stderr" "$RUBY" -E UTF-8 "$2")
+  rc=${res%% *}; secs=${res#* }
+  if [ "$rc" = "$3" ] && { [ "$3" != 2 ] || grep -q "Co-Authored-By" "$D/stderr"; }; then
+    ok "$1" "rc=$rc ${secs}s"
+  else
+    bad "$1" "want rc=$3 within ${FAST_LIMIT}s, got rc=$rc after ${secs}s :: $(cat "$D/stderr")"
+  fi
+}
+STACK=$(for i in $(seq 20); do printf 'cd a%s 2>/dev/null || cd b%s; ' "$i" "$i"; done)
+CASES=$(for i in $(seq 16); do printf 'case $H in pro) cd p%s;; *) cd q%s;; esac\n' "$i" "$i"; done)
+IFS24=$(for i in $(seq 24); do printf 'if [ -d sub%s ]; then cd sub%s; fi\n' "$i" "$i"; done)
+CHAIN="cd a$(printf ' || cd a%.0s' $(seq 4999))"
+for h in BLOCK PRECOMMIT; do
+  fast "$h: 20 stacked cd aN || cd bN; git commit -F m" "${!h}" 0 "${STACK}git commit -F m" "$D/work"
+  fast "$h: 16 stacked case arms with relative cds" "${!h}" 0 "${CASES}
+git commit -F m" "$D/work"
+  fast "$h: 24 stacked if [ -d subN ]; then cd subN; fi" "${!h}" 0 "${IFS24}
+git commit -F m" "$D/work"
+  fast "$h: 5000-link cd a || cd a || ... chain" "${!h}" 0 "${CHAIN}; git commit -F m" "$D/work"
+done
+fast "BLOCK: past the cap, a heredoc message under the same cwd blocks" "$BLOCK" 2 "${STACK}cat > m <<'EOF'
+fix: thing
+
+$BAD_T
+EOF
+git commit -F m" "$D/work"
+fast "BLOCK: past the cap, the same with a clean line allows" "$BLOCK" 0 "${STACK}cat > m <<'EOF'
+fix: thing
+
+$OK_T
+EOF
+git commit -F m" "$D/work"
 
 echo "== Ruby 2.6 API surface (filter_map / tally removed, as on CRuby 2.6)"
 if grep -nE '\.(filter_map|tally)\b' "$HOOKS/git-command.rb" "$BLOCK" "$PRECOMMIT"; then

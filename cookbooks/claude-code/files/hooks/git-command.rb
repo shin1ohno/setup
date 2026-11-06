@@ -25,7 +25,8 @@
 #                   a loop plus the entry directory (where failed cds leave
 #                   the shell), with later relative cds applied; [] when
 #                   nothing is knowable (an unresolved cd target, a remote
-#                   call, an uncertain call). Never a directory the command
+#                   call, an uncertain call) or when there would be more than
+#                   Evaluator::MAX_CANDIDATES. Never a directory the command
 #                   cannot be in.
 #     base          what the call's relative paths are keyed against
 #                   (GitCommand.path_key): dir, or an UnknownDir token
@@ -94,8 +95,11 @@
 # under the same unknown cwd in one command still meet as one path key. A
 # branch merge (`cd A 2>/dev/null || cd B`, if / else, case arms, a loop body
 # whose end differs from its entry) mints "<?N>" with the branches' ends and
-# the entry as candidates; an unresolved cd target (`cd "$X"`, `cd "$(mktemp
-# -d)"`) is a token rooted at that text, which `-F "$X/m"` keys the same way;
+# the entry as candidates, or with none when there would be more than
+# MAX_CANDIDATES (stacked merges with relative cds multiply them: `cd a1 ||
+# cd b1; cd a2 || cd b2; ...`), so a parse stays linear in the command's
+# length; an unresolved cd target (`cd "$X"`, `cd "$(mktemp -d)"`) is a
+# token rooted at that text, which `-F "$X/m"` keys the same way;
 # `cd -`, `pushd` with no operand and a popd past an unknown dirstack entry
 # mint a token with no candidates; a relative cd from a token joins it
 # (`<?3>/sub`), an absolute one is known again. Inside a shell on another
@@ -1150,6 +1154,13 @@ module GitCommand
     # per item; MAX_REPLAYS caps the extra body runs in one parse.
     MAX_FOR_ITEMS = 16
     MAX_REPLAYS = 64
+    # The most candidate directories one unknown cwd keeps. Each branch merge
+    # with distinct relative cds can triple the set (`cd a1 || cd b1; cd a2 ||
+    # cd b2; ...`, if / case arms) and a chain of cds into the same name grows
+    # it by one per link, so past the cap the cwd is a token with no
+    # candidates: its key still meets the writes made under it, and only the
+    # on-disk lookups are lost.
+    MAX_CANDIDATES = 64
     # Commands that read their own stdin as data: a shell they start does not
     # get it as its script.
     ARGS_FROM_STDIN = %w[xargs parallel].freeze
@@ -1325,15 +1336,30 @@ module GitCommand
     # The cwd after a construct whose branches ended at ends ([cwd, dirstack]
     # pairs): their shared directory, or else a new UnknownDir whose
     # candidates are every directory those ends and the construct's entry
-    # (where a failed cd leaves the shell) can be; the dirstack likewise
-    # (unknown entries are nil, so a later popd gives an unknown cwd).
+    # (where a failed cd leaves the shell) can be, none past MAX_CANDIDATES;
+    # the dirstack likewise (unknown entries are nil, so a later popd gives an
+    # unknown cwd).
     def merge_ends(ends, dirstack, entry = nil)
       stacks = ends.map(&:last).uniq
       dirstack.replace(stacks.size == 1 ? stacks[0] : Array.new(stacks.map(&:size).max))
       cwds = ends.map(&:first).uniq
       return cwds[0] if cwds.size == 1
 
-      unknown_dir((cwds + [entry]).flat_map { |d| candidates_of(d) }.uniq)
+      unknown_dir(merged_candidates(cwds + [entry]))
+    end
+
+    # The candidates of dirs, each once; none as soon as there would be more
+    # than MAX_CANDIDATES (see there), so a merge costs at most that many
+    # lookups per end, never the product of the merges before it.
+    def merged_candidates(dirs)
+      seen = {}
+      dirs.each do |dir|
+        candidates_of(dir).each do |c|
+          seen[c] = true
+          return [] if seen.size > MAX_CANDIDATES
+        end
+      end
+      seen.keys
     end
 
     # Ends the commands after `||` still open at the top: either they ran or
@@ -1780,8 +1806,15 @@ module GitCommand
       case dir
       when String then [dir]
       when UnknownDir
+        roots = @unknown_dirs.fetch(dir.root, [])
+        return roots if dir.segs.empty?
+
         rel = dir.segs.join("/")
-        @unknown_dirs.fetch(dir.root, []).map { |c| File.expand_path(rel, c) }
+        # join already dropped "." and inner ".."; only a leading ".." needs
+        # expand_path, so the rest is plain string work.
+        return roots.map { |c| File.expand_path(rel, c) } if dir.segs.first == ".."
+
+        roots.map { |c| c == "/" ? "/#{rel}" : "#{c}/#{rel}" }
       else []
       end
     end
