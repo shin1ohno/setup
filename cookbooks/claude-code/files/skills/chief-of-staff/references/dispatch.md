@@ -41,16 +41,19 @@ uploaded. Store enough context to resume, but never copy secrets into briefs.
 python3 <skill-dir>/scripts/tasks.py new --owner <socket#controller-pane> \
   --topic <topic> --cwd <absolute-dir> --scope <authorized-scope> \
   --acceptance <criterion> [--acceptance <criterion> ...]
-python3 <skill-dir>/scripts/tasks.py attempt <task-id> \
-  --kind codex --model default --reason <routing-or-repair-reason>
-python3 <skill-dir>/scripts/tasks.py bind <task-id> --pane <returned-pane-id>
-python3 <skill-dir>/scripts/tasks.py update <task-id> --state running \
+python3 <skill-dir>/scripts/tasks.py attempt <task-id> --owner <verified-owner> \
+  --kind codex --model <verified-model> --effort <verified-effort> --reason <routing-or-repair-reason>
+python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id>
+# Launch through the verified route, then observe startup selections.
+python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id> \
+  --model <observed-model> --effort <observed-effort>
+python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state running \
   --note <observed-start> --evidence <observed-working-transition>
-python3 <skill-dir>/scripts/tasks.py update <task-id> --state reviewing \
-  --note <result-received> --evidence <result-location>
-python3 <skill-dir>/scripts/tasks.py update <task-id> --state accepted \
+python3 <skill-dir>/scripts/tasks.py receive <task-id> --owner <verified-owner> \
+  --file <absolute-envelope-file>
+python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state accepted \
   --note <criterion-by-criterion-verdict> --evidence <independent-check>
-python3 <skill-dir>/scripts/tasks.py reported <task-id> --note <message-sent>
+python3 <skill-dir>/scripts/tasks.py reported <task-id> --owner <verified-owner> --note <message-sent>
 python3 <skill-dir>/scripts/tasks.py list --owner <socket#controller-pane>
 python3 <skill-dir>/scripts/tasks.py show <task-id>
 ```
@@ -60,13 +63,14 @@ When the user explicitly requests a new agent or separate pane, create the task
 with `new --fresh-worker`. Its attempt and bind operations reject reuse. Use a
 new pane returned by a fresh split, even if an old worker is idle.
 Unless the user requests a new agent or separate pane, for a correction to the same settled worker, pass `--reuse-agent` with the same
-kind/model: this consumes an attempt but retains its live name. Re-bind its
+kind/model/effort: this consumes an attempt but retains its live name. Re-bind its
 verified existing pane, skip `agent start`, and prompt that existing name only
 after confirming it is ready. Changing harness/model uses a fresh worker.
 Keep the JSON output: it includes `agent` and `attempt`. Save the full worker
 brief to a private task-local file under the returned task directory using a
-file-write tool. It is a controller handoff record, not a requirement for the
-worker to write its answer to a file. `bind` records the returned pane before
+file-write tool. It is the controller handoff record. For envelope-v1 tasks the worker must
+write the full answer and test evidence as task-local or checkout artifacts,
+then return only the bounded envelope. `bind` records the returned pane before
 `agent start`; if an interrupted split has no recorded ID, inspect topology
 and refuse to guess or blindly create another pane.
 
@@ -96,17 +100,23 @@ herdr --session <verified-session> pane split --pane <verified-caller-pane> --di
 herdr --session <verified-session> agent start <reserved-agent-name> --kind codex --pane <returned-id>
 herdr --session <verified-session> agent prompt <reserved-agent-name> <brief-text> --wait --timeout 30000
 herdr --session <verified-session> agent get <reserved-agent-name>
-herdr --session <verified-session> agent read <reserved-agent-name> --source recent-unwrapped --lines 200
+herdr --session <verified-session> agent read <reserved-agent-name> --source recent-unwrapped --lines 40
 herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 30000
 ```
 
 For explicit model selection, append native options **after** `--`, e.g.
 `-- --model <verified-model>`, and record the resulting effective model/effort.
-Update the attempt's observed model with `bind --pane <id> --model <actual-model>`.
+After startup evidence, record both observed selections with
+`bind <task-id> --owner <verified-owner> --pane <id> --model <actual-model> --effort <actual-effort>`.
+A pre-start bind records only identity; repeat it after observing the selections.
 Wait for an actual shell/agent prompt rather than a fixed startup sleep. Do not
 prompt a working agent or send slash commands as if they were normal task text.
-Read up to 1000 lines for missing results; only if that fails, ask the worker to
-save its full answer in a temporary file and read it locally (Herdr skill rule).
+For envelope-v1 tasks do not escalate to full pane history. Request the missing
+envelope or delegate an artifact read. The installed Herdr skill's legacy
+file-output fallback remains the rule for old tasks; the new explicit artifact
+contract is an opt-in protocol, not a reason to alter an active legacy session.
+Review the two skill contracts together before deployment. No installed skill
+or live controller ledger is changed by adopting this source proposal.
 
 ## Worker brief
 
@@ -131,6 +141,48 @@ Complete the authorized work and perform the relevant checks. Distinguish facts
 from assumptions; report concrete blockers rather than answering permission
 dialogs on behalf of the user. Preserve other agents' changes. Do not weaken
 the acceptance criteria. Do not send messages to third parties without explicit
-authorization. Report the result, artifact/commit links, checks and their actual
-outputs, and remaining failures/risks. Leave the terminal ready for review.
+authorization. Write full results and actual check output to artifact files inside the supplied
+task directory or checkout. Return only the envelope below (at most 16 KiB).
+Do not paste full logs or documents into the controller response. Leave the
+terminal ready for review.
 ```
+
+
+## Envelope-v1 and owner binding
+
+New `tasks.py new` records default to envelope-v1; old JSON records without a
+contract retain the legacy protocol. Never convert an active task implicitly.
+All envelope-v1 mutations pass `--owner` from the verified caller helper.
+The string check prevents accidental cross-controller edits; it is not an
+authentication boundary or a substitute for Herdr caller verification.
+
+```json
+{"task_id":"<id>","attempt":1,"status":"done","summary":"Brief result",
+ "artifacts":["/absolute/task/result.txt"],
+ "criteria":[{"criterion":"<original acceptance text>","status":"pass",
+              "evidence":"/absolute/task/check.txt"}],"open_questions":[]}
+```
+
+Use status done/blocked/failed and criterion pass/fail/unverified. Cover every
+original criterion exactly once. Artifacts and evidence must be existing files
+inside the task directory or checkout (including symlink resolution). A summary
+is at most 1200 UTF-8 bytes; at most 12 artifacts and 8 open questions.
+`receive <id> --owner <owner> --file <absolute-envelope>` rejects stale attempts,
+foreign tasks, path escapes and `done` with unverified criteria. Envelope input
+must be a regular file: FIFOs, sockets, directories and devices are rejected.
+Contained symlinks resolve once; descriptor traversal then refuses symlink
+replacements, and a pinned descriptor bounds the read to 16 KiB plus one byte.
+Every descriptor closes on rejection, releasing the ledger lock. It records
+reviewing, not accepted. Acceptance also needs independent review evidence and
+observed model/effort matching the request; file existence proves no quality.
+
+## Attempt selection fields
+
+For envelope-v1 tasks `tasks.py attempt` requires an explicit `--model` and
+`--effort`; an inherited default is not a recorded choice. `bind --model ACTUAL
+--effort ACTUAL` records observed values only after startup evidence.
+
+For an authorized Agent-tool route, use `attempt --route agent` and bind
+`--session <returned-native-agent-id>` rather than inventing a pane. Pass the
+same envelope contract in the brief. Do not claim a fake fixture proves a live
+dispatch.
