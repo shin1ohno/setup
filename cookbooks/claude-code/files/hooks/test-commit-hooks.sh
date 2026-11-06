@@ -28,15 +28,21 @@
 # block hook fails closed (SH1-86): a message file written or on disk under an
 # unknown cwd (`cd A 2>/dev/null || cd B`, if / else, case arms, `cd
 # "$(mktemp -d)"`, `cd "$UNSET"`, `cd -`, a heredoc file inside `ssh host bash
-# -s <<EOF` or `pct exec -- bash -c`), and a commit in a nested command string
+# -s <<EOF` or `pct exec -- bash -c`), a commit in a nested command string
 # no model covers (flock -c / --command, sg -c, watch, parallel :::, tmux
-# send-keys, trap, git rebase -x, osascript -e, python3 -c os.system, a
-# script's arguments, an unknown `foo --run '...'`), a function body, a
-# variable reassigned in a branch, $VAR in an unquoted heredoc and `<<<
-# "$(cat f)"` all block; the text of data commands (gh --body / -b, git notes
-# / log / show / grep, cat > docs <<EOF, printf / echo, jq --arg, curl -d,
-# wget --post-data, logger, sed / awk programs, `xargs echo`, `find -exec
-# grep`) and text that does not lex do not. Then
+# send-keys, trap, git rebase -x and --exec=, osascript -e, lua -e, a
+# script's arguments, an unknown `foo --run '...'`), a relative message file
+# such a string reads where its command runs (written first by `cat > m
+# <<EOF`, or on disk in the session cwd or its env -C directory), a variable
+# reassigned in a branch, $VAR in an unquoted heredoc and `<<< "$(cat f)"`
+# all block; the text of data commands (gh --body / -b, git notes / log /
+# show / grep, cat > docs <<EOF, printf / echo, jq --arg, curl -d, wget
+# --post-data, logger, sed / awk programs, `xargs echo`, `find -exec grep`),
+# an interpreter's program (python3 -c, ruby -e, perl -lne, node -pe /
+# --eval, also `xargs python3 -c`; its arguments are still scanned), a file
+# a nested string reads on another host (ssh, docker exec), and text that
+# does not lex do not. The residual holes kept by decision (`python3 -c
+# 'os.system(...)'`, a commit in a `function NAME { ...; }` body) allow. Then
 # allow-only cases: the trailer outside any git commit (echo, git log --grep,
 # grep -r, a comment, hg commit, a doc heredoc next to `done < <(ls)`, a group
 # member piped or redirected elsewhere, a shell name that is only an argument
@@ -63,19 +69,23 @@
 # after a cd chosen by `||` (also with the newline after it), if / else or
 # case arms (its directory is unknown), rather than test the other directory,
 # and an uncertain commit in a nested command string (`flock L -c '...'`,
-# `watch '...'`, `git rebase -x '...'`: the documented skip), while `flock L
-# bash -c '...'` stays tested.
+# also after `cd failrepo &&`, `watch '...'`, `git rebase -x '...'` /
+# `--exec='...'`: the documented skip), while `flock L bash -c '...'` stays
+# tested; a cd in a `function NAME { ...; }` definition (also one a trap
+# runs) does not move the tested directory.
 #
 # The git-command.rb sections check each commit's effective directory, its
 # dir_candidates / certain flags, the path keys of writes under an
-# unknown cwd, and the MAX_CANDIDATES cap; then both hooks must decide
+# unknown cwd, the local directories a nested string's relative file is
+# looked up in, and the MAX_CANDIDATES cap; then both hooks must decide
 # within FAST_LIMIT seconds on stacked branch merges (20 `cd aN || cd bN`,
 # case arms, ifs, a 5000-link `cd a || cd a ...` chain), which grew
 # exponentially before the cap, and a heredoc message past the cap still
 # blocks through its token key.
 #
-# The last section reruns key cases with filter_map / tally removed, the way
-# CRuby 2.6 lacks them.
+# The last section reruns key cases (also a nested string's message file,
+# --exec=, an interpreter's program, a function definition) with filter_map
+# / tally removed, the way CRuby 2.6 lacks them.
 #
 # Usage: bash test-commit-hooks.sh [<hooks-dir>]   (default: this script's dir)
 
@@ -683,11 +693,8 @@ pair "git rebase -x 'git commit --amend ...'" "git rebase -x 'git commit --amend
 pair "trap 'git commit ...' EXIT" "trap 'git commit -m fix -m \"@T@\"' EXIT"
 pair "osascript -e 'do shell script \"git commit ...\"' (not data)" \
   "osascript -e 'do shell script \"git commit -m fix -m \\\"@T@\\\"\"'"
-pair "python3 -c 'os.system(\"git commit ...\")'" \
-  "python3 -c 'import os; os.system(\"git commit -m fix -m \\\"@T@\\\"\")'"
 pair "bash -c 'eval \"\$1\"' _ 'git commit ...' (a script's argument)" \
   "bash -c 'eval \"\$1\"' _ 'git commit -m fix -m \"@T@\"'"
-pair "function NAME { git commit ...; }" 'function ci { git commit -m fix -m "@T@"; }; ci'
 pair "MSG=...; if ...; then MSG=other; fi (the first value may stay)" \
   'MSG="@T@"; if [ -n "$UNSET_COMMIT_HOOK_TEST_VAR" ]; then MSG=fix; fi; git commit -m "$MSG"'
 pair "TR=...; git commit -F - <<EOF with \$TR (unquoted heredoc)" "TR='@T@'
@@ -723,6 +730,77 @@ expect_allow "xargs git log --grep '...' (a later git data subcommand)" "xargs g
 expect_allow "unknown command: argument names git commit, no trailer" "mytool --run 'git commit -m fix'"
 expect_allow "nested text that does not lex is not a script" "mytool --note \"don't $EX\""
 expect_allow "message mentions co-authored in prose (no -by)" 'git commit -m "docs: credit co-authored work in the changelog"'
+
+echo "== block-co-authored-by: a nested command string reads files where its command runs"
+M3="cat > m <<'EOF'
+fix: thing
+
+@T@
+EOF
+"
+pair "cat > m <<EOF; flock /tmp/l -c 'git commit -F m'" "${M3}flock /tmp/l -c 'git commit -F m'"
+pair "cat > m <<EOF; flock -x .git/x -c 'git add -A && git commit -F m'" \
+  "${M3}flock -x .git/x -c 'git add -A && git commit -F m'"
+pair "cat > m <<EOF; sg staff -c 'git commit -F m'" "${M3}sg staff -c 'git commit -F m'"
+pair "cat > m <<EOF; watch -n1 'git commit -F m'" "${M3}watch -n1 'git commit -F m'"
+pair "cat > m <<EOF; git rebase -x 'git commit --amend -F m' HEAD~1" \
+  "${M3}git rebase -x 'git commit --amend -F m' HEAD~1"
+pair "cat > m <<EOF; flock L -c 'git commit -m \"\$(cat m)\"'" "${M3}flock L -c 'git commit -m \"\$(cat m)\"'"
+pair "cat > m <<EOF; flock L -c 'git commit -F - < m'" "${M3}flock L -c 'git commit -F - < m'"
+pair "cat > m <<EOF; flock L -c 'git commit -F ./m'" "${M3}flock L -c 'git commit -F ./m'"
+pair "flock L -c 'git commit -F rel': the file on disk under the session cwd" \
+  "flock L -c 'git commit -F @F@'" "$D/repo"
+pair "env -C repo flock L -c 'git commit -F rel': the command's own directory" \
+  "env -C @D@/repo flock L -c 'git commit -F @F@'"
+expect_block "flock L -c 'git commit -F stale.txt': the trailer file on disk" "flock L -c 'git commit -F stale.txt'"
+expect_allow "printf > stale.txt && flock L -c 'git commit -F stale.txt': overwritten first" \
+  "printf 'fix\\n' > stale.txt && flock L -c 'git commit -F stale.txt'"
+expect_allow "ssh host 'git commit -F rel': the file is on that host" "ssh host 'git commit -F msg-bad.txt'" "$D/repo"
+expect_allow "ssh host 'flock L -c \"git commit -F rel\"': no local lookup" \
+  "ssh host 'flock L -c \"git commit -F msg-bad.txt\"'" "$D/repo"
+expect_allow "docker exec c flock L -c 'git commit -F rel': no local lookup" \
+  "docker exec c flock L -c 'git commit -F msg-bad.txt'" "$D/repo"
+
+echo "== block-co-authored-by: a --NAME=VALUE word's VALUE is a nested command string"
+pair "git rebase --exec='git commit --amend --no-edit --trailer \"...\"'" \
+  "git rebase --exec='git commit --amend --no-edit --trailer \"@T@\"' origin/main"
+expect_block "git rebase -i --exec=\"git commit --amend -m ... -m \\\"...\\\"\"" \
+  'git rebase -i --exec="git commit --amend -m \"x\" -m \"Co-Authored-By: a <b@c>\"" HEAD~3'
+expect_allow "git rebase --exec='make test'" "git rebase --exec='make test' origin/main"
+expect_allow "git rebase --exec='git commit --amend --no-edit'" "git rebase --exec='git commit --amend --no-edit' origin/main"
+expect_allow "gh pr create --body=\"...\" (a data command)" "gh pr create --body=\"git commit -m x -m 'Co-Authored-By: a'\""
+expect_allow "git log --grep='Co-Authored-By'" "git log --grep='Co-Authored-By'"
+expect_allow "git log --format='%(trailers:key=Co-Authored-By)'" "git log --format='%(trailers:key=Co-Authored-By)'"
+
+echo "== block-co-authored-by: an interpreter's program is code in its language, not a nested script"
+# PEX: the commit example inside a double-quoted string of the program.
+PEX="git commit -m x -m \\\"$BAD_T\\\""
+expect_allow "python3 -c 'print(\"git commit ... trailer\")'" "python3 -c 'print(\"$PEX\")'"
+expect_allow "ruby -I hooks -rgit-command -e 'pp GitCommand.parse(...)'" \
+  "ruby -I cookbooks/claude-code/files/hooks -rgit-command -e 'pp GitCommand.parse(%q{flock L -c \"git commit -m x -m \\\"Co-Authored-By: a\\\"\"}, cwd: \"/w\")'"
+expect_allow "python3 -c 'print(json.dumps(...))' | ruby block-co-authored-by.rb (payload builder)" \
+  "python3 -c 'import json; print(json.dumps({\"tool_input\": {\"command\": \"git commit -m x -m \\\"Co-Authored-By: a <b@c>\\\"\"}}))' | ruby cookbooks/claude-code/files/hooks/block-co-authored-by.rb"
+expect_allow "node -e 'console.log(\"git commit ... trailer\")'" \
+  "node -e 'console.log(\"git commit -m x -m \\\"Co-Authored-By: a <b@c>\\\"\")'"
+expect_allow "perl -e 'print(\"git commit ... trailer\")'" \
+  "perl -e 'print(\"git commit -m x -m \\\"Co-Authored-By: a <b\\@c>\\\"\\n\")'"
+expect_allow "perl -lne 'print(...)' (option cluster)" "perl -lne 'print(\"$PEX\")'"
+expect_allow "node -pe '\"...\"' (-p -e, the next word)" "node -pe '\"$PEX\"'"
+expect_allow "node --eval='console.log(...)' (attached long option)" "node --eval='console.log(\"$PEX\")'"
+expect_allow "python3 -Ic 'print(...)' (option cluster)" "python3 -Ic 'print(\"$PEX\")'"
+expect_allow "ruby -rjson -e 'puts(...)'" "ruby -rjson -e 'puts(\"$PEX\")'"
+expect_allow "xargs python3 -c 'print(...)' (an interpreter later in the argv)" "xargs python3 -c 'print(\"$PEX\")' < /dev/null"
+expect_block "ruby -e 'puts ARGV[0]' '...': its arguments are still scanned (fail-closed cost)" "ruby -e 'puts ARGV[0]' '$EX'"
+expect_block "lua -e 'os.execute(\"...\")': not a listed interpreter, still scanned" "lua -e 'os.execute(\"$PEX\")'"
+
+echo "== block-co-authored-by: residual holes kept by decision (allow)"
+expect_allow "python3 -c 'os.system(\"git commit ...\")': an interpreter's program is not parsed" \
+  "python3 -c 'import os; os.system(\"git commit -m fix -m \\\"$BAD_T\\\"\")'"
+expect_allow "python3 -c 'os.system(\"git commit ...\")' [clean]" \
+  "python3 -c 'import os; os.system(\"git commit -m fix -m \\\"$OK_T\\\"\")'"
+expect_allow "function NAME { git commit ...; }: the definition is skipped (as at d13879d)" \
+  "function ci { git commit -m fix -m \"$BAD_T\"; }; ci"
+expect_allow "function NAME { git commit ...; } [clean]" "function ci { git commit -m fix -m \"$OK_T\"; }; ci"
 
 echo "== pre-commit-test: tests run in each commit's effective directory"
 precommit() { # precommit <name> <want-rc> <command-template> <cwd> [stderr-substring] [make-log-substring|NOMAKE]
@@ -885,6 +963,14 @@ precommit "cd \"\$(mktemp -d)\"; cd failrepo && git commit: the absolute cd is k
   'cd "$(mktemp -d)"; cd @D@/failrepo && git commit -m x' "$D/work" "FAILING-SUITE-MARKER" "@D@/failrepo|test"
 precommit "flock L bash -c 'git -C failrepo commit' stays certain and tested" 2 \
   "flock -n @D@/work/lock bash -c 'git -C @D@/failrepo commit -m x'" "$D/work" "FAILING-SUITE-MARKER" "@D@/failrepo|test"
+precommit "function f { cd failrepo; }; git commit: the body's cd does not move the cwd" 0 \
+  'function f { cd failrepo; }; git commit -m x' "$D" "" NOMAKE
+precommit "function cleanup { cd failrepo && ...; }; trap cleanup EXIT; git commit: no make" 0 \
+  'function cleanup { cd failrepo && rm -f t; }; trap cleanup EXIT; git commit -m x' "$D" "" NOMAKE
+precommit "cd failrepo && flock L -c 'git commit' (uncertain, inherited cwd): no make" 0 \
+  "cd @D@/failrepo && flock @D@/work/lock -c 'git commit -m x'" "$D/work" "" NOMAKE
+precommit "git rebase --exec='git -C failrepo commit --amend' (uncertain): no make" 0 \
+  "git rebase --exec='git -C @D@/failrepo commit --amend --no-edit' HEAD~1" "$D/work" "" NOMAKE
 out=$(printf 'not-json' | HOME="$D/home" "$RUBY" -E UTF-8 "$PRECOMMIT" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "malformed payload (pre-commit hook)" "rc=0" \
   || bad "malformed payload (pre-commit hook)" "rc=$rc :: $out"
@@ -956,6 +1042,7 @@ dirs "for: nested loops, and items with a space" \
   "/w/a/c /w/a/d /w/b/c /w/b/d /w/x y /w/z"
 dirs "for: a glob or unknown item keeps the joined value" \
   'for d in *.x y; do git -C "$d" commit; done; for d in $X y; do git -C "$d" commit; done' "/w/*.x y ?"
+dirs "function NAME { cd /; }: the definition is skipped, its cd included" 'function f { cd /; }; git commit -m x' "/w"
 
 echo "== git-command.rb: uncertainty reporting (dir | dir_candidates | certain)"
 cands() { # cands <name> <command> <expected "dir|candidates|certain" per commit, joined by " ; ">
@@ -979,6 +1066,22 @@ cands "nested command string: uncertain" "flock L -c 'cd /x && git commit'; watc
   "?||uncertain ; ?||uncertain"
 cands "explicit models stay certain" "flock L bash -c 'git -C /x commit'; su root -c 'cd /y && git commit'" \
   "/x|/x|certain ; /y|/y|certain"
+cands "nested string under a known cwd: still uncertain, no candidates" "cd /a && flock L -c 'git commit -F m'" \
+  "?||uncertain"
+npaths() { # npaths <name> <command> <expected local paths of a relative "m" per commit ("-": none), joined by " ; ">
+  local got
+  got=$("$RUBY" -r"$HOOKS/git-command.rb" -e '
+    r = GitCommand.parse(ARGV[0], cwd: "/w", home: "/h")
+    puts r.commits.map { |i| ps = r.local_paths(GitCommand.path_key(i.base, "m")); ps.empty? ? "-" : ps.join(" ") }.join(" ; ")' "$2" 2>&1)
+  if [ "$got" = "$3" ]; then ok "$1" "$got"; else bad "$1" "want='$3' got='$got'"; fi
+}
+npaths "nested string: rooted at the outer cwd" "flock L -c 'git commit -F m'" "/w/m"
+npaths "nested string: the command's env -C / git -C directory" \
+  "env -C /x flock L -c 'git commit'; cd /a && git -C sub rebase -x 'git commit' HEAD~1" "/x/m ; /a/sub/m"
+npaths "nested string: each candidate of an unknown outer cwd" \
+  "cd /a 2>/dev/null || cd /b; flock L -c 'cd s && git commit'" "/a/s/m /b/s/m /w/s/m"
+npaths "nested string behind ssh / docker: no local directory" \
+  "ssh h 'flock L -c \"git commit\"'; docker exec c flock L -c 'git commit'" "- ; -"
 keys() { # keys <name> <command> <expected space-joined write keys>
   local got
   got=$("$RUBY" -r"$HOOKS/git-command.rb" -e '
@@ -1114,6 +1217,13 @@ git commit -F br-msg26.txt"
 pair "2.6: flock L -c 'git commit ...'" "flock @D@/work/lock -c 'git commit -m x -m \"@T@\"'"
 precommit "2.6: flock L -c 'git -C failrepo commit': no make" 0 \
   "flock @D@/work/lock -c 'git -C @D@/failrepo commit -m x'" "$D/work" "" NOMAKE
+pair "2.6: cat > m <<EOF; flock L -c 'git commit -F m'" "${M3}flock L -c 'git commit -F m'"
+pair "2.6: git rebase --exec='git commit ... --trailer \"...\"'" \
+  "git rebase --exec='git commit --amend --no-edit --trailer \"@T@\"' origin/main"
+expect_allow "2.6: python3 -c 'print(\"git commit ... trailer\")'" "python3 -c 'print(\"$PEX\")'"
+expect_allow "2.6: perl -lne 'print(...)'" "perl -lne 'print(\"$PEX\")'"
+precommit "2.6: function f { cd failrepo; }; git commit: no make" 0 \
+  'function f { cd failrepo; }; git commit -m x' "$D" "" NOMAKE
 PRELOAD=()
 
 echo "---- pass=$pass fail=$fail"

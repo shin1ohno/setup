@@ -27,7 +27,9 @@
 #                   nothing is knowable (an unresolved cd target, a remote
 #                   call, an uncertain call) or when there would be more than
 #                   Evaluator::MAX_CANDIDATES. Never a directory the command
-#                   cannot be in.
+#                   cannot be in, but for one known gap: the right side of
+#                   `L || R` is evaluated from where L ended (see "Control
+#                   flow" below).
 #     base          what the call's relative paths are keyed against
 #                   (GitCommand.path_key): dir, or an UnknownDir token
 #     certain       false for a call found inside a nested command string
@@ -110,10 +112,13 @@
 # after | |& || && continues the command, as bash reads it, so `a |` + newline
 # + `git commit -F -` is one pipeline); ( ) subshells and
 # { ...; } groups (a cd or assignment inside a subshell does not leak out; one
-# inside a pipeline or `&` does not count); `NAME() { ...; }` and `function
-# NAME { ...; }` bodies, read where they are defined; single, double and
-# $'...' quoting, backslash escapes, comments; heredocs (<<EOF, <<'EOF',
-# <<"EOF", <<-EOF) and here-strings, attached to the command that owns them;
+# inside a pipeline or `&` does not count); `NAME() { ...; }` bodies, read
+# where they are defined (a `function NAME { ...` command is skipped up to
+# the body's first ; && || | or newline, so `function f { cd x; }` moves no
+# cwd; the body's later commands are read like a NAME() body); single,
+# double and $'...' quoting, backslash escapes, comments; heredocs (<<EOF,
+# <<'EOF', <<"EOF", <<-EOF) and here-strings, attached to the command that
+# owns them;
 # $(...), `...` and <(...) / >(...), also inside a word (`--file=<(...)`) and
 # as a redirection target (`done < <(ls)`), scanned so their quotes and
 # heredocs do not break the outer split and searched for git calls
@@ -129,6 +134,9 @@
 # stdin redirection or pipe of its own reads the shell's stdin (`bash -c 'git
 # commit -F -' <<EOF`); a script read from stdin has used it up. A child
 # shell's HOME (from su, sudo -i / -H, `HOME=x bash -c`) is its ~ and $HOME.
+# A script that is itself the output of a $(...) (`bash -c "$(cat <<'EOF'
+# ... EOF)"`, and ssh / eval / flock -c of such output) is not parsed: only
+# the $(...) body is, and a `cat <<EOF` there is data.
 #
 # Any other command (xargs, mise exec --, flock, find -exec, stdbuf, setsid,
 # ionice, pct exec, ...) is searched for the command it runs; a word that
@@ -155,12 +163,23 @@
 # commit: the unconsumed words of an unknown command (also after a later git
 # word that is not a commit), the arguments of a shell's script ($1 ...), the
 # words of a git subcommand other than commit and GIT_DATA (`git rebase -x
-# S`, `git submodule foreach S`), and inside such a string any string in
-# command position (`os.system("git commit ...")`). Everything found in it is
-# uncertain (certain false, dir nil, no dir_candidates), starts in a new
-# UnknownDir, reads the command's stdin unless that is the command's own data
-# (xargs / parallel), and none of its writes marks a file rewritten. Text
-# that does not lex is not a script any shell would run, and is skipped.
+# S`, `git submodule foreach S`), the VALUE of such a word that is
+# `--NAME=VALUE` (`git rebase --exec=S`), and inside such a string any
+# string in command position (`lua -e 'os.execute("git commit ...")'`).
+# Everything found in it is uncertain (certain false, dir nil, no
+# dir_candidates) and starts in a new UnknownDir whose candidates are those
+# of the directory the command runs in (the outer cwd, or its env -C / sudo
+# -D / git -C directory; none when the command runs on another host), so a
+# relative file it reads meets what the command wrote there and what is on
+# disk there (`cat > m <<EOF` + `flock L -c 'git commit -F m'`); it reads the
+# command's stdin unless that is the command's own data (xargs / parallel),
+# and none of its writes marks a file rewritten. Text that does not lex is
+# not a script any shell would run, and is skipped. An interpreter's program
+# (INTERPRETERS, by basename: ruby -e, perl -e / -E, python / python3 /
+# pythonN.N -c, node -e / -p / --eval / --print, also later in an argv as in
+# `xargs python3 -c P`) is code in that language, not shell, and is not
+# scanned: a commit run by its os.system / system / execSync call is not
+# found. The interpreter's other words (its program's arguments) still are.
 # Data commands are not scanned at all: DATA_COMMANDS (echo, printf, cat,
 # tee, grep / rg, sed / awk programs, jq, gh / glab with their --body /
 # --title / -b / -F, curl / wget, logger, read / export ...; osascript -e is
@@ -189,16 +208,21 @@
 # branch starts from the cwd its construct was entered with (a loop body may
 # run zero times, a case may match no arm, b runs only when a fails); after
 # the construct the cwd is that shared end directory, or an UnknownDir with
-# the ends and the entry as candidates when they differ, so `cd A 2>/dev/null
-# || cd B; git commit` and `if ...; then cd A; else cd B; fi; git commit` give
-# dir nil and dir_candidates [A, B, entry]. `a && b` applies b's cd as if a
-# succeeded. A variable assigned in a branch keeps its last assignment as its
-# value and the value it had before as an extra, since the branch may not
-# run. `for NAME in` 2 to MAX_FOR_ITEMS static items (no $, `, glob or brace
-# left after expansion) runs its body once per item, NAME set to it and each
-# run starting from the cwd the one before ended in, as bash runs it (at most
-# MAX_REPLAYS extra runs per parse; break / continue are not modeled, so every
-# item runs); after `done` that end is merged with the entry like any loop's.
+# the ends and the entry as candidates when they differ, so `cd /A 2>/dev/null
+# || cd /B; git commit` and `if ...; then cd A; else cd B; fi; git commit` give
+# dir nil and dir_candidates [A, B, entry]. A known gap (TODO.md): b of `a ||
+# b` starts where a ended, as if a's cds succeeded, not in the directory
+# before a, so a relative cd in b joins a's end: `cd a 2>/dev/null || cd b`
+# from /w gives /w/a, /w/a/b and /w, and misses /w/b (starting b before a
+# instead turns `cd a || exit 1` into an unknown cwd). `a && b` applies b's
+# cd as if a succeeded. A variable assigned in a branch keeps its last
+# assignment as its value and the value it had before as an extra, since the
+# branch may not run. `for NAME in` 2 to MAX_FOR_ITEMS static items (no $,
+# `, glob or brace left after expansion) runs its body once per item, NAME
+# set to it and each run starting from the cwd the one before ended in, as
+# bash runs it (at most MAX_REPLAYS extra runs per parse; break / continue
+# are not modeled, so every item runs); after `done` that end is merged with
+# the entry like any loop's.
 #
 # Variables: NAME=value commands, export / declare / local / readonly / typeset
 # NAME=value, `read [-d ''] NAME` from a heredoc / here-string / `< file`,
@@ -1098,7 +1122,7 @@ module GitCommand
     MAX_DEPTH = 8
     SHELLS = %w[bash sh zsh dash ksh].freeze
     RESERVED_SKIP = %w[! { if then elif else do while until].freeze
-    RESERVED_STOP = %w[} fi done esac for case select in].freeze
+    RESERVED_STOP = %w[} fi done esac for case select function in].freeze
     ASSIGNMENT = /\A[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/.freeze
     ASSIGNMENT_PARTS = /\A([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?(\+?)=/.freeze
     NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/.freeze
@@ -1172,6 +1196,31 @@ module GitCommand
     REMOTE_COMMANDS = %w[ssh mosh docker podman kubectl lxc lxc-attach incus pct qm vagrant
                          multipass distrobox toolbox chroot schroot nsenter machinectl
                          systemd-run].freeze
+    # Interpreters whose program option takes code in their own language,
+    # which no shell reads (`python3 -c P`, `ruby -e P`, `perl -lne P`, `node
+    # -e P` / `-p P` / `--eval=P`): that word is not scanned as a nested
+    # command string (interpreter_programs). Short option letters per
+    # interpreter: program (its value is the program), valued (a value
+    # attached, or else the next word), rest (the rest of the word is its
+    # value), digits (attached octal / hex digits), ends (no option follows);
+    # attached: a program may be attached (`-e'P'`, `-cP`; node has none, its
+    # `-pe` is `-p -e`); long: options whose value is the program;
+    # long_valued: long options whose value may be the next word.
+    Interpreter = Struct.new(:program, :valued, :rest, :digits, :ends, :attached, :long, :long_valued)
+    INTERPRETERS = {
+      "ruby" => Interpreter.new("e", "CEIr", "FiKWx", "0", "", true, [],
+                                %w[--encoding --external-encoding --internal-encoding]),
+      "perl" => Interpreter.new("eE", "I", "CdDFimMx", "0l", "", true, [], []),
+      "python" => Interpreter.new("c", "mWX", "", "", "cm", true, [], []),
+      "node" => Interpreter.new("ep", "rC", "", "", "", false, %w[--eval --print],
+                                %w[--require --import --loader --experimental-loader --input-type
+                                   --conditions --env-file]),
+    }.freeze
+    # ruby, perl, node, python, python3, python3.12 (by basename).
+    INTERPRETER_NAME = /\A(ruby|perl|node|python)(?:\d+(?:\.\d+)*)?\z/.freeze
+    # A `--NAME=VALUE` word: in a nested command string scan, VALUE is the
+    # candidate script (`git rebase --exec='git commit ...'`).
+    LONG_OPTION_VALUE = /\A--[A-Za-z0-9][A-Za-z0-9-]*=/.freeze
 
     def initialize(home)
       @home = home
@@ -1554,13 +1603,14 @@ module GitCommand
         script, used = shell_script(cmd, words, cwd)
         run_shell(script, dir, exported_env.merge(env), depth, used.positive? ? stdin_of(cmd, cwd) : nil) if script
         # Its other words are the script's arguments ($1 ...), which it may run.
-        scan_words(cmd, words, 1, cwd, depth, !(script && used.zero?), used.positive? ? used : nil)
+        scan_words(cmd, words, 1, cwd, depth, !(script && used.zero?), used.positive? ? used : nil, dir: dir)
         cwd
       when "git"
         inv = git_invocation(cmd, words, dir, cwd, exported_env.merge(env))
         @invocations << inv
-        # `git rebase -x CMD`, `git submodule foreach CMD`: a string git runs.
-        scan_words(cmd, words, 1, cwd, depth) unless inv.commit? || GIT_DATA.include?(inv.subcommand)
+        # `git rebase -x CMD`, `git submodule foreach CMD`: a string git runs
+        # (from its -C directory).
+        scan_words(cmd, words, 1, cwd, depth, dir: inv.base) unless inv.commit? || GIT_DATA.include?(inv.subcommand)
         cwd
       else
         unless isolated?(cmd)
@@ -1616,6 +1666,8 @@ module GitCommand
     #     before it in the same command already ran, or the word directly
     #     follows an option, whose value it then is (`shellcheck -s bash -`,
     #     `bat -l sh`).
+    #   - an interpreter's program (`python3 -c P`, `xargs ruby -e P`; see
+    #     interpreter_programs): skipped, code in that language, not shell;
     #   - any other word: scanned as a nested command string (scan_nested),
     #     which is how `flock L -c S`, `sg G -c S`, `watch S`, `parallel :::
     #     S`, `tmux send-keys S` and wrappers no table lists are covered;
@@ -1631,12 +1683,20 @@ module GitCommand
       remote ||= REMOTE_COMMANDS.include?(name)
       stdin_free &&= !ARGS_FROM_STDIN.include?(name)
       # Inside a nested command string, a string with blanks in command
-      # position is a script some program runs (`os.system("git commit ...")`).
-      scan_nested(cmd, words[0], cwd, depth, stdin_free) if @uncertain.positive? && words[0].value.match?(/\s/)
+      # position is a script some program runs (`lua -e 'os.execute("git
+      # commit ...")'`).
+      if @uncertain.positive? && words[0].value.match?(/\s/)
+        scan_nested(cmd, words[0], cwd, depth, stdin_free, dir: dir, remote: remote)
+      end
       data = false # a data command word was passed: the words after it are its text
+      code = interpreter_programs(words, 0) # {index => true} of an interpreter's program words
       idx = 1
       while idx < words.size
         word = words[idx]
+        if code[idx] # `python3 -c P`: code in that language, not shell
+          idx += 1
+          next
+        end
         cname = word.value.start_with?("-") ? "" : command_name(word)
         remote ||= REMOTE_COMMANDS.include?(cname)
         optval = option_value?(words[idx - 1])
@@ -1664,11 +1724,69 @@ module GitCommand
             stdin_free = false
             idx += used
           end
+        elsif INTERPRETER_NAME.match?(cname)
+          code.merge!(interpreter_programs(words, idx)) # `xargs python3 -c P`
         elsif !data
-          scan_nested(cmd, word, cwd, depth, stdin_free)
+          scan_nested(cmd, word, cwd, depth, stdin_free, dir: dir, remote: remote)
         end
         idx += 1
       end
+    end
+
+    # {index => true} for the words after words[at], an interpreter by
+    # basename (INTERPRETERS), that are its program: the value of a program
+    # option (`-e P`, `-c P`, `-lne P`, `-e'P'`, `--eval=P`), up to the first
+    # word that is not an option (its script file, or the program's
+    # arguments).
+    def interpreter_programs(words, at)
+      m = INTERPRETER_NAME.match(command_name(words[at]))
+      spec = m && INTERPRETERS[m[1]]
+      found = {}
+      return found unless spec
+
+      i = at + 1
+      while (w = words[i]) && w.value.start_with?("-") && !["-", "--"].include?(w.value)
+        opt = w.value
+        i = opt.start_with?("--") ? long_program(spec, opt, i + 1, found) : short_program(spec, opt, i + 1, found)
+        break if i.nil?
+      end
+      found
+    end
+
+    # A long option at words[i - 1]: records a program word in found; returns
+    # the index of the next option word.
+    def long_program(spec, opt, i, found)
+      name, eq, = opt.partition("=")
+      if spec.long.include?(name)
+        found[eq.empty? ? i : i - 1] = true
+        return eq.empty? ? i + 1 : i
+      end
+      eq.empty? && spec.long_valued.include?(name) ? i + 1 : i
+    end
+
+    # A short option cluster at words[i - 1] (`-lne`, `-rjson`, `-0777`):
+    # records a program word in found; returns the index of the next option
+    # word, or nil when no option follows (python's -c / -m).
+    def short_program(spec, opt, i, found)
+      j = 1
+      while j < opt.length
+        ch = opt[j]
+        j += 1
+        if spec.program.include?(ch)
+          attached = j < opt.length && spec.attached
+          found[attached ? i - 1 : i] = true
+          i += 1 unless attached
+          return spec.ends.include?(ch) ? nil : i
+        elsif spec.valued.include?(ch)
+          i += 1 if j == opt.length
+          return spec.ends.include?(ch) ? nil : i
+        elsif spec.rest.include?(ch)
+          return i
+        elsif spec.digits.include?(ch)
+          j += opt[j..][/\A(?:[xX]\h*|[0-7]*)/].length
+        end
+      end
+      i
     end
 
     # What a TAIL_WRAPPERS word later in an argv runs, words[0] being its
@@ -1822,24 +1940,29 @@ module GitCommand
     # ---- nested command strings -------------------------------------------
 
     # words[from..] (but not words[skip]) each scanned by scan_nested.
-    def scan_words(cmd, words, from, cwd, depth, stdin_free = true, skip = nil)
+    def scan_words(cmd, words, from, cwd, depth, stdin_free = true, skip = nil, dir: cwd)
       (from...words.size).each do |i|
-        scan_nested(cmd, words[i], cwd, depth, stdin_free) unless i == skip
+        scan_nested(cmd, words[i], cwd, depth, stdin_free, dir: dir) unless i == skip
       end
     end
 
     # An argv word that no explicit model consumed, of a command that is not
     # a data command: when its text lexes and names git and commit, it is
     # parsed as a script some program may run (`flock L -c S`, `watch S`,
-    # `tmux send-keys S`, `git rebase -x S`). Everything found in it is
-    # uncertain (Invocation#certain false, dir nil, no dir_candidates): it
-    # starts in a new UnknownDir, reads the command's stdin unless that is
-    # the command's own data (stdin_free false), and a truncating write in it
-    # does not count as having happened (rewritten). Text that does not lex
-    # is not a script any shell would run. A word that names them only inside
-    # its own $(...) / <(...) is skipped: finish already ran those bodies.
-    def scan_nested(cmd, word, cwd, depth, stdin_free)
-      text = word.value
+    # `tmux send-keys S`, `git rebase -x S`); of a `--NAME=VALUE` word, the
+    # VALUE (`git rebase --exec=S`). Everything found in it is uncertain
+    # (Invocation#certain false, dir nil, no dir_candidates): it starts in a
+    # new UnknownDir whose candidates are those of dir, the directory the
+    # command runs in (none when it runs remote: remote, or a shell behind
+    # ssh / docker ...), so a relative file it reads is looked up where the
+    # command wrote it or has it on disk; it reads the command's stdin unless
+    # that is the command's own data (stdin_free false), and a truncating
+    # write in it does not count as having happened (rewritten). Text that
+    # does not lex is not a script any shell would run. A word that names
+    # them only inside its own $(...) / <(...) is skipped: finish already ran
+    # those bodies.
+    def scan_nested(cmd, word, cwd, depth, stdin_free, dir: cwd, remote: false)
+      text = word.value.sub(LONG_OPTION_VALUE, "")
       return unless names_commit?(text)
 
       rest = text.dup
@@ -1852,7 +1975,8 @@ module GitCommand
       @uncertain += 1
       @conditional += 1
       begin
-        nested_run(text, unknown_dir, depth + 1, tokens)
+        candidates = remote || @remote.positive? ? [] : merged_candidates([dir])
+        nested_run(text, unknown_dir(candidates), depth + 1, tokens)
       ensure
         @uncertain -= 1
         @conditional -= 1
@@ -2218,10 +2342,6 @@ module GitCommand
         end
         if w.raw.match?(ASSIGNMENT)
           add_env(env, ws.shift)
-          next
-        end
-        if w.raw == v && v == "function"
-          ws.shift(2) # `function NAME { ...; }`: the body is read like `NAME() { ...; }`
           next
         end
         return [[], dir, env] if w.raw == v && RESERVED_STOP.include?(v)

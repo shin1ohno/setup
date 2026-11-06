@@ -23,16 +23,24 @@
 # -c`, `pct exec 104 -- su - U -c`, `setsid -w su U <<EOF`); ssh's remote
 # command string, which the remote shell runs reading ssh's stdin (`ssh host
 # 'bash -s' <<EOF`, `ssh pve "pct exec 104 -- bash -s" <<EOF`, `ssh host
-# 'cd x && git commit ...'`, `ssh host <<EOF`); `NAME() { ...; }` and
-# `function NAME { ...; }` bodies; a pipe or && split across lines; a for loop
-# over several static items (each item is its own commit); and, uncertain,
-# a commit inside any argv word of a non-data command that lexes as a script
-# naming git commit (a nested command string): `flock L -c '...'`, `flock
-# --command`, `sg G -c`, `watch '...'`, `parallel ::: '...'`, `tmux send-keys
-# '...'`, `trap '...' EXIT`, `git rebase -x '...'`, a shell script's own
-# arguments (`bash -c 'eval "$1"' _ '...'`), `osascript -e 'do shell script
-# "..."'`, `python3 -c 'os.system("...")'` and any wrapper no table lists. Its
-# message says when the commit was found in a nested command string. Data
+# 'cd x && git commit ...'`, `ssh host <<EOF`); `NAME() { ...; }` bodies; a
+# pipe or && split across lines; a for loop over several static items (each
+# item is its own commit); and, uncertain, a commit inside any argv word of
+# a non-data command that lexes as a script naming git commit (a nested
+# command string): `flock L -c '...'`, `flock --command`, `sg G -c`, `watch
+# '...'`, `parallel ::: '...'`, `tmux send-keys '...'`, `trap '...' EXIT`,
+# `git rebase -x '...'`, the VALUE of a `--NAME=VALUE` word (`git rebase
+# --exec='...'`), a shell script's own arguments (`bash -c 'eval "$1"' _
+# '...'`), `osascript -e 'do shell script "..."'` and any wrapper no table
+# lists. A relative message file such a string reads is checked where its
+# command runs (the session cwd, or its env -C / git -C directory): what the
+# command wrote there (`cat > m <<'EOF'` + `flock L -c 'git commit -F m'`,
+# also `-m "$(cat m)"`, `-F - < m`, `-F ./m`) and the file on disk unless
+# the command overwrote it first; behind ssh / docker only what was written
+# on that host counts. The message says when the commit was found in a
+# nested command string. An interpreter's program (`python3 -c P`, `ruby -e
+# P`, `perl -e P`, `node -e P`) is not shell and is not scanned, so
+# `python3 -c 'print("git commit ... Co-Authored-By ...")'` passes. Data
 # commands are not scanned (echo / printf / cat / tee, grep / rg, sed / awk,
 # jq, gh / glab bodies, curl / wget, logger, git log / show / notes / grep, and
 # in a wrapper's argv the words after such a command), so a documented
@@ -113,8 +121,20 @@
 #     script file run by name (`bash x.sh`, `./x.sh`, `make`, `npm run`), git
 #     hooks and templates.
 #   - aliases and indirection outside the command: git aliases (`git ci`),
-#     shell aliases and functions defined before this command, and a program
-#     that assembles its own argv (`subprocess.run(["git", "commit", ...])`).
+#     shell aliases and functions defined before this command, a commit in
+#     the first command of a `function NAME { ...; }` body (`function ci {
+#     git commit ...; }`, skipped with the definition), and a program that
+#     assembles its own argv (`subprocess.run(["git", "commit", ...])`).
+#   - kept open by decision (TODO.md): (a) a relative cd on the right of
+#     `L || R` (`cd a 2>/dev/null || cd b; git commit -F m`): R is read from
+#     where L ended, so m is looked for under a, a/b and the entry but not
+#     entry/b; (b) a script that is the literal output of a command
+#     substitution (`bash -c "$(cat <<'EOF' ... EOF)"`, ssh / eval / flock -c
+#     of such output): only the substitution's body is parsed, where `cat
+#     <<EOF` is data; (c) an interpreter's program (ruby / perl -e, python
+#     -c, node -e / -p / --eval): the commit its os.system / system /
+#     execSync call runs (`python3 -c 'import os; os.system("git commit
+#     ...")'`) is not parsed.
 #   - word-splitting and spelling tricks: the hook exits before parsing
 #     unless the command contains "commit", so `git com\mit`, `git "com"mit`
 #     and `git $'\x63ommit'` pass; so does an unquoted $VAR that bash splits
@@ -132,12 +152,13 @@
 # into either one blocks a commit that reads the other; a nested command
 # string is checked even when the program treats it as data (`linear ...
 # --description "git commit -m '...Co-Authored-By...'"`, `claude -p "..."`,
-# `ruby -e '...' "git commit ..."`); a commit behind ssh / docker ... reads an
-# absolute message path from this host; ssh's command string the remote shell
-# would reject (`ssh host git commit -m "x <a@b>"`, where `<a@b>` turns into a
-# redirection) is checked as text; su / sudo after an option (`--become-method
-# su <<EOF`) is still taken as su reading the heredoc; a for loop's body runs
-# for every item (break / continue are not modeled).
+# the arguments of an interpreter's program: `ruby -e 'puts ARGV[0]' "git
+# commit ..."`); a commit behind ssh / docker ... reads an absolute message
+# path from this host; ssh's command string the remote shell would reject
+# (`ssh host git commit -m "x <a@b>"`, where `<a@b>` turns into a
+# redirection) is checked as text; su / sudo after an option
+# (`--become-method su <<EOF`) is still taken as su reading the heredoc; a
+# for loop's body runs for every item (break / continue are not modeled).
 # History: the -F <path> check came from a 2026-09-16 audit (the -F route,
 # which CLAUDE.md recommends for messages with glob characters, passed
 # unchecked); SH1-79 replaced the literal "git commit" match with the parser;

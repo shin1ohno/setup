@@ -44,16 +44,22 @@
 #     `ssh host <<EOF`) or behind a later ssh / docker word (`xargs -I{} ssh
 #     {} ...`, `caffeinate -i ssh ...`, `stdbuf -oL docker exec ...`), none of
 #     which is this host's directory;
-#   - known limitation: an uncertain commit, found only inside a nested
-#     command string that no explicit model covers. Commits through
+#   - known limitation (TODO.md): an uncertain commit, found only inside a
+#     nested command string that no explicit model covers. Commits through
 #     unmodelled wrappers are not tested: `flock L -c '...'` / `--command`,
 #     `sg G -c`, `watch '...'`, `parallel ::: '...'`, `tmux send-keys`, `trap
-#     '...' EXIT`, `git rebase -x '...'`, a shell script's arguments, `python3
-#     -c 'os.system(...)'`. Whether such a string runs, and where, is not
-#     knowable from the command; the modelled forms above (`flock L bash -c`,
-#     `su -c`, ...) are tested.
+#     '...' EXIT`, `git rebase -x '...'` / `--exec='...'`, a shell script's
+#     arguments, also when the string starts in a definite directory (`cd X
+#     && flock L -c 'git commit ...'`). Whether such a string runs, and
+#     where, is not knowable from the command; the modelled forms above
+#     (`flock L bash -c`, `su -c`, ...) are tested.
 # A commit only inside a snippet handed to a linter or highlighter
-# (`shellcheck -s bash - <<EOF`, `bat -l sh`) is not a commit.
+# (`shellcheck -s bash - <<EOF`, `bat -l sh`) is not a commit, and neither
+# is one run by an interpreter's program (`python3 -c 'os.system(...)'`,
+# `ruby -e`, `perl -e`, `node -e`: not shell, not parsed). A `function NAME
+# { cd X; }` definition is skipped, so its cd does not move the directory a
+# later commit is tested in (`function cleanup { cd X; }; trap cleanup EXIT;
+# git commit` tests the cwd).
 #
 # Fail-open: any internal error exits 0; only a failing test run exits 2.
 
