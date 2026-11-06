@@ -62,7 +62,12 @@ results, then choose an available model/effort. Do not assume the controller's
 own provider is best. Record one concrete reason and the actual model observed
 after startup separately from the requested selection. Choose model and effort
 explicitly for every attempt; an inherited default is not an observed choice.
-Validate host capabilities before launch.
+Start from the work-type table in dispatch.md, then validate host capabilities
+before launch. Tune effort before switching model; escalate by failure type
+(wrong with full context: stronger model; skipped files or tests: more effort),
+one step at a time. Use cheaper workers only for independent fan-out or work
+beyond one context window. Use xhigh/max only for work over 30 minutes or with
+evaluation evidence, and group parallel workers by (model, effort).
 
 ## Dispatch and monitor
 
