@@ -7,19 +7,25 @@
 # Every git commit in the command is found by git-command.rb, not only a
 # command that starts with "git commit": `git -C <dir> commit`, chains such as
 # `test -d X && git -C X add -A && git -C X commit -F msg`, `cd X && git
-# commit`, wrappers (env / command / timeout, xargs / mise exec -- / flock ...)
-# and `bash -c '...'`. Project detection and the test command run in each
-# distinct directory a commit targets: its work tree when --work-tree or
-# GIT_WORK_TREE names one, otherwise its effective directory (cwd, then `cd`,
-# then -C, with variables the command sets substituted: `R=/x; git -C "$R"`,
-# plus $HOME / $PWD / environment variables, $(pwd), and `cd "$(git rev-parse
-# --show-toplevel)"` / `git -C "$(git rev-parse --show-toplevel)"`, which
-# resolve to the nearest ancestor holding .git), so a commit into another
-# checkout runs that checkout's tests rather than the session cwd's. Skipped:
-# a commit whose directory is not static (`git -C "$REPO" commit` with REPO set
-# neither by the command nor in the environment, rev-parse outside any repo),
-# a --git-dir / GIT_DIR without a work tree (a bare or dotfiles repo, which the
-# cwd's project does not guard), and a commit behind ssh / docker / pct ...
+# commit`, wrappers (env / command / timeout, sudo -iu USER, xargs / mise exec
+# -- / flock ...) and shell scripts: `bash -c '...'`, su / runuser -c or a
+# heredoc, `sudo -s <<EOF`, `script -qc`, and a shell started by any other
+# command (`flock L bash -c`, `xargs sh -c`, `find -exec sh -c`). Project
+# detection and the test command run in each distinct directory a commit
+# targets: its work tree when --work-tree or GIT_WORK_TREE names one,
+# otherwise its effective directory (cwd, then `cd`, then -C, with variables
+# the command sets substituted: `R=/x; git -C "$R"`, plus $HOME / $PWD /
+# environment variables, $(pwd), and `cd "$(git rev-parse --show-toplevel)"` /
+# `git -C "$(git rev-parse --show-toplevel)"`, which resolve to the nearest
+# ancestor holding .git; `su - USER` / `sudo -i` start in USER's home), so a
+# commit into another checkout runs that checkout's tests rather than the
+# session cwd's. Skipped: a commit whose directory is not static (`git -C
+# "$REPO" commit` with REPO set neither by the command nor in the environment,
+# rev-parse outside any repo, a cd in an if / case branch, a loop body or
+# after `||`, as in `cd A 2>/dev/null || cd B; git commit`, where the
+# branches end in different directories), a --git-dir / GIT_DIR without a
+# work tree (a bare or dotfiles repo, which the cwd's project does not guard),
+# and a commit behind ssh / docker / pct ..., also inside a shell started there
 # (not this host's directory).
 #
 # Fail-open: any internal error exits 0; only a failing test run exits 2.
@@ -100,7 +106,9 @@ dirs =
   begin
     data = JSON.parse($stdin.read)
     command = data.dig("tool_input", "command").to_s
-    # Quick exit before parsing: no git commit can hide without the word.
+    # Quick exit before parsing: a commit not spelled with the literal word
+    # (`git com\mit`, `git "com"mit`, `git $'\x63ommit'`, an alias such as
+    # `git ci`) is not checked.
     exit 0 unless command.include?("commit")
 
     cwd = data["cwd"].is_a?(String) && File.directory?(data["cwd"]) ? data["cwd"] : Dir.pwd
