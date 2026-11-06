@@ -337,11 +337,15 @@ Worktree teardown origins: 2026-07-24〜08-06 — 4 sessions repeated 「ブラ�
 
 ## commit-message-glob-chars
 
+zsh globs them and `git commit -m "…"` aborts with `no matches found` (the mangled one-line echo points at quoting, not globbing). Use `git commit -F <path>`; `-m` only for a single line with no glob characters.
+
 Writing the message to a file and committing with `git commit -F <path>` works for the same reason PR bodies go through `--body-file`. Because the whole message comes back as one mangled line, the error points at the quoting rather than at globbing, and a second attempt tends to fiddle with quotes instead of leaving `-m` behind.
 
 Origin: 2026-09-16 — a multi-paragraph message containing "status?" failed with `(eval):2: no matches found:`.
 
 ## sibling-repo-worktree
+
+`EnterWorktree` works only in the session's current repo (or one nested in it). For a sibling repo: `git worktree add <repo>/.claude/worktrees/<name> -b <branch> origin/main`, edit via absolute paths, commit with `git -C <worktree>`; the textual refusal does not apply.
 
 `EnterWorktree` creates a worktree only in the session's current repository, and entering an existing one by `path` is refused unless the target belongs to the current repo or to a repo nested inside it. Creating the sibling worktree with `git worktree add` leaves the session itself un-isolated, so the textual git-substring refusal does not apply there.
 
@@ -402,6 +406,18 @@ Origin: 2026-04-25 cherry-picked onto the user's unrelated WIP branch.
 
 ## pr-body-file
 
+A PR body with backticks, fences, `$()`, `${...}`, nested quotes or multiple paragraphs never goes through inline `--body "$(cat <<'EOF' …)"`. Always:
+
+```
+cat > /tmp/pr-body.md <<'EOF'
+## Summary
+- ...
+## Test plan
+- `cmd1` … `cmd2` …
+EOF
+gh pr create --base main --title "..." --body-file /tmp/pr-body.md
+```
+
 With an inline HEREDOC the shell or `gh` mis-parses embedded backticks / dollar signs / pipes, and the command aborts with a usage-error blurb that hides the actual parsing failure. The body file is plain Markdown — no escaping, no quoting concerns, no parser ambiguity — so apply `--body-file` unconditionally whenever the body has any of: backticks, code fences, `$()`, `${...}`, single quotes inside double quotes, or multi-paragraph structure.
 
 Origin: 2026-05-05 — inline HEREDOC with backticks made `gh pr create` print `--title string` usage hints and abort.
@@ -437,3 +453,15 @@ The first half of the chain reloads the agent; the second forces a `gpg --clears
 **Output integrity.** The user copy-pastes whatever is emitted. If the output ends `… echo "test" | gp` — truncated mid-word — the user runs `echo "test" | gpg` with no `--clearsign`, gpg warns "no command supplied", the cache is NOT primed, and the next commit fails with the same "No passphrase given" error. Before emitting the line, check that both halves are intact, and emit it as a fenced code block rather than inline at the end of a sentence where a line wrap can swallow trailing tokens.
 
 Origin: 2026-05-04 retro — emitted `... echo "test" | gp` truncated mid-word; cold pinentry cache failed the next commit.
+
+## git-mv-reread
+
+The Edit tool tracks Read history by path, not inode. After `git mv <old> <new>`, the Read cache for `<old>` does NOT carry over to `<new>` — Edit calls on the new path fail with "File has not been read yet", even though the file content is identical and the inode is unchanged.
+
+**Bulk rename workflow:**
+
+1. `git mv` all files first (single Bash call)
+2. Re-Read every moved file at its new path — batch in a single message with parallel Read calls
+3. Apply Edits
+
+Skipping step 2 produces one "not been read" error per file, scattering across tool calls and wasting context. On a 13-file rename this costs a full round-trip of failed Edits before the re-Read batch can start.
