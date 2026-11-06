@@ -205,7 +205,12 @@ Pass both values on every route:
 
 - Agent tool: set `model` (`opus`, `sonnet`, `haiku`) and `effort` from the
   table. The table is the skill's explicit effort instruction for the tool.
-- Herdr Claude worker: `-- --model <model> --effort <level>`.
+- Herdr Claude worker: `-- --model <model> --effort <level>`. Implementation and
+  document workers add `--settings ~/.claude/worker-floor/<impl|docs>.json`.
+  Implementation workers also add
+  `--tools Bash,Read,Edit,Write,Skill,ToolSearch,Agent,AskUserQuestion`. Keep
+  `ToolSearch`: without it first-call usage rose by about 72k on pro-dev. Daily
+  admin workers add neither.
 - Herdr Codex worker: `-- -m <model> -c model_reasoning_effort="<level>"`.
 
 Launch workers without `CLAUDE_CODE_EFFORT_LEVEL` in their environment (for

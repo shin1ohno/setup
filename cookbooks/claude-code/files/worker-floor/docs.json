@@ -1,0 +1,8 @@
+{
+  "skillListingBudgetFraction": 0.005,
+  "enabledPlugins": {
+    "plugin-dev@claude-plugins-official": false,
+    "feature-dev@claude-plugins-official": false,
+    "hookify@claude-plugins-official": false
+  }
+}

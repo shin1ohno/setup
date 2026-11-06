@@ -498,10 +498,10 @@ if File.file?(cc_default)
   # the fixed 3-line block shape (%w line, remote_file line, source line). This
   # avoids a greedy match grabbing an earlier unrelated %w (e.g. the hooks list).
   # Flat per-file deploy dirs only; skills/ is directory-based + templated.
-  wanted = %w[rules docs workflows agents].to_set
+  wanted = %w[rules docs workflows agents worker-floor].to_set
   deployed = Hash.new { |h, k| h[k] = [] }
   cc_src.scan(
-    /%w\(([^)]*)\)\.each do \|file_name\|\s*\n\s*remote_file[^\n]*\n\s*source "files\/(\w+)\/\#\{file_name\}"/,
+    /%w\(([^)]*)\)\.each do \|file_name\|\s*\n\s*remote_file[^\n]*\n\s*source "files\/([\w-]+)\/\#\{file_name\}"/,
   ) do |names, dir|
     deployed[dir] = names.split if wanted.include?(dir)
   end
