@@ -553,6 +553,9 @@ jobs:
         # exit code and message.
         ruby bin/test-build-instructions
 
+    - name: Test first-call instruction usage
+      run: bin/test-instruction-usage
+
     - name: Check for common issues
       run: |
         # Check for syntax errors in main files
