@@ -220,8 +220,9 @@ from evidence:
 - Herdr route: after startup evidence, `bind --pane <id> --model ACTUAL --effort
   ACTUAL`.
 - Agent-tool route: `attempt --route agent`, then `bind --session
-  <returned-native-agent-id>` rather than inventing a pane. After the worker
-  returns, run `observe <task-id> --owner <owner> --transcript <path>` on
+  <returned-native-agent-id>` rather than inventing a pane. A synchronous Agent
+  call returns its id only when the worker finishes, so bind and record
+  `running` then, with a note saying so. Then run `observe <task-id> --owner <owner> --transcript <path>` on
   `~/.claude/projects/<cwd-slug>/<controller-session>/subagents/agent-<agent-id>.jsonl`.
   It reads the model and effort recorded on every assistant turn. A missing
   field, mixed values, a mismatched file name or a non-regular file is refused,
