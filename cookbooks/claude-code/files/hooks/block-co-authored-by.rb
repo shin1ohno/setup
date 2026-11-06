@@ -14,7 +14,13 @@
 # behind su / runuser (-c, or the shell reading a heredoc), `sudo -s` / `sudo
 # -i` reading a heredoc, `script -qc`, and any other command whose later word
 # starts a shell (`flock L bash -c`, `xargs sh -c`, `find -exec sh -c`, `ssh
-# host bash -s <<EOF`). For each one the message sources are checked:
+# host bash -s <<EOF`) or is su / sudo / runuser / script (`flock L su - U
+# -c`, `pct exec 104 -- su - U -c`, `setsid -w su U <<EOF`); ssh's remote
+# command string, which the remote shell runs reading ssh's stdin (`ssh host
+# 'bash -s' <<EOF`, `ssh pve "pct exec 104 -- bash -s" <<EOF`, `ssh host
+# 'cd x && git commit ...'`, `ssh host <<EOF`); a pipe or && split across
+# lines; and a for loop over several static items (each item is its own
+# commit). For each one the message sources are checked:
 #   -m / --message   separate, = and attached forms, and a short-option
 #                    cluster such as -am "msg"; unique abbreviations (--mess)
 #   --trailer        separate and = forms
@@ -41,7 +47,10 @@
 #                    quotes inside the body), `< file`, or the literal output
 #                    on the left of a pipe: echo / printf / `cat <<EOF` / `cat
 #                    file`, or a { ...; } / ( ... ) group of them
-#                    (`{ echo fix; echo; echo "..."; } | git commit -F -`)
+#                    (`{ echo fix; echo; echo "..."; } | git commit -F -`);
+#                    with none of these, the stdin of the -c script the
+#                    commit is in (`bash -c 'git commit -F -' <<EOF`, `ssh
+#                    host 'git commit -F -' <<EOF`)
 # A value may come through a variable the same command sets (MSG=...; export,
 # declare, local, `read -d '' MSG <<'EOF'`, `printf -v`, `for M in ...`) and
 # through a literal $(...): `-m "$(cat msg)"` and `-m "$(< msg)"` read that
@@ -75,13 +84,25 @@
 #   - a commit not spelled with the literal word: the hook exits before
 #     parsing unless the command contains "commit", so `git com\mit`, `git
 #     "com"mit`, `git $'\x63ommit'` and git aliases (`git ci`) pass.
-#   - a commit inside a quoted command string handed to another program
-#     (`ssh host '...'`, `tmux send-keys`, `watch '...'`), and one inside a
-#     `function NAME { ...; }` body.
+#   - a commit inside a quoted command string handed to a program other than
+#     ssh (`tmux send-keys`, `watch '...'`, `parallel '...' ::: a b`), and one
+#     inside a `function NAME { ...; }` body.
+#   - a shell reading its script from stdin when its name directly follows an
+#     option, which is taken as that option's value (so `shellcheck -s bash -
+#     <<EOF` is data): `setsid -w bash <<EOF`, `unshare -r bash <<EOF`,
+#     `nsenter -t 1 -a sh <<EOF`; their -c form is still parsed.
+#   - a for loop over items that are not static (a glob, $(...), an unset
+#     variable) or more than GitCommand::Evaluator::MAX_FOR_ITEMS of them:
+#     NAME holds the items joined into one value.
 # Conservative: two unresolved paths with the same text (two `$(mktemp)`
 # variables) share one key, so the trailer written into either one blocks a
 # commit that reads the other; a commit behind ssh / docker ... is checked like
-# a local one, and its message file is read from this host.
+# a local one, and its message file is read from this host; ssh's command
+# string the remote shell would reject (`ssh host git commit -m "x <a@b>"`,
+# where `<a@b>` turns into a redirection) is checked as text; su / sudo after
+# an option (`--become-method su <<EOF`) is still taken as su reading the
+# heredoc; a for loop's body runs for every item (break / continue are not
+# modeled).
 # History: the -F <path> check came from a 2026-09-16 audit (the -F route,
 # which CLAUDE.md recommends for messages with glob characters, passed
 # unchecked); SH1-79 replaced the literal "git commit" match with the parser.

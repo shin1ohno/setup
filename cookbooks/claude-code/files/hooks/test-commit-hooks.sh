@@ -13,8 +13,14 @@
 # not list (xargs, mise exec --, flock, find -exec), commits in a shell
 # started through su / runuser / sudo (-iu, -Hu, -s <<EOF) / script -qc or any
 # other command (flock bash -c, xargs sh -c, find -exec sh -c, ssh host bash
-# -s), values held in variables the command sets, -F /dev/stdin and $(cat
-# file), message paths through $HOME / $TMPDIR / $PWD / $(pwd) /
+# -s), su / sudo / script behind such a command (flock su -c, pct exec -- su
+# -c, xargs su -c, setsid su <<EOF, flock script -qc), ssh's remote command
+# string (`ssh host 'bash -s' <<EOF`, `ssh pve "pct exec 104 -- bash -s"
+# <<EOF`, `ssh host sudo -s <<EOF`, a quoted `cd x && git commit`, a login
+# shell reading the heredoc), a -c script reading its shell's stdin (`bash -c
+# 'git commit -F -' <<EOF`), a pipe or && split across lines, a for loop over
+# several messages, values held in variables the command sets, -F /dev/stdin
+# and $(cat file), message paths through $HOME / $TMPDIR / $PWD / $(pwd) /
 # $CLAUDE_PROJECT_DIR / ${NAME:-default} (the hook runs with HOME, TMPDIR and
 # CLAUDE_PROJECT_DIR set to scratch dirs), a $(mktemp) message file, a file
 # copied with `cat src > msg`, -F <(...) / --file=<(...) / < <(...), and
@@ -22,8 +28,10 @@
 # allow-only cases: the trailer outside any git commit (echo, git log --grep,
 # grep -r, a comment, hg commit, a doc heredoc next to `done < <(ls)`, a group
 # member piped or redirected elsewhere, a shell name that is only an argument
-# such as `gh ... --label bash`, ...), the trailer only in the source of a
-# $(...) whose output is not literal (an amend that strips it), an unset
+# such as `gh ... --label bash` or an option's value (`shellcheck -s bash -`,
+# `bat -l sh`, `--shell=/bin/bash`), a file named su / bash written by tee,
+# a document or file written through ssh, `ssh -n`, ...), the trailer only in
+# the source of a $(...) whose output is not literal (an amend that strips it), an unset
 # $NAME whose NAME appears only inside another quoted string, a stale message
 # file the command overwrites with clean literal text first, and 5000-deep
 # nesting, which must exit 0 rather than crash.
@@ -31,13 +39,17 @@
 # pre-commit-test: a fake `make` on PATH logs every call. A repo whose
 # `make test` fails must block a commit addressed to it from ANOTHER cwd
 # (git -C, the add/commit chain, cd, bash -c, su -c, su <<EOF, sudo -iu,
-# sudo -s <<EOF, flock bash -c, a wrapper, -C "$R", --work-tree, cd / -C
-# "$(git rev-parse --show-toplevel)" from a subdirectory of a real git repo);
-# a passing repo exits 0 after running its tests; a command with no commit
-# (or a --git-dir-only / remote commit, also in a shell behind ssh / docker)
-# exits 0 without calling make, and so does a commit after a cd chosen by
-# `||`, if / else or case arms (its directory is unknown), rather than test
-# the other directory.
+# sudo -s <<EOF, flock bash -c, flock su -c, xargs sudo -iu, setsid su
+# <<EOF, a wrapper, -C "$R", --work-tree, cd / -C "$(git rev-parse
+# --show-toplevel)" from a subdirectory of a real git repo, each repo of a
+# for loop over several dirs); a passing repo exits 0 after running its
+# tests; a command with no commit (or a --git-dir-only / remote commit, also
+# in a shell behind ssh / docker / pct, in ssh's remote command string, or
+# behind a later ssh / docker word such as `xargs ssh` / `caffeinate ssh` /
+# `stdbuf docker exec`, and a commit only inside a snippet given to
+# `shellcheck -s bash -`) exits 0 without calling make, and so does a commit
+# after a cd chosen by `||` (also with the newline after it), if / else or
+# case arms (its directory is unknown), rather than test the other directory.
 #
 # The last section reruns key cases with filter_map / tally removed, the way
 # CRuby 2.6 lacks them.
@@ -242,6 +254,104 @@ EOF"
 pair "ssh host bash -s <<'EOF' (remote: message still checked)" "ssh host bash -s <<'EOF'
 cd /srv/repo && git commit -m fix -m \"@T@\"
 EOF"
+
+echo "== block-co-authored-by: su / sudo / script behind another command; ssh's remote command"
+pair "flock f su - root -c '...'" "flock @D@/work/lock su - root -c 'cd @D@/repo && git commit -m fix -m \"@T@\"'"
+pair "pct exec 104 -- su - root -c '...' (remote)" "pct exec 104 -- su - root -c 'cd ~ && git commit -m fix -m \"@T@\"'"
+pair "docker exec c su - root -c '...' (remote)" "docker exec c su - root -c 'git commit -m fix -m \"@T@\"'"
+pair "xargs -I{} su root -c '...'" "echo x | xargs -I{} su root -c 'git commit -m fix -m \"@T@\"'"
+pair "setsid -w su root <<'EOF' (the shell reads the heredoc)" "setsid -w su root <<'EOF'
+git commit -m fix -m \"@T@\"
+EOF"
+pair "flock f script -qc '...' /dev/null" "flock @D@/work/lock script -qc 'git commit -m fix -m \"@T@\"' /dev/null"
+pair "xargs sudo -iu root bash -c '...'" "echo x | xargs sudo -iu root bash -c 'git commit -m fix -m \"@T@\"'"
+pair "ssh host sudo -s <<'EOF' (remote)" "ssh host sudo -s <<'EOF'
+git commit -m fix -m \"@T@\"
+EOF"
+pair "ssh host 'bash -s' <<'EOF' (quoted remote shell)" "ssh host 'bash -s' <<'EOF'
+git commit -m fix -m \"@T@\"
+EOF"
+pair "ssh pve \"pct exec 104 -- bash -s\" <<'EOF'" "ssh pve \"pct exec 104 -- bash -s\" <<'EOF'
+cd /root/x && git commit -m fix -m \"@T@\"
+EOF"
+pair "ssh -p 22 host -t 'cd x && git commit ...' (remote command string)" \
+  "ssh -p 22 host -t 'cd /srv/repo && git commit -m fix -m \"@T@\"'"
+pair "ssh host <<'EOF' (the login shell reads the heredoc)" "ssh host <<'EOF'
+cd /srv/repo && git commit -m fix -m \"@T@\"
+EOF"
+pair "ssh host 'git commit -F -' <<'EOF' (the remote command reads ssh's stdin)" "ssh host 'git commit -F -' <<'EOF'
+fix: thing
+
+@T@
+EOF"
+pair "bash -c 'git commit -F -' <<'EOF' (the -c script reads the shell's stdin)" "bash -c 'git commit -F -' <<'EOF'
+fix: thing
+
+@T@
+EOF"
+pair "caffeinate -i ssh host bash -s <<'EOF' (remote behind a wrapper)" "caffeinate -i ssh host bash -s <<'EOF'
+git commit -m fix -m \"@T@\"
+EOF"
+expect_allow "ssh host 'tee notes.md' <<EOF (a document, not a script)" "ssh host 'tee /tmp/notes.md' <<'EOF'
+cd /srv/repo && git commit -m fix -m \"$BAD_T\"
+EOF"
+expect_allow "ssh host 'cat > x.sh' <<EOF (a file being written)" "ssh host 'cat > /tmp/x.sh' <<'EOF'
+git commit -m fix -m \"$BAD_T\"
+EOF"
+expect_allow "ssh host \"echo '...' >> notes\" (data command)" \
+  "ssh host \"echo 'git commit -m \\\"$BAD_T\\\"' >> notes\""
+expect_allow "ssh host \"echo git commit -m trailer\" (data command)" \
+  "ssh host \"echo git commit -m Co-Authored-By: Claude\""
+expect_allow "ssh -n host bash -s <<EOF (stdin is /dev/null)" "ssh -n host bash -s <<'EOF'
+git commit -m fix -m \"$BAD_T\"
+EOF"
+expect_allow "tee f/su <<EOF (a file named su is data)" "tee @D@/work/su <<'EOF'
+git commit -m fix -m \"$BAD_T\"
+EOF"
+expect_allow "tee f/bash <<EOF (a file named bash is data)" "tee @D@/work/bash <<'EOF'
+git commit -m fix -m \"$BAD_T\"
+EOF"
+
+echo "== block-co-authored-by: a shell name that is an option's value is not a shell"
+expect_allow "shellcheck -s bash - <<'EOF'" "shellcheck -s bash - <<'EOF'
+git commit -m fix -m \"$BAD_T\"
+EOF"
+expect_allow "bat -l sh <<'EOF'" "bat -l sh <<'EOF'
+git commit -m \"$BAD_T\"
+EOF"
+expect_allow "pygmentize -l bash <<'EOF'" "pygmentize -l bash <<'EOF'
+git commit -m \"$BAD_T\"
+EOF"
+expect_allow "shfmt -ln bash <<'EOF'" "shfmt -ln bash <<'EOF'
+git commit -m \"$BAD_T\"
+EOF"
+expect_allow "tool --shell bash <<'EOF'" "npx tsx gen.ts --shell bash <<'EOF'
+git commit -m \"$BAD_T\"
+EOF"
+expect_allow "tool --shell=/bin/bash <<'EOF'" "npx some-tool --shell=/bin/bash <<'EOF'
+git commit -m \"$BAD_T\"
+EOF"
+expect_allow "shellcheck -s sh - <<< '...'" "shellcheck -s sh - <<< 'git commit -m \"$BAD_T\"'"
+expect_allow "printf ... | shellcheck -s bash -" "printf '%s\\n' 'git commit -m \"$BAD_T\"' | shellcheck -s bash -"
+pair "docker exec -i c sh <<'EOF' (a shell, not an option value)" "docker exec -i c sh <<'EOF'
+git commit -m fix -m \"@T@\"
+EOF"
+pair "kubectl exec -i pod -- bash <<'EOF'" "kubectl exec -i pod -- bash <<'EOF'
+git commit -m fix -m \"@T@\"
+EOF"
+pair "setsid -f bash -c '...' (-c after an option is kept)" "setsid -f bash -c 'git commit -m fix -m \"@T@\"'"
+pair "printf x | xargs -0 bash -c '...'" "printf x | xargs -0 bash -c 'git commit -m fix -m \"@T@\"'"
+
+echo "== block-co-authored-by: a newline after | || && continues the command; for over several items"
+pair "printf ... |<newline> git commit -F -" "printf 'fix\\n\\n%s\\n' '@T@' |
+  git commit -F -"
+pair "{ ...; } |<newline> git commit -F -" "{ echo fix; echo; echo '@T@'; } |
+  git commit -F -"
+pair "echo 'git commit ...' |<newline> bash" "echo 'git commit -m fix -m \"@T@\"' |
+  bash"
+pair "cd repo &&<newline> git commit -F rel" "cd @D@/repo &&
+  git commit -F @F@"
+pair "for M in fix \"...\"; do git commit -m \"\$M\" (each item)" 'for M in fix "@T@"; do git commit -m "$M"; done'
 expect_allow "echo \"su - root -c 'git commit ...'\" (data command)" \
   "echo \"su - root -c 'git commit -m fix -m \\\"$BAD_T\\\"'\""
 expect_allow "gh issue create --label bash --body-file - <<EOF (data)" \
@@ -579,6 +689,43 @@ precommit "cd failrepo || exit 1; git commit still tests failrepo" 2 \
   'cd @D@/failrepo || exit 1; git commit -m x' "$D/work" "FAILING-SUITE-MARKER" "@D@/failrepo|test"
 precommit "if ...; then cd failrepo && git commit; fi tests failrepo" 2 \
   'if [ -d @D@/failrepo ]; then cd @D@/failrepo && git commit -m x; fi' "$D/work" "FAILING-SUITE-MARKER"
+precommit "flock f su root -c 'cd failrepo && git commit'" 2 \
+  "flock @D@/work/lock su root -c 'cd @D@/failrepo && git commit -m x'" "$D/work" "FAILING-SUITE-MARKER" "@D@/failrepo|test"
+precommit "xargs sudo -iu root git -C failrepo commit" 2 \
+  'xargs sudo -iu root git -C @D@/failrepo commit -m x < /dev/null' "$D/work" "FAILING-SUITE-MARKER" "@D@/failrepo|test"
+precommit "setsid -w su root <<'EOF' cd failrepo && git commit" 2 "setsid -w su root <<'EOF'
+cd @D@/failrepo && git commit -m x
+EOF" "$D/work" "FAILING-SUITE-MARKER" "@D@/failrepo|test"
+precommit "pct exec 104 -- su - root -c 'cd failrepo && git commit' (remote) runs no make" 0 \
+  "pct exec 104 -- su - root -c 'cd @D@/failrepo && git commit -m x'" "$D/work" "" NOMAKE
+precommit "ssh host 'cd failrepo && git commit' (remote) runs no make" 0 \
+  "ssh host 'cd @D@/failrepo && git commit -m x'" "$D/work" "" NOMAKE
+precommit "ssh host <<'EOF' cd failrepo && git commit (remote) runs no make" 0 "ssh host <<'EOF'
+cd @D@/failrepo && git commit -m x
+EOF" "$D/work" "" NOMAKE
+precommit "xargs -I{} ssh {} bash -c 'cd failrepo && git commit' runs no make" 0 \
+  "echo h1 | xargs -I{} ssh {} bash -c 'cd @D@/failrepo && git commit -m x'" "$D/work" "" NOMAKE
+precommit "caffeinate -i ssh host bash -s <<'EOF' cd failrepo runs no make" 0 "caffeinate -i ssh host bash -s <<'EOF'
+cd @D@/failrepo && git commit -m x
+EOF" "$D/work" "" NOMAKE
+precommit "stdbuf -oL docker exec c sh -c 'cd failrepo && git commit' runs no make" 0 \
+  "stdbuf -oL docker exec c sh -c 'cd @D@/failrepo && git commit -m x'" "$D/work" "" NOMAKE
+precommit "flock f ssh host git -C failrepo commit runs no make" 0 \
+  'flock @D@/work/lock ssh host git -C @D@/failrepo commit -m x' "$D/work" "" NOMAKE
+precommit "shellcheck -s bash - <<'EOF' with a commit inside runs no make" 0 "shellcheck -s bash - <<'EOF'
+cd @D@/failrepo && git commit -m x
+EOF" "$D/work" "" NOMAKE
+precommit "cd failrepo 2>/dev/null ||<newline> cd passrepo; git commit: no make" 0 'cd @D@/failrepo 2>/dev/null ||
+  cd @D@/passrepo
+git commit -m x' "$D/work" "" NOMAKE
+precommit "for d in passrepo failrepo; do git -C \"\$d\" commit: both tested" 2 \
+  'for d in @D@/passrepo @D@/failrepo; do git -C "$d" commit -m x; done' "$D/work" "FAILING-SUITE-MARKER" "@D@/passrepo|test"
+precommit "for d in failrepo passrepo; do cd \"\$d\" && git commit: tested" 2 \
+  'for d in @D@/failrepo @D@/passrepo; do cd "$d" && git commit -m x; done' "$D/work" "FAILING-SUITE-MARKER" "@D@/failrepo|test"
+precommit "cd D && for d in passrepo failrepo; do git -C \$d commit" 2 \
+  'cd @D@ && for d in passrepo failrepo; do git -C $d commit -m x; done' "$D/work" "FAILING-SUITE-MARKER" "@D@/passrepo|test"
+precommit "for d in gitrepo passrepo; do git -C \"\$d\" commit: passes after testing" 0 \
+  'for d in @D@/gitrepo @D@/passrepo; do git -C "$d" commit -m x; done' "$D/work" "" "@D@/passrepo|test"
 out=$(printf 'not-json' | HOME="$D/home" "$RUBY" -E UTF-8 "$PRECOMMIT" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "malformed payload (pre-commit hook)" "rc=0" \
   || bad "malformed payload (pre-commit hook)" "rc=$rc :: $out"
@@ -633,6 +780,23 @@ dirs "HOME=x bash -c 'cd ~' uses that HOME" "HOME=/x bash -c 'cd ~ && git commit
 dirs "runuser -u root -- git -C /x commit" 'runuser -u root -- git -C /x commit' "/x"
 dirs "shell behind ssh / docker: unknown, cd and -C included" \
   "ssh h bash -c 'cd /x && git commit'; docker exec c sh -c 'git -C /x commit'" "? ?"
+dirs "su / sudo / runuser / script / env behind flock or xargs" \
+  "flock /l su - root -c 'git commit'; flock /l sudo -D /d git commit; xargs env -C /e git commit; flock /l runuser -u root -- git -C /x commit; flock /l script -qc 'cd /s && git commit' /dev/null" \
+  "$ROOT_HOME /d /e /x /s"
+dirs "ssh: options, the remote string, a later ssh / docker word: unknown" \
+  "ssh -o BatchMode=yes -i k h -- git -C /x commit; ssh h 'cd /x && git commit'; flock /l ssh h git -C /x commit; stdbuf -oL docker exec c sh -c 'git -C /x commit'; pct exec 104 -- su - root -c 'cd /x && git commit'" \
+  "? ? ? ? ?"
+dirs "a shell name after an option keeps its -c script" "tool --shell bash -c 'cd /t && git commit'" "/t"
+dirs "newline after || && | continues the command" \
+  $'cd /a 2>/dev/null ||\n  cd /b\ngit commit; cd /c &&\n  git commit; true | # note\n  git commit' "? /c /c"
+dirs "for over static items: the body once per item" \
+  'for d in /a /b; do cd "$d"; git commit; done; git commit' "/a /b ?"
+dirs "for: each run starts where the last one ended" 'for d in a b; do cd $d && git commit; done' "/w/a /w/a/b"
+dirs "for: nested loops, and items with a space" \
+  'for d in a b; do for e in c d; do git -C $d/$e commit; done; done; for d in "x y" z; do git -C "$d" commit; done' \
+  "/w/a/c /w/a/d /w/b/c /w/b/d /w/x y /w/z"
+dirs "for: a glob or unknown item keeps the joined value" \
+  'for d in *.x y; do git -C "$d" commit; done; for d in $X y; do git -C "$d" commit; done' "/w/*.x y ?"
 
 echo "== Ruby 2.6 API surface (filter_map / tally removed, as on CRuby 2.6)"
 if grep -nE '\.(filter_map|tally)\b' "$HOOKS/git-command.rb" "$BLOCK" "$PRECOMMIT"; then
@@ -666,6 +830,13 @@ precommit "2.6: sudo -iu root bash -lc 'cd failrepo && git commit'" 2 \
 precommit "2.6: cd failrepo || cd passrepo; git commit: no make" 0 \
   'cd @D@/failrepo 2>/dev/null || cd @D@/passrepo; git commit -m x' "$D/work" "" NOMAKE
 precommit "2.6: plain git commit in failing cwd" 2 'git commit -m x' "$D/failrepo" "FAILING-SUITE-MARKER"
+pair "2.6: ssh host 'bash -s' <<'EOF'" "ssh host 'bash -s' <<'EOF'
+git commit -m fix -m \"@T@\"
+EOF"
+precommit "2.6: flock f su root -c 'cd failrepo && git commit'" 2 \
+  "flock @D@/work/lock su root -c 'cd @D@/failrepo && git commit -m x'" "$D/work" "FAILING-SUITE-MARKER"
+precommit "2.6: for d in passrepo failrepo; do git -C \"\$d\" commit" 2 \
+  'for d in @D@/passrepo @D@/failrepo; do git -C "$d" commit -m x; done' "$D/work" "FAILING-SUITE-MARKER"
 precommit "2.6: git -C failrepo commit from another cwd" 2 'git -C @D@/failrepo commit -m x' "$D/work" "FAILING-SUITE-MARKER"
 PRELOAD=()
 

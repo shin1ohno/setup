@@ -9,8 +9,13 @@
 # `test -d X && git -C X add -A && git -C X commit -F msg`, `cd X && git
 # commit`, wrappers (env / command / timeout, sudo -iu USER, xargs / mise exec
 # -- / flock ...) and shell scripts: `bash -c '...'`, su / runuser -c or a
-# heredoc, `sudo -s <<EOF`, `script -qc`, and a shell started by any other
-# command (`flock L bash -c`, `xargs sh -c`, `find -exec sh -c`). Project
+# heredoc, `sudo -s <<EOF`, `script -qc`, a shell started by any other
+# command (`flock L bash -c`, `xargs sh -c`, `find -exec sh -c`), and su /
+# sudo / runuser / script behind such a command (`flock L su root -c`,
+# `setsid -w su root <<EOF`, `xargs sudo -iu U git ...`); a pipe, || or &&
+# split across lines is read as one command, and a for loop over several
+# static directories (`for d in A B; do git -C "$d" commit ...; done`)
+# commits in, and tests, each of them. Project
 # detection and the test command run in each distinct directory a commit
 # targets: its work tree when --work-tree or GIT_WORK_TREE names one,
 # otherwise its effective directory (cwd, then `cd`, then -C, with variables
@@ -25,8 +30,12 @@
 # after `||`, as in `cd A 2>/dev/null || cd B; git commit`, where the
 # branches end in different directories), a --git-dir / GIT_DIR without a
 # work tree (a bare or dotfiles repo, which the cwd's project does not guard),
-# and a commit behind ssh / docker / pct ..., also inside a shell started there
-# (not this host's directory).
+# and a commit behind ssh / docker / pct ..., also inside a shell started
+# there, in ssh's remote command string (`ssh host 'cd X && git commit'`, `ssh
+# host <<EOF`) or behind a later ssh / docker word (`xargs -I{} ssh {} ...`,
+# `caffeinate -i ssh ...`, `stdbuf -oL docker exec ...`), none of which is
+# this host's directory. A commit only inside a snippet handed to a linter
+# or highlighter (`shellcheck -s bash - <<EOF`, `bat -l sh`) is not a commit.
 #
 # Fail-open: any internal error exits 0; only a failing test run exits 2.
 

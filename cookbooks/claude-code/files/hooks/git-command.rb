@@ -30,9 +30,10 @@
 #     work_tree     --work-tree (or GIT_WORK_TREE) resolved against dir; nil
 #                   when absent or not static
 #     stdin         fd 0 text when the command itself shows it: a heredoc or
-#                   here-string on the git call, `< <(...)`, or the literal
+#                   here-string on the git call, `< <(...)`, the literal
 #                   output of what is on the left of a pipe (see "Literal
-#                   output" below)
+#                   output" below), or with none of these the stdin of the
+#                   -c script the call is in (`bash -c '...' <<EOF`)
 #     stdin_source  :heredoc, :herestring, :file, :process, :pipe,
 #                   :pipe_unknown or nil
 #     stdin_files   files whose content reaches fd 0 (`< f`, `cat f |`)
@@ -58,7 +59,9 @@
 #                 (`mapfile -t MSG`, `MSG[0]=x`), nested shells included
 #   fallback      true when the command could not be parsed
 #
-# Understood: && || ; | |& & and newlines outside quotes; ( ) subshells and
+# Understood: && || ; | |& & and newlines outside quotes (a newline right
+# after | |& || && continues the command, as bash reads it, so `a |` + newline
+# + `git commit -F -` is one pipeline); ( ) subshells and
 # { ...; } groups (a cd or assignment inside a subshell does not leak out; one
 # inside a pipeline or `&` does not count); single, double and $'...' quoting,
 # backslash escapes, comments; heredocs (<<EOF, <<'EOF', <<"EOF", <<-EOF) and
@@ -73,16 +76,42 @@
 # form starting in the user's home, no -c: the shell reads stdin; runuser -u
 # USER [--] COMMAND runs COMMAND) and util-linux `script -c` (-qc); bash /
 # sh / zsh / dash / ksh -c strings, `bash -s` / `bash` reading a heredoc,
-# here-string or literal pipe, and eval. A child shell's HOME (from su,
-# sudo -i / -H, `HOME=x bash -c`) is its ~ and $HOME. Any other command
-# (xargs, mise exec --, flock, find -exec, stdbuf, setsid, ionice, ...) is
-# searched for a later `git` word that starts a commit and for a later shell
+# here-string or literal pipe, and eval. In a -c script (also su -c, script
+# -c, an ssh command string), a command with no stdin redirection or pipe of
+# its own reads the shell's stdin (`bash -c 'git commit -F -' <<EOF`); a
+# script read from stdin has used it up. A child shell's HOME (from su,
+# sudo -i / -H, `HOME=x bash -c`) is its ~ and $HOME.
+#
+# Any other command (xargs, mise exec --, flock, find -exec, stdbuf, setsid,
+# ionice, pct exec, ...) is searched for the command it runs; a word that
+# starts with "-" is an option, never that command: a later `git` word that
+# starts a commit; a later su / runuser / sudo / script / env / timeout /
+# nice / nohup word (TAIL_WRAPPERS), unwrapped as above and its command taken
+# the same way (`flock L su - U -c S`, `pct exec 104 -- su - U -c S`,
+# `setsid -w su U <<EOF`, `xargs sudo -iu U git ...`); a later ssh word (not
+# right after an option, as in `rsync -e ssh`), see below; and a later shell
 # word (by basename, no whitespace, followed only by bash's own options, so
 # `--label bash` is data) whose -c string, or stdin when it has -s or no
-# operands, is parsed like `bash -c` (not the stdin of xargs / parallel,
-# which is their own data); a data command (echo, grep, gh, ...) is not
-# searched. Behind ssh / docker / pct ... (REMOTE_COMMANDS) such a commit, and
-# every commit in such a shell, gets dir nil (not this host's).
+# operands, is parsed like `bash -c`. A shell does not take that stdin as its
+# script when it is the stdin of xargs / parallel (their own data), when a
+# shell before it in the command already took it, or when the shell word
+# directly follows an option, whose value it then is (`shellcheck -s bash -`,
+# `bat -l sh`, `--shell bash`; so `setsid -w bash <<EOF` and `unshare -r
+# bash <<EOF` are not parsed either). A data command (echo, grep, gh, cat,
+# tee, ...) is not searched, so `tee docs/su <<EOF` is a document.
+#
+# ssh [options] DEST [options] [--] [COMMAND ...], first or later in an argv:
+# sshd hands the remote shell the COMMAND words joined with spaces (their
+# quotes removed, as sshd receives them), and that string is parsed as a -c
+# script reading ssh's stdin (`ssh host 'bash -s' <<EOF`, `ssh pve "pct exec
+# 104 -- bash -s" <<EOF`, `ssh host sudo -s <<EOF`, `ssh host 'cd x && git
+# commit ...'`); with no COMMAND the login shell reads stdin as its script; -n
+# (or xargs) leaves it no stdin; -N / -O / -W / -s run no command. From a
+# ssh / docker / pct ... word (REMOTE_COMMANDS) on, at the start of a command
+# or later in its argv (`xargs ssh`, `caffeinate -i ssh`, `stdbuf docker
+# exec`), every commit found, also in a shell started there, gets dir nil (not
+# this host's), and so does a fallback scan of a remote string the lexer
+# rejects.
 #
 # Control flow: if / elif / else / fi, case / esac (patterns are not
 # commands), while / until / for / select ... do / done, and `a || b`. Each
@@ -92,12 +121,18 @@
 # branches end in different ones, so `cd A 2>/dev/null || cd B; git commit`
 # and `if ...; then cd A; else cd B; fi; git commit` give dir nil. `a && b`
 # applies b's cd as if a succeeded, and a variable assigned in a branch keeps
-# its last assignment.
+# its last assignment. `for NAME in` 2 to MAX_FOR_ITEMS static items (no $,
+# `, glob or brace left after expansion) runs its body once per item, NAME
+# set to it and each run starting from the cwd the one before ended in, as
+# bash runs it (at most MAX_REPLAYS extra runs per parse; break / continue
+# are not modeled, so every item runs); after `done` that end is merged with
+# the entry like any loop's.
 #
 # Variables: NAME=value commands, export / declare / local / readonly / typeset
 # NAME=value, `read [-d ''] NAME` from a heredoc / here-string / `< file`,
-# `printf -v NAME` and `for NAME in ...` are tracked like the cwd (a subshell
-# does not leak them). In later words, cd / -C targets and redirection
+# `printf -v NAME` and `for NAME in ...` (each item, see above; other loops:
+# the items joined, so a single item resolves) are tracked like the cwd (a
+# subshell does not leak them). In later words, cd / -C targets and redirection
 # targets, $NAME, ${NAME} and ${NAME:-default} (also -, := and =) take, in
 # order: the value this command assigned; $PWD the shell's cwd at that point
 # and $HOME the home directory; any other variable the command never assigns
@@ -166,8 +201,10 @@ module GitCommand
   # (the command after `||`), or a :paren / :brace marker. entry / stack: the
   # cwd and dirstack each branch starts from; ends: [cwd, dirstack] where each
   # finished branch ended; state: :cond / :elif / :body (if), :head / :pattern
-  # / :arm (case); otherwise: an else / `*)` arm was seen.
-  Flow = Struct.new(:kind, :state, :entry, :stack, :ends, :otherwise)
+  # / :arm (case); otherwise: an else / `*)` arm was seen; replay (a for
+  # loop over static items): [NAME, [[value, extras], ...] still to run, index
+  # of the first body token].
+  Flow = Struct.new(:kind, :state, :entry, :stack, :ends, :otherwise, :replay)
 
   def self.parse(command, cwd: Dir.pwd, home: ENV.fetch("HOME", nil))
     Evaluator.new(home).run_top(command.to_s.scrub, cwd)
@@ -341,6 +378,8 @@ module GitCommand
   # stored on the Redir that introduced them.
   class Lexer
     META = [" ", "\t", "\n", ";", "&", "|", "(", ")", "<", ">"].freeze
+    # Operators a newline does not end the command after.
+    CONTINUED = %w[| |& || &&].freeze
     ESCAPES = {
       "n" => "\n", "t" => "\t", "r" => "\r", "a" => "\a", "b" => "\b", "e" => "\e",
       "E" => "\e", "f" => "\f", "v" => "\v", "\\" => "\\", "'" => "'", "\"" => "\"", "?" => "?"
@@ -408,7 +447,9 @@ module GitCommand
       elsif ch == "\n"
         @i += 1
         read_heredoc_bodies
-        @tokens << [:op, "\n"]
+        # A newline after | |& || && continues the command (bash's linebreak
+        # rule); heredoc bodies are still read here.
+        @tokens << [:op, "\n"] unless @tokens.last&.first == :op && CONTINUED.include?(@tokens.last.last)
       elsif ch == "#"
         @i += 1 while @i < @n && @c[@i] != "\n"
       elsif ch == "&"
@@ -958,7 +999,18 @@ module GitCommand
     DATA_COMMANDS = (%w[echo printf print grep egrep fgrep zgrep rg ag ack sed awk jq man info
                        help whatis apropos tldr which type whereis hash alias unalias test
                        : true false printenv set unset read export declare typeset local
-                       readonly gh glab] + ["[", "[["]).freeze
+                       readonly gh glab cat tee] + ["[", "[["]).freeze
+    # Wrappers strip_prefix models that may also come later in an argv
+    # (`flock L su - U -c`, `pct exec 104 -- su -c`, `xargs sudo -iu U`).
+    TAIL_WRAPPERS = %w[env nice nohup timeout sudo su runuser script].freeze
+    # ssh options that take a value (as the last letter of a cluster, the next
+    # word), and those after which it runs no remote command.
+    SSH_SHORT_VALUED = "BbcDEeFIiJLlmOoPpRSWw"
+    SSH_NO_COMMAND = %w[-N -O -W -s].freeze
+    # A for loop over at most MAX_FOR_ITEMS static items runs its body once
+    # per item; MAX_REPLAYS caps the extra body runs in one parse.
+    MAX_FOR_ITEMS = 16
+    MAX_REPLAYS = 64
     # Commands that read their own stdin as data: a shell they start does not
     # get it as its script.
     ARGS_FROM_STDIN = %w[xargs parallel].freeze
@@ -982,6 +1034,9 @@ module GitCommand
       @assigned = {} # every name any modeled form set, in any scope
       @remote = 0 # > 0 inside a shell run behind ssh / docker ...
       @conditional = 0 # open if / case / loop / `||` frames, all runs
+      @inherit = nil # [text, source, files]: the stdin of the shell running this script
+      @pending_for = nil # replay of the for header just evaluated, for its `do`
+      @replays = MAX_REPLAYS
     end
 
     def run_top(src, cwd)
@@ -1002,8 +1057,11 @@ module GitCommand
           raise if depth.zero?
 
           # A nested string (bash -c, $(...), eval) bash itself would reject:
-          # scan just that string, keep everything parsed around it.
-          @invocations.concat(GitCommand.fallback_scan(src, cwd).invocations)
+          # scan just that string, keep everything parsed around it. Behind
+          # ssh / docker ... its cd targets are not this host's.
+          found = GitCommand.fallback_scan(src, cwd).invocations
+          found.each { |inv| inv.dir = nil } if @remote.positive?
+          @invocations.concat(found)
           return cwd
         end
       scopes = []
@@ -1011,7 +1069,10 @@ module GitCommand
       dirstack = []
       flow = []
       cur = new_command(nil)
-      tokens.each do |type, val|
+      pos = 0
+      while pos < tokens.size
+        type, val = tokens[pos]
+        pos += 1
         top = flow.last
         pattern = top&.kind == :case && top.state == :pattern
         case type
@@ -1027,7 +1088,17 @@ module GitCommand
             top.entry = cwd
             top.stack = dirstack.dup
           elsif keyword?(cur, val)
+            if val.value == "done"
+              cwd = close_or(flow, cwd, dirstack)
+              if (body = next_item(flow.last))
+                # The next item: the body again, from where this run ended.
+                pos = body
+                cur = new_command(nil)
+                next
+              end
+            end
             cwd = flow_keyword(flow, val.value, cwd, dirstack)
+            attach_replay(flow.last, pos) if val.value == "do"
             brace(groups, flow, cur, val)
           end
           cur.words << val
@@ -1069,6 +1140,7 @@ module GitCommand
       end
       cwd = close_or(flow, cwd, dirstack)
       pop_flow(flow) until flow.empty?
+      @pending_for = nil # a for header with no `do`
       cwd
     end
 
@@ -1183,6 +1255,24 @@ module GitCommand
       cwd
     end
 
+    # `do` of the for loop whose header for_loop just evaluated: the items
+    # still to run and where its body starts.
+    def attach_replay(top, pos)
+      pending = @pending_for
+      @pending_for = nil
+      top.replay = [pending[0], pending[1], pos] if pending && top&.kind == :loop
+    end
+
+    # At the `done` of a for loop with items left: NAME takes the next one
+    # and the body index is returned; nil closes the loop as usual.
+    def next_item(top)
+      return nil unless top&.kind == :loop && top.replay && !top.replay[1].empty?
+
+      text, extras = top.replay[1].shift
+      set_var(top.replay[0], text, extras)
+      top.replay[2]
+    end
+
     # fi / done / esac: the branches' ends, plus the entry itself when no
     # branch has to run (no else, a loop body, a case without `*)`).
     def close_flow(flow, kind, cwd, dirstack)
@@ -1287,8 +1377,8 @@ module GitCommand
         after = run(words[1..].map(&:value).join(" "), dir, depth + 1)
         isolated?(cmd) ? cwd : after
       when *SHELLS
-        script, = shell_script(cmd, words, cwd)
-        run_shell(script, dir, exported_env.merge(env), depth) if script
+        script, used = shell_script(cmd, words, cwd)
+        run_shell(script, dir, exported_env.merge(env), depth, used.positive? ? stdin_of(cmd, cwd) : nil) if script
         cwd
       when "git"
         @invocations << git_invocation(cmd, words, dir, cwd, exported_env.merge(env))
@@ -1306,12 +1396,16 @@ module GitCommand
 
     # A child shell's script, run in dir; a HOME in its environment (su,
     # sudo -i / -H, `HOME=x bash -c`) is its ~ and $HOME, nil when unknown.
-    def run_shell(script, dir, env, depth)
-      saved = @home
+    # stdin: the shell's own stdin ([text, source, files]) for a -c script,
+    # which every command in it without a stdin of its own reads; nil for a
+    # script read from stdin, which has used it up.
+    def run_shell(script, dir, env, depth, stdin = nil)
+      saved = [@home, @inherit]
       @home = env["HOME"] if env.key?("HOME")
+      @inherit = stdin
       nested_run(script, dir, depth + 1)
     ensure
-      @home = saved
+      @home, @inherit = saved
     end
 
     # A cd in a pipeline element or a background job runs in a subshell.
@@ -1329,31 +1423,52 @@ module GitCommand
     end
 
     # A command this parser does not know (xargs, mise exec --, flock, find
-    # -exec, stdbuf, setsid ...): the first later `git` word that starts a
-    # commit is taken as the command it runs (only commits are recorded from
-    # here), and a later shell word as a shell it starts (only real shell
-    # options after it, so `--label bash` is not one): its -c string is
-    # parsed, or its stdin (-s, or no operands) unless the command reads stdin
-    # itself (xargs) or a shell before it in the same command already ran.
-    # Behind a REMOTE_COMMANDS wrapper both run remote (dir nil).
-    def wrapped(cmd, words, dir, cwd, env, name, depth)
+    # -exec, stdbuf, setsid ...), scanned for the command it runs; a word
+    # that starts with "-" is an option, never that command:
+    #   - the first later `git` word that starts a commit (only commits are
+    #     recorded from here);
+    #   - a later TAIL_WRAPPERS word (su, sudo, runuser, script, env, ...),
+    #     unwrapped by strip_prefix, whose command is then taken the same way
+    #     (wrapped_command);
+    #   - a later ssh word: its remote command string (ssh_command);
+    #   - a later shell word (only real shell options after it, so `--label
+    #     bash` is not one): its -c string is parsed, or its stdin (-s, or no
+    #     operands) unless the command reads stdin itself (xargs), a shell
+    #     before it in the same command already ran, or the word directly
+    #     follows an option, whose value it then is (`shellcheck -s bash -`,
+    #     `bat -l sh`).
+    # From a REMOTE_COMMANDS word on, at words[0] or later, all of them run
+    # remote (dir nil). A data command (DATA_COMMANDS) is not scanned.
+    def wrapped(cmd, words, dir, cwd, env, name, depth, remote: false, stdin_free: true)
       return if DATA_COMMANDS.include?(name)
+      return ssh_command(cmd, words, cwd, env, depth, stdin_free) if name == "ssh"
 
-      remote = REMOTE_COMMANDS.include?(name)
-      stdin_free = !ARGS_FROM_STDIN.include?(name)
+      remote ||= REMOTE_COMMANDS.include?(name)
+      stdin_free &&= !ARGS_FROM_STDIN.include?(name)
       idx = 1
       while idx < words.size
         word = words[idx]
-        if command_name(word) == "git"
+        cname = word.value.start_with?("-") ? "" : command_name(word)
+        remote ||= REMOTE_COMMANDS.include?(cname)
+        optval = option_value?(words[idx - 1])
+        if cname == "git"
           inv = git_invocation(cmd, words[idx..], dir, cwd, env, remote: remote)
           if inv.commit?
             @invocations << inv
             return
           end
+        elsif cname == "ssh" && !optval # not `rsync -e ssh`
+          return ssh_command(cmd, words[idx..], cwd, env, depth, stdin_free)
+        elsif TAIL_WRAPPERS.include?(cname)
+          rest, wdir, wenv = strip_prefix(words[idx..], dir)
+          unless rest.empty? || rest[0].equal?(word)
+            return wrapped_command(cmd, rest, remote ? nil : wdir, cwd, env.merge(wenv), depth, remote,
+                                   stdin_free)
+          end
         elsif shell_word?(word)
-          script, used = shell_script(cmd, words[idx..], cwd, stdin: stdin_free, strict: true)
+          script, used = shell_script(cmd, words[idx..], cwd, stdin: stdin_free && !optval, strict: true)
           if script
-            remote_run(remote) { run_shell(script, remote ? nil : dir, env, depth) }
+            wrapped_shell(cmd, script, used, remote ? nil : dir, cwd, env, depth, remote, stdin_free)
             stdin_free = false
             idx += used
           end
@@ -1362,9 +1477,79 @@ module GitCommand
       end
     end
 
-    # bash, /bin/sh ... as a whole word (not text that ends in one).
+    # What a TAIL_WRAPPERS word later in an argv runs, words[0] being its
+    # command (`flock L su root -c S` gives [sh -c S]): a git commit, a shell,
+    # or a command scanned like any other.
+    def wrapped_command(cmd, words, dir, cwd, env, depth, remote, stdin_free)
+      name = command_name(words[0])
+      if name == "git"
+        inv = git_invocation(cmd, words, dir, cwd, env, remote: remote)
+        @invocations << inv if inv.commit?
+      elsif shell_word?(words[0])
+        script, used = shell_script(cmd, words, cwd, stdin: stdin_free, strict: true)
+        wrapped_shell(cmd, script, used, dir, cwd, env, depth, remote, stdin_free) if script
+      else
+        wrapped(cmd, words, dir, cwd, env, name, depth, remote: remote, stdin_free: stdin_free)
+      end
+    end
+
+    # A shell found inside another command's argv: a -c script reads the
+    # command's stdin unless that is the command's own data (xargs).
+    def wrapped_shell(cmd, script, used, dir, cwd, env, depth, remote, stdin_free)
+      stdin = used.positive? && stdin_free ? stdin_of(cmd, cwd) : nil
+      remote_run(remote) { run_shell(script, remote ? nil : dir, env, depth, stdin) }
+    end
+
+    # ssh [options] DEST [options] [--] [COMMAND ...]: sshd hands the remote
+    # shell the COMMAND words joined with spaces (their quotes already
+    # removed here), and that shell reads ssh's stdin (none with -n or under
+    # xargs); with no COMMAND the login shell reads stdin as its script. -N /
+    # -O / -W / -s run no command. Everything in it runs remote (dir nil).
+    def ssh_command(cmd, words, cwd, env, depth, stdin_free)
+      ws = words.drop(1)
+      dest = nil
+      ended = false
+      until ws.empty?
+        w = ws.first
+        if !ended && w.value.start_with?("-") && w.value.length > 1
+          ws.shift
+          if w.value == "--"
+            ended = true
+            next
+          end
+
+          names = option_values(w, ws, SSH_SHORT_VALUED, []).map(&:first)
+          return if names.any? { |n| SSH_NO_COMMAND.include?(n) }
+
+          stdin_free = false if names.include?("-n")
+        elsif dest.nil?
+          dest = ws.shift
+        else
+          break
+        end
+      end
+      return unless dest
+
+      script = ws.map(&:value).join(" ")
+      stdin = stdin_free ? stdin_of(cmd, cwd) : nil
+      if script.strip.empty?
+        script = stdin && stdin[0]
+        stdin = nil
+      end
+      remote_run(true) { run_shell(script, nil, env, depth, stdin) } if script
+    end
+
+    # bash, /bin/sh ... as a whole word (not text that ends in one, nor an
+    # option such as --shell=/bin/bash).
     def shell_word?(word)
-      SHELLS.include?(command_name(word)) && !word.value.match?(/\s/)
+      SHELLS.include?(command_name(word)) && !word.value.match?(/\s/) && !word.value.start_with?("-")
+    end
+
+    # The word before is an option (not `-` / `--` / --name=value), so the
+    # word after it is most likely that option's value.
+    def option_value?(prev)
+      v = prev.value
+      v.start_with?("-") && !["-", "--"].include?(v) && !v.include?("=")
     end
 
     def remote_run(remote)
@@ -1621,12 +1806,25 @@ module GitCommand
       core[0]&.raw == "for" && core[1]&.value&.match?(NAME) && core[2]&.raw == "in"
     end
 
-    # for NAME in WORDS: NAME holds the words joined (one word: that word), so
-    # a message or directory given as the only item resolves.
+    # for NAME in WORDS: with 2..MAX_FOR_ITEMS static items (no $, `, glob or
+    # brace left after expansion) and replays left, NAME takes the first and
+    # its `do` replays the body for the rest (each from the cwd the previous
+    # run ended in, as bash runs it); otherwise NAME holds the words joined
+    # (one word: that word), so a message or directory given as the only
+    # item resolves.
     def for_loop(core, cwd)
       items = expand_words(core[3..], cwd)
-      set_var(core[1].value, items.map(&:value).join(" "),
-              items.flat_map { |w| word_extras(w, cwd) })
+      name = core[1].value
+      @pending_for = nil
+      if items.size.between?(2, MAX_FOR_ITEMS) && items.size - 1 <= @replays &&
+         items.none? { |w| w.value.match?(/[$`*?\[{]/) }
+        @replays -= items.size - 1
+        pairs = items.map { |w| [w.value, word_extras(w, cwd)] }
+        set_var(name, *pairs.shift)
+        @pending_for = [name, pairs]
+      else
+        set_var(name, items.map(&:value).join(" "), items.flat_map { |w| word_extras(w, cwd) })
+      end
       cwd
     end
 
@@ -2023,7 +2221,9 @@ module GitCommand
     # ---- stdin and literal output -----------------------------------------
 
     # [text, source, files] for what reaches fd 0 of cmd. Redirections are
-    # resolved against the shell's cwd (not env -C / git -C).
+    # resolved against the shell's cwd (not env -C / git -C). A command with
+    # neither a stdin redirection nor a pipe into it reads the stdin of the
+    # -c script it is in (`bash -c '...' <<EOF`, `ssh host 'bash -s' <<EOF`).
     def stdin_of(cmd, cwd)
       redir = cmd.redirs.reverse.find { |r| (r.fd.nil? || r.fd == "0") && STDIN_OPS.include?(r.op) }
       if redir
@@ -2041,7 +2241,7 @@ module GitCommand
         return [nil, :file, path ? [path] : []]
       end
       prev = cmd.pipe_prev
-      return [nil, nil, []] if prev.nil?
+      return @inherit ? [@inherit[0], @inherit[1], @inherit[2].dup] : [nil, nil, []] if prev.nil?
       return [nil, :pipe_unknown, []] if prev == :unknown
 
       out = literal_output(prev, cwd)
