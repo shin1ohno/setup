@@ -104,8 +104,9 @@ herdr --session <verified-session> agent read <reserved-agent-name> --source rec
 herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 30000
 ```
 
-For explicit model selection, append native options **after** `--`, e.g.
-`-- --model <verified-model>`, and record the resulting effective model/effort.
+For explicit model selection, append native options **after** `--` (see
+"Model and effort per attempt" for each harness), and record the resulting
+effective model/effort.
 After startup evidence, record both observed selections with
 `bind <task-id> --owner <verified-owner> --pane <id> --model <actual-model> --effort <actual-effort>`.
 A pre-start bind records only identity; repeat it after observing the selections.
@@ -174,13 +175,60 @@ Every descriptor closes on rejection, releasing the ledger lock. It records
 reviewing, not accepted. Acceptance also needs independent review evidence and
 observed model/effort matching the request; file existence proves no quality.
 
-## Attempt selection fields
+## Model and effort per attempt
 
 For envelope-v1 tasks `tasks.py attempt` requires an explicit `--model` and
-`--effort`; an inherited default is not a recorded choice. `bind --model ACTUAL
---effort ACTUAL` records observed values only after startup evidence.
+`--effort`; an inherited default is not a recorded choice. Start from this
+table, approved by the owner on 2026-11-04. It states preferences, not account
+availability: validate the installed catalog on every host (`claude --help`,
+`codex debug models`) and never pin an obsolete Codex model.
 
-For an authorized Agent-tool route, use `attempt --route agent` and bind
-`--session <returned-native-agent-id>` rather than inventing a pane. Pass the
-same envelope contract in the brief. Do not claim a fake fixture proves a live
+| Work type | Default harness | Claude | Codex |
+| --- | --- | --- | --- |
+| CoS itself | Claude | opus / high | none |
+| Implementation, well specified | Codex | sonnet / medium | gpt-6.1-sol / medium |
+| Implementation, ambiguous, multi-file or migration | Codex | opus / high (xhigh over 30 min) | gpt-6-astra / medium, xhigh for exacting work |
+| Small edits, extraction | either | haiku / medium | gpt-6-luna / low, raise up to high |
+| Review, security | the harness the author did not use | opus / high | gpt-6.1-sol / high |
+| Research, many sources | Claude | readers haiku / medium; synthesis opus / high | none |
+| Documents, PRDs | Claude | opus / high | none |
+| Operations, infrastructure changes | either | opus / high | gpt-6.1-sol / high |
+| Daily admin (mail, calendar) | Claude | haiku / medium | none |
+| Checkable output (tests, verifier) | either | the row's model at low; re-run failures at high | same |
+
+The Claude column names the 5.5 models by alias. Use fable only after a
+capability-sensitive task failed on opus / high, or on the owner's request; its
+usage-credit consent prompt can stall an unattended pane for up to 5 minutes,
+and the controller never answers that prompt.
+
+Pass both values on every route:
+
+- Agent tool: set `model` (`opus`, `sonnet`, `haiku`) and `effort` from the
+  table. The table is the skill's explicit effort instruction for the tool.
+- Herdr Claude worker: `-- --model <model> --effort <level>`.
+- Herdr Codex worker: `-- -m <model> -c model_reasoning_effort="<level>"`.
+
+Launch workers without `CLAUDE_CODE_EFFORT_LEVEL` in their environment (for
+example `env -u CLAUDE_CODE_EFFORT_LEVEL`); it overrides per-worker effort. Do
+not change the user's own profile for this. Use argv arrays; never interpolate a
+topic into shell code.
+
+Record the choice with `attempt --kind ... --model ... --effort ... --reason ...`
+(the reason names the table row and any escalation). Record observed values only
+from evidence:
+
+- Herdr route: after startup evidence, `bind --pane <id> --model ACTUAL --effort
+  ACTUAL`.
+- Agent-tool route: `attempt --route agent`, then `bind --session
+  <returned-native-agent-id>` rather than inventing a pane. After the worker
+  returns, run `observe <task-id> --owner <owner> --transcript <path>` on
+  `~/.claude/projects/<cwd-slug>/<controller-session>/subagents/agent-<agent-id>.jsonl`.
+  It reads the model and effort recorded on every assistant turn. A missing
+  field, mixed values, a mismatched file name or a non-regular file is refused,
+  because this transcript is not a published interface; then report the route
+  as unobserved rather than binding the requested values by hand.
+
+`accepted` requires the observed model to match the request (a Claude alias
+matches its full model ID) and the observed effort to equal it. Pass the same
+envelope contract in every brief. Do not claim a fake fixture proves a live
 dispatch.
