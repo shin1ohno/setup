@@ -60,8 +60,9 @@ continues. Cancellation stops that task; a new topic does not cancel other work.
 Choose the harness using tool availability, relevant skills, task fit, and prior
 results, then choose an available model/effort. Do not assume the controller's
 own provider is best. Record one concrete reason and the actual model observed
-after startup (`default` until resolved). Favor the configured default for routine
-work; use stronger reasoning or a different harness when evidence warrants it.
+after startup separately from the requested selection. Choose model and effort
+explicitly for every attempt; an inherited default is not an observed choice.
+Validate host capabilities before launch.
 
 ## Dispatch and monitor
 
@@ -111,7 +112,13 @@ install cron, native scheduled jobs, or an always-on service implicitly.
 
 ## Evaluate, repair, deliver
 
-Read the worker's actual result and inspect the artifacts/primary sources.
+Receive only the bounded envelope described in dispatch.md. Workers write their
+full outputs as artifact files from the start. Use `tasks.py receive` before
+review; `done` with a failed or unverified criterion is rejected.
+Inspect the cited primary evidence, not the full worker transcript. Open a full
+artifact in the controller only for a failing or unverified criterion. Delegate
+long reads to an authorized read-only reviewer returning a bounded verdict and
+file/line citations. A worker's passing claim still needs independent checks.
 Evaluate **each acceptance criterion** and record evidence: test output, file and
 line, receiving-system state, or a source URL. Re-run an appropriate independent
 check when the result depends on behavior. For research/writing/decisions, check
@@ -162,3 +169,15 @@ heartbeat interval with a short factual update; it does not justify a stream of
 routine status messages. Herdr `notification show` is optional attention, not a
 delivery guarantee: inspect `shown`/`reason`. The conversation is the reporting
 channel; Slack/email/etc. require the user's explicit instruction.
+
+
+## Context budget and milestone handoff
+
+Monitor state and at most 40 recent lines per transition; do not load full pane
+history as a normal result channel. Persist decisions and unresolved criteria
+in the ledger and Linear. Ask the owner only for named values or filtered lines,
+not full command dumps. At a safe milestone, write a handoff artifact containing
+owner, task/attempt identities, decisions, evidence paths, blockers, and the next
+probe. A fresh controller must verify live identities before resuming. Rotate
+only when a session-start mechanism is available and no task is abandoned;
+writing a handoff is not proof that a new session started.
