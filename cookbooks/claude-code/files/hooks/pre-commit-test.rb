@@ -24,18 +24,36 @@
 # `git -C "$(git rev-parse --show-toplevel)"`, which resolve to the nearest
 # ancestor holding .git; `su - USER` / `sudo -i` start in USER's home), so a
 # commit into another checkout runs that checkout's tests rather than the
-# session cwd's. Skipped: a commit whose directory is not static (`git -C
-# "$REPO" commit` with REPO set neither by the command nor in the environment,
-# rev-parse outside any repo, a cd in an if / case branch, a loop body or
-# after `||`, as in `cd A 2>/dev/null || cd B; git commit`, where the
-# branches end in different directories), a --git-dir / GIT_DIR without a
-# work tree (a bare or dotfiles repo, which the cwd's project does not guard),
-# and a commit behind ssh / docker / pct ..., also inside a shell started
-# there, in ssh's remote command string (`ssh host 'cd X && git commit'`, `ssh
-# host <<EOF`) or behind a later ssh / docker word (`xargs -I{} ssh {} ...`,
-# `caffeinate -i ssh ...`, `stdbuf -oL docker exec ...`), none of which is
-# this host's directory. A commit only inside a snippet handed to a linter
-# or highlighter (`shellcheck -s bash - <<EOF`, `bat -l sh`) is not a commit.
+# session cwd's.
+#
+# A convenience check, so it acts only on what the parser is sure of: a
+# certain invocation (GitCommand::Invocation#certain) with a definite
+# directory (Invocation#dir). It never tests a directory the commit might not
+# be in, so it skips (block-co-authored-by.rb, a safety check, checks these
+# same commits instead):
+#   - a commit whose directory is not static: `git -C "$REPO" commit` with
+#     REPO set neither by the command nor in the environment, `cd
+#     "$(mktemp -d)"`, `cd -`, rev-parse outside any repo, and a cd in an if /
+#     case branch, a loop body or after `||` (`cd A 2>/dev/null || cd B; git
+#     commit`), where the branches end in different directories; it tests
+#     neither branch's directory, though Invocation#dir_candidates lists them;
+#   - a --git-dir / GIT_DIR without a work tree (a bare or dotfiles repo,
+#     which the cwd's project does not guard);
+#   - a commit behind ssh / docker / pct ..., also inside a shell started
+#     there, in ssh's remote command string (`ssh host 'cd X && git commit'`,
+#     `ssh host <<EOF`) or behind a later ssh / docker word (`xargs -I{} ssh
+#     {} ...`, `caffeinate -i ssh ...`, `stdbuf -oL docker exec ...`), none of
+#     which is this host's directory;
+#   - known limitation: an uncertain commit, found only inside a nested
+#     command string that no explicit model covers. Commits through
+#     unmodelled wrappers are not tested: `flock L -c '...'` / `--command`,
+#     `sg G -c`, `watch '...'`, `parallel ::: '...'`, `tmux send-keys`, `trap
+#     '...' EXIT`, `git rebase -x '...'`, a shell script's arguments, `python3
+#     -c 'os.system(...)'`. Whether such a string runs, and where, is not
+#     knowable from the command; the modelled forms above (`flock L bash -c`,
+#     `su -c`, ...) are tested.
+# A commit only inside a snippet handed to a linter or highlighter
+# (`shellcheck -s bash - <<EOF`, `bat -l sh`) is not a commit.
 #
 # Fail-open: any internal error exits 0; only a failing test run exits 2.
 
@@ -101,8 +119,11 @@ def run_tests(dir)
   end
 end
 
-# The directory whose tests guard this commit, or nil to skip it.
+# The directory whose tests guard this commit, or nil to skip it (see the
+# header: uncertain, not static, --git-dir without a work tree, remote).
 def test_dir(inv)
+  return nil unless inv.certain
+
   globals = inv.globals.map(&:first)
   env = inv.env || {}
   return inv.work_tree if globals.include?("--work-tree") || env.key?("GIT_WORK_TREE")

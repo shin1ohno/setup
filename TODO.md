@@ -1,5 +1,24 @@
 # TODO
 
+## Commit hooks skip tests for commits behind unmodelled wrappers (Low)
+
+- **Failure class**: `cookbooks/claude-code/files/hooks/git-command.rb`
+  marks a `git commit` found only inside an unmodelled wrapper's string
+  (`flock -c`, `sg -c`, `watch`, `parallel`, `tmux send-keys`, `trap`,
+  `git rebase -x`, a script's arguments, `python3 -c`) as uncertain, with no
+  directory. `block-co-authored-by.rb` checks such commits and fails closed;
+  `pre-commit-test.rb` skips them, so the commit lands without the project
+  tests. The block hook's own residual holes (run-time values, files written
+  by programs it does not model, aliases, stdin scripts to non-shell programs,
+  `git merge/tag/commit-tree -m`) are listed in its header.
+- **Why**: accepted scope of SH1-86 / PR #1130 (2026-11-06). The actor is a
+  cooperating Claude following the harness attribution line, so wrapper
+  hunting stops at shapes it really emits, and testing a guessed directory
+  is worse than skipping.
+- **First step**: start `scan_nested` from the outer cwd instead of a fresh
+  unknown token, then let `pre-commit-test.rb` test an uncertain commit whose
+  directory is definite (inherited, or an absolute `cd` inside the string).
+
 ## session-search Codex follow-ups left after PR #1102 (Low)
 
 - **Failure class**: three residual edges of the Codex ingest/search path.
