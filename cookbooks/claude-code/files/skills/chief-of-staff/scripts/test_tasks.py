@@ -19,9 +19,11 @@ class TasksTest(unittest.TestCase):
         self.env = dict(os.environ, COS_STATE_DIR=self.tmp.name + "/state")
         self.task = self.call("new", "--owner", "/socket#w1:p1", "--topic", "A topic",
                               "--cwd", self.tmp.name, "--scope", "Local edits only",
-                              "--acceptance", "Actual test passes")["task"]["id"]
+                              "--acceptance", "Actual test passes", "--contract", "legacy")["task"]["id"]
 
     def call(self, *args, ok=True):
+        if args[0] == "new" and "--contract" not in args:
+            args += ("--contract", "legacy")
         result = subprocess.run([sys.executable, str(SCRIPT), *args], env=self.env,
                                 text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0 if ok else 1, result.stderr)
