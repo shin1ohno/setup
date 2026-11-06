@@ -155,8 +155,11 @@ do not become solvable just by repeatedly switching providers.
 
 Mark `accepted` only after review passes with recorded evidence. Report the
 outcome, artifact/link, the checks that justify it, and any material limitation.
-Keep panes and transcripts available; close only panes you created when cleanup
-is requested. Do not merge, deploy, post messages, or spend money beyond the
+Close a worker pane you created once its task is `accepted` or `cancelled`.
+Keep it open in every other state, because a same-worker correction may still
+need it. Session logs and artifacts remain after the pane closes. Never close a
+pane you did not create.
+Do not merge, deploy, post messages, or spend money beyond the
 authorization in the original task. Prior authorization remains valid.
 
 ## Communication contract
