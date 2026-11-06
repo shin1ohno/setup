@@ -668,17 +668,18 @@ idempotent enforce-execute in `cookbooks/mac-settings/default.rb`, so a
 ## available-skills list diet — gws-*/recipe-*/persona-* occupy the session skill listing (Low)
 
 From the 2026-07-06 claude-md-audit critic pass: the per-session available-skills
-reminder lists ~100 deployed skills, dominated by the gws plugin families
+reminder lists ~100 deployed skills, dominated by the gws-generated families
 (`gws-*`, `recipe-*`, `persona-*`). Their descriptions consume always-loaded
 context the same way rules/ files did before #639/#666, but they were out of
 scope for the rules diet.
 
-- Reason deferred: the skills come from plugins/marketplaces, not the cookbook
-  deploy lists — the diet mechanism is enabledPlugins scoping, not file deletion.
-- First step: measure the actual byte share of the skill listing in a fresh
-  session's system prompt, then trial-disable the `recipe-*`/`persona-*`
-  families in `enabledPlugins` (keep `gws-*` operational skills) and confirm
-  nothing in daily flows regresses.
+- Reason deferred: the skills come from `cookbooks/gws` (`files/sync-skills.sh`
+  generates them into ~/.agents/skills and links them into ~/.claude/skills), not
+  from plugins, so `enabledPlugins` cannot trim them and deleted links return
+  through the cookbook's link-count guard.
+- First step: see SH1-78. Any trim goes into `cookbooks/gws`, and only after the
+  skill listing is under its budget: while skills are collapsed to name-only, a
+  removed description is refilled by another one and the session saves nothing.
 
 Status 2026-09-06: unchanged — a fresh headless session on sh1-cloud still lists the
 full `gws-*` / `recipe-*` / `persona-*` set in its available-skills block.
