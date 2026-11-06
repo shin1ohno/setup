@@ -2,15 +2,7 @@
 
 ## After `git mv`, Re-Read files before editing
 
-The Edit tool tracks Read history by path, not inode. After `git mv <old> <new>`, the Read cache for `<old>` does NOT carry over to `<new>` — Edit calls on the new path fail with "File has not been read yet", even though the file content is identical and the inode is unchanged.
-
-**Bulk rename workflow:**
-
-1. `git mv` all files first (single Bash call)
-2. Re-Read every moved file at its new path — batch in a single message with parallel Read calls
-3. Apply Edits
-
-Skipping step 2 produces one "not been read" error per file, scattering across tool calls and wasting context. On a 13-file rename this costs a full round-trip of failed Edits before the re-Read batch can start.
+Detail: see `~/.claude/docs/git-commit-detail.md#git-mv-reread`.
 
 ## Multiple Edits on the same file: serialize across messages
 

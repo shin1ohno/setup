@@ -67,6 +67,12 @@ A fresh `claude -p` session does not have its claude.ai connectors at turn 1: th
 
 Origin: 2026-10-30 Aembit clamp and disconnect verification on sh1-cloud — the lesson was written to project memory mid-session and the false negative still recurred 4 times (direct Notion `update-page` FOUND only on call 3; one run where even the Aembit control stayed NOT FOUND across 4 calls); one probe burst hit the 5-hour limit.
 
+## claude-mcp-list-connected
+
+`claude mcp list` / `claude mcp get` の Connected は「サーバが initialize に応答した」以上を意味しない。claude.ai スコープの Google 系コネクタ（`*mcp.googleapis.com/mcp/v1`）は未認証の initialize に 200 を返すため、claude.ai で切断した後も Connected と表示される（Notion / Slack / Figma は 401 で Needs authentication になる）。ツールが実際に注入されるかは、新規セッションの ToolSearch か、陽性対照つきの headless 多回 probe（`~/.claude/docs/claude-cli-headless.md`）で判定する。SessionStart の health hook もこの Connected を信じるので、Google 系の認証切れは検出できない。
+
+Origin: 2026-10-30、直接登録 13 本を claude.ai で切断した後に Google 6 本だけが Connected のまま見え、切断失敗と誤読した件。
+
 ## PreToolUse allowlist hooks are dependency-free and fail-closed
 
 A `--settings` PreToolUse hook returning `permissionDecision: deny` is the second clamp layer under `bypassPermissions` (the first is `--disallowedTools`; subagents inherit both). The harness treats EMPTY or malformed hook output as allow, so any dependency that can fail in the runner's environment turns the hook fail-open. Extract `tool_name` and print the deny JSON with grep/sed/printf only — no jq, no ruby shim, no mise-managed binary (the hook runs under the harness's HOME and PATH, not yours) — and return deny when extraction fails. Verify with an offline harness that runs the hook in a scratch HOME with a minimal PATH and asserts both directions (allowed name → no output; denied name and missing `tool_name` → deny JSON), then run the live gate probe above on the deployed path.

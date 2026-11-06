@@ -83,11 +83,11 @@ test "$(git -C /Users/sh1/ManagedProjects/setup branch --show-current)" = "fix/X
 
 ### A commit message containing `?` / `*` / `[` goes through `-F <file>`, not `-m`
 
-zsh globs them and `git commit -m "…"` aborts with `no matches found` (the mangled one-line echo points at quoting, not globbing). Use `git commit -F <path>`; `-m` only for a single line with no glob characters. Detail: see `~/.claude/docs/git-commit-detail.md#commit-message-glob-chars`.
+Detail: see `~/.claude/docs/git-commit-detail.md#commit-message-glob-chars`.
 
 ### A worktree in a sibling repo is created with `git worktree add` and driven by absolute paths
 
-`EnterWorktree` works only in the session's current repo (or one nested in it). For a sibling repo: `git worktree add <repo>/.claude/worktrees/<name> -b <branch> origin/main`, edit via absolute paths, commit with `git -C <worktree>`; the textual refusal does not apply. Detail: see `~/.claude/docs/git-commit-detail.md#sibling-repo-worktree`.
+Detail: see `~/.claude/docs/git-commit-detail.md#sibling-repo-worktree`.
 
 ### Cherry-pick is a commit operation — branch check applies
 
@@ -118,18 +118,6 @@ Detail: see `~/.claude/docs/git-commit-detail.md#stacked-pr-merge-guard`.
 Detail: see `~/.claude/docs/git-commit-detail.md#tag-release-downstream-lib`.
 
 ## `gh pr create` body containing code → use `--body-file`
-
-A PR body with backticks, fences, `$()`, `${...}`, nested quotes or multiple paragraphs never goes through inline `--body "$(cat <<'EOF' …)"`. Always:
-
-```
-cat > /tmp/pr-body.md <<'EOF'
-## Summary
-- ...
-## Test plan
-- `cmd1` … `cmd2` …
-EOF
-gh pr create --base main --title "..." --body-file /tmp/pr-body.md
-```
 
 Detail: see `~/.claude/docs/git-commit-detail.md#pr-body-file`.
 

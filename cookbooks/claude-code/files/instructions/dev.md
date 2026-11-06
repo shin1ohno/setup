@@ -197,15 +197,7 @@ Detail: see `~/.claude/docs/debugging-detail.md#confirm-suspected-driver-deploye
 
 ## After `git mv`, Re-Read files before editing
 
-The Edit tool tracks Read history by path, not inode. After `git mv <old> <new>`, the Read cache for `<old>` does NOT carry over to `<new>` — Edit calls on the new path fail with "File has not been read yet", even though the file content is identical and the inode is unchanged.
-
-**Bulk rename workflow:**
-
-1. `git mv` all files first (single Bash call)
-2. Re-Read every moved file at its new path — batch in a single message with parallel Read calls
-3. Apply Edits
-
-Skipping step 2 produces one "not been read" error per file, scattering across tool calls and wasting context. On a 13-file rename this costs a full round-trip of failed Edits before the re-Read batch can start.
+Detail: see `~/.claude/docs/git-commit-detail.md#git-mv-reread`.
 
 <!-- section id=editing-same-file-edits file=rules/editing.md order=0020 harness=claude lazy=n -->
 ## Multiple Edits on the same file: serialize across messages
@@ -313,12 +305,12 @@ test "$(git -C /Users/sh1/ManagedProjects/setup branch --show-current)" = "fix/X
 <!-- section id=git-commit-message-file file=rules/git-commit.md order=0120 harness=neutral lazy=y -->
 ### A commit message containing `?` / `*` / `[` goes through `-F <file>`, not `-m`
 
-zsh globs them and `git commit -m "…"` aborts with `no matches found` (the mangled one-line echo points at quoting, not globbing). Use `git commit -F <path>`; `-m` only for a single line with no glob characters. Detail: see `~/.claude/docs/git-commit-detail.md#commit-message-glob-chars`.
+Detail: see `~/.claude/docs/git-commit-detail.md#commit-message-glob-chars`.
 
 <!-- section id=git-commit-sibling-worktree file=rules/git-commit.md order=0130 harness=claude lazy=y -->
 ### A worktree in a sibling repo is created with `git worktree add` and driven by absolute paths
 
-`EnterWorktree` works only in the session's current repo (or one nested in it). For a sibling repo: `git worktree add <repo>/.claude/worktrees/<name> -b <branch> origin/main`, edit via absolute paths, commit with `git -C <worktree>`; the textual refusal does not apply. Detail: see `~/.claude/docs/git-commit-detail.md#sibling-repo-worktree`.
+Detail: see `~/.claude/docs/git-commit-detail.md#sibling-repo-worktree`.
 
 <!-- section id=git-commit-cherry-pick file=rules/git-commit.md order=0140 harness=neutral lazy=y -->
 ### Cherry-pick is a commit operation — branch check applies
@@ -357,18 +349,6 @@ Detail: see `~/.claude/docs/git-commit-detail.md#tag-release-downstream-lib`.
 
 <!-- section id=git-commit-pr-body-file file=rules/git-commit.md order=0210 harness=neutral lazy=y -->
 ## `gh pr create` body containing code → use `--body-file`
-
-A PR body with backticks, fences, `$()`, `${...}`, nested quotes or multiple paragraphs never goes through inline `--body "$(cat <<'EOF' …)"`. Always:
-
-```
-cat > /tmp/pr-body.md <<'EOF'
-## Summary
-- ...
-## Test plan
-- `cmd1` … `cmd2` …
-EOF
-gh pr create --base main --title "..." --body-file /tmp/pr-body.md
-```
 
 Detail: see `~/.claude/docs/git-commit-detail.md#pr-body-file`.
 
@@ -438,9 +418,7 @@ Format:
 <!-- section id=mcp-config-connected-not-auth file=rules/mcp-config.md order=0020 harness=claude lazy=y -->
 ## `claude mcp list` の Connected は認証・接続の証拠にしない
 
-`claude mcp list` / `claude mcp get` の Connected は「サーバが initialize に応答した」以上を意味しない。claude.ai スコープの Google 系コネクタ（`*mcp.googleapis.com/mcp/v1`）は未認証の initialize に 200 を返すため、claude.ai で切断した後も Connected と表示される（Notion / Slack / Figma は 401 で Needs authentication になる）。ツールが実際に注入されるかは、新規セッションの ToolSearch か、陽性対照つきの headless 多回 probe（`~/.claude/docs/claude-cli-headless.md`）で判定する。SessionStart の health hook もこの Connected を信じるので、Google 系の認証切れは検出できない。
-
-Origin: 2026-10-30、直接登録 13 本を claude.ai で切断した後に Google 6 本だけが Connected のまま見え、切断失敗と誤読した件。
+Detail: see `~/.claude/docs/claude-cli-headless.md#claude-mcp-list-connected`.
 <!-- section id=planning-intro file=rules/planning.md order=0010 harness=claude lazy=n -->
 # Plan-Phase Rules
 
