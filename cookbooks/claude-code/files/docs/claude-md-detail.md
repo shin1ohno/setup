@@ -42,6 +42,8 @@ Origin: 2026-07 sessions aa4b0e75 (status? asked 3 times) and 29d690f1 (30 minut
 
 Discovering the architectural-split option after the user already answered inline-only forces a 2-turn plan revision. Origin: 2026-05-11 CLAUDE.md trim — the split option surfaced too late.
 
+Pricing a size reduction: saving = bytes moved out of always-loaded files − text that must stay behind − the `Detail: see …` pointers added. Measure every always-loaded output that changes with `wc -c` before and after the build; a figure stated before adversarial review or before the full keep/move classification is applied is an estimate and is labelled as one. Origin: SH1-70 — the saving was reported as 7,189 B, then 4,800 B, then about 3.2 KB, and shipped at 2,210 B (PR #1135). The first fall came from adversarial review; the next two came from estimating before the full classification was applied.
+
 ## deliverable-to-file
 
 This is not the same rule as `sub-agents.md`'s "Synthesis Stage — Pass Data by Path", which governs agent-to-agent handoff; this one governs the user-facing deliverable. A relative path does not resolve against the user's cwd — cf. `~/ManagedProjects/setup/.claude/rules/shell.md` "User-run block self-containment".
