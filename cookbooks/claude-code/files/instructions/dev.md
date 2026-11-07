@@ -20,7 +20,7 @@
 ## Planning and Execution Model — Claude Code specifics
 
 - `/plan` mode + user confirmation before proceeding
-- **Batch plan-phase questions** into one AskUserQuestion (multiSelect when non-exclusive) at the end of the draft. **Partial-answer guard**: re-ask any unaddressed question in one AskUserQuestion. **Size-reduction tasks** (「大きい」「削減」): the first ask MUST offer both inline-removal AND architectural-split (move sections to on-demand `docs/*.md` or path-scoped `rules/*.md`). Detail: see `~/.claude/docs/claude-md-detail.md#plan-question-batching`.
+- **Batch plan-phase questions** into one AskUserQuestion (multiSelect when non-exclusive) at the end of the draft. **Partial-answer guard**: re-ask any unaddressed question in one AskUserQuestion. **Size-reduction tasks** (「大きい」「削減」): the first ask MUST offer both inline-removal AND architectural-split (move sections to on-demand `docs/*.md` or path-scoped `rules/*.md`); price the saving as moved bytes minus text that must stay plus added pointers, measured with `wc -c` before and after, and label any figure given before review an estimate. Detail: see `~/.claude/docs/claude-md-detail.md#plan-question-batching`.
 - **Auto mode ≠ skipping plan** for non-trivial work
 
 <!-- section id=agents-general-aws-terraform file=AGENTS.md order=0090 harness=neutral lazy=n -->
@@ -110,6 +110,8 @@ Detail: see `~/.claude/docs/debugging-detail.md#noisy-non-failure-pattern`.
 ## Do Not Report Success Without State Evidence
 
 NOT evidence: clean compile/run, `Ok(())`, your own code's "success" line, a previous good run, passing tests, green CI whose exercising step is gated on `workflow_dispatch` inputs (grep its `if:`; if gated, dispatch it and read that step's conclusion and stdout). ARE evidence: receiving-end state (file, DB record, zone status, queue length), tests on the changed path with real inputs, receiving-system logs, a status query showing the expected state.
+
+A new check (jq filter, lint, verify script) is not evidence until you have read its input's header or one real sample and seen a negative control fail for the intended reason, not an environment error.
 
 Detail: see `~/.claude/docs/debugging-detail.md#do-not-report-success-without-state-evidence`.
 
