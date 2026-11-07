@@ -76,7 +76,7 @@ Create a sibling pane with an explicit caller target, actual cwd, and
 `--no-focus`. Inspect geometry to choose right/down. Reserve a unique agent name
 in the ledger before launching (with an explicit `--profile`), bind the pane
 returned by Herdr, and start the selected harness there. Prepare a launch plan
-with `bin/worker-profile prepare` for every attempt and launch from it only when
+with `bin/worker-profile prepare --route <hc|agent|herdr1>` for every attempt and launch from it only when
 it says `launch_ready: true`; otherwise launch as before (dispatch.md, "Worker
 profiles and launch plans"). Workers receive a self-contained brief and must **not**
 invoke Chief of Staff or create their own worker trees unless this task requires
@@ -203,6 +203,5 @@ Until SH1-68 supplies owner-approved numeric thresholds, direct work is limited
 to a short answer using evidence already in context, with no repository change,
 external mutation, or new investigation. Delegate implementation and new reads.
 The profile-isolated Agent route (`subagent_type: profile-<profile>`) is used
-only when the attempt's Claude launch plan says `launch_ready: true`, which waits
-for canary acceptance; a missing tool or unsupported isolation capability blocks
+only when the attempt's Claude launch plan says `launch_ready: true`, (prepared with `--route agent`); a missing tool or unsupported isolation capability blocks
 that route, not permission checks.

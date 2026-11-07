@@ -33,8 +33,8 @@ hooks that go through `~/.claude/hooks/ruby-shim` still work.
   otherwise consumes the prompt as one of its values.
 - Launch without `CLAUDE_CODE_EFFORT_LEVEL` in the environment, as on the
   Herdr 1 route; it overrides the per-worker effort.
-- When the attempt's `bin/worker-profile prepare` plan says `launch_ready:
-  true`, launch from it: `/usr/bin/env` with one `-u` per `env_unset` entry,
+- When the attempt's `bin/worker-profile prepare --route hc` plan says
+  `launch_ready: true`, launch from it: `/usr/bin/env` with one `-u` per `env_unset` entry,
   one `KEY=VALUE` per `env_set` entry and the controller's PATH, then the plan
   `argv` unchanged, the prompt, and the usual worker-floor and `--tools`
   additions. Otherwise launch as above. See "Worker profiles and launch plans"
