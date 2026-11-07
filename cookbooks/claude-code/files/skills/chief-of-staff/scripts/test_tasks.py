@@ -30,7 +30,7 @@ class TasksTest(unittest.TestCase):
         return json.loads(result.stdout if ok else result.stderr)
 
     def attempt(self, kind="codex"):
-        result = self.call("attempt", self.task, "--kind", kind,
+        result = self.call("attempt", self.task, "--profile", "dev", "--kind", kind,
                            "--model", "default", "--reason", "Task fit")
         self.call("bind", self.task, "--pane", "w1:p2")
         return result["attempt"]
@@ -49,7 +49,7 @@ class TasksTest(unittest.TestCase):
         self.update("accepted", evidence=False, ok=False)
         result = self.update("accepted")
         self.assertEqual(result["task"]["state"], "accepted")
-        self.call("attempt", self.task, "--kind", "claude", "--model", "default",
+        self.call("attempt", self.task, "--profile", "dev", "--kind", "claude", "--model", "default",
                   "--reason", "Duplicate", ok=False)
         self.assertEqual(len(self.call("list", "--owner", "/socket#w1:p1")["tasks"]), 1)
         self.call("reported", self.task, "--note", "Verified result delivered")
@@ -57,7 +57,7 @@ class TasksTest(unittest.TestCase):
 
     def test_no_duplicate_attempt_during_ambiguous_startup(self):
         self.attempt()
-        self.call("attempt", self.task, "--kind", "codex", "--model", "default",
+        self.call("attempt", self.task, "--profile", "dev", "--kind", "codex", "--model", "default",
                   "--reason", "Resend after timeout", ok=False)
         task = self.call("show", self.task)["task"]
         self.assertEqual(len(task["attempts"]), 1)
@@ -69,7 +69,7 @@ class TasksTest(unittest.TestCase):
                           "--cwd", self.tmp.name, "--scope", "Local", "--acceptance", "Pass",
                           "--fresh-worker")["task"]["id"]
         self.task = fresh
-        reserve = ("attempt", fresh, "--kind", "codex", "--model", "default", "--reason", "Fresh")
+        reserve = ("attempt", fresh, "--profile", "dev", "--kind", "codex", "--model", "default", "--reason", "Fresh")
         self.call(*reserve)
         self.call("bind", fresh, "--pane", "w1:p1", ok=False)
         self.call("bind", fresh, "--pane", "w1:p2", ok=False)
@@ -89,7 +89,7 @@ class TasksTest(unittest.TestCase):
             result = self.update("retry")
         self.assertEqual(len(set(names)), 3)
         self.assertEqual(result["task"]["state"], "needs-user")
-        self.call("attempt", self.task, "--kind", "claude", "--model", "default",
+        self.call("attempt", self.task, "--profile", "dev", "--kind", "claude", "--model", "default",
                   "--reason", "Fourth attempt", ok=False)
         self.call("extend", self.task, "--max-attempts", "4", "--note", "User: try once more")
         self.attempt("claude")
@@ -106,7 +106,7 @@ class TasksTest(unittest.TestCase):
         self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
 
     def test_parallel_reservation_has_one_winner(self):
-        argv = [sys.executable, str(SCRIPT), "attempt", self.task, "--kind", "codex",
+        argv = [sys.executable, str(SCRIPT), "attempt", self.task, "--profile", "dev", "--kind", "codex",
                 "--model", "default", "--reason", "Concurrent reservation"]
         processes = [subprocess.Popen(argv, env=self.env, text=True,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -117,7 +117,7 @@ class TasksTest(unittest.TestCase):
         self.assertEqual(len(self.call("show", self.task)["task"]["attempts"]), 1)
 
     def test_pane_identity_and_execution_cannot_be_guessed(self):
-        self.call("attempt", self.task, "--kind", "codex", "--model", "default",
+        self.call("attempt", self.task, "--profile", "dev", "--kind", "codex", "--model", "default",
                   "--reason", "Initial choice")
         self.update("running", ok=False)
         self.call("bind", self.task, "--pane", "w1:p2")
@@ -141,25 +141,43 @@ class TasksTest(unittest.TestCase):
         original = self.attempt()
         self.update("reviewing")
         self.update("retry")
-        result = self.call("attempt", self.task, "--kind", "codex", "--model", "default",
+        result = self.call("attempt", self.task, "--profile", "dev", "--kind", "codex", "--model", "default",
                            "--reason", "Correct the failing criterion", "--reuse-agent")
         self.assertEqual(result["attempt"]["agent"], original["agent"])
         self.assertEqual(result["attempt"]["number"], 2)
         self.call("bind", self.task, "--pane", "w1:p2")
         self.update("reviewing")
         self.update("retry")
-        self.call("attempt", self.task, "--kind", "claude", "--model", "default",
+        self.call("attempt", self.task, "--profile", "dev", "--kind", "claude", "--model", "default",
                   "--reason", "Mismatched reuse", "--reuse-agent", ok=False)
 
     def test_context_block_before_dispatch_cannot_invent_an_attempt(self):
         self.update("needs-user", evidence=False)
         self.update("starting", ok=False)
         self.assertEqual(self.call("show", self.task)["task"]["attempts"], [])
-        self.call("attempt", self.task, "--kind", "codex", "--model", "default",
+        self.call("attempt", self.task, "--profile", "dev", "--kind", "codex", "--model", "default",
                   "--reason", "Live controller context restored")
         self.update("needs-user", evidence=False)
         self.update("starting")
         self.call("bind", self.task, "--pane", "w1:p2")
+
+    def test_attempt_requires_an_explicit_profile(self):
+        strict = self.call("new", "--owner", "/socket#w1:p1", "--topic", "Profiled",
+                           "--cwd", self.tmp.name, "--scope", "Local", "--acceptance", "Pass",
+                           "--contract", "envelope-v1")["task"]["id"]
+        for task, owner in ((self.task, ()), (strict, ("--owner", "/socket#w1:p1"))):
+            argv = [sys.executable, str(SCRIPT), "attempt", task, *owner, "--kind", "claude",
+                    "--model", "opus", "--effort", "high", "--reason", "No profile chosen"]
+            refused = subprocess.run(argv, env=self.env, text=True, capture_output=True, timeout=10)
+            self.assertEqual(refused.returncode, 2, refused.stderr)
+            self.assertIn("--profile", refused.stderr)
+            self.assertEqual(self.call("show", task)["task"]["attempts"], [])
+            self.assertEqual(self.call("show", task)["task"]["state"], "queued")
+        result = self.call("attempt", strict, "--owner", "/socket#w1:p1", "--profile", "writing",
+                           "--kind", "claude", "--model", "opus", "--effort", "high",
+                           "--reason", "Documents row")
+        self.assertEqual(result["attempt"]["profile"], "writing")
+        self.assertEqual(self.call("show", strict)["task"]["attempts"][-1]["profile"], "writing")
 
 
 if __name__ == "__main__":
