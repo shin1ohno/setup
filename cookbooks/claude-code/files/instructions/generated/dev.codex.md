@@ -145,7 +145,7 @@ When the output is edits to `CLAUDE.md`, `~/.claude/rules/*.md`, or other rules/
 
 ### Branch check immediately before `gh pr create`
 
-The branch can drift between commit and PR-create; pass `--head <branch>` so gh ignores the CWD: `cat /tmp/pr-body.md | gh pr create --base main --head feat/my-branch --title "..." --body-file -`. Detail: see `~/.claude/docs/git-commit-detail.md#pr-create-branch-check`.
+The branch can drift between commit and PR-create; pass `--head <branch>` so gh ignores the CWD: `gh pr create --base main --head feat/my-branch --title "..." --body-file - <<'EOF' … EOF`. Detail: see `~/.claude/docs/git-commit-detail.md#pr-create-branch-check`.
 
 ### Multi-repo tasks
 
