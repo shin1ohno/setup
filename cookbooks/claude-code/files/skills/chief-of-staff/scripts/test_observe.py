@@ -36,7 +36,7 @@ class ObserveTest(unittest.TestCase):
         return self.call(command, self.task, "--owner", self.owner, *args, **kwargs)
 
     def start(self, model="sonnet", effort="low", route="agent"):
-        self.mutate("attempt", "--kind", "claude", "--model", model, "--effort", effort,
+        self.mutate("attempt", "--profile", "dev", "--kind", "claude", "--model", model, "--effort", effort,
                     "--reason", "fixture", "--route", route)
         identity = "--session" if route == "agent" else "--pane"
         self.mutate("bind", identity, SESSION)

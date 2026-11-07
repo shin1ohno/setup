@@ -42,7 +42,10 @@ python3 <skill-dir>/scripts/tasks.py new --owner <socket#controller-pane> \
   --topic <topic> --cwd <absolute-dir> --scope <authorized-scope> \
   --acceptance <criterion> [--acceptance <criterion> ...]
 python3 <skill-dir>/scripts/tasks.py attempt <task-id> --owner <verified-owner> \
-  --kind codex --model <verified-model> --effort <verified-effort> --reason <routing-or-repair-reason>
+  --kind codex --model <verified-model> --effort <verified-effort> --profile <profile> \
+  --reason <routing-or-repair-reason>
+# Prepare the launch plan; see "Worker profiles and launch plans".
+python3 <setup-checkout>/bin/worker-profile prepare --harness codex --profile <profile> ...
 python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id>
 # Launch through the verified route.
 python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state running \
@@ -120,6 +123,9 @@ herdr --session <verified-session> agent read <reserved-agent-name> --source rec
 herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 30000
 ```
 
+This is today's launch, used whenever the attempt's launch plan is not ready
+(see "Worker profiles and launch plans"); a ready plan adds `--env` to the
+split and replaces the options after `--`.
 For explicit model selection, append native options **after** `--` (see
 "Model and effort per attempt" for each harness), and record the resulting
 effective model/effort with `observe` once the worker has answered at least
@@ -233,7 +239,9 @@ and the controller never answers that prompt.
 Compare cost per solved task when tuning. A bundled model catalog establishes
 support, not successful execution.
 
-Pass both values on every route:
+Pass both values on every route. The flags below are today's launch; with a
+ready launch plan the plan argv carries them instead (see "Worker profiles and
+launch plans"):
 
 - Agent tool: set `model` (`opus`, `sonnet`, `haiku`) and `effort` from the
   table. The table is the skill's explicit effort instruction for the tool.
@@ -305,12 +313,97 @@ matches its full model ID) and the observed effort to equal it. Pass the same
 envelope contract in every brief. Do not claim a fake fixture proves a live
 dispatch.
 
-A profile-isolated Agent-tool route also passes the same profile text. A tool
-lacking effort or instruction isolation cannot meet that route's acceptance; use
-a supported route or report that blocker.
+## Worker profiles and launch plans
 
-Profiles: implementation/review/operations use common+dev; controller uses
-common+cos; documents use common+writing; other research/admin uses common.
-The same rendered artifact supplies both routes. The profile launcher proposal
-is reviewed separately; until isolation and login are observed, keep existing
-launches unchanged and do not label them profile-isolated.
+Profiles: implementation/review/operations use `dev` (common+dev); controller
+uses `cos`; documents use `writing`; other research/admin uses `common`. Pass the
+choice to every `attempt` as `--profile <profile>`; `tasks.py` has no default,
+so the ledger always records it. Profiles apply only to workers the controller
+launches. A session the owner opens directly keeps the full instruction set.
+
+### Prepare and read the plan
+
+Before each launch, prepare a plan with `bin/worker-profile` from a setup
+checkout whose `main` matches the applied claude-code cookbook (on pro-dev
+`~/ManagedProjects/setup`). Pass the attempt's harness, profile, model, effort
+and reason, the task cwd, and a new directory under the task directory:
+
+```text
+python3 <setup-checkout>/bin/worker-profile prepare --harness <claude|codex> \
+  --profile <profile> --model <model> --effort <effort> --reason <attempt-reason> \
+  --cwd <task-cwd> --directory <task-dir>/plan-<attempt> \
+  [--catalog <task-dir>/codex-models.json]   # Codex: saved `codex debug models` output
+```
+
+`prepare` never launches anything. It refuses (exit 1, `{"error": ...}`) when the
+deployed profile or Codex home is missing or differs from the rendered source,
+and it writes `<task-dir>/plan-<attempt>/launch-plan.json` otherwise. Read that
+file and use the profile launch below **only when all of these hold**:
+
+- `launch_ready` is exactly `true`;
+- `harness`, `profile`, `model`, `effort` and `cwd` equal the attempt and task;
+- `argv[0]` equals `harness`.
+
+Otherwise (a refusal, `launch_ready: false`, or any mismatch) keep today's
+launch exactly as described in "Launch example" and "Model and effort per
+attempt", including the worker-floor settings and the `--tools` allowlist for
+implementation workers, and do not call the worker profile-isolated. Until the
+canary PR flips it, every plan says `launch_ready: false`. Record which launch
+was used in the `update --state running` note (`profile plan <plan-file>` or
+`launch_ready false: default launch`).
+
+### Profile launch per route
+
+Pass `env_set`, `env_unset` and `argv` from the plan unchanged, as argv arrays.
+Never build a shell string from them. The route's own additions stay as today
+and come after the plan argv: the prompt, then for implementation and document
+Claude workers `--settings ~/.claude/worker-floor/<impl|docs>.json`, then for
+implementation workers `--tools Bash,Read,Edit,Write,Skill,ToolSearch,Agent,AskUserQuestion`
+(last, because it is variadic). The plan argv already carries the model and
+effort flags. After the first turn, run `observe --transcript <log>
+--launch-prompt <prompt>` as on every Herdr route. The Claude session log
+path depends on the cwd, as today. Codex writes rollouts under
+`$CODEX_HOME/sessions`, so a profile worker's rollout is under the plan's
+`codex_home`, not `~/.codex/sessions`; `observe` accepts it by file name.
+
+- **Herdr 1, Claude or Codex.** Add one `--env <KEY>=<VALUE>` to `pane split`
+  per `env_set` entry. Herdr 1 has no unset option (`pane split --help` lists
+  only `--env`), so before `agent start` clear `env_unset` in the new pane with
+  `herdr pane run <returned-id> unset <NAME> ...`, after checking each name
+  against `^[A-Z_][A-Z0-9_]*$`, and wait for its shell prompt. `agent start
+  --kind <harness>` runs the canonical executable, so pass `argv[1:]` after
+  `--`:
+
+  ```text
+  herdr --session <s> pane split --pane <caller> --direction right --cwd <plan.cwd> --no-focus \
+    --env <KEY>=<VALUE> [--env ...]
+  herdr --session <s> pane run <returned-id> unset <env_unset names>
+  herdr --session <s> agent start <reserved-agent-name> --kind <plan.harness> --pane <returned-id> \
+    -- <plan.argv[1:]> [route additions without the prompt]
+  herdr --session <s> agent prompt <reserved-agent-name> <brief-text> --wait --timeout 30000
+  ```
+
+- **Herdr 2 (`hc`), Claude or Codex.** Wrap the plan argv in `/usr/bin/env`, one
+  `-u <NAME>` per `env_unset` entry and one `<KEY>=<VALUE>` per `env_set` entry,
+  plus the controller's PATH (see `hc-route.md`). `env` resolves `argv[0]`
+  through that PATH; confirm it finds `~/.local/bin/claude` or `codex` first.
+
+  ```text
+  hc run --bg --name <name> --cwd <plan.cwd> -- /usr/bin/env -u <NAME> [...] \
+    <KEY>=<VALUE> [...] PATH=<controller PATH> <plan.argv...> <prompt> [route additions]
+  ```
+
+- **Agent tool (Claude only).** Prepare a Claude plan (`--harness claude`) for
+  the gate above. The Agent tool takes no argv or environment: the definition
+  `~/.claude/agents/profile-<profile>.md` (`omitClaudeMd: true`, deployed by
+  `claude-code::worker-profiles`) carries the same rendered text. Confirm that
+  the file exists and that the sha256 of its body after the front matter's
+  closing `---` and blank line equals the plan's `instruction_sha256`. Then call
+  the Agent tool with `subagent_type: "profile-<profile>"` and the attempt's
+  `model` and `effort`. Record `attempt --route agent` and `observe` as in the
+  Agent-tool bullet above. When the gate fails, use the Agent tool as today
+  (no `profile-` subagent type).
+
+A route that cannot carry the profile text, the model and the effort together
+cannot meet a profile-isolated acceptance; use another route or report that
+blocker. The same rendered artifact supplies every route.

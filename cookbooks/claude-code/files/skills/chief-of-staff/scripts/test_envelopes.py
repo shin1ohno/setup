@@ -35,7 +35,7 @@ class EnvelopeTest(unittest.TestCase):
         return self.call(command, self.task, "--owner", self.owner, *args, **kwargs)
 
     def start(self, route="agent"):
-        self.mutate("attempt", "--kind", "codex", "--model", "fixture-model",
+        self.mutate("attempt", "--profile", "dev", "--kind", "codex", "--model", "fixture-model",
                     "--effort", "medium", "--reason", "fixture", "--route", route)
         identity = "--pane" if route == "herdr" else "--session"
         self.mutate("bind", identity, "fixture-worker", "--model", "fixture-model",
@@ -103,7 +103,7 @@ class EnvelopeTest(unittest.TestCase):
         self.mutate("receive", "--file", str(self.envelope()))
         check = self.check(0)["check"]["id"]
         self.mutate("update", "--state", "retry", "--note", "fixture", "--evidence", "fixture")
-        self.mutate("attempt", "--kind", "codex", "--model", "fixture-model",
+        self.mutate("attempt", "--profile", "dev", "--kind", "codex", "--model", "fixture-model",
                     "--effort", "medium", "--reason", "fixture", "--route", "agent")
         self.mutate("bind", "--session", "fixture-worker-2", "--model", "fixture-model",
                     "--effort", "medium")
@@ -119,7 +119,7 @@ class EnvelopeTest(unittest.TestCase):
         self.assertNotIn("checks", self.call("show", self.task)["task"]["attempts"][-1])
 
     def test_bind_values_are_refused_on_envelope_v1_herdr(self):
-        self.mutate("attempt", "--kind", "codex", "--model", "fixture-model",
+        self.mutate("attempt", "--profile", "dev", "--kind", "codex", "--model", "fixture-model",
                     "--effort", "medium", "--reason", "fixture")
         for flag, value in (("--model", "fixture-model"), ("--effort", "medium")):
             error = self.mutate("bind", "--pane", "fixture-worker", flag, value, ok=False)
@@ -141,7 +141,7 @@ class EnvelopeTest(unittest.TestCase):
         legacy = self.call("new", "--owner", self.owner, "--topic", "Legacy",
                            "--cwd", str(self.root), "--scope", "fixture only",
                            "--acceptance", "fixture check", "--contract", "legacy")["task"]["id"]
-        self.call("attempt", legacy, "--owner", self.owner, "--kind", "codex",
+        self.call("attempt", legacy, "--owner", self.owner, "--profile", "dev", "--kind", "codex",
                   "--model", "fixture-model", "--effort", "medium", "--reason", "fixture")
         self.call("bind", legacy, "--owner", self.owner, "--pane", "fixture-worker",
                   "--model", "fixture-model", "--effort", "medium")
@@ -156,7 +156,7 @@ class EnvelopeTest(unittest.TestCase):
         self.assertEqual(task["attempts"][0]["session"], "fixture-worker")
 
     def test_requested_selection_is_not_observed_selection(self):
-        self.mutate("attempt", "--kind", "codex", "--model", "fixture-model",
+        self.mutate("attempt", "--profile", "dev", "--kind", "codex", "--model", "fixture-model",
                     "--effort", "medium", "--reason", "fixture")
         self.mutate("bind", "--pane", "fixture-worker")
         self.mutate("update", "--state", "running", "--note", "fixture",
@@ -166,9 +166,9 @@ class EnvelopeTest(unittest.TestCase):
                     "--evidence", "fixture", ok=False)
 
     def test_wrong_owner_and_implicit_effort_are_rejected(self):
-        self.call("attempt", self.task, "--owner", "wrong", "--kind", "codex",
+        self.call("attempt", self.task, "--owner", "wrong", "--profile", "dev", "--kind", "codex",
                   "--model", "fixture-model", "--effort", "medium", "--reason", "x", ok=False)
-        self.mutate("attempt", "--kind", "codex", "--model", "fixture-model",
+        self.mutate("attempt", "--profile", "dev", "--kind", "codex", "--model", "fixture-model",
                     "--reason", "x", ok=False)
 
     def test_unverified_stale_oversized_and_escaped_artifacts(self):
@@ -186,7 +186,7 @@ class EnvelopeTest(unittest.TestCase):
         self.start()
         self.mutate("receive", "--file", str(self.envelope()))
         self.mutate("update", "--state", "retry", "--note", "fixture", "--evidence", "fixture")
-        self.mutate("attempt", "--kind", "codex", "--model", "fixture-model",
+        self.mutate("attempt", "--profile", "dev", "--kind", "codex", "--model", "fixture-model",
                     "--effort", "medium", "--reason", "fixture")
         self.assertNotIn("envelope", self.call("show", self.task)["task"])
 
