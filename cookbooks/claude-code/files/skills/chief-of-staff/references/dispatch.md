@@ -51,8 +51,12 @@ python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> -
   --note <observed-start> --evidence <observed-working-transition>
 python3 <skill-dir>/scripts/tasks.py receive <task-id> --owner <verified-owner> \
   --file <absolute-envelope-file>
+# Run the independent check first and save its output under the task directory or checkout.
+python3 <skill-dir>/scripts/tasks.py check <task-id> --owner <verified-owner> \
+  --file <absolute-check-output> --exit-status <check-exit-status> --note <what-was-checked>
+# Read the check output and the printed check ID, then accept in a later, separate call.
 python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state accepted \
-  --note <criterion-by-criterion-verdict> --evidence <independent-check>
+  --check <id-printed-by-check> --note <criterion-by-criterion-verdict> --evidence <independent-check>
 python3 <skill-dir>/scripts/tasks.py reported <task-id> --owner <verified-owner> --note <message-sent>
 python3 <skill-dir>/scripts/tasks.py list --owner <socket#controller-pane>
 python3 <skill-dir>/scripts/tasks.py show <task-id>
@@ -73,6 +77,17 @@ write the full answer and test evidence as task-local or checkout artifacts,
 then return only the bounded envelope. `bind` records the returned pane before
 `agent start`; if an interrupted split has no recorded ID, inspect topology
 and refuse to guess or blindly create another pane.
+
+Acceptance is three steps, never one shell command. (1) Run the independent
+check and save its output to a file. (2) Record it with `check`, which stores
+the file path, its sha256, the exit status and a timestamp on the current
+attempt and prints a check ID. (3) Read the check output, then run
+`update --state accepted --check <id>` in a later call. For envelope-v1 tasks
+`accepted` is refused when the current attempt has no recorded check, when the
+latest recorded check has a non-zero exit status, or when `--check` does not
+name that latest check. A new attempt starts with no checks. Never chain the
+check, `check` and `accepted` in one command line: the ID exists so that the
+acceptance follows reading the result.
 
 Use `update --state retry --note ... --evidence ...` after a failed review;
 it automatically becomes `needs-user` at the attempt limit. `attempt` also
@@ -121,6 +136,11 @@ contract is an opt-in protocol, not a reason to alter an active legacy session.
 
 Write a real brief, replacing the fields below; include the user's words where
 wording matters. Do not send the controller's entire private conversation.
+Every brief states the envelope limits and the spec-conflict rule in the
+template below. `receive` rejects an envelope over a limit, so a brief that
+omits them invites a rejected report (one brief left out the 12-artifact limit
+and its worker returned 20). A brief that says "exactly these changes" can
+still name something a check rejects, so the worker needs the stop rule.
 
 ```text
 You are the execution worker for task <id>, attempt <n>.
@@ -142,6 +162,13 @@ dialogs on behalf of the user. Preserve other agents' changes. Do not weaken
 the acceptance criteria. Do not send messages to third parties without explicit
 authorization. Write full results and actual check output to artifact files inside the supplied
 task directory or checkout. Return only the envelope below (at most 16 KiB).
+Envelope limits: at most 12 artifacts; at most 8 open questions, each at most
+600 UTF-8 bytes; summary at most 1200 UTF-8 bytes. Cite a directory or log file
+instead of listing more than 12 paths.
+If the specification cannot pass a required check (a lint, test or validator
+rejects what the brief asks for), stop. Report status `blocked` with the failing
+check, its output file, and the specification change it needs. Never deviate
+from the specification silently, even to make the check pass.
 Do not paste full logs or documents into the controller response. Leave the
 terminal ready for review.
 ```
@@ -172,8 +199,9 @@ must be a regular file: FIFOs, sockets, directories and devices are rejected.
 Contained symlinks resolve once; descriptor traversal then refuses symlink
 replacements, and a pinned descriptor bounds the read to 16 KiB plus one byte.
 Every descriptor closes on rejection, releasing the ledger lock. It records
-reviewing, not accepted. Acceptance also needs independent review evidence and
-observed model/effort matching the request; file existence proves no quality.
+reviewing, not accepted. Acceptance also needs independent review evidence,
+observed model/effort matching the request, and a passing check recorded by an
+earlier `check` call (see Ledger operations); file existence proves no quality.
 
 ## Model and effort per attempt
 

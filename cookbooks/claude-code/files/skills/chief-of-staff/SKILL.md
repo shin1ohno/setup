@@ -43,6 +43,7 @@ Use [references/dispatch.md](references/dispatch.md) for routing, launch mechani
 and the worker brief. Use [scripts/tasks.py](scripts/tasks.py) for durable task
 state (Python 3 standard library; no provider SDK). The helper does not dispatch,
 judge quality, schedule itself, or send notifications.
+For the owner-approved Herdr 2 (`hc`) route, read [references/hc-route.md](references/hc-route.md) first.
 
 ## Intake and routing
 
@@ -153,7 +154,12 @@ The user may explicitly extend the budget. Do not loop indefinitely, conceal
 failures, or represent partial completion as a pass. Model/permission/cost limits
 do not become solvable just by repeatedly switching providers.
 
-Mark `accepted` only after review passes with recorded evidence. Report the
+Mark `accepted` only after review passes with recorded evidence. Run the
+independent check and save its output, record it with `tasks.py check`, read
+that output and the printed check ID, then run `update --state accepted --check
+<id>` in a later, separate call. Never put the check and the acceptance in one
+shell command; envelope-v1 `accepted` is refused without a passing recorded
+check for the current attempt. Report the
 outcome, artifact/link, the checks that justify it, and any material limitation.
 Close a worker pane you created once its task is `accepted` or `cancelled`.
 Keep it open in every other state, because a same-worker correction may still
