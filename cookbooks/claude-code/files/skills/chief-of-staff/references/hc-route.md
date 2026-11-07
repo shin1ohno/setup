@@ -33,6 +33,10 @@ hooks that go through `~/.claude/hooks/ruby-shim` still work.
   otherwise consumes the prompt as one of its values.
 - Launch without `CLAUDE_CODE_EFFORT_LEVEL` in the environment, as on the
   Herdr 1 route; it overrides the per-worker effort.
+- Record the worker terminal with `bind --pane <terminal>` and its effective
+  model/effort with `observe --transcript <session-log> --launch-prompt
+  <prompt>` (see "Model and effort per attempt" in `dispatch.md`); the session
+  logs are the same files as on the Herdr 1 route.
 - A prompt passed as argv to a worker in a directory it has not trusted yet
   can sit unsent behind the trust dialog. After the dialog is accepted, read
   the input box and press enter if the prompt is still there.

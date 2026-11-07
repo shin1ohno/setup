@@ -111,9 +111,15 @@ class ObserveTest(unittest.TestCase):
         task = self.call("show", self.task)["task"]
         self.assertIsNone(task["attempts"][-1]["observed_effort"])
 
-    def test_observe_needs_a_bound_agent_route(self):
+    def test_agent_transcript_is_refused_on_the_herdr_route(self):
         self.start(route="herdr")
-        self.mutate("observe", "--transcript", str(self.transcript([self.turn()])), ok=False)
+        self.mutate("observe", "--transcript", str(self.transcript([self.turn()])),
+                    "--launch-prompt", "fixture", ok=False)
+
+    def test_launch_prompt_is_refused_on_the_agent_route(self):
+        self.start()
+        self.mutate("observe", "--transcript", str(self.transcript([self.turn()])),
+                    "--launch-prompt", "fixture", ok=False)
 
     def test_symlinked_or_special_transcript_is_refused(self):
         self.start()
