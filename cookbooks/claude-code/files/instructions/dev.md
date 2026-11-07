@@ -275,7 +275,7 @@ When the output is edits to `CLAUDE.md`, `~/.claude/rules/*.md`, or other rules/
 <!-- section id=git-commit-branch-check-pr-create file=rules/git-commit.md order=0080 harness=neutral lazy=y -->
 ### Branch check immediately before `gh pr create`
 
-The branch can drift between commit and PR-create; pass `--head <branch>` so gh ignores the CWD: `cat /tmp/pr-body.md | gh pr create --base main --head feat/my-branch --title "..." --body-file -`. Detail: see `~/.claude/docs/git-commit-detail.md#pr-create-branch-check`.
+The branch can drift between commit and PR-create; pass `--head <branch>` so gh ignores the CWD: `gh pr create --base main --head feat/my-branch --title "..." --body-file - <<'EOF' … EOF`. Detail: see `~/.claude/docs/git-commit-detail.md#pr-create-branch-check`.
 
 <!-- section id=git-commit-multi-repo file=rules/git-commit.md order=0090 harness=neutral lazy=y -->
 ### Multi-repo tasks
@@ -353,9 +353,9 @@ Detail: see `~/.claude/docs/git-commit-detail.md#tag-release-downstream-lib`.
 Detail: see `~/.claude/docs/git-commit-detail.md#pr-body-file`.
 
 <!-- section id=git-commit-body-file-stdin file=rules/git-commit.md order=0220 harness=claude lazy=y -->
-### When the harness blocks `--body-file` — pipe via stdin
+### When `gh pr create --body-file` is denied
 
-If `--body-file /tmp/...` is denied as `the body content is unverifiable`, pipe it: `cat /tmp/pr-body.md | (cd /path/to/repo && gh pr create --base main --title "..." --body-file -)`. Detail: see `~/.claude/docs/git-commit-detail.md#body-file-stdin`.
+The denial `the body content is unverifiable` (seen 2026-05-07, mode not recorded) is a tool-permission denial, so Blocked Command Boundary (`~/ManagedProjects/setup/.claude/rules/infrastructure.md`) applies as for any other denial. Recovery: present the command as a `!` block with the body inline (next section). Never re-send a denied command as `cat <file> | gh pr create --body-file -`: only the `cat` line is added, so the body stays unseen if it never appeared in the transcript, and only the command's shape changes. To prevent the denial, make the body appear in the transcript first; the inline form does that. Detail: see `~/.claude/docs/git-commit-detail.md#body-file-stdin`.
 
 <!-- section id=git-commit-tmpdir-isolation file=rules/git-commit.md order=0230 harness=claude lazy=y -->
 ### Cross-sandbox TMPDIR isolation — never reference a `$TMPDIR` file across sandbox modes
