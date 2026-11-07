@@ -278,7 +278,7 @@ Origin: 2026-04-25 weave — feature branch cut from main lacked an open sibling
 
 The Write tool and ordinary Bash commands run in the Claude Code command sandbox, where `$TMPDIR` is remapped to a sandbox-private directory. Network commands (`gh pr create/edit`, see the next section) must run with `dangerouslyDisableSandbox: true`, where `$TMPDIR` resolves to the REAL OS temp dir (`/var/folders/.../T` on macOS) — a different path. A `cat "$TMPDIR/body.md"` inside the sandbox-disabled invocation then returns 0 bytes with NO error, and the PR is created with a silently empty body.
 
-Building the body inline (heredoc piped to `--body-file -` inside the same sandbox-disabled invocation) sidesteps all three `--body-file` failure modes at once: backtick mis-parse, the harness verifier window, and cross-sandbox TMPDIR. For a user-run `!` command, a scratchpad or sandbox-`$TMPDIR` path fails with `fatal: could not read log file <path>: No such file or directory` — any command taking `-f` / `-F` / `--file`, or an `scp` / `rsync` source, is affected.
+Building the body inline (heredoc piped to `--body-file -` inside the same sandbox-disabled invocation) avoids all three `--body-file` failure modes at once: backtick mis-parse, a body that never appeared in the transcript, and cross-sandbox TMPDIR. For a user-run `!` command, a scratchpad or sandbox-`$TMPDIR` path fails with `fatal: could not read log file <path>: No such file or directory` — any command taking `-f` / `-F` / `--file`, or an `scp` / `rsync` source, is affected.
 
 Origin: 2026-06-26 PR #556 — body written to the command-sandbox TMPDIR, `gh pr create` ran sandbox-disabled with the real TMPDIR → `cat "$TMPDIR/body.md"` returned empty → blank PR body, no error surfaced.
 
@@ -424,9 +424,17 @@ Origin: 2026-05-05 — inline HEREDOC with backticks made `gh pr create` print `
 
 ## body-file-stdin
 
-The full denial text is `no Write to that file appears in this transcript—the body content is unverifiable.` It happens when the harness's verifier window no longer sees the `Write` that created the body file (a long transcript pushed it out of the lookback). The file IS on disk; the harness just cannot audit it. `--body-file -` reads stdin, so the content flows through the pipe and is visible inline with the command; the file on disk stays the source of truth.
+The full denial text is `no Write to that file appears in this transcript—the body content is unverifiable.` It is a tool permission denial, so Blocked Command Boundary applies to it as to any other denial.
 
-Origin: 2026-05-07 — `--body-file /tmp/...` denied right after a Write the verifier window had advanced past.
+Its source is most likely the auto-mode classifier rather than a separate harness check. The classifier prompt's UNSEEN TOOL RESULTS clause blocks sending a file by reference to anyone other than the user when its content never appeared in the transcript and the user did not name it. On Claude Code 2.1.319 (measured 2026-11-07) the denial's fixed phrases have 0 hits in the binary in both ASCII and UTF-16, while `auto mode classifier. Reason:` is present. This is an inference from a binary six months newer than the denial: no transcript of the 2026-05-07 event was found (pro-dev's transcripts go back to 2026-09-22, and the session index returned only quotes of this rule).
+
+`cat <file> | gh pr create --body-file -` is not a recovery. Only the `cat` command line reaches the transcript, so a body that was not already there stays unseen, and the retry differs from the denied command in shape alone.
+
+**Recovery**: present the command as a `!` block with the body inline as a heredoc (`gh pr create --body-file - <<'EOF' … EOF`), so the user reads what gets published. A scratchpad or sandbox-`$TMPDIR` path fails in a `!` block; see `#cross-sandbox-tmpdir`. A body too long to inline goes to a user-visible path, with its text shown in the same reply. A headless run has no `!`, so it reports the command as blocked.
+
+**Prevention**: make the body appear in the transcript before the command runs. The inline form does so by construction, which matters most for a body from another agent or from early in a long session. A `Write` in the same session is no guarantee: the 2026-05-07 denial followed one, and why that `Write` went unseen is unknown.
+
+Origin: 2026-05-07 — `--body-file /tmp/...` denied right after a `Write` of that file; permission mode not recorded.
 
 ## gh-network-sandbox
 

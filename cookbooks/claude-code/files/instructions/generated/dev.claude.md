@@ -295,9 +295,9 @@ Detail: see `~/.claude/docs/git-commit-detail.md#tag-release-downstream-lib`.
 
 Detail: see `~/.claude/docs/git-commit-detail.md#pr-body-file`.
 
-### When the harness blocks `--body-file` — pipe via stdin
+### When `gh pr create --body-file` is denied
 
-If `--body-file /tmp/...` is denied as `the body content is unverifiable`, pipe it: `cat /tmp/pr-body.md | (cd /path/to/repo && gh pr create --base main --title "..." --body-file -)`. Detail: see `~/.claude/docs/git-commit-detail.md#body-file-stdin`.
+The denial `the body content is unverifiable` (seen 2026-05-07, mode not recorded) is a tool-permission denial, so Blocked Command Boundary (`~/ManagedProjects/setup/.claude/rules/infrastructure.md`) applies as for any other denial. Recovery: present the command as a `!` block with the body inline (next section). Never re-send a denied command as `cat <file> | gh pr create --body-file -`: only the `cat` line reaches the transcript, so a body that was not already there stays unseen and only the command's shape changes. To prevent the denial, make the body appear in the transcript first; the inline form does that. Detail: see `~/.claude/docs/git-commit-detail.md#body-file-stdin`.
 
 ### Cross-sandbox TMPDIR isolation — never reference a `$TMPDIR` file across sandbox modes
 
