@@ -363,7 +363,10 @@ The alternative to `--head` is asserting the branch in the same Bash invocation,
 
 ```bash
 test "$(git -C . branch --show-current)" = "feat/my-branch" && \
-  cat /tmp/pr-body.md | gh pr create --base main --title "..." --body-file -
+  gh pr create --base main --title "..." --body-file - <<'EOF'
+## Summary
+- ...
+EOF
 ```
 
 `--head` is still safer, because it does not depend on the assertion being written correctly.
@@ -409,16 +412,15 @@ Origin: 2026-04-25 cherry-picked onto the user's unrelated WIP branch.
 A PR body with backticks, fences, `$()`, `${...}`, nested quotes or multiple paragraphs never goes through inline `--body "$(cat <<'EOF' …)"`. Always:
 
 ```
-cat > /tmp/pr-body.md <<'EOF'
+gh pr create --base main --title "..." --body-file - <<'EOF'
 ## Summary
 - ...
 ## Test plan
 - `cmd1` … `cmd2` …
 EOF
-gh pr create --base main --title "..." --body-file /tmp/pr-body.md
 ```
 
-With an inline HEREDOC the shell or `gh` mis-parses embedded backticks / dollar signs / pipes, and the command aborts with a usage-error blurb that hides the actual parsing failure. The body file is plain Markdown — no escaping, no quoting concerns, no parser ambiguity — so apply `--body-file` unconditionally whenever the body has any of: backticks, code fences, `$()`, `${...}`, single quotes inside double quotes, or multi-paragraph structure.
+With `--body "$(cat <<'EOF' …)"` the shell or `gh` mis-parses embedded backticks / dollar signs / pipes, and the command aborts with a usage-error blurb that hides the actual parsing failure. A `--body-file` body is plain Markdown — no escaping, no quoting concerns, no parser ambiguity — so apply `--body-file` unconditionally whenever the body has any of: backticks, code fences, `$()`, `${...}`, single quotes inside double quotes, or multi-paragraph structure.
 
 Origin: 2026-05-05 — inline HEREDOC with backticks made `gh pr create` print `--title string` usage hints and abort.
 
@@ -428,9 +430,9 @@ The full denial text is `no Write to that file appears in this transcript—the 
 
 Its source is most likely the auto-mode classifier rather than a separate harness check. The classifier prompt's UNSEEN TOOL RESULTS clause blocks sending a file by reference to anyone other than the user when its content never appeared in the transcript and the user did not name it. On Claude Code 2.1.319 (measured 2026-11-07) the denial's fixed phrases have 0 hits in the binary in both ASCII and UTF-16, while `auto mode classifier. Reason:` is present. This is an inference from a binary six months newer than the denial: no transcript of the 2026-05-07 event was found (pro-dev's transcripts go back to 2026-09-22, and the session index returned only quotes of this rule).
 
-`cat <file> | gh pr create --body-file -` is not a recovery. Only the `cat` command line reaches the transcript, so a body that was not already there stays unseen, and the retry differs from the denied command in shape alone.
+`cat <file> | gh pr create --body-file -` is not a recovery. Only the `cat` command line is added, so the body stays unseen if it never appeared in the transcript, and the retry differs from the denied command in shape alone.
 
-**Recovery**: present the command as a `!` block with the body inline as a heredoc (`gh pr create --body-file - <<'EOF' … EOF`), so the user reads what gets published. A scratchpad or sandbox-`$TMPDIR` path fails in a `!` block; see `#cross-sandbox-tmpdir`. A body too long to inline goes to a user-visible path, with its text shown in the same reply. A headless run has no `!`, so it reports the command as blocked.
+**Recovery**: present the command as a `!` block with the body inline as a heredoc (`gh pr create --body-file - <<'EOF' … EOF`), so the user reads what gets published. A scratchpad or sandbox-`$TMPDIR` path fails in a `!` block; see `#cross-sandbox-tmpdir`. A body too long to inline goes to a file under the git dir (`git rev-parse --git-dir`), with its text shown in the same reply. A headless run has no `!`, so it reports the command as blocked.
 
 **Prevention**: make the body appear in the transcript before the command runs. The inline form does so by construction, which matters most for a body from another agent or from early in a long session. A `Write` in the same session is no guarantee: the 2026-05-07 denial followed one, and why that `Write` went unseen is unknown.
 

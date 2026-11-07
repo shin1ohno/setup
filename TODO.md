@@ -93,6 +93,12 @@
 - **Why**: found by the Phase B compression stream (instruction-layout, 2026-10-25); pre-existing, not introduced by the compression.
 - **First step**: recall memory for the 2026-09-10〜12 secondary-summary incidents, write a `## secondary-summary-backing` section in `data-collection.md` (primary-source lookup per fact type, divergence note format, "secondary only" tag), and point AGENTS.md at that anchor through its layer-file sections (`agents-bp-domain-term-verification` in `cookbooks/claude-code/files/instructions/common.md`, `agents-detail-playbooks` in `instructions/dev.md`), then `bin/build-instructions`.
 
+## The `.git/<file>` remedy in git-commit-detail.md fails in a linked worktree (Low)
+
+- **Failure class**: `cookbooks/claude-code/files/docs/git-commit-detail.md` (`cross-sandbox-tmpdir`, remediation step 2) tells a user-run `!` command to read a message from `.git/<topic>-commit-msg.txt`. In a linked worktree `.git` is a file pointing at the real git dir, so that path cannot be written and the `!` command has nothing to read.
+- **Why**: found by the review of SH1-104 (2026-11-07); pre-existing, and that change only captures it.
+- **First step**: replace `.git/` in that step with the directory from `git rev-parse --git-dir`, which is `<primary>/.git/worktrees/<name>` in a linked worktree, and change the relative `! git commit -F .git/...` form to an absolute path.
+
 ## Any fleet LXC can read an account-wide GitHub push key, and setup main is unprotected (High)
 
 - **Failure class**: a compromise of ONE fleet LXC becomes a fleet-wide root
