@@ -513,6 +513,10 @@ def run(args, root):
         attempt = task["attempts"][-1]
         if (attempt.get("route", "herdr") == "herdr") != bool(args.pane):
             raise ValueError("bind the identity returned by the selected route")
+        if (args.model or args.effort) and task.get("contract") == "envelope-v1" \
+                and attempt.get("route", "herdr") == "herdr":
+            raise ValueError("bind cannot record model or effort for an envelope-v1 herdr attempt; "
+                             "run observe --transcript <session-log> --launch-prompt <prompt> instead")
         if args.session:
             if attempt.get("session") not in (None, args.session):
                 raise ValueError("session already bound")
