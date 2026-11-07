@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Profile byte, argv, usage and opt-in native prompt-inspection regressions."""
+import hashlib
 import json
 import os
 from pathlib import Path
 import runpy
 import subprocess
 import tempfile
+import tomllib
 import unittest
 
 BIN = Path(__file__).resolve().parent
@@ -40,39 +42,113 @@ class ProfileTest(unittest.TestCase):
             self.assertLessEqual(len(data), 32768)
             self.assertIn(b"Shared Agent Instructions", data)
 
-    def test_prepare_keeps_argv_data_and_never_copies_auth(self):
+    def deploy_fixture(self, profile="dev"):
+        """Mirror what worker-profiles.rb deploys, under the test's own root."""
+        profiles = self.root / "profiles"
+        homes = self.root / "codex-homes"
+        profiles.mkdir(exist_ok=True)
+        (homes / profile).mkdir(parents=True, exist_ok=True)
+        (profiles / f"{profile}.claude.md").write_bytes(
+            PROFILE["render"](PROFILE["SOURCES"], "claude", profile))
+        (homes / profile / "AGENTS.md").write_bytes(
+            PROFILE["render"](PROFILE["SOURCES"], "codex", profile))
+        (homes / profile / "config.toml").write_text(
+            'project_doc_max_bytes = 0\ncli_auth_credentials_store = "file"\n')
+        return profiles, homes
+
+    def prepare(self, harness, destination, cwd, model, *extra):
+        argv = ["python3", str(BIN / "worker-profile"), "prepare", "--harness", harness,
+                "--profile", "dev", "--directory", str(destination), "--cwd", str(cwd),
+                "--model", model, "--effort", "medium", "--reason", "fixture",
+                "--profiles-dir", str(self.root / "profiles"),
+                "--codex-homes", str(self.root / "codex-homes"), *extra]
+        return subprocess.run(argv, text=True, capture_output=True, timeout=10)
+
+    def codex_catalog(self, model):
         catalog = self.root / "catalog.json"
-        model = "fixture-model; touch NEVER"
         catalog.write_text(json.dumps({"models": [{"slug": model,
             "supported_reasoning_levels": [{"effort": "medium"}]}]}))
+        return catalog
+
+    def test_codex_prepare_uses_the_fixed_home_and_trusts_only_the_cwd(self):
+        _, homes = self.deploy_fixture()
+        model = "fixture-model; touch NEVER"
+        cwd = self.root / 'repo with "quote".and.dots'
+        cwd.mkdir()
         destination = self.root / "worker with spaces"
-        result = subprocess.run(["python3", str(BIN / "worker-profile"), "prepare",
-            "--harness", "codex", "--profile", "dev", "--directory", str(destination),
-            "--cwd", str(self.root), "--model", model, "--effort", "medium",
-            "--catalog", str(catalog), "--reason", "fixture"], text=True, capture_output=True, timeout=10)
+        result = self.prepare("codex", destination, cwd, model, "--catalog", str(self.codex_catalog(model)))
         self.assertEqual(result.returncode, 0, result.stderr)
         plan = json.loads((destination / "launch-plan.json").read_text())
-        self.assertIn(model, plan["argv"])
+        home = homes / "dev"
+        self.assertEqual(plan["env_set"], {"CODEX_HOME": str(home)})
+        self.assertEqual(plan["codex_home"], str(home))
+        self.assertEqual(plan["profile_file"], str(home / "AGENTS.md"))
+        self.assertIn("codex-homes", plan["env_set"]["CODEX_HOME"])
+        self.assertEqual(plan["argv"][:7], ["codex", "--no-daemon", "-C", str(cwd), "-m", model, "-c"])
+        pairs = [plan["argv"][i + 1] for i, item in enumerate(plan["argv"]) if item == "-c"]
+        self.assertEqual(pairs[:2], ['model_reasoning_effort="medium"', "project_doc_max_bytes=0"])
+        trust = [pair for pair in pairs if pair.startswith("projects=")]
+        self.assertEqual(len(trust), 1)
+        self.assertEqual(tomllib.loads(trust[0])["projects"], {str(cwd): {"trust_level": "trusted"}})
+        self.assertEqual(plan["instruction_sha256"],
+                         hashlib.sha256((home / "AGENTS.md").read_bytes()).hexdigest())
+        for name in ["OPENAI_API_KEY", "CODEX_API_KEY", "CLAUDE_CODE_EFFORT_LEVEL"]:
+            self.assertIn(name, plan["env_unset"])
         self.assertFalse(plan["launch_ready"])
         self.assertIsNone(plan["observed_model"])
-        self.assertFalse((destination / "codex/auth.json").exists())
+        # The plan neither creates a per-task home nor touches credentials.
+        self.assertEqual(sorted(path.name for path in destination.iterdir()), ["launch-plan.json"])
+        self.assertEqual(sorted(path.name for path in home.iterdir()), ["AGENTS.md", "config.toml"])
         self.assertFalse((self.root / "NEVER").exists())
-        self.assertIn("CLAUDE_CODE_EFFORT_LEVEL", plan["env_unset"])
-        self.assertEqual((destination / "codex/AGENTS.md").read_bytes(),
-                         (destination / "profile.md").read_bytes())
+        manifest = json.loads(result.stdout)
+        self.assertNotIn("argv", manifest)
+        self.assertEqual(manifest["plan_file"], str(destination / "launch-plan.json"))
 
-    def test_claude_prepare_appends_rather_than_replaces_the_system_prompt(self):
+    def test_codex_prepare_refuses_a_missing_or_stale_home(self):
+        catalog = self.codex_catalog("m")
+        result = self.prepare("codex", self.root / "w1", self.root, "m", "--catalog", str(catalog))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not deployed", result.stderr)
+        self.assertFalse((self.root / "w1").exists())
+        _, homes = self.deploy_fixture()
+        (homes / "dev/AGENTS.md").write_text("stale profile\n")
+        result = self.prepare("codex", self.root / "w2", self.root, "m", "--catalog", str(catalog))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("differs", result.stderr)
+        self.assertFalse((self.root / "w2").exists())
+
+    def test_claude_prepare_appends_the_deployed_profile_file(self):
+        profiles, _ = self.deploy_fixture()
         destination = self.root / "claude"
-        result = subprocess.run(["python3", str(BIN / "worker-profile"), "prepare",
-            "--harness", "claude", "--profile", "dev", "--directory", str(destination),
-            "--cwd", str(self.root), "--model", "sonnet", "--effort", "medium",
-            "--reason", "fixture"],
-            text=True, capture_output=True, timeout=10)
+        result = self.prepare("claude", destination, self.root, "sonnet")
         self.assertEqual(result.returncode, 0, result.stderr)
         plan = json.loads((destination / "launch-plan.json").read_text())
-        self.assertIn("--append-system-prompt", plan["argv"])
-        self.assertNotIn("--system-prompt", plan["argv"])
+        profile = profiles / "dev.claude.md"
+        self.assertEqual(plan["env_set"], {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"})
+        self.assertEqual(plan["argv"], ["claude", "--model", "sonnet", "--effort", "medium",
+                                        "--append-system-prompt-file", str(profile)])
+        self.assertEqual(plan["profile_file"], str(profile))
+        self.assertEqual(plan["instruction_sha256"], hashlib.sha256(profile.read_bytes()).hexdigest())
+        self.assertIn("CLAUDE_CODE_EFFORT_LEVEL", plan["env_unset"])
         self.assertFalse(plan["launch_ready"])
+        self.assertEqual(sorted(path.name for path in destination.iterdir()), ["launch-plan.json"])
+
+    def test_claude_prepare_refuses_a_missing_or_stale_profile(self):
+        result = self.prepare("claude", self.root / "c1", self.root, "sonnet")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not deployed", result.stderr)
+        profiles, _ = self.deploy_fixture()
+        (profiles / "dev.claude.md").write_text("stale profile\n")
+        result = self.prepare("claude", self.root / "c2", self.root, "sonnet")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("differs", result.stderr)
+        self.assertFalse((self.root / "c2").exists())
+
+    def test_trust_override_round_trips_awkward_paths_through_toml(self):
+        for path in ['/a/.claude/worktrees/x', '/q"uote', '/back\\slash', '/new\nline',
+                     '/del\x7f', '/emoji\U0001F600', '/x=y/{z}', "/tab\there"]:
+            value = PROFILE["trust_override"](Path(path))
+            self.assertEqual(tomllib.loads(value), {"projects": {path: {"trust_level": "trusted"}}})
 
     def test_first_call_usage_does_not_add_codex_cached_tokens_twice(self):
         event = dict(type="turn.completed", usage=dict(input_tokens=100, cached_input_tokens=80, output_tokens=5))
