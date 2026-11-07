@@ -33,7 +33,8 @@ hooks that go through `~/.claude/hooks/ruby-shim` still work.
   otherwise consumes the prompt as one of its values.
 - Launch without `CLAUDE_CODE_EFFORT_LEVEL` in the environment, as on the
   Herdr 1 route; it overrides the per-worker effort.
-- Record the worker terminal with `bind --pane <terminal>` and its effective
+- Record the worker terminal with `bind --pane <terminal>` (no `--model` or
+  `--effort`: `tasks.py` refuses them for envelope-v1 Herdr attempts) and its effective
   model/effort with `observe --transcript <session-log> --launch-prompt
   <prompt>` (see "Model and effort per attempt" in `dispatch.md`); the session
   logs are the same files as on the Herdr 1 route.
