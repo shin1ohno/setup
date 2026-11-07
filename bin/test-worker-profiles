@@ -133,6 +133,31 @@ class ProfileTest(unittest.TestCase):
         self.assertFalse(plan["launch_ready"])
         self.assertEqual(sorted(path.name for path in destination.iterdir()), ["launch-plan.json"])
 
+    def test_launch_ready_only_for_canaried_harness_route_pairs(self):
+        self.deploy_fixture()
+        catalog = self.codex_catalog("m")
+        # The 2026-11-08 pro-dev canary passed exactly these three pairs.
+        expected = {("claude", "hc"): True, ("claude", "agent"): True, ("claude", "herdr1"): False,
+                    ("codex", "hc"): True, ("codex", "agent"): False, ("codex", "herdr1"): False,
+                    ("claude", None): False, ("codex", None): False}
+        for (harness, route), ready in expected.items():
+            extra = ["--catalog", str(catalog)] if harness == "codex" else []
+            if route:
+                extra += ["--route", route]
+            destination = self.root / f"plan-{harness}-{route}"
+            result = self.prepare(harness, destination, self.root, "m" if harness == "codex" else "sonnet", *extra)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads((destination / "launch-plan.json").read_text())
+            self.assertIs(plan["launch_ready"], ready, (harness, route))
+            self.assertEqual(plan["route"], route)
+            self.assertIn("Launch-ready" if ready else "Not launch-ready", plan["note"])
+            if not ready:
+                self.assertTrue(plan["note"].split(":", 1)[1].strip(), "a false plan says why")
+            self.assertEqual(json.loads(result.stdout)["launch_ready"], ready)
+        result = self.prepare("claude", self.root / "bad-route", self.root, "sonnet", "--route", "herdr")
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse((self.root / "bad-route").exists())
+
     def test_claude_prepare_refuses_a_missing_or_stale_profile(self):
         result = self.prepare("claude", self.root / "c1", self.root, "sonnet")
         self.assertEqual(result.returncode, 1)
