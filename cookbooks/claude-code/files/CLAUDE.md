@@ -67,7 +67,7 @@ canon は `~/.agents/AGENTS.md` の Japanese Output Discipline。git commit・so
 ## Planning and Execution Model — Claude Code specifics
 
 - `/plan` mode + user confirmation before proceeding
-- **Batch plan-phase questions** into one AskUserQuestion (multiSelect when non-exclusive) at the end of the draft. **Partial-answer guard**: re-ask any unaddressed question in one AskUserQuestion. **Size-reduction tasks** (「大きい」「削減」): the first ask MUST offer both inline-removal AND architectural-split (move sections to on-demand `docs/*.md` or path-scoped `rules/*.md`). Detail: see `~/.claude/docs/claude-md-detail.md#plan-question-batching`.
+- **Batch plan-phase questions** into one AskUserQuestion (multiSelect when non-exclusive) at the end of the draft. **Partial-answer guard**: re-ask any unaddressed question in one AskUserQuestion. **Size-reduction tasks** (「大きい」「削減」): the first ask MUST offer both inline-removal AND architectural-split (move sections to on-demand `docs/*.md` or path-scoped `rules/*.md`); price the saving as moved bytes minus text that must stay plus added pointers, measured with `wc -c` before and after, and label any figure given before review an estimate. Detail: see `~/.claude/docs/claude-md-detail.md#plan-question-batching`.
 - **Auto mode ≠ skipping plan** for non-trivial work
 
 ### Detail playbooks — Claude Code only (load on demand — Read when the task matches)

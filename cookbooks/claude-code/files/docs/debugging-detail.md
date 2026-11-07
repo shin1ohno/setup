@@ -18,6 +18,8 @@ Unit/integration tests exercise isolated paths, not end-to-end effects, which is
 
 Origin: 2026-08-02 setup #793 — a PR body claimed `test-macos` gated a darwin change while its apply/verify steps had not run.
 
+Sample before check: before trusting a check you just wrote, read the header of its input or one real output sample, then run a negative control (an input the check must reject) and confirm it fails for the intended reason. A control that fails because of an unset variable, a wrong argument or a missing file proves nothing about the check. Origins (SH1-110): a jq filter on Codex `agent_message` returned nothing because Codex 0.166.0 rollouts carry assistant text as `response_item`; `bin/instruction-usage` was first called with wrong arguments; `verify-ac.rb` exited 1 because `BASE_GIT` was unset, and its negative control failed for that same wrong reason.
+
 ## adapter-layers-host-shaped-input
 
 Unit tests on the wrapped logic say nothing about the wrapper: the logic can be correct while every call site passes it the wrong shape. Name the missing adapter tier as a plan gap before implementation, not as a review finding after it.
