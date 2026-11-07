@@ -66,8 +66,12 @@ class ObserveTest(unittest.TestCase):
         self.mutate("receive", "--file", str(path))
 
     def accept(self, ok=True):
+        log = self.directory / "check.log"
+        log.write_text("synthetic controller check output")
+        check = self.mutate("check", "--file", str(log), "--exit-status", "0",
+                            "--note", "fixture check")["check"]["id"]
         return self.mutate("update", "--state", "accepted", "--note", "review",
-                           "--evidence", "independent fixture review", ok=ok)
+                           "--evidence", "independent fixture review", "--check", check, ok=ok)
 
     def test_observed_alias_and_effort_allow_acceptance(self):
         self.start()

@@ -53,12 +53,70 @@ class EnvelopeTest(unittest.TestCase):
         path.write_text(json.dumps(value))
         return path
 
+    def check(self, status, **kwargs):
+        log = self.directory / ("check-" + str(status) + ".log")
+        log.write_text("synthetic controller check output, exit " + str(status))
+        return self.mutate("check", "--file", str(log), "--exit-status", str(status),
+                           "--note", "fixture check", **kwargs)
+
+    def accept(self, *args, ok=True):
+        return self.mutate("update", "--state", "accepted", "--note", "review",
+                           "--evidence", "independent fixture review", *args, ok=ok)
+
     def test_passing_envelope_still_needs_independent_review(self):
         self.start()
         self.mutate("receive", "--file", str(self.envelope()))
         self.mutate("update", "--state", "accepted", "--note", "review", ok=False)
-        self.mutate("update", "--state", "accepted", "--note", "review",
-                    "--evidence", "independent fixture review")
+        check = self.check(0)["check"]["id"]
+        self.accept("--check", check)
+
+    def test_accepted_is_refused_without_a_recorded_check(self):
+        self.start()
+        self.mutate("receive", "--file", str(self.envelope()))
+        error = self.accept(ok=False)["error"]
+        self.assertIn("check recorded for this attempt", error)
+        self.accept("--check", "000000000000", ok=False)
+        self.assertEqual(self.call("show", self.task)["task"]["state"], "reviewing")
+
+    def test_accepted_is_refused_when_the_latest_check_failed(self):
+        self.start()
+        self.mutate("receive", "--file", str(self.envelope()))
+        passed = self.check(0)["check"]["id"]
+        failed = self.check(1)["check"]["id"]
+        self.assertIn("latest recorded check failed", self.accept("--check", failed, ok=False)["error"])
+        self.accept("--check", passed, ok=False)
+        self.assertEqual(self.call("show", self.task)["task"]["state"], "reviewing")
+
+    def test_accepted_is_allowed_with_the_latest_passing_check(self):
+        self.start()
+        self.mutate("receive", "--file", str(self.envelope()))
+        self.check(1)
+        record = self.check(0)["check"]
+        self.assertTrue(record["passed"])
+        self.assertEqual(len(record["sha256"]), 64)
+        self.assertIn("pass --check", self.accept(ok=False)["error"])
+        result = self.accept("--check", record["id"])
+        self.assertEqual(result["task"]["state"], "accepted")
+
+    def test_checks_do_not_carry_over_to_a_new_attempt(self):
+        self.start()
+        self.mutate("receive", "--file", str(self.envelope()))
+        check = self.check(0)["check"]["id"]
+        self.mutate("update", "--state", "retry", "--note", "fixture", "--evidence", "fixture")
+        self.mutate("attempt", "--kind", "codex", "--model", "fixture-model",
+                    "--effort", "medium", "--reason", "fixture")
+        self.mutate("bind", "--pane", "fixture-worker-2", "--model", "fixture-model",
+                    "--effort", "medium")
+        self.mutate("update", "--state", "running", "--note", "fixture",
+                    "--evidence", str(self.evidence))
+        self.mutate("receive", "--file", str(self.envelope(attempt=2)))
+        self.accept("--check", check, ok=False)
+
+    def test_check_file_must_be_a_contained_regular_file(self):
+        self.start()
+        for path in ["/etc/passwd", "relative.log", str(self.directory)]:
+            self.mutate("check", "--file", path, "--exit-status", "0", "--note", "x", ok=False)
+        self.assertNotIn("checks", self.call("show", self.task)["task"]["attempts"][-1])
 
     def test_agent_identity_has_no_invented_pane(self):
         self.start("agent")
