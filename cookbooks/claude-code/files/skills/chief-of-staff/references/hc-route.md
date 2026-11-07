@@ -18,20 +18,34 @@ the ledger owner in the form `hc:<server>#<terminal>`; the string used on
 
 ## Launch
 
-The `hc` core starts processes with a PATH that lacks `~/.local/bin` and node.
+The `hc` core starts processes with the PATH
+`/usr/local/bin:/usr/bin:/bin:/usr/games`, which lacks `~/.local/bin`, node and
+ruby. Project hooks that call bare `ruby` (for example the setup repo's
+`ruby .claude/hooks/guard-mitamae-dry-run.rb`) then exit 127 on every Bash call;
+hooks that go through `~/.claude/hooks/ruby-shim` still work.
 
+- Start every worker with the controller's PATH so bare-ruby project hooks
+  resolve: `/usr/bin/env PATH="$PATH" ...`, expanded in the controller's shell.
 - Start Claude by absolute path: `/home/<user>/.local/bin/claude`.
-- Start Codex as `/usr/bin/env PATH=<path with ~/.local/bin and node> codex --no-daemon`.
+- Start Codex as `/usr/bin/env PATH="$PATH" codex --no-daemon`; the PATH must
+  include `~/.local/bin` and node's directory.
 - Put the prompt before variadic flags such as `--tools`; a variadic flag
   otherwise consumes the prompt as one of its values.
 - Launch without `CLAUDE_CODE_EFFORT_LEVEL` in the environment, as on the
   Herdr 1 route; it overrides the per-worker effort.
+- A prompt passed as argv to a worker in a directory it has not trusted yet
+  can sit unsent behind the trust dialog. After the dialog is accepted, read
+  the input box and press enter if the prompt is still there.
 
 ## Waiting and messages
 
 A worker's `hc send` back to the controller can fail with exit 127, so a
 missing message is not evidence that the worker is still running. The
 controller waits with `hc wait --children` and then reads the envelope file.
+
+`hc send` wraps its text in `<hc from=...>` tags, so a slash command such as
+`/context` sent with `hc send` reaches the model as an ordinary message. Type
+slash commands with `hc keys` instead.
 
 ## Cleanup
 
