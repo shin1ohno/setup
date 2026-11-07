@@ -63,7 +63,7 @@ class Graph
     @rows << ["agents-skill-link", name, {}]
   end
 
-  %i[directory file remote_file execute].each do |kind|
+  %i[directory file remote_file execute link].each do |kind|
     define_method(kind) do |name, &block|
       resource = Resource.new(self)
       resource.instance_eval(&block)
@@ -82,7 +82,40 @@ Dir.mktmpdir("distribution-graph-") do |home|
                File.join(COOKBOOK, "default.rb"))
   current = Graph.new(home)
   current.evaluate(File.read(File.join(COOKBOOK, "default.rb")), File.join(COOKBOOK, "default.rb"))
-  raise "local resource graph changed" unless old.normalized == current.normalized
+
+  # default.rb has included worker-profiles.rb since the pro-dev canary
+  # (docs/runbook/worker-instruction-profiles.md). Its resources are the only
+  # addition allowed on top of the pre-split fixture, and they are pinned here
+  # one by one so the include cannot smuggle anything else in.
+  profiles_path = File.join(COOKBOOK, "worker-profiles.rb")
+  profiles = Graph.new(home)
+  profiles.evaluate(File.read(profiles_path), profiles_path)
+  expected_profile_resources = %w[.agents .agents/profiles .claude .claude/agents .agents/codex-homes]
+    .map { |dir| ["directory", "#{home}/#{dir}"] }
+  %w[common dev cos writing].each do |profile|
+    codex_home = "#{home}/.agents/codex-homes/#{profile}"
+    expected_profile_resources += [
+      ["file", "#{home}/.agents/profiles/#{profile}.claude.md"],
+      ["file", "#{home}/.agents/profiles/#{profile}.codex.md"],
+      ["file", "#{home}/.claude/agents/profile-#{profile}.md"],
+      ["directory", codex_home],
+      ["file", "#{codex_home}/AGENTS.md"],
+      ["file", "#{codex_home}/config.toml"],
+      ["link", "#{codex_home}/auth.json"],
+    ]
+  end
+  actual_profile_resources = profiles.rows.map { |kind, name, _| [kind, name] }
+  raise "worker-profile resources changed: #{actual_profile_resources.sort - expected_profile_resources.sort} / " \
+        "#{expected_profile_resources.sort - actual_profile_resources.sort}" unless
+    actual_profile_resources.sort == expected_profile_resources.sort
+  auth_links = profiles.rows.select { |kind, _, _| kind == "link" }
+  raise "auth.json must link to the shared ~/.codex/auth.json" unless
+    auth_links.all? { |_, _, attributes| attributes["to"] == ["#{home}/.codex/auth.json"] }
+
+  # Multiset check: the local graph is exactly every pre-split resource plus
+  # the worker-profile resources, so nothing pre-existing was dropped or changed.
+  expected = (old.rows + profiles.rows).map { |row| JSON.generate(row).gsub(home, "[HOME]") }.sort
+  raise "local resource graph changed" unless expected == current.normalized
 
   cloud = Graph.new(home)
   %w[instructions skills agents].each do |name|
@@ -97,6 +130,6 @@ Dir.mktmpdir("distribution-graph-") do |home|
   end
   raise "cloud missed agent definitions" unless cloud.rows.any? { |_, name, _| name.include?("/.claude/agents/") }
   raise "cloud missed shared skill" unless cloud.rows.any? { |_, name, _| name.include?("chief-of-staff/SKILL.md") }
-  puts "Local resource declarations match the pre-split fixture (including every hook)."
+  puts "Local resource declarations match the pre-split fixture (including every hook) plus the #{profiles.rows.size} worker-profile resources."
   puts "Cloud declares only instruction, skill and agent distribution."
 end
