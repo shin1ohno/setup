@@ -5,6 +5,7 @@ import argparse
 import contextlib
 from datetime import datetime, timezone
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -110,7 +111,8 @@ def parser():
     ls = sub.add_parser("list", help="List only this controller's tasks")
     ls.add_argument("--owner", required=True, type=nonempty)
     ls.add_argument("--all", action="store_true", help="Include terminal tasks")
-    for name in ("show", "attempt", "bind", "update", "reported", "extend", "receive", "observe"):
+    for name in ("show", "attempt", "bind", "update", "reported", "extend", "receive", "observe",
+                 "check"):
         cmd = sub.add_parser(name)
         cmd.add_argument("task_id")
         cmd.add_argument("--owner", type=nonempty)
@@ -134,10 +136,17 @@ def parser():
         elif name == "observe":
             cmd.add_argument("--transcript", required=True, type=Path,
                              help="Agent-tool subagent transcript agent-<session>.jsonl")
+        elif name == "check":
+            cmd.add_argument("--file", required=True, type=Path,
+                             help="Saved output of the controller's independent check")
+            cmd.add_argument("--exit-status", required=True, type=int)
+            cmd.add_argument("--note", required=True, type=nonempty)
         elif name == "update":
             cmd.add_argument("--state", choices=TRANSITIONS, required=True)
             cmd.add_argument("--note", required=True, type=nonempty)
             cmd.add_argument("--evidence", action="append", type=nonempty, default=[])
+            cmd.add_argument("--check", type=nonempty,
+                             help="ID printed by an earlier `check` call (envelope-v1 accepted)")
         elif name in {"reported", "extend"}:
             cmd.add_argument("--note", required=True, type=nonempty)
             if name == "extend":
@@ -230,6 +239,41 @@ def observe_transcript(path, session):
     if len(pairs) != 1:
         raise ValueError("transcript must record exactly one model/effort pair")
     return pairs.pop()
+
+
+def check_file(path, task, root):
+    """Hash a contained regular evidence file so later edits are detectable."""
+    roots = [Path(task["cwd"]).resolve(), task_path(root, task["id"]).parent.resolve()]
+    if not path.is_absolute():
+        raise ValueError("check file must be an absolute path")
+    resolved = path.resolve(strict=True)
+    if not any(resolved.is_relative_to(r) for r in roots):
+        raise ValueError("check file must be inside the task or checkout")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(resolved, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("check file must be a regular file")
+        digest = hashlib.sha256()
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            for block in iter(lambda: handle.read(65536), b""):
+                digest.update(block)
+    finally:
+        os.close(descriptor)
+    return str(resolved), digest.hexdigest()
+
+
+def require_passing_check(attempt, check_id):
+    """envelope-v1 acceptance cites the latest check recorded by an earlier call."""
+    checks = attempt.get("checks") or []
+    if not checks:
+        raise ValueError("acceptance requires a check recorded for this attempt; run `check` first")
+    latest = checks[-1]
+    if latest["exit_status"] != 0:
+        raise ValueError("the latest recorded check failed (exit " +
+                         str(latest["exit_status"]) + "); fix and record a new check")
+    if check_id != latest["id"]:
+        raise ValueError("pass --check with the ID printed by the latest `check` call")
 
 
 def read_envelope(path, task, root):
@@ -391,7 +435,23 @@ def run(args, root):
         task["state"] = "reviewing"
         event(task, "Received bounded envelope", [str(args.file)])
         result["envelope"] = envelope
+    elif args.command == "check":
+        if task["state"] not in {"running", "reviewing"}:
+            raise ValueError("check requires a running or reviewing attempt")
+        attempt = task["attempts"][-1]
+        path, digest = check_file(args.file, task, root)
+        record = {
+            "id": uuid.uuid4().hex[:12], "at": now(), "file": path, "sha256": digest,
+            "exit_status": args.exit_status, "passed": args.exit_status == 0,
+            "note": args.note,
+        }
+        attempt.setdefault("checks", []).append(record)
+        event(task, "Recorded check " + record["id"] + " exit " + str(args.exit_status) +
+              ": " + args.note, [path])
+        result["check"] = record
     elif args.command == "update":
+        if args.check and args.state != "accepted":
+            raise ValueError("--check applies only to accepted")
         if args.state not in TRANSITIONS[task["state"]]:
             raise ValueError("invalid transition: " + task["state"] + " -> " + args.state)
         if args.state in {"starting", "running", "reviewing", "accepted", "retry"} and not args.evidence:
@@ -409,6 +469,7 @@ def run(args, root):
             if (not model_matches(attempt.get("requested_model"), attempt.get("observed_model"))
                     or attempt.get("observed_effort") != attempt.get("effort")):
                 raise ValueError("effective model/effort has not been observed to match the request")
+            require_passing_check(attempt, args.check)
         task["state"] = args.state
         if args.state == "retry" and len(task["attempts"]) >= task["max_attempts"]:
             task["state"] = "needs-user"
