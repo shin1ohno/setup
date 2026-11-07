@@ -68,7 +68,7 @@ LXC_ENTRY_ROLE      = "lxc-core"
 LXC_ENTRY_COOKBOOK  = "elastic-agent"
 LXC_ENTRY_TAIL      = "gate-report"
 
-ENTRY_FILES = (["darwin.rb", "linux.rb", "test-cookbook.rb"] + Dir["pve/*.rb"]).select { |f| File.file?(f) }
+ENTRY_FILES = (["darwin.rb", "linux.rb", "test-cookbook.rb", "claude-cloud.rb"] + Dir["pve/*.rb"]).select { |f| File.file?(f) }
 
 # A cookbook is a directory under cookbooks/ with at least one top-level
 # recipe (*.rb). Per-OS split cookbooks (stream B) ship {darwin,linux}.rb

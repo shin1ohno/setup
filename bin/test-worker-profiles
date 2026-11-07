@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Profile byte, argv, usage and opt-in native prompt-inspection regressions."""
+import json
+import os
+from pathlib import Path
+import runpy
+import subprocess
+import tempfile
+import unittest
+
+BIN = Path(__file__).resolve().parent
+PROFILE = runpy.run_path(str(BIN / "worker-profile"))
+USAGE = runpy.run_path(str(BIN / "instruction-usage"))
+
+
+class ProfileTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_byte_guard_checks_exact_artifact_including_multibyte_text(self):
+        file = self.root / "AGENTS.md"
+        file.write_bytes(b"a" * 32768)
+        self.assertEqual(len(PROFILE["checked_bytes"](file, "codex")), 32768)
+        for data in [b"a" * 32769, ("語" * 11000).encode()]:
+            file.write_bytes(data)
+            with self.assertRaises(ValueError):
+                PROFILE["checked_bytes"](file, "codex")
+
+    def test_render_guards_the_combination_not_only_each_layer(self):
+        for layer in ["common", "dev"]:
+            (self.root / f"{layer}.codex.md").write_text("a" * 17000)
+        with self.assertRaises(ValueError):
+            PROFILE["render"](self.root, "codex", "dev")
+
+    def test_real_profiles_render_without_weakening_the_cap(self):
+        for profile in PROFILE["PROFILES"]:
+            data = PROFILE["render"](PROFILE["SOURCES"], "codex", profile)
+            self.assertLessEqual(len(data), 32768)
+            self.assertIn(b"Shared Agent Instructions", data)
+
+    def test_prepare_keeps_argv_data_and_never_copies_auth(self):
+        catalog = self.root / "catalog.json"
+        model = "fixture-model; touch NEVER"
+        catalog.write_text(json.dumps({"models": [{"slug": model,
+            "supported_reasoning_levels": [{"effort": "medium"}]}]}))
+        destination = self.root / "worker with spaces"
+        result = subprocess.run(["python3", str(BIN / "worker-profile"), "prepare",
+            "--harness", "codex", "--profile", "dev", "--directory", str(destination),
+            "--cwd", str(self.root), "--model", model, "--effort", "medium",
+            "--catalog", str(catalog), "--reason", "fixture"], text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads((destination / "launch-plan.json").read_text())
+        self.assertIn(model, plan["argv"])
+        self.assertFalse(plan["launch_ready"])
+        self.assertIsNone(plan["observed_model"])
+        self.assertFalse((destination / "codex/auth.json").exists())
+        self.assertFalse((self.root / "NEVER").exists())
+        self.assertIn("CLAUDE_CODE_EFFORT_LEVEL", plan["env_unset"])
+        self.assertEqual((destination / "codex/AGENTS.md").read_bytes(),
+                         (destination / "profile.md").read_bytes())
+
+    def test_claude_prepare_appends_rather_than_replaces_the_system_prompt(self):
+        destination = self.root / "claude"
+        result = subprocess.run(["python3", str(BIN / "worker-profile"), "prepare",
+            "--harness", "claude", "--profile", "dev", "--directory", str(destination),
+            "--cwd", str(self.root), "--model", "sonnet", "--effort", "medium",
+            "--reason", "fixture"],
+            text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads((destination / "launch-plan.json").read_text())
+        self.assertIn("--append-system-prompt", plan["argv"])
+        self.assertNotIn("--system-prompt", plan["argv"])
+        self.assertFalse(plan["launch_ready"])
+
+    def test_first_call_usage_does_not_add_codex_cached_tokens_twice(self):
+        event = dict(type="turn.completed", usage=dict(input_tokens=100, cached_input_tokens=80, output_tokens=5))
+        usage = USAGE["first_usage"]([json.dumps(event)], "codex")
+        self.assertEqual(usage["context_input_tokens"], 100)
+        self.assertIn("may contain multiple model calls", usage["scope"])
+
+    def test_claude_cache_categories_are_added_once_for_the_first_api_call(self):
+        event = dict(type="assistant", message=dict(id="same-call", usage=dict(
+            input_tokens=20, cache_read_input_tokens=50, cache_creation_input_tokens=30, output_tokens=5)))
+        usage = USAGE["first_usage"]([json.dumps(event), json.dumps(event)], "claude")
+        self.assertEqual(usage["context_input_tokens"], 100)
+
+    @unittest.skipUnless(os.environ.get("INSTRUCTION_TEST_CODEX"), "explicit native Codex binary required")
+    def test_native_prompt_excludes_project_and_keeps_private_profile(self):
+        home = self.root / "codex"
+        home.mkdir()
+        project = self.root / "project"
+        project.mkdir()
+        (project / ".git").mkdir()
+        (home / "AGENTS.md").write_text("GLOBAL_PROFILE_SENTINEL_ONLY\n")
+        (home / "config.toml").write_text('cli_auth_credentials_store = "ephemeral"\n')
+        (project / "AGENTS.md").write_text("PROJECT_SENTINEL_MUST_BE_EXCLUDED\n")
+        env = dict(os.environ, CODEX_HOME=str(home))
+        for name in ["OPENAI_API_KEY", "CODEX_API_KEY"]:
+            env.pop(name, None)
+        for zero in [False, True]:
+            argv = [os.environ["INSTRUCTION_TEST_CODEX"], "-C", str(project), "debug", "prompt-input"]
+            if zero:
+                argv += ["-c", "project_doc_max_bytes=0"]
+            result = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("GLOBAL_PROFILE_SENTINEL_ONLY", result.stdout)
+            self.assertEqual("PROJECT_SENTINEL_MUST_BE_EXCLUDED" in result.stdout, not zero)
+
+        data = PROFILE["render"](PROFILE["SOURCES"], "codex", "dev")
+        (home / "AGENTS.md").write_bytes(data)
+        result = subprocess.run([os.environ["INSTRUCTION_TEST_CODEX"], "-C", str(project),
+            "debug", "prompt-input", "-c", "project_doc_max_bytes=0"], env=env,
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        def texts(value):
+            if isinstance(value, str):
+                yield value
+            elif isinstance(value, dict):
+                for item in value.values():
+                    yield from texts(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from texts(item)
+        effective = "\n".join(texts(json.loads(result.stdout)))
+        self.assertIn(data.decode("utf-8").strip(), effective)
+        self.assertNotIn("PROJECT_SENTINEL_MUST_BE_EXCLUDED", effective)
+
+
+if __name__ == "__main__":
+    unittest.main()

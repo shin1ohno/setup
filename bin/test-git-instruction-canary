@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Exercise instruction partition and hook responses without running Git commands."""
+import json
+from pathlib import Path
+import runpy
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parent.parent
+MODULE = runpy.run_path(str(ROOT / 'bin/prepare-git-instruction-canary'))
+HOOK = ROOT / 'cookbooks/claude-code/files/hooks/git-procedure-preflight.rb'
+
+
+class CanaryTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.destination = self.root / 'candidate with spaces'
+        MODULE['prepare'](self.destination)
+
+    def hook(self, command, session='fixture-one'):
+        return subprocess.run(['ruby', str(HOOK), '--document', str(self.destination / 'git-operations.md'),
+            '--state-directory', str(self.destination / 'state')], input=json.dumps(dict(
+                tool_name='Bash', tool_input=dict(command=command), cwd=str(self.root), session_id=session)),
+            text=True, capture_output=True, timeout=10)
+
+    def test_original_bodies_partition_without_losing_a_rule(self):
+        source = (ROOT / 'cookbooks/claude-code/files/instructions/dev.md').read_text()
+        rows, removed = MODULE['split'](source)
+        profile = (self.destination / 'profile.md').read_text()
+        procedures = (self.destination / 'git-operations.md').read_text()
+        for row in rows:
+            self.assertIn(row[3], procedures if row in removed else profile)
+        self.assertIn('Never add a `Co-Authored-By` trailer', profile)
+        for section in ['git-commit-branch-check-config-edits', 'git-commit-merge-execution',
+                        'git-commit-gpg-signing', 'git-commit-working-dir-git-check']:
+            self.assertIn(next(row[3] for row in rows if row[0] == section), profile)
+        review = json.loads((self.destination / 'review.json').read_text())
+        self.assertFalse(review['applied'])
+        self.assertFalse(review['runtime_verified'])
+
+    def test_read_only_does_not_consume_preflight(self):
+        self.assertEqual(self.hook('git status').returncode, 0)
+        first = self.hook('git -C /tmp commit -m fixture')
+        self.assertEqual(first.returncode, 2, first.stderr)
+        self.assertIn((self.destination / 'git-operations.md').read_text(), first.stderr)
+        second = self.hook('git push')
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(second.stdout, '')  # No permissionDecision=allow override.
+
+    def test_session_and_document_revision_each_need_preflight(self):
+        self.assertEqual(self.hook('git push').returncode, 2)
+        self.assertEqual(self.hook('git push', 'other-session').returncode, 2)
+        with (self.destination / 'git-operations.md').open('a') as stream:
+            stream.write('\nNew procedure revision.\n')
+        self.assertEqual(self.hook('git push').returncode, 2)
+
+    def test_missing_and_oversized_document_fail_closed(self):
+        file = self.destination / 'git-operations.md'
+        file.write_bytes(b'x' * 32769)
+        self.assertEqual(self.hook('gh -R fixture/repo pr create').returncode, 2)
+        file.unlink()
+        self.assertEqual(self.hook('git commit -m fixture').returncode, 2)
+        self.assertFalse((self.root / '.git').exists())
+
+
+if __name__ == '__main__':
+    unittest.main()

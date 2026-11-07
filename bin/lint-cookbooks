@@ -488,12 +488,24 @@ end
 cc_default = "cookbooks/claude-code/default.rb"
 if File.file?(cc_default)
   cc_src = File.read(cc_default)
-  # Follow literal local subrecipes too: narrow skill-only convergence uses
-  # the same resource definitions as the full cookbook.
-  cc_skill_src = cc_src.dup
-  cc_src.scan(/^include_recipe "([a-z0-9_-]+\.rb)"$/).flatten.each do |name|
-    cc_skill_src << "\n" << File.read(File.join(File.dirname(cc_default), name))
+  # Follow the distribution subrecipes recursively, including skill helpers.
+  # Restrict edges to literal sibling filenames; never evaluate recipe Ruby.
+  visited = Set.new([cc_default])
+  pending = [cc_default]
+  sources = []
+  until pending.empty?
+    path = pending.shift
+    source = File.read(path)
+    sources << source
+    source.scan(/^include_recipe "([a-z0-9_-]+\.rb)"$/).flatten.each do |name|
+      child = File.join(File.dirname(path), name)
+      next if visited.include?(child)
+      visited << child
+      pending << child
+    end
   end
+  cc_src = sources.join("\n")
+  cc_skill_src = cc_src
   # Tie each %w(...) list DIRECTLY to the files/<dir>/ it sources, by matching
   # the fixed 3-line block shape (%w line, remote_file line, source line). This
   # avoids a greedy match grabbing an earlier unrelated %w (e.g. the hooks list).
