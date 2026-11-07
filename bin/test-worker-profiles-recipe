@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Run cookbooks/claude-code/worker-profiles.rb through a real mitamae dry-run.
+
+The recipe must refuse a Codex profile over 32768 bytes before it declares any
+resource, accept one at exactly 32768, and with the real profiles plan one
+fixed CODEX_HOME per profile whose auth.json links to ~/.codex/auth.json.
+Every run uses a private temporary HOME, so the real ~/.codex and ~/.agents
+are never read or written.
+"""
+import grp
+import os
+from pathlib import Path
+import pwd
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+REPO = Path(__file__).resolve().parent.parent
+RECIPE = REPO / "cookbooks/claude-code/worker-profiles.rb"
+GENERATED = REPO / "cookbooks/claude-code/files/instructions/generated"
+PROFILES = ["common", "dev", "cos", "writing"]
+CAP = 32768
+
+
+def mitamae():
+    """MITAMAE overrides; otherwise the repo's bin/mitamae, downloaded by bin/setup if absent."""
+    explicit = os.environ.get("MITAMAE")
+    if explicit:
+        return explicit
+    binary = REPO / "bin/mitamae"
+    if not binary.exists():
+        subprocess.run([str(REPO / "bin/setup")], check=True, timeout=300)
+    return str(binary)
+
+
+class WorkerProfilesRecipeTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mitamae = mitamae()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.home = self.root / "home"
+        self.home.mkdir()
+
+    def dry_run(self, recipe):
+        user = pwd.getpwuid(os.getuid()).pw_name
+        group = grp.getgrgid(os.getgid()).gr_name
+        entry = self.root / "entry.rb"
+        entry.write_text(
+            "node.reverse_merge!(setup: { home: %r, user: %r, group: %r })\n"
+            "include_recipe %r\n" % (str(self.home), user, group, str(recipe)))
+        env = dict(os.environ, HOME=str(self.home))
+        before = self.snapshot()
+        result = subprocess.run([self.mitamae, "local", str(entry), "--dry-run"],
+                                env=env, cwd=self.root, capture_output=True, text=True, timeout=120)
+        # A dry-run must leave the private HOME exactly as it found it.
+        self.assertEqual(self.snapshot(), before)
+        return result.returncode, result.stdout + result.stderr
+
+    def snapshot(self):
+        return sorted((str(path), os.readlink(path) if path.is_symlink() else None)
+                      for path in self.home.rglob("*"))
+
+    def fixture_recipe(self, dev_codex_bytes):
+        """Copy the recipe beside generated views whose dev Codex profile totals dev_codex_bytes."""
+        cookbook = self.root / "cookbook"
+        shutil.copytree(GENERATED, cookbook / "files/instructions/generated")
+        shutil.copy(RECIPE, cookbook / "worker-profiles.rb")
+        common = (GENERATED / "common.codex.md").read_bytes()
+        # The recipe joins common and dev with one newline.
+        filler = dev_codex_bytes - len(common) - 1
+        self.assertGreater(filler, 0)
+        (cookbook / "files/instructions/generated/dev.codex.md").write_bytes(b"a" * filler)
+        return cookbook / "worker-profiles.rb"
+
+    def test_profile_over_the_cap_fails_the_deploy(self):
+        code, output = self.dry_run(self.fixture_recipe(CAP + 1))
+        self.assertNotEqual(code, 0, output)
+        self.assertIn("Codex dev profile exceeds 32768 bytes", output)
+        # The check runs before any resource is declared.
+        self.assertNotIn("codex-homes", output)
+
+    def test_profile_at_the_cap_passes(self):
+        code, output = self.dry_run(self.fixture_recipe(CAP))
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("exceeds", output)
+
+    def test_real_profiles_plan_one_fixed_codex_home_each(self):
+        code, output = self.dry_run(RECIPE)
+        self.assertEqual(code, 0, output)
+        for profile in PROFILES:
+            home = self.home / ".agents/codex-homes" / profile
+            for resource in ["directory[%s]" % home, "file[%s/AGENTS.md]" % home,
+                             "file[%s/config.toml]" % home, "link[%s/auth.json]" % home]:
+                self.assertIn(resource, output)
+            # The planned AGENTS.md content diff sits between its own line and config.toml's.
+            agents = output.split("file[%s/AGENTS.md] exist" % home, 1)[1]
+            agents = agents.split("file[%s/config.toml]" % home, 1)[0]
+            self.assertIn("Shared Agent Instructions", agents)
+
+    def test_auth_json_links_to_the_shared_file_store(self):
+        # A dry-run reports a link's target only when it differs from the
+        # current one, so seed a wrong symlink and read the planned change.
+        wrong = self.root / "not-the-store"
+        for profile in PROFILES:
+            home = self.home / ".agents/codex-homes" / profile
+            home.mkdir(parents=True)
+            (home / "auth.json").symlink_to(wrong)
+        code, output = self.dry_run(RECIPE)
+        self.assertEqual(code, 0, output)
+        for profile in PROFILES:
+            self.assertIn("link[%s/auth.json] to will change from '%s' to '%s'" % (
+                self.home / ".agents/codex-homes" / profile, wrong,
+                self.home / ".codex/auth.json"), output)
+
+
+if __name__ == "__main__":
+    unittest.main()
