@@ -45,7 +45,7 @@ python3 <skill-dir>/scripts/tasks.py attempt <task-id> --owner <verified-owner> 
   --kind codex --model <verified-model> --effort <verified-effort> --profile <profile> \
   --reason <routing-or-repair-reason>
 # Prepare the launch plan; see "Worker profiles and launch plans".
-python3 <setup-checkout>/bin/worker-profile prepare --harness codex --profile <profile> ...
+python3 <setup-checkout>/bin/worker-profile prepare --harness codex --route <hc|herdr1> --profile <profile> ...
 python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id>
 # Launch through the verified route.
 python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state running \
@@ -326,11 +326,16 @@ launches. A session the owner opens directly keeps the full instruction set.
 Before each launch, prepare a plan with `bin/worker-profile` from a setup
 checkout whose `main` matches the applied claude-code cookbook (on pro-dev
 `~/ManagedProjects/setup`). Pass the attempt's harness, profile, model, effort
-and reason, the task cwd, and a new directory under the task directory:
+and reason, the task cwd, a new directory under the task directory, and the
+attempt's launch route: `hc` for an hc terminal, `agent` for the Agent tool,
+`herdr1` for a Herdr 1 pane. Every flag except `--catalog` is required; without
+`--route` the plan always says `launch_ready: false`. Pass the call as an argv
+array, never a shell string:
 
 ```text
 python3 <setup-checkout>/bin/worker-profile prepare --harness <claude|codex> \
-  --profile <profile> --model <model> --effort <effort> --reason <attempt-reason> \
+  --route <hc|agent|herdr1> --profile <profile> --model <model> \
+  --effort <effort> --reason <attempt-reason> \
   --cwd <task-cwd> --directory <task-dir>/plan-<attempt> \
   [--catalog <task-dir>/codex-models.json]   # Codex: saved `codex debug models` output
 ```
@@ -341,14 +346,15 @@ and it writes `<task-dir>/plan-<attempt>/launch-plan.json` otherwise. Read that
 file and use the profile launch below **only when all of these hold**:
 
 - `launch_ready` is exactly `true`;
-- `harness`, `profile`, `model`, `effort` and `cwd` equal the attempt and task;
+- `harness`, `route`, `profile`, `model`, `effort` and `cwd` equal the attempt and task;
 - `argv[0]` equals `harness`.
 
 Otherwise (a refusal, `launch_ready: false`, or any mismatch) keep today's
 launch exactly as described in "Launch example" and "Model and effort per
 attempt", including the worker-floor settings and the `--tools` allowlist for
-implementation workers, and do not call the worker profile-isolated. Until the
-canary PR flips it, every plan says `launch_ready: false`. Record which launch
+implementation workers, and do not call the worker profile-isolated. `launch_ready` is true only for claude×hc, claude×agent and codex×hc (the
+2026-11-08 pro-dev canary). Herdr 1 (`--route herdr1`) stays on today's launch
+until its own canary passes; its plan says `launch_ready: false`. Record which launch
 was used in the `update --state running` note (`profile plan <plan-file>` or
 `launch_ready false: default launch`).
 
@@ -393,7 +399,7 @@ path depends on the cwd, as today. Codex writes rollouts under
     <KEY>=<VALUE> [...] PATH=<controller PATH> <plan.argv...> <prompt> [route additions]
   ```
 
-- **Agent tool (Claude only).** Prepare a Claude plan (`--harness claude`) for
+- **Agent tool (Claude only).** Prepare a Claude plan (`--harness claude --route agent`) for
   the gate above. The Agent tool takes no argv or environment: the definition
   `~/.claude/agents/profile-<profile>.md` (`omitClaudeMd: true`, deployed by
   `claude-code::worker-profiles`) carries the same rendered text. Confirm that
