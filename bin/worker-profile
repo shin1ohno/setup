@@ -14,6 +14,25 @@ CLAUDE_PROFILES = Path.home() / ".agents/profiles"
 CODEX_HOMES = Path.home() / ".agents/codex-homes"
 PROFILES = ("common", "dev", "cos", "writing")
 CAP = 32768
+# Launch routes a plan can be prepared for (dispatch.md "Profile launch per route").
+ROUTES = ("hc", "agent", "herdr1")
+# Harness/route pairs the pro-dev canary observed with only the profile's layers,
+# login, model and effort (2026-11-08, docs/runbook/worker-instruction-profiles.md).
+# Every other pair stays not launch-ready until a canary observes it.
+CANARIED = {("claude", "hc"), ("claude", "agent"), ("codex", "hc")}
+
+
+def readiness(harness, route):
+    """Return (launch_ready, note) for one harness/route pair."""
+    if route is None:
+        return False, "Not launch-ready: readiness is per route; pass --route (hc, agent or herdr1)."
+    if (harness, route) in CANARIED:
+        return True, (f"Launch-ready for {harness} on {route}: the 2026-11-08 pro-dev canary observed "
+                      "only this profile's layers, login, model and effort.")
+    if route == "agent":
+        return False, "Not launch-ready: the Agent tool route is Claude only."
+    return False, (f"Not launch-ready for {harness} on {route}: the 2026-11-08 pro-dev canary covered "
+                   "hc and the Agent tool only; Herdr 1 launches (pane split, agent start) were not observed.")
 
 
 def checked_bytes(path, harness):
@@ -120,11 +139,9 @@ def prepare(args):
         env_set["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
         argv = ["claude", "--model", args.model, "--effort", args.effort,
                 "--append-system-prompt-file", str(profile)]
-    # Flipped only by the canary PR, after the dispatch routes use these plans.
-    ready = False
-    note = "Not launch-ready until the pro-dev canary observes context, login, model and effort."
+    ready, note = readiness(args.harness, args.route)
     directory.mkdir(mode=0o700)
-    plan = dict(harness=args.harness, profile=args.profile, model=args.model,
+    plan = dict(harness=args.harness, profile=args.profile, route=args.route, model=args.model,
                 effort=args.effort, reason=args.reason, cwd=str(args.cwd), argv=argv, env_set=env_set,
                 env_unset=env_unset, profile_file=str(profile), **extra, instruction_bytes=len(data),
                 instruction_sha256=hashlib.sha256(data).hexdigest(),
@@ -155,6 +172,8 @@ def main():
     prep.add_argument("--model", required=True)
     prep.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max", "ultra"), required=True)
     prep.add_argument("--catalog", type=Path)
+    prep.add_argument("--route", choices=ROUTES,
+                      help="launch route; launch_ready is true only for canaried harness/route pairs")
     prep.add_argument("--profiles-dir", type=Path, default=CLAUDE_PROFILES,
                       help="deployed Claude profiles (<profile>.claude.md)")
     prep.add_argument("--codex-homes", type=Path, default=CODEX_HOMES,
