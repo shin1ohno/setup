@@ -62,7 +62,12 @@ results, then choose an available model/effort. Do not assume the controller's
 own provider is best. Record one concrete reason and the actual model observed
 after startup separately from the requested selection. Choose model and effort
 explicitly for every attempt; an inherited default is not an observed choice.
-Use the work-type table in dispatch.md, then validate host capabilities.
+Start from the work-type table in dispatch.md, then validate host capabilities
+before launch. Tune effort before switching model; escalate by failure type
+(wrong with full context: stronger model; skipped files or tests: more effort),
+one step at a time. Use cheaper workers only for independent fan-out or work
+beyond one context window. Use xhigh/max only for work over 30 minutes or with
+evaluation evidence, and group parallel workers by (model, effort).
 
 ## Dispatch and monitor
 
@@ -150,8 +155,11 @@ do not become solvable just by repeatedly switching providers.
 
 Mark `accepted` only after review passes with recorded evidence. Report the
 outcome, artifact/link, the checks that justify it, and any material limitation.
-Keep panes and transcripts available; close only panes you created when cleanup
-is requested. Do not merge, deploy, post messages, or spend money beyond the
+Close a worker pane you created once its task is `accepted` or `cancelled`.
+Keep it open in every other state, because a same-worker correction may still
+need it. Session logs and artifacts remain after the pane closes. Never close a
+pane you did not create.
+Do not merge, deploy, post messages, or spend money beyond the
 authorization in the original task. Prior authorization remains valid.
 
 ## Communication contract
@@ -185,5 +193,6 @@ writing a handoff is not proof that a new session started.
 Until SH1-68 supplies owner-approved numeric thresholds, direct work is limited
 to a short answer using evidence already in context, with no repository change,
 external mutation, or new investigation. Delegate implementation and new reads.
-The profile/Agent route is opt-in pending canary acceptance; a missing tool or
-unsupported isolation capability blocks that route, not permission checks.
+The profile-isolated Agent route is opt-in pending canary acceptance; a missing
+tool or unsupported isolation capability blocks that route, not permission
+checks.

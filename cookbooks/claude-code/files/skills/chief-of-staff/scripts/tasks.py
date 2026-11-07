@@ -26,6 +26,8 @@ TRANSITIONS = {
     "cancelled": set(),
 }
 TERMINAL = {"accepted", "cancelled"}
+CLAUDE_ALIASES = {"opus", "sonnet", "haiku", "fable"}
+TRANSCRIPT_LIMIT = 32 * 1024 * 1024
 
 
 def now():
@@ -108,7 +110,7 @@ def parser():
     ls = sub.add_parser("list", help="List only this controller's tasks")
     ls.add_argument("--owner", required=True, type=nonempty)
     ls.add_argument("--all", action="store_true", help="Include terminal tasks")
-    for name in ("show", "attempt", "bind", "update", "reported", "extend", "receive"):
+    for name in ("show", "attempt", "bind", "update", "reported", "extend", "receive", "observe"):
         cmd = sub.add_parser(name)
         cmd.add_argument("task_id")
         cmd.add_argument("--owner", type=nonempty)
@@ -129,6 +131,9 @@ def parser():
             cmd.add_argument("--effort", type=nonempty)
         elif name == "receive":
             cmd.add_argument("--file", required=True, type=Path)
+        elif name == "observe":
+            cmd.add_argument("--transcript", required=True, type=Path,
+                             help="Agent-tool subagent transcript agent-<session>.jsonl")
         elif name == "update":
             cmd.add_argument("--state", choices=TRANSITIONS, required=True)
             cmd.add_argument("--note", required=True, type=nonempty)
@@ -178,6 +183,53 @@ def envelope_bytes(path, roots):
     finally:
         for descriptor in reversed(descriptors):
             os.close(descriptor)
+
+
+def model_matches(requested, observed):
+    """A Claude alias matches the full model ID the harness reports for it."""
+    if not requested or not observed:
+        return False
+    if requested == observed:
+        return True
+    return requested in CLAUDE_ALIASES and observed.startswith("claude-" + requested + "-")
+
+
+def observe_transcript(path, session):
+    """Return the single (model, effort) pair an Agent-tool transcript records.
+
+    The transcript format is not a published interface, so anything unexpected
+    (wrong file, no assistant turns, a missing field, mixed values) is refused
+    rather than guessed."""
+    if path.name != "agent-" + session + ".jsonl":
+        raise ValueError("transcript name does not match the bound session")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(path, flags)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("transcript must be a regular file")
+        if info.st_size > TRANSCRIPT_LIMIT:
+            raise ValueError("transcript is too large")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            data = handle.read(TRANSCRIPT_LIMIT + 1)
+    finally:
+        os.close(descriptor)
+    pairs = set()
+    for line in data.decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if not isinstance(record, dict) or record.get("type") != "assistant":
+            continue
+        message = record.get("message")
+        model = message.get("model") if isinstance(message, dict) else None
+        effort = record.get("effort")
+        if not isinstance(model, str) or not model or not isinstance(effort, str) or not effort:
+            raise ValueError("an assistant turn lacks its model or effort")
+        pairs.add((model, effort))
+    if len(pairs) != 1:
+        raise ValueError("transcript must record exactly one model/effort pair")
+    return pairs.pop()
 
 
 def read_envelope(path, task, root):
@@ -318,6 +370,19 @@ def run(args, root):
         if args.effort:
             attempt["observed_effort"] = args.effort
         event(task, "Bound worker " + (args.pane or args.session))
+    elif args.command == "observe":
+        if task["state"] not in {"starting", "running", "reviewing"}:
+            raise ValueError("observe requires a live attempt")
+        attempt = task["attempts"][-1]
+        if attempt.get("route") != "agent" or not attempt.get("session"):
+            raise ValueError("observe reads Agent-tool transcripts; bind the session first")
+        model, effort = observe_transcript(args.transcript, attempt["session"])
+        attempt["observed_model"] = model
+        attempt["observed_effort"] = effort
+        attempt["observed_source"] = str(args.transcript)
+        event(task, "Observed " + model + " / " + effort + " in the worker transcript",
+              [str(args.transcript)])
+        result["observed"] = {"model": model, "effort": effort}
     elif args.command == "receive":
         if task["state"] not in {"running", "reviewing"}:
             raise ValueError("receive requires a running or reviewing attempt")
@@ -341,7 +406,7 @@ def run(args, root):
             if envelope.get("status") != "done" or not all(c["status"] == "pass" for c in envelope.get("criteria", [])):
                 raise ValueError("acceptance requires a complete passing envelope and independent review")
             attempt = task["attempts"][-1]
-            if (attempt.get("observed_model") != attempt.get("requested_model")
+            if (not model_matches(attempt.get("requested_model"), attempt.get("observed_model"))
                     or attempt.get("observed_effort") != attempt.get("effort")):
                 raise ValueError("effective model/effort has not been observed to match the request")
         task["state"] = args.state

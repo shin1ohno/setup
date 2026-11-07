@@ -7,8 +7,17 @@ import sys
 
 
 def first_usage(lines, harness):
+    skill_listing = None
     for line in lines:
         event = json.loads(line)
+        if harness == "claude" and event.get("type") == "attachment":
+            attachment = event.get("attachment", {})
+            if attachment.get("type") == "skill_listing":
+                content = attachment["content"]
+                skill_listing = dict(
+                    skills=attachment["skillCount"], chars=len(content),
+                    name_only=sum(line.startswith("- ") and ": " not in line
+                                  for line in content.splitlines()))
         if harness == "codex" and event.get("type") == "turn.completed":
             usage = event["usage"]
             total = usage["input_tokens"]
@@ -25,15 +34,19 @@ def first_usage(lines, harness):
             continue
         if any(type(n) is not int or n < 0 for n in [total, cached, output]) or cached > total:
             raise ValueError("invalid token counts")
-        return dict(context_input_tokens=total, cached_input_tokens=cached,
+        result = dict(context_input_tokens=total, cached_input_tokens=cached,
                     output_tokens=output, scope=("first reported turn; may contain multiple model calls" if harness == "codex"
                            else "first reported assistant API usage"))
+        if skill_listing is not None:
+            result["skill_listing"] = skill_listing
+        return result
     raise ValueError("no first-call usage found; byte counts are not token measurements")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--harness", choices=("claude", "codex"), required=True)
+    parser.add_argument("--harness", choices=("claude", "codex"), required=True,
+                        help="Codex accepts only codex exec --json stdout, not rollout JSONL")
     parser.add_argument("--file", type=Path, required=True)
     args = parser.parse_args()
     try:

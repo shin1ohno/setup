@@ -268,6 +268,23 @@ remote_file "#{node[:setup][:home]}/.claude/loop-repos.json" do
   action :create
 end
 
+directory "#{node[:setup][:home]}/.claude/worker-floor" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+  action :create
+end
+
+%w(impl.json docs.json).each do |file_name|
+  remote_file "#{node[:setup][:home]}/.claude/worker-floor/#{file_name}" do
+    source "files/worker-floor/#{file_name}"
+    owner node[:setup][:user]
+    group node[:setup][:group]
+    mode "644"
+    action :create
+  end
+end
+
 # Deploy workflows (multi-agent orchestration scripts, loaded by name via the Workflow tool)
 directory "#{node[:setup][:home]}/.claude/workflows" do
   owner node[:setup][:user]

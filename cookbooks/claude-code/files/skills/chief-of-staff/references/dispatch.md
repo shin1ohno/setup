@@ -104,8 +104,9 @@ herdr --session <verified-session> agent read <reserved-agent-name> --source rec
 herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 30000
 ```
 
-For explicit model selection, append native options **after** `--`, e.g.
-`-- --model <verified-model>`, and record the resulting effective model/effort.
+For explicit model selection, append native options **after** `--` (see
+"Model and effort per attempt" for each harness), and record the resulting
+effective model/effort.
 After startup evidence, record both observed selections with
 `bind <task-id> --owner <verified-owner> --pane <id> --model <actual-model> --effort <actual-effort>`.
 A pre-start bind records only identity; repeat it after observing the selections.
@@ -115,8 +116,6 @@ For envelope-v1 tasks do not escalate to full pane history. Request the missing
 envelope or delegate an artifact read. The installed Herdr skill's legacy
 file-output fallback remains the rule for old tasks; the new explicit artifact
 contract is an opt-in protocol, not a reason to alter an active legacy session.
-Review the two skill contracts together before deployment. No installed skill
-or live controller ledger is changed by adopting this source proposal.
 
 ## Worker brief
 
@@ -176,47 +175,76 @@ Every descriptor closes on rejection, releasing the ledger lock. It records
 reviewing, not accepted. Acceptance also needs independent review evidence and
 observed model/effort matching the request; file existence proves no quality.
 
-## Explicit selection per attempt (SH1-84)
+## Model and effort per attempt
 
-These owner-selected starting points are preferences, not an account-availability
-claim. Validate the installed catalog/help on every host. Labels such as Opus
-5.5 must be resolved to a supported CLI alias or model ID before launch.
+For envelope-v1 tasks `tasks.py attempt` requires an explicit `--model` and
+`--effort`; an inherited default is not a recorded choice. Start from this
+table, approved by the owner on 2026-11-04. It states preferences, not account
+availability: validate the installed catalog on every host (`claude --help`,
+`codex debug models`) and never pin an obsolete Codex model.
 
-| Work type | Claude preference | Codex preference |
-| --- | --- | --- |
-| CoS | Opus 5.5 / high | no default |
-| Specified implementation | Sonnet 5.5 / medium | gpt-6.1-sol / medium |
-| Ambiguous implementation or migration | Opus 5.5 / high | gpt-6-astra / medium |
-| Small edit or extraction | Haiku 5.5 / medium | gpt-6-luna / low, increase when needed |
-| Review or security | Opus 5.5 / high | gpt-6.1-sol / high |
-| Research | Haiku 5.5 / medium readers; Opus 5.5 / high synthesis | choose only when its tools are needed |
-| Documents or PRDs | Opus 5.5 / high | choose for a concrete capability need |
-| Infrastructure operations | Opus 5.5 / high | gpt-6.1-sol / high |
-| Daily administration | Haiku 5.5 / medium | choose only when its tools are needed |
-| Independently checkable verifier | row model / low; failed cases / high | same |
+| Work type | Default harness | Claude | Codex |
+| --- | --- | --- | --- |
+| CoS itself | Claude | opus / high | none |
+| Implementation, well specified | Codex | sonnet / medium | gpt-6.1-sol / medium |
+| Implementation, ambiguous, multi-file or migration | Codex | opus / high (xhigh over 30 min) | gpt-6-astra / medium, xhigh for exacting work |
+| Small edits, extraction | either | haiku / medium | gpt-6-luna / low, raise up to high |
+| Review, security | the harness the author did not use | opus / high | gpt-6.1-sol / high |
+| Research, many sources | Claude | readers haiku / medium; synthesis opus / high | none |
+| Documents, PRDs | Claude | opus / high | none |
+| Operations, infrastructure changes | either | opus / high | gpt-6.1-sol / high |
+| Daily admin (mail, calendar) | Claude | haiku / medium | none |
+| Checkable output (tests, verifier) | either | the row's model at low; re-run failures at high | same |
 
-Tune effort before changing model. Skipped files/tests call for more effort;
-wrong reasoning with complete context calls for a stronger model. Change one
-variable at a time and compare cost per solved task. Cheap workers fit
-independent fan-out or work beyond one context, not automatic serial delegation.
-Use xhigh/max only beyond 30 minutes or with evaluation evidence. Group parallel
-work by model/effort to preserve caches. Fable requires a failed Opus-high
-capability case or an explicit owner request; never answer usage-credit consent.
+The Claude column names the 5.5 models by alias. Use fable only after a
+capability-sensitive task failed on opus / high, or on the owner's request; its
+usage-credit consent prompt can stall an unattended pane for up to 5 minutes,
+and the controller never answers that prompt.
 
-Record `attempt --kind ... --model ... --effort ... --profile dev --route herdr
---reason ... --owner ...`. Unset inherited `CLAUDE_CODE_EFFORT_LEVEL` in the
-worker environment, not the user's profile. Pass native Claude `--model MODEL
---effort LEVEL`, or Codex `-m MODEL -c model_reasoning_effort="LEVEL"`, after
-Herdr's `--`. Use argv arrays, never interpolate a topic into shell code.
-`bind --model ACTUAL --effort ACTUAL` records observed values only after startup
-evidence. A bundled model catalog establishes support, not successful execution.
+Compare cost per solved task when tuning. A bundled model catalog establishes
+support, not successful execution.
 
-For an authorized cloud Agent-tool route, reserve `--route agent` and bind
-`--session <returned-native-agent-id>` rather than inventing a pane. Pass the
-native tool's supported model and effort fields explicitly, along with the same
-profile text and envelope contract. A tool lacking effort or instruction
-isolation cannot meet this route's acceptance; use a supported route or report
-that blocker. Do not claim a fake fixture proves a live dispatch.
+Pass both values on every route:
+
+- Agent tool: set `model` (`opus`, `sonnet`, `haiku`) and `effort` from the
+  table. The table is the skill's explicit effort instruction for the tool.
+- Herdr Claude worker: `-- --model <model> --effort <level>`. Implementation and
+  document workers add `--settings ~/.claude/worker-floor/<impl|docs>.json`.
+  Implementation workers also add
+  `--tools Bash,Read,Edit,Write,Skill,ToolSearch,Agent,AskUserQuestion`. Keep
+  `ToolSearch`: without it first-call usage rose by about 72k on pro-dev. Daily
+  admin workers add neither.
+- Herdr Codex worker: `-- -m <model> -c model_reasoning_effort="<level>"`.
+
+Launch workers without `CLAUDE_CODE_EFFORT_LEVEL` in their environment (for
+example `env -u CLAUDE_CODE_EFFORT_LEVEL`); it overrides per-worker effort. Do
+not change the user's own profile for this. Use argv arrays; never interpolate a
+topic into shell code.
+
+Record the choice with `attempt --kind ... --model ... --effort ...
+--profile <profile> --route <route> --reason ... --owner ...` (the reason names
+the table row and any escalation). Record observed values only from evidence:
+
+- Herdr route: after startup evidence, `bind --pane <id> --model ACTUAL --effort
+  ACTUAL`.
+- Agent-tool route: `attempt --route agent`, then `bind --session
+  <returned-native-agent-id>` rather than inventing a pane. A synchronous Agent
+  call returns its id only when the worker finishes, so bind and record
+  `running` then, with a note saying so. Then run `observe <task-id> --owner <owner> --transcript <path>` on
+  `~/.claude/projects/<cwd-slug>/<controller-session>/subagents/agent-<agent-id>.jsonl`.
+  It reads the model and effort recorded on every assistant turn. A missing
+  field, mixed values, a mismatched file name or a non-regular file is refused,
+  because this transcript is not a published interface; then report the route
+  as unobserved rather than binding the requested values by hand.
+
+`accepted` requires the observed model to match the request (a Claude alias
+matches its full model ID) and the observed effort to equal it. Pass the same
+envelope contract in every brief. Do not claim a fake fixture proves a live
+dispatch.
+
+A profile-isolated Agent-tool route also passes the same profile text. A tool
+lacking effort or instruction isolation cannot meet that route's acceptance; use
+a supported route or report that blocker.
 
 Profiles: implementation/review/operations use common+dev; controller uses
 common+cos; documents use common+writing; other research/admin uses common.
