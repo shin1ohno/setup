@@ -44,11 +44,12 @@ python3 <skill-dir>/scripts/tasks.py new --owner <socket#controller-pane> \
 python3 <skill-dir>/scripts/tasks.py attempt <task-id> --owner <verified-owner> \
   --kind codex --model <verified-model> --effort <verified-effort> --reason <routing-or-repair-reason>
 python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id>
-# Launch through the verified route, then observe startup selections.
-python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id> \
-  --model <observed-model> --effort <observed-effort>
+# Launch through the verified route.
 python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state running \
   --note <observed-start> --evidence <observed-working-transition>
+# After the worker's first turn, record its effective model/effort from its own log.
+python3 <skill-dir>/scripts/tasks.py observe <task-id> --owner <verified-owner> \
+  --transcript <absolute-session-log> --launch-prompt <exact-launch-prompt>
 python3 <skill-dir>/scripts/tasks.py receive <task-id> --owner <verified-owner> \
   --file <absolute-envelope-file>
 # Run the independent check first and save its output under the task directory or checkout.
@@ -121,10 +122,8 @@ herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 30
 
 For explicit model selection, append native options **after** `--` (see
 "Model and effort per attempt" for each harness), and record the resulting
-effective model/effort.
-After startup evidence, record both observed selections with
-`bind <task-id> --owner <verified-owner> --pane <id> --model <actual-model> --effort <actual-effort>`.
-A pre-start bind records only identity; repeat it after observing the selections.
+effective model/effort with `observe` once the worker has answered at least
+one turn. `bind` records only identity.
 Wait for an actual shell/agent prompt rather than a fixed startup sleep. Do not
 prompt a working agent or send slash commands as if they were normal task text.
 For envelope-v1 tasks do not escalate to full pane history. Request the missing
@@ -193,7 +192,9 @@ Use status done/blocked/failed and criterion pass/fail/unverified. Cover every
 original criterion exactly once. Artifacts and evidence must be existing files
 inside the task directory or checkout (including symlink resolution). A summary
 is at most 1200 UTF-8 bytes; at most 12 artifacts and 8 open questions.
-`receive <id> --owner <owner> --file <absolute-envelope>` rejects stale attempts,
+`receive <id> --owner <owner> --file <absolute-envelope>` prints only
+`task_id`, `state` and the validated envelope (use `show` for the full record).
+It rejects stale attempts,
 foreign tasks, path escapes and `done` with unverified criteria. Envelope input
 must be a regular file: FIFOs, sockets, directories and devices are rejected.
 Contained symlinks resolve once; descriptor traversal then refuses symlink
@@ -253,17 +254,47 @@ Record the choice with `attempt --kind ... --model ... --effort ...
 --profile <profile> --route <route> --reason ... --owner ...` (the reason names
 the table row and any escalation). Record observed values only from evidence:
 
-- Herdr route: after startup evidence, `bind --pane <id> --model ACTUAL --effort
-  ACTUAL`.
+- Herdr route (Herdr 1 panes and `hc` terminals): after the worker's first
+  turn, run `observe <task-id> --owner <owner> --transcript <log>
+  --launch-prompt <prompt>`, passing the exact prompt text the worker was
+  launched with. The log is the worker's own session log:
+  - Claude: `~/.claude/projects/<cwd-slug>/<session-id>.jsonl`, where the slug
+    is the launch directory with every `/` and `.` replaced by `-`. Launching
+    with `-- --session-id <new-uuid>` names the file in advance. `observe`
+    reads `.message.model` and the top-level `.effort` of each assistant entry
+    written since the attempt was reserved, skipping `<synthetic>` and
+    sidechain entries.
+  - Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<session-id>.jsonl`
+    (local date). `observe` reads `.payload.model` and `.payload.effort` of each
+    `turn_context` entry written since the attempt was reserved; Codex 0.166+
+    rollouts carry no `agent_message` events, and none are needed.
+
+  The log must name its own session (file name, entry `sessionId` or
+  `session_meta.id`), must start inside the task directory, and its first user
+  message must equal the launch prompt. The last check separates a worker from
+  a controller that shares its directory: both logs sit in the same project
+  directory and both mention the brief path, but only the worker's log opens
+  with the launch prompt. When several candidate logs exist, a refusal naming
+  the launch prompt means "not this worker"; try the next candidate.
+  `observe` cannot prove that the log was written by the process in the bound
+  pane. Two workers launched with the same prompt in the same directory during
+  the same attempt are indistinguishable, so give each launch a distinct
+  prompt (the task-specific brief path already does).
 - Agent-tool route: `attempt --route agent`, then `bind --session
   <returned-native-agent-id>` rather than inventing a pane. A synchronous Agent
   call returns its id only when the worker finishes, so bind and record
   `running` then, with a note saying so. Then run `observe <task-id> --owner <owner> --transcript <path>` on
   `~/.claude/projects/<cwd-slug>/<controller-session>/subagents/agent-<agent-id>.jsonl`.
-  It reads the model and effort recorded on every assistant turn. A missing
-  field, mixed values, a mismatched file name or a non-regular file is refused,
-  because this transcript is not a published interface; then report the route
-  as unobserved rather than binding the requested values by hand.
+  It reads the model and effort recorded on every assistant turn.
+
+On either route, exactly one (model, effort) pair must appear. No counted
+entry, an entry missing its model or effort, and mixed pairs (for example a
+model switch mid-session) are refused, and a refusal clears any value an
+earlier `observe` recorded, so `accepted` cannot rest on it. A mismatched
+file name or a non-regular file is also refused, because these logs are not a
+published interface. After a refusal, report the route as unobserved rather
+than binding the requested values by hand. `bind --model/--effort` is the
+legacy hand-recorded path; do not use it for envelope-v1 tasks.
 
 `accepted` requires the observed model to match the request (a Claude alias
 matches its full model ID) and the observed effort to equal it. Pass the same
