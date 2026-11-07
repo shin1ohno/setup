@@ -1,9 +1,11 @@
 # frozen_string_literal: true
 
-# Opt-in only (not included by default.rb): no login and no permission changes.
-# The one credential link is each Codex home's auth.json, a symlink to the
-# file-store ~/.codex/auth.json so a profile home shares the existing login
-# without copying it.
+# Included by default.rb on every host that applies claude-code: no login and
+# no permission changes. The one credential link is each Codex home's
+# auth.json, a symlink to the file-store ~/.codex/auth.json so a profile home
+# shares the existing login without copying it. On a host without a Codex
+# login the link dangles, which Codex reads as "Not logged in" (its file store
+# maps the open's NotFound to no auth), so the link is left unguarded.
 profiles = %w(common dev cos writing)
 codex_homes = "#{node[:setup][:home]}/.agents/codex-homes"
 

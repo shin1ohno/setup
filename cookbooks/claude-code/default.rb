@@ -307,6 +307,11 @@ include_recipe "agents.rb"
 
 include_recipe "skills.rb"
 
+# Worker instruction profiles (~/.agents/profiles, profile-* agents, fixed
+# per-profile Codex homes). Default since the pro-dev canary passed 12 of 12
+# (docs/runbook/worker-instruction-profiles.md).
+include_recipe "worker-profiles.rb"
+
 # Deploy TODO pipeline config (docs/todo-management.md). sources.yaml is the
 # managed PERSONAL-source list for /todo-collect; work sources live in the
 # unmanaged ~/.claude/todo/sources.local.yaml, merged at runtime by the skill.

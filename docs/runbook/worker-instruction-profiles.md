@@ -63,6 +63,12 @@ in, and the canary below repeated it for all four homes. Do not weaken the byte
 guard to make a profile pass. Direct sessions the owner opens keep the full
 instruction set; profiles apply only to workers the controller launches.
 
+Log in with the normal `codex` (default `CODEX_HOME`), never from a profile
+home. On a host where Codex has never logged in, each home's `auth.json` is a
+dangling link and Codex reports "Not logged in"; `codex login` run from a
+profile home writes through the link to `~/.codex/auth.json` and fails with
+ENOENT when `~/.codex` does not exist (owner decision 2026-11-08: accepted).
+
 ## pro-dev canary, 2026-11-08
 
 Host pro-dev (CT 104), Claude Code 2.1.319, codex-cli 0.167.0, setup `main` at
