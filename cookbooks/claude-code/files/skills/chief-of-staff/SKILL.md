@@ -189,3 +189,10 @@ owner, task/attempt identities, decisions, evidence paths, blockers, and the nex
 probe. A fresh controller must verify live identities before resuming. Rotate
 only when a session-start mechanism is available and no task is abandoned;
 writing a handoff is not proof that a new session started.
+
+Until SH1-68 supplies owner-approved numeric thresholds, direct work is limited
+to a short answer using evidence already in context, with no repository change,
+external mutation, or new investigation. Delegate implementation and new reads.
+The profile-isolated Agent route is opt-in pending canary acceptance; a missing
+tool or unsupported isolation capability blocks that route, not permission
+checks.

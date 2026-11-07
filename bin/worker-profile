@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Render and prepare explicit worker profiles; never dispatch or copy credentials."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+SOURCES = ROOT / "cookbooks/claude-code/files/instructions/generated"
+PROFILES = ("common", "dev", "cos", "writing")
+CAP = 32768
+
+
+def checked_bytes(path, harness):
+    data = Path(path).read_bytes()
+    data.decode("utf-8")
+    if not data.strip():
+        raise ValueError("profile must not be empty")
+    if harness == "codex" and len(data) > CAP:
+        raise ValueError(f"Codex profile exceeds {CAP} bytes: {len(data)}")
+    return data
+
+
+def render(sources, harness, profile):
+    layers = ["common"] + ([] if profile == "common" else [profile])
+    data = b"\n".join(checked_bytes(sources / f"{layer}.{harness}.md", harness) for layer in layers)
+    if harness == "codex" and len(data) > CAP:
+        raise ValueError(f"combined Codex profile exceeds {CAP} bytes: {len(data)}")
+    return data
+
+
+def catalog_supports(path, model, effort):
+    catalog = json.loads(path.read_text(encoding="utf-8"))
+    for item in catalog["models"]:
+        if item["slug"] == model:
+            if effort in [level["effort"] for level in item["supported_reasoning_levels"]]:
+                return
+            raise ValueError("effort is not supported by the supplied catalog")
+    raise ValueError("model is not in the supplied catalog")
+
+
+def prepare(args):
+    data = render(args.sources, args.harness, args.profile)
+    if args.model == "default" or not args.model.strip():
+        raise ValueError("model must be selected explicitly")
+    if args.harness == "codex":
+        if args.catalog is None:
+            raise ValueError("Codex preparation requires an observed model catalog")
+        catalog_supports(args.catalog, args.model, args.effort)
+    elif args.effort not in {"low", "medium", "high", "xhigh", "max"}:
+        raise ValueError("effort is not listed by the observed Claude CLI help")
+    directory = args.directory
+    if not directory.is_absolute() or directory.exists() or directory.is_symlink():
+        raise ValueError("directory must be a new absolute private directory")
+    if not args.cwd.is_absolute() or not args.cwd.is_dir():
+        raise ValueError("cwd must be an existing absolute directory")
+    directory.mkdir(mode=0o700)
+    profile = directory / "profile.md"
+    profile.write_bytes(data)
+    os.chmod(profile, 0o600)
+    env_set = {}
+    env_unset = ["CLAUDE_CODE_EFFORT_LEVEL"]
+    if args.harness == "codex":
+        worker_home = directory / "codex"
+        worker_home.mkdir(mode=0o700)
+        (worker_home / "AGENTS.md").write_bytes(data)
+        os.chmod(worker_home / "AGENTS.md", 0o600)
+        (worker_home / "config.toml").write_text(
+            'project_doc_max_bytes = 0\ncli_auth_credentials_store = "file"\n', encoding="utf-8")
+        env_set["CODEX_HOME"] = str(worker_home)
+        env_unset += ["OPENAI_API_KEY", "CODEX_API_KEY"]
+        argv = ["codex", "--no-daemon", "-C", str(args.cwd), "-m", args.model,
+                "-c", "model_reasoning_effort=" + json.dumps(args.effort)]
+        ready = False
+        note = "Separate home has no credentials; login/sharing needs an authorized canary decision."
+    else:
+        env_set["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
+        argv = ["claude", "--model", args.model, "--effort", args.effort,
+                "--append-system-prompt", data.decode("utf-8")]
+        ready = False
+        note = "Effective context, omission behavior and subscription availability need a live canary."
+    plan = dict(harness=args.harness, profile=args.profile, model=args.model,
+                effort=args.effort, reason=args.reason, cwd=str(args.cwd), argv=argv, env_set=env_set,
+                env_unset=env_unset, instruction_bytes=len(data),
+                instruction_sha256=hashlib.sha256(data).hexdigest(),
+                launch_ready=ready, observed_model=None, observed_effort=None, note=note)
+    plan_file = directory / "launch-plan.json"
+    plan_file.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.chmod(plan_file, 0o600)
+    return {key: value for key, value in plan.items() if key not in {"argv", "env_set", "env_unset"}} | {
+        "plan_file": str(plan_file), "profile_file": str(profile)}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    check = sub.add_parser("check")
+    check.add_argument("--file", required=True, type=Path)
+    check.add_argument("--harness", choices=("claude", "codex"), required=True)
+    build = sub.add_parser("render")
+    prep = sub.add_parser("prepare")
+    for command in [build, prep]:
+        command.add_argument("--sources", type=Path, default=SOURCES)
+        command.add_argument("--harness", choices=("claude", "codex"), required=True)
+        command.add_argument("--profile", choices=PROFILES, required=True)
+    build.add_argument("--output", type=Path, required=True)
+    prep.add_argument("--directory", type=Path, required=True)
+    prep.add_argument("--cwd", type=Path, required=True)
+    prep.add_argument("--reason", required=True)
+    prep.add_argument("--model", required=True)
+    prep.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max", "ultra"), required=True)
+    prep.add_argument("--catalog", type=Path)
+    args = parser.parse_args()
+    try:
+        if args.command == "check":
+            data = checked_bytes(args.file, args.harness)
+            result = dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+        elif args.command == "render":
+            data = render(args.sources, args.harness, args.profile)
+            # Exclusive creation prevents overwriting the controller's profile.
+            with args.output.open("xb") as stream:
+                stream.write(data)
+            result = dict(file=str(args.output), bytes=len(data))
+        else:
+            result = prepare(args)
+        print(json.dumps(result))
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        print(json.dumps({"error": str(error)}), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

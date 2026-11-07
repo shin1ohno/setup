@@ -201,6 +201,9 @@ capability-sensitive task failed on opus / high, or on the owner's request; its
 usage-credit consent prompt can stall an unattended pane for up to 5 minutes,
 and the controller never answers that prompt.
 
+Compare cost per solved task when tuning. A bundled model catalog establishes
+support, not successful execution.
+
 Pass both values on every route:
 
 - Agent tool: set `model` (`opus`, `sonnet`, `haiku`) and `effort` from the
@@ -218,9 +221,9 @@ example `env -u CLAUDE_CODE_EFFORT_LEVEL`); it overrides per-worker effort. Do
 not change the user's own profile for this. Use argv arrays; never interpolate a
 topic into shell code.
 
-Record the choice with `attempt --kind ... --model ... --effort ... --reason ...`
-(the reason names the table row and any escalation). Record observed values only
-from evidence:
+Record the choice with `attempt --kind ... --model ... --effort ...
+--profile <profile> --route <route> --reason ... --owner ...` (the reason names
+the table row and any escalation). Record observed values only from evidence:
 
 - Herdr route: after startup evidence, `bind --pane <id> --model ACTUAL --effort
   ACTUAL`.
@@ -238,3 +241,13 @@ from evidence:
 matches its full model ID) and the observed effort to equal it. Pass the same
 envelope contract in every brief. Do not claim a fake fixture proves a live
 dispatch.
+
+A profile-isolated Agent-tool route also passes the same profile text. A tool
+lacking effort or instruction isolation cannot meet that route's acceptance; use
+a supported route or report that blocker.
+
+Profiles: implementation/review/operations use common+dev; controller uses
+common+cos; documents use common+writing; other research/admin uses common.
+The same rendered artifact supplies both routes. The profile launcher proposal
+is reviewed separately; until isolation and login are observed, keep existing
+launches unchanged and do not label them profile-isolated.
