@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ruby .claude/hooks/guard-mitamae-dry-run.rb"
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/run-ruby.sh\" guard-mitamae-dry-run.rb"
           }
         ]
       }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ruby .claude/hooks/remind-cookbook-dry-run.rb"
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/run-ruby.sh\" remind-cookbook-dry-run.rb"
           }
         ]
       }
