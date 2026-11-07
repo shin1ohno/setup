@@ -68,17 +68,11 @@ unmatched directories as development silently.
 
 ## Startup-floor and usage measurements
 
-Default preparation leaves the tool/plugin/connector floor unchanged. The explicit
-Claude dev `--floor implementation-minimal` candidate disables the repository's
-managed plugin names and Claude.ai connectors via a separate settings file. It
-does not alter permission or hook configuration. Do not use it for review or an
-integration-dependent task; unmanaged plugins and managed settings can still
-affect the effective catalog. Daily/admin keeps its connector access.
+Preparation leaves the tool/plugin/connector floor unchanged.
 
-The candidate is a real launch-plan alternative, not a measured token saving.
 Fresh-session `/context` and required-tool spot checks must decide whether each
-lever removes definitions or only disables use. Claude quota/access has not been
-retested here; no model session was launched.
+`~/.claude/worker-floor/*.json` setting removes definitions or only disables use.
+Claude quota/access has not been retested here; no model session was launched.
 
 `bin/instruction-usage` consumes supplied JSONL. For Claude it adds first reported API
 input, cache creation and cache read once; for Codex it does not double-count

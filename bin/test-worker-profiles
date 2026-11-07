@@ -61,16 +61,14 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual((destination / "codex/AGENTS.md").read_bytes(),
                          (destination / "profile.md").read_bytes())
 
-    def test_floor_candidate_cannot_change_permissions_or_hooks(self):
+    def test_claude_prepare_appends_rather_than_replaces_the_system_prompt(self):
         destination = self.root / "claude"
         result = subprocess.run(["python3", str(BIN / "worker-profile"), "prepare",
             "--harness", "claude", "--profile", "dev", "--directory", str(destination),
             "--cwd", str(self.root), "--model", "sonnet", "--effort", "medium",
-            "--reason", "fixture", "--floor", "implementation-minimal"],
+            "--reason", "fixture"],
             text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
-        settings = json.loads((destination / "floor-candidate.json").read_text())
-        self.assertEqual(set(settings), {"disableClaudeAiConnectors", "enabledPlugins"})
         plan = json.loads((destination / "launch-plan.json").read_text())
         self.assertIn("--append-system-prompt", plan["argv"])
         self.assertNotIn("--system-prompt", plan["argv"])

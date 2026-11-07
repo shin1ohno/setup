@@ -51,8 +51,6 @@ def prepare(args):
         catalog_supports(args.catalog, args.model, args.effort)
     elif args.effort not in {"low", "medium", "high", "xhigh", "max"}:
         raise ValueError("effort is not listed by the observed Claude CLI help")
-    if args.floor == "implementation-minimal" and (args.harness != "claude" or args.profile != "dev"):
-        raise ValueError("minimal implementation floor requires Claude development profile")
     directory = args.directory
     if not directory.is_absolute() or directory.exists() or directory.is_symlink():
         raise ValueError("directory must be a new absolute private directory")
@@ -83,18 +81,8 @@ def prepare(args):
                 "--append-system-prompt", data.decode("utf-8")]
         ready = False
         note = "Effective context, omission behavior and subscription availability need a live canary."
-    if args.floor == "implementation-minimal":
-        managed = json.loads((ROOT / "cookbooks/claude-code/files/settings.json").read_text())
-        candidate = {
-            "disableClaudeAiConnectors": True,
-            "enabledPlugins": {name: False for name in managed.get("enabledPlugins", {})},
-        }
-        settings_file = directory / "floor-candidate.json"
-        settings_file.write_text(json.dumps(candidate, indent=2) + "\n")
-        argv += ["--settings", str(settings_file)]
-        note += " Floor candidate disables managed plugins/connectors; token savings are unmeasured."
     plan = dict(harness=args.harness, profile=args.profile, model=args.model,
-                effort=args.effort, reason=args.reason, floor=args.floor, cwd=str(args.cwd), argv=argv, env_set=env_set,
+                effort=args.effort, reason=args.reason, cwd=str(args.cwd), argv=argv, env_set=env_set,
                 env_unset=env_unset, instruction_bytes=len(data),
                 instruction_sha256=hashlib.sha256(data).hexdigest(),
                 launch_ready=ready, observed_model=None, observed_effort=None, note=note)
@@ -121,7 +109,6 @@ def main():
     prep.add_argument("--directory", type=Path, required=True)
     prep.add_argument("--cwd", type=Path, required=True)
     prep.add_argument("--reason", required=True)
-    prep.add_argument("--floor", choices=("unchanged", "implementation-minimal"), default="unchanged")
     prep.add_argument("--model", required=True)
     prep.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max", "ultra"), required=True)
     prep.add_argument("--catalog", type=Path)
