@@ -9,6 +9,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = ROOT / "cookbooks/claude-code/files/instructions/generated"
+# Deployed by cookbooks/claude-code/worker-profiles.rb.
+CLAUDE_PROFILES = Path.home() / ".agents/profiles"
+CODEX_HOMES = Path.home() / ".agents/codex-homes"
 PROFILES = ("common", "dev", "cos", "writing")
 CAP = 32768
 
@@ -41,6 +44,38 @@ def catalog_supports(path, model, effort):
     raise ValueError("model is not in the supplied catalog")
 
 
+def toml_string(text):
+    """Quote text as a TOML basic string (escaping what TOML forbids raw)."""
+    out = []
+    for char in text:
+        if char in '"\\':
+            out.append("\\" + char)
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            out.append(f"\\u{ord(char):04x}")
+        else:
+            out.append(char)
+    return '"' + "".join(out) + '"'
+
+
+def trust_override(cwd):
+    # Codex 0.167.0 ignores the dotted form projects."<path>".trust_level=...
+    # (the TUI still asks "Trust this folder?"); an inline table is honored and
+    # is never written back to config.toml, which the cookbook owns. It replaces
+    # any projects table, and the cookbook's config.toml has none.
+    return "projects={" + toml_string(str(cwd)) + '={trust_level="trusted"}}'
+
+
+def deployed(path, expected, what):
+    """Read a cookbook-deployed artifact and require it to match the source."""
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        raise ValueError(f"{what} is not deployed at {path}; apply claude-code::worker-profiles") from None
+    if data != expected:
+        raise ValueError(f"{what} at {path} differs from the rendered profile; re-apply claude-code::worker-profiles")
+    return data
+
+
 def prepare(args):
     data = render(args.sources, args.harness, args.profile)
     if args.model == "default" or not args.model.strip():
@@ -56,41 +91,49 @@ def prepare(args):
         raise ValueError("directory must be a new absolute private directory")
     if not args.cwd.is_absolute() or not args.cwd.is_dir():
         raise ValueError("cwd must be an existing absolute directory")
-    directory.mkdir(mode=0o700)
-    profile = directory / "profile.md"
-    profile.write_bytes(data)
-    os.chmod(profile, 0o600)
     env_set = {}
     env_unset = ["CLAUDE_CODE_EFFORT_LEVEL"]
+    extra = {}
     if args.harness == "codex":
-        worker_home = directory / "codex"
-        worker_home.mkdir(mode=0o700)
-        (worker_home / "AGENTS.md").write_bytes(data)
-        os.chmod(worker_home / "AGENTS.md", 0o600)
-        (worker_home / "config.toml").write_text(
-            'project_doc_max_bytes = 0\ncli_auth_credentials_store = "file"\n', encoding="utf-8")
+        # The fixed per-profile home: AGENTS.md is the profile, auth.json links
+        # to the shared file store. Only AGENTS.md is read; nothing is written
+        # and auth.json is never opened.
+        worker_home = args.codex_homes / args.profile
+        if not worker_home.is_absolute() or worker_home.is_symlink() or not worker_home.is_dir():
+            raise ValueError(f"Codex home is not deployed at {worker_home}; apply claude-code::worker-profiles")
+        profile = worker_home / "AGENTS.md"
+        deployed(profile, data, "Codex profile")
         env_set["CODEX_HOME"] = str(worker_home)
         env_unset += ["OPENAI_API_KEY", "CODEX_API_KEY"]
         argv = ["codex", "--no-daemon", "-C", str(args.cwd), "-m", args.model,
-                "-c", "model_reasoning_effort=" + json.dumps(args.effort)]
-        ready = False
-        note = "Separate home has no credentials; login/sharing needs an authorized canary decision."
+                "-c", "model_reasoning_effort=" + toml_string(args.effort),
+                "-c", "project_doc_max_bytes=0",
+                "-c", trust_override(args.cwd)]
+        extra["codex_home"] = str(worker_home)
     else:
+        profile = args.profiles_dir / f"{args.profile}.claude.md"
+        if not profile.is_absolute():
+            raise ValueError("Claude profile path must be absolute")
+        deployed(profile, data, "Claude profile")
+        # Drops memory files, rules and their imports (SH1-69); the profile is
+        # appended so the built-in system prompt stays.
         env_set["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
         argv = ["claude", "--model", args.model, "--effort", args.effort,
-                "--append-system-prompt", data.decode("utf-8")]
-        ready = False
-        note = "Effective context, omission behavior and subscription availability need a live canary."
+                "--append-system-prompt-file", str(profile)]
+    # Flipped only by the canary PR, after the dispatch routes use these plans.
+    ready = False
+    note = "Not launch-ready until the pro-dev canary observes context, login, model and effort."
+    directory.mkdir(mode=0o700)
     plan = dict(harness=args.harness, profile=args.profile, model=args.model,
                 effort=args.effort, reason=args.reason, cwd=str(args.cwd), argv=argv, env_set=env_set,
-                env_unset=env_unset, instruction_bytes=len(data),
+                env_unset=env_unset, profile_file=str(profile), **extra, instruction_bytes=len(data),
                 instruction_sha256=hashlib.sha256(data).hexdigest(),
                 launch_ready=ready, observed_model=None, observed_effort=None, note=note)
     plan_file = directory / "launch-plan.json"
     plan_file.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.chmod(plan_file, 0o600)
     return {key: value for key, value in plan.items() if key not in {"argv", "env_set", "env_unset"}} | {
-        "plan_file": str(plan_file), "profile_file": str(profile)}
+        "plan_file": str(plan_file)}
 
 
 def main():
@@ -112,6 +155,10 @@ def main():
     prep.add_argument("--model", required=True)
     prep.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max", "ultra"), required=True)
     prep.add_argument("--catalog", type=Path)
+    prep.add_argument("--profiles-dir", type=Path, default=CLAUDE_PROFILES,
+                      help="deployed Claude profiles (<profile>.claude.md)")
+    prep.add_argument("--codex-homes", type=Path, default=CODEX_HOMES,
+                      help="parent of the deployed per-profile CODEX_HOME directories")
     args = parser.parse_args()
     try:
         if args.command == "check":
