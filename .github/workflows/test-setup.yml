@@ -624,6 +624,7 @@ jobs:
         ruby bin/test-claude-distribution
         python3 bin/test-cloud-setup
         python3 bin/test-worker-profiles
+        python3 bin/test-worker-profiles-recipe
         python3 bin/test-git-instruction-canary
 
     - name: Chief of Staff task ledger regression suite
