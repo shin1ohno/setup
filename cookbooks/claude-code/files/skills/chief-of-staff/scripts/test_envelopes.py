@@ -34,7 +34,7 @@ class EnvelopeTest(unittest.TestCase):
     def mutate(self, command, *args, **kwargs):
         return self.call(command, self.task, "--owner", self.owner, *args, **kwargs)
 
-    def start(self, route="herdr"):
+    def start(self, route="agent"):
         self.mutate("attempt", "--kind", "codex", "--model", "fixture-model",
                     "--effort", "medium", "--reason", "fixture", "--route", route)
         identity = "--pane" if route == "herdr" else "--session"
@@ -104,8 +104,8 @@ class EnvelopeTest(unittest.TestCase):
         check = self.check(0)["check"]["id"]
         self.mutate("update", "--state", "retry", "--note", "fixture", "--evidence", "fixture")
         self.mutate("attempt", "--kind", "codex", "--model", "fixture-model",
-                    "--effort", "medium", "--reason", "fixture")
-        self.mutate("bind", "--pane", "fixture-worker-2", "--model", "fixture-model",
+                    "--effort", "medium", "--reason", "fixture", "--route", "agent")
+        self.mutate("bind", "--session", "fixture-worker-2", "--model", "fixture-model",
                     "--effort", "medium")
         self.mutate("update", "--state", "running", "--note", "fixture",
                     "--evidence", str(self.evidence))
@@ -117,6 +117,37 @@ class EnvelopeTest(unittest.TestCase):
         for path in ["/etc/passwd", "relative.log", str(self.directory)]:
             self.mutate("check", "--file", path, "--exit-status", "0", "--note", "x", ok=False)
         self.assertNotIn("checks", self.call("show", self.task)["task"]["attempts"][-1])
+
+    def test_bind_values_are_refused_on_envelope_v1_herdr(self):
+        self.mutate("attempt", "--kind", "codex", "--model", "fixture-model",
+                    "--effort", "medium", "--reason", "fixture")
+        for flag, value in (("--model", "fixture-model"), ("--effort", "medium")):
+            error = self.mutate("bind", "--pane", "fixture-worker", flag, value, ok=False)
+            self.assertIn("observe --transcript", error["error"])
+        attempt = self.call("show", self.task)["task"]["attempts"][-1]
+        self.assertIsNone(attempt["pane"])
+        self.assertIsNone(attempt["observed_model"])
+        self.mutate("bind", "--pane", "fixture-worker")
+        self.assertEqual(self.call("show", self.task)["task"]["attempts"][-1]["pane"],
+                         "fixture-worker")
+
+    def test_agent_route_still_binds_values_by_hand(self):
+        self.start("agent")
+        attempt = self.call("show", self.task)["task"]["attempts"][-1]
+        self.assertEqual(attempt["observed_model"], "fixture-model")
+        self.assertEqual(attempt["observed_effort"], "medium")
+
+    def test_legacy_herdr_still_binds_values_by_hand(self):
+        legacy = self.call("new", "--owner", self.owner, "--topic", "Legacy",
+                           "--cwd", str(self.root), "--scope", "fixture only",
+                           "--acceptance", "fixture check", "--contract", "legacy")["task"]["id"]
+        self.call("attempt", legacy, "--owner", self.owner, "--kind", "codex",
+                  "--model", "fixture-model", "--effort", "medium", "--reason", "fixture")
+        self.call("bind", legacy, "--owner", self.owner, "--pane", "fixture-worker",
+                  "--model", "fixture-model", "--effort", "medium")
+        attempt = self.call("show", legacy)["task"]["attempts"][-1]
+        self.assertEqual(attempt["observed_model"], "fixture-model")
+        self.assertEqual(attempt["observed_effort"], "medium")
 
     def test_agent_identity_has_no_invented_pane(self):
         self.start("agent")

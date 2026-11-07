@@ -294,7 +294,11 @@ earlier `observe` recorded, so `accepted` cannot rest on it. A mismatched
 file name or a non-regular file is also refused, because these logs are not a
 published interface. After a refusal, report the route as unobserved rather
 than binding the requested values by hand. `bind --model/--effort` is the
-legacy hand-recorded path; do not use it for envelope-v1 tasks.
+legacy hand-recorded path: `tasks.py` refuses it for an envelope-v1 task whose
+current attempt uses the Herdr route and points to `observe --transcript
+<session-log> --launch-prompt <prompt>`. `bind --pane` / `--session` without
+values still works there, and legacy-contract tasks and Agent-route attempts
+keep the old behaviour.
 
 `accepted` requires the observed model to match the request (a Claude alias
 matches its full model ID) and the observed effort to equal it. Pass the same
