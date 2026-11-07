@@ -29,6 +29,9 @@ TRANSITIONS = {
 TERMINAL = {"accepted", "cancelled"}
 CLAUDE_ALIASES = {"opus", "sonnet", "haiku", "fable"}
 TRANSCRIPT_LIMIT = 32 * 1024 * 1024
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+SESSION_LOG = re.compile(UUID + r"\.jsonl")
+ROLLOUT_LOG = re.compile(r"rollout-.+-(" + UUID + r")\.jsonl")
 
 
 def now():
@@ -135,7 +138,10 @@ def parser():
             cmd.add_argument("--file", required=True, type=Path)
         elif name == "observe":
             cmd.add_argument("--transcript", required=True, type=Path,
-                             help="Agent-tool subagent transcript agent-<session>.jsonl")
+                             help="Agent route: agent-<session>.jsonl; herdr route: the "
+                                  "worker's Claude <session>.jsonl or Codex rollout-*.jsonl")
+            cmd.add_argument("--launch-prompt", type=nonempty,
+                             help="herdr route: the exact prompt the worker was launched with")
         elif name == "check":
             cmd.add_argument("--file", required=True, type=Path,
                              help="Saved output of the controller's independent check")
@@ -203,14 +209,8 @@ def model_matches(requested, observed):
     return requested in CLAUDE_ALIASES and observed.startswith("claude-" + requested + "-")
 
 
-def observe_transcript(path, session):
-    """Return the single (model, effort) pair an Agent-tool transcript records.
-
-    The transcript format is not a published interface, so anything unexpected
-    (wrong file, no assistant turns, a missing field, mixed values) is refused
-    rather than guessed."""
-    if path.name != "agent-" + session + ".jsonl":
-        raise ValueError("transcript name does not match the bound session")
+def read_log(path):
+    """Read a worker log as JSON records without following links or blocking."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     descriptor = os.open(path, flags)
     try:
@@ -223,22 +223,144 @@ def observe_transcript(path, session):
             data = handle.read(TRANSCRIPT_LIMIT + 1)
     finally:
         os.close(descriptor)
-    pairs = set()
+    records = []
     for line in data.decode("utf-8").splitlines():
-        if not line.strip():
-            continue
-        record = json.loads(line)
-        if not isinstance(record, dict) or record.get("type") != "assistant":
+        if line.strip():
+            record = json.loads(line)
+            if isinstance(record, dict):
+                records.append(record)
+    return records
+
+
+def text(value):
+    return value if isinstance(value, str) and value else None
+
+
+def log_time(record):
+    try:
+        moment = datetime.fromisoformat(record["timestamp"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("a counted log entry lacks a valid timestamp") from None
+    if moment.tzinfo is None:
+        raise ValueError("a counted log entry has a timestamp without a time zone")
+    return moment
+
+
+def inside(value, directory):
+    return isinstance(value, str) and Path(value).is_absolute() and \
+        Path(value).resolve().is_relative_to(directory)
+
+
+def blocks_text(content):
+    """Text of a message whose content is a string or a list of text blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list) and all(isinstance(b, dict) for b in content) and \
+            {b.get("type") for b in content} <= {"text", "input_text"}:
+        return "".join(b.get("text", "") for b in content)
+    return None
+
+
+def require_launch_prompt(first, prompt):
+    """The worker's log opens with the prompt the controller launched it with.
+
+    cwd and time window cannot tell a worker from a controller that shares its
+    directory; the controller's own first message is never the launch prompt."""
+    if first is None:
+        raise ValueError("the log records no first user message")
+    if first.strip() != prompt.strip():
+        raise ValueError("the log's first user message is not this attempt's launch prompt")
+
+
+def agent_pairs(path, session):
+    """(model, effort) of every assistant turn in an Agent-tool transcript."""
+    if path.name != "agent-" + session + ".jsonl":
+        raise ValueError("transcript name does not match the bound session")
+    pairs = []
+    for record in read_log(path):
+        if record.get("type") != "assistant":
             continue
         message = record.get("message")
-        model = message.get("model") if isinstance(message, dict) else None
-        effort = record.get("effort")
-        if not isinstance(model, str) or not model or not isinstance(effort, str) or not effort:
-            raise ValueError("an assistant turn lacks its model or effort")
-        pairs.add((model, effort))
-    if len(pairs) != 1:
-        raise ValueError("transcript must record exactly one model/effort pair")
-    return pairs.pop()
+        model = text(message.get("model")) if isinstance(message, dict) else None
+        pairs.append((model, text(record.get("effort"))))
+    return pairs
+
+
+def claude_pairs(path, cwd, since, prompt):
+    """(model, effort) of the worker's own assistant turns since the attempt began.
+
+    Harness-inserted `<synthetic>` turns and sidechain (subagent) turns are
+    not the worker's effective selection and are skipped."""
+    if not SESSION_LOG.fullmatch(path.name):
+        raise ValueError("Claude session log must be named <session-uuid>.jsonl")
+    session = path.name[:-len(".jsonl")]
+    started, pairs, first = False, [], None
+    for record in read_log(path):
+        if record.get("sessionId", session) != session:
+            raise ValueError("a log entry belongs to another session")
+        if not started and "cwd" in record:
+            if not inside(record["cwd"], cwd):
+                raise ValueError("the session did not start inside the task directory")
+            started = True
+        if record.get("type") == "user" and first is None and record.get("isMeta") is not True \
+                and record.get("isSidechain") is not True:
+            message = record.get("message")
+            first = blocks_text(message.get("content")) if isinstance(message, dict) else None
+            first = "" if first is None else first
+        if record.get("type") != "assistant" or record.get("isSidechain") is True:
+            continue
+        message = record.get("message")
+        model = text(message.get("model")) if isinstance(message, dict) else None
+        if model == "<synthetic>" or log_time(record) < since:
+            continue
+        pairs.append((model, text(record.get("effort"))))
+    if not started:
+        raise ValueError("the log records no working directory")
+    require_launch_prompt(first, prompt)
+    return pairs, session
+
+
+def codex_pairs(path, cwd, since, prompt):
+    """(model, effort) of every Codex turn_context since the attempt began."""
+    match = ROLLOUT_LOG.fullmatch(path.name)
+    if not match:
+        raise ValueError("Codex log must be named rollout-<time>-<session-uuid>.jsonl")
+    records = read_log(path)
+    meta = records[0].get("payload") if records and records[0].get("type") == "session_meta" else None
+    if not isinstance(meta, dict) or meta.get("id") != match.group(1):
+        raise ValueError("the rollout does not open with this session's session_meta")
+    if not inside(meta.get("cwd"), cwd):
+        raise ValueError("the session did not start inside the task directory")
+    first = None
+    for record in records:
+        payload = record.get("payload")
+        item = payload.get("item") if isinstance(payload, dict) else None
+        if isinstance(item, dict) and record.get("type") == "event_msg" \
+                and payload.get("type") == "item_completed" and item.get("type") == "UserMessage":
+            first = blocks_text(item.get("content")) or ""
+            break
+    require_launch_prompt(first, prompt)
+    pairs = []
+    for record in records:
+        if record.get("type") != "turn_context" or log_time(record) < since:
+            continue
+        payload = record.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
+        pairs.append((text(payload.get("model")), text(payload.get("effort"))))
+    return pairs, match.group(1)
+
+
+def single_pair(pairs):
+    """Return the one (model, effort) pair, or the reason the log cannot give one."""
+    if not pairs:
+        return None, "the log records no model/effort for this attempt"
+    if any(model is None or effort is None for model, effort in pairs):
+        return None, "a counted turn lacks its model or effort"
+    distinct = sorted(set(pairs))
+    if len(distinct) != 1:
+        return None, "the log records mixed model/effort pairs: " + \
+            ", ".join(m + " / " + e for m, e in distinct)
+    return distinct[0], None
 
 
 def check_file(path, task, root):
@@ -418,13 +540,32 @@ def run(args, root):
         if task["state"] not in {"starting", "running", "reviewing"}:
             raise ValueError("observe requires a live attempt")
         attempt = task["attempts"][-1]
-        if attempt.get("route") != "agent" or not attempt.get("session"):
-            raise ValueError("observe reads Agent-tool transcripts; bind the session first")
-        model, effort = observe_transcript(args.transcript, attempt["session"])
+        if (attempt.get("route") == "agent") == bool(args.launch_prompt):
+            raise ValueError("--launch-prompt is required on the herdr route and only there")
+        if attempt.get("route") == "agent":
+            if not attempt.get("session"):
+                raise ValueError("observe reads Agent-tool transcripts; bind the session first")
+            pairs, session = agent_pairs(args.transcript, attempt["session"]), attempt["session"]
+        else:
+            if not attempt.get("pane"):
+                raise ValueError("bind the worker pane or terminal before observing its log")
+            reader = claude_pairs if attempt["kind"] == "claude" else codex_pairs
+            pairs, session = reader(args.transcript, Path(task["cwd"]).resolve(),
+                                    datetime.fromisoformat(attempt["created_at"]),
+                                    args.launch_prompt)
+        pair, refusal = single_pair(pairs)
+        attempt["observed_source"] = str(args.transcript)
+        attempt["observed_session"] = session
+        if refusal:
+            # A refused log clears earlier values so `accepted` cannot rest on them.
+            attempt["observed_model"] = attempt["observed_effort"] = None
+            event(task, "Observation refused: " + refusal, [str(args.transcript)])
+            save_task(root, task)
+            raise ValueError(refusal)
+        model, effort = pair
         attempt["observed_model"] = model
         attempt["observed_effort"] = effort
-        attempt["observed_source"] = str(args.transcript)
-        event(task, "Observed " + model + " / " + effort + " in the worker transcript",
+        event(task, "Observed " + model + " / " + effort + " in the worker log",
               [str(args.transcript)])
         result["observed"] = {"model": model, "effort": effort}
     elif args.command == "receive":
@@ -434,7 +575,8 @@ def run(args, root):
         task["envelope"] = envelope
         task["state"] = "reviewing"
         event(task, "Received bounded envelope", [str(args.file)])
-        result["envelope"] = envelope
+        save_task(root, task)
+        return {"task_id": task["id"], "state": task["state"], "envelope": envelope}
     elif args.command == "check":
         if task["state"] not in {"running", "reviewing"}:
             raise ValueError("check requires a running or reviewing attempt")
