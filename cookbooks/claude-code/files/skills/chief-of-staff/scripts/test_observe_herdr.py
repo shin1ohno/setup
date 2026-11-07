@@ -44,7 +44,7 @@ class HerdrObserveTest(unittest.TestCase):
         return self.call(command, self.task, "--owner", self.owner, *args, **kwargs)
 
     def start(self, kind="claude", model="sonnet", effort="medium", bind=True):
-        self.mutate("attempt", "--kind", kind, "--model", model, "--effort", effort,
+        self.mutate("attempt", "--profile", "dev", "--kind", kind, "--model", model, "--effort", effort,
                     "--reason", "fixture", "--route", "herdr")
         if bind:
             self.mutate("bind", "--pane", "t2")

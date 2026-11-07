@@ -125,7 +125,8 @@ def parser():
             cmd.add_argument("--reason", required=True, type=nonempty)
             cmd.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max", "ultra"))
             cmd.add_argument("--route", choices=("herdr", "agent"), default="herdr")
-            cmd.add_argument("--profile", choices=("common", "dev", "cos", "writing"), default="dev")
+            cmd.add_argument("--profile", choices=("common", "dev", "cos", "writing"), required=True,
+                             help="Worker instruction profile; recorded on the attempt")
             cmd.add_argument("--reuse-agent", action="store_true",
                              help="Reuse the previous settled worker's identity")
         elif name == "bind":
