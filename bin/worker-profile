@@ -17,9 +17,10 @@ CAP = 32768
 # Launch routes a plan can be prepared for (dispatch.md "Profile launch per route").
 ROUTES = ("hc", "agent", "herdr1")
 # Harness/route pairs the pro-dev canary observed with only the profile's layers,
-# login, model and effort (2026-11-08, docs/runbook/worker-instruction-profiles.md).
+# login, model and effort (2026-11-08/09, docs/runbook/worker-instruction-profiles.md).
 # Every other pair stays not launch-ready until a canary observes it.
-CANARIED = {("claude", "hc"), ("claude", "agent"), ("codex", "hc")}
+CANARIED = {("claude", "hc"), ("claude", "agent"), ("codex", "hc"),
+            ("claude", "herdr1"), ("codex", "herdr1")}
 
 
 def readiness(harness, route):
@@ -27,12 +28,12 @@ def readiness(harness, route):
     if route is None:
         return False, "Not launch-ready: readiness is per route; pass --route (hc, agent or herdr1)."
     if (harness, route) in CANARIED:
-        return True, (f"Launch-ready for {harness} on {route}: the 2026-11-08 pro-dev canary observed "
+        date = "2026-11-09" if route == "herdr1" else "2026-11-08"
+        return True, (f"Launch-ready for {harness} on {route}: the {date} pro-dev canary observed "
                       "only this profile's layers, login, model and effort.")
     if route == "agent":
         return False, "Not launch-ready: the Agent tool route is Claude only."
-    return False, (f"Not launch-ready for {harness} on {route}: the 2026-11-08 pro-dev canary covered "
-                   "hc and the Agent tool only; Herdr 1 launches (pane split, agent start) were not observed.")
+    return False, f"Not launch-ready for {harness} on {route}: this harness/route pair has not been canaried."
 
 
 def checked_bytes(path, harness):

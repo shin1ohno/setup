@@ -1,9 +1,11 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Evaluate resource declarations, never resource bodies or shell commands.
+# Evaluate resource declarations; only the read-only policy generator may run.
 require "digest"
 require "json"
+require "open3"
+require "shellwords"
 require "tmpdir"
 
 ROOT = File.expand_path("..", __dir__)
@@ -40,6 +42,21 @@ class Graph
 
   def node
     @node
+  end
+
+  def run_command(command)
+    generator = File.join(ROOT, "cookbooks/codex-cli/files/generate_config.sh")
+    expected = ["env", "-u", "CODEX_CONFIG_PREAMBLE", "HOME=#{@home}",
+                "bash", generator, "--permission-policy"]
+    raise ArgumentError, "unexpected graph command" unless Shellwords.split(command) == expected
+
+    # Execute fixed argv, never the supplied shell text. Use only the fixture
+    # home and omit an ambient preamble override, just as the recipe does.
+    output, status = Open3.capture2({"HOME" => @home, "CODEX_CONFIG_PREAMBLE" => nil},
+                                   "bash", generator, "--permission-policy")
+    raise "permission generator failed" unless status.success?
+
+    Struct.new(:stdout).new(output)
   end
 
   def evaluate(text, path)
@@ -90,6 +107,13 @@ Dir.mktmpdir("distribution-graph-") do |home|
   profiles_path = File.join(COOKBOOK, "worker-profiles.rb")
   profiles = Graph.new(home)
   profiles.evaluate(File.read(profiles_path), profiles_path)
+  refused = false
+  begin
+    profiles.run_command("echo unexpected-command")
+  rescue ArgumentError
+    refused = true
+  end
+  raise "graph must refuse unrelated commands" unless refused
   expected_profile_resources = %w[.agents .agents/profiles .claude .claude/agents .agents/codex-homes]
     .map { |dir| ["directory", "#{home}/#{dir}"] }
   %w[common dev cos writing].each do |profile|

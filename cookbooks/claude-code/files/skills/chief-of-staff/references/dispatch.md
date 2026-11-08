@@ -41,11 +41,12 @@ uploaded. Store enough context to resume, but never copy secrets into briefs.
 python3 <skill-dir>/scripts/tasks.py new --owner <socket#controller-pane> \
   --topic <topic> --cwd <absolute-dir> --scope <authorized-scope> \
   --acceptance <criterion> [--acceptance <criterion> ...]
-python3 <skill-dir>/scripts/tasks.py attempt <task-id> --owner <verified-owner> \
-  --kind codex --model <verified-model> --effort <verified-effort> --profile <profile> \
-  --reason <routing-or-repair-reason>
 # Prepare the launch plan; see "Worker profiles and launch plans".
 python3 <setup-checkout>/bin/worker-profile prepare --harness codex --route <hc|herdr1> --profile <profile> ...
+# When using the validated plan, record its path on the reserved attempt.
+python3 <skill-dir>/scripts/tasks.py attempt <task-id> --owner <verified-owner> \
+  --kind codex --model <verified-model> --effort <verified-effort> --profile <profile> \
+  --route <hc|herdr1> --plan <absolute-launch-plan.json> --reason <routing-or-repair-reason>
 python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id>
 # Launch through the verified route.
 python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state running \
@@ -66,12 +67,32 @@ python3 <skill-dir>/scripts/tasks.py list --owner <socket#controller-pane>
 python3 <skill-dir>/scripts/tasks.py show <task-id>
 ```
 
-`attempt` reserves the next attempt and a unique Herdr name before any mutation.
+Use the same route vocabulary in `prepare` and `attempt`: `hc` for Herdr 2,
+`herdr1` for Herdr 1, and `agent` for the Agent tool. Pass the route explicitly
+for every new dispatch; omission retains legacy `herdr` for old callers.
+`--plan` records
+the file used for a fresh profile launch on the attempt (`show` exposes `route`
+and `plan`); omit it for a fresh default launch, which records `plan: null`.
+The path must be absolute, point to an existing JSON file, and name the same
+route as the attempt. This validation does not prove the plan was executed.
+Reused workers inherit their previous plan, including null; an explicitly
+supplied different plan is refused because reuse does not launch a new process.
+
+Legacy `herdr` records, and records without a route, mean an unspecified
+terminal route: either `hc` or `herdr1`. They keep pane/terminal binding and
+session-log observation; never infer which route they used or rewrite their
+history. `--route herdr` remains accepted for old callers, but new callers use
+the three explicit routes. Reusing a worker requires the same recorded route;
+an unspecified legacy route is not automatically equivalent to either one.
+
+`attempt` reserves the next attempt and a unique Herdr name before any terminal mutation.
 When the user explicitly requests a new agent or separate pane, create the task
 with `new --fresh-worker`. Its attempt and bind operations reject reuse. Use a
 new pane returned by a fresh split, even if an old worker is idle.
 Unless the user requests a new agent or separate pane, for a correction to the same settled worker, pass `--reuse-agent` with the same
-kind/model/effort: this consumes an attempt but retains its live name. Re-bind its
+kind/model/effort/route: this consumes an attempt but retains its live name and
+launch plan. Pass the recorded `--route`, omit `--plan`, and skip `prepare`.
+Re-bind its
 verified existing pane, skip `agent start`, and prompt that existing name only
 after confirming it is ready. Changing harness/model uses a fresh worker.
 Keep the JSON output: it includes `agent` and `attempt`. Save the full worker
@@ -103,6 +124,11 @@ for an actual external/authorization blocker or stopped supervision.
 To resume monitoring the same worker, use `update --state running` (or
 `starting`/`reviewing` matching the observed state) with new live evidence;
 do not create another attempt just because the controller was interrupted.
+If reservation failed after preparation, first `show` the task and reconcile
+its state. Re-read and validate the saved plan, then retry `attempt` with that
+same plan file. Do not run `prepare` again into the existing directory or
+silently switch to a default launch because reservation failed. For a changed
+launch choice, prepare into a new unique directory after reconciling the task.
 The default `list` includes unreported terminal results. Only call `reported`
 after actually delivering the update; it clears `report_pending`. Earlier status
 updates do not hide a subsequently accepted result.
@@ -276,7 +302,8 @@ not change the user's own profile for this. Use argv arrays; never interpolate a
 topic into shell code.
 
 Record the choice with `attempt --kind ... --model ... --effort ...
---profile <profile> --route <route> --reason ... --owner ...` (the reason names
+--profile <profile> --route <hc|herdr1|agent> [--plan <absolute-launch-plan.json>]
+--reason ... --owner ...` (the reason names
 the table row and any escalation). Record observed values only from evidence:
 
 - Herdr route (Herdr 1 panes and `hc` terminals): after the worker's first
@@ -340,11 +367,12 @@ launches. A session the owner opens directly keeps the full instruction set.
 
 ### Prepare and read the plan
 
-Before each launch, prepare a plan with `bin/worker-profile` from a setup
+Before each fresh launch, select the harness, profile, model, effort, reason
+and route, then prepare a plan with `bin/worker-profile` from a setup
 checkout whose `main` matches the applied claude-code cookbook (on pro-dev
-`~/ManagedProjects/setup`). Pass the attempt's harness, profile, model, effort
-and reason, the task cwd, a new directory under the task directory, and the
-attempt's launch route: `hc` for an hc terminal, `agent` for the Agent tool,
+`~/ManagedProjects/setup`). Pass those selected values, the task cwd, a new
+unique directory under the task directory, and the selected launch route:
+`hc` for an hc terminal, `agent` for the Agent tool,
 `herdr1` for a Herdr 1 pane. Every flag except `--catalog` is required; without
 `--route` the plan always says `launch_ready: false`. Pass the call as an argv
 array, never a shell string:
@@ -353,27 +381,37 @@ array, never a shell string:
 python3 <setup-checkout>/bin/worker-profile prepare --harness <claude|codex> \
   --route <hc|agent|herdr1> --profile <profile> --model <model> \
   --effort <effort> --reason <attempt-reason> \
-  --cwd <task-cwd> --directory <task-dir>/plan-<attempt> \
+  --cwd <task-cwd> --directory <task-dir>/plan-<unique-launch-token> \
   [--catalog <task-dir>/codex-models.json]   # Codex: saved `codex debug models` output
 ```
 
 `prepare` never launches anything. It refuses (exit 1, `{"error": ...}`) when the
 deployed profile or Codex home is missing or differs from the rendered source,
-and it writes `<task-dir>/plan-<attempt>/launch-plan.json` otherwise. Read that
-file and use the profile launch below **only when all of these hold**:
+and it writes `<task-dir>/plan-<unique-launch-token>/launch-plan.json` otherwise.
+The directory identifies a preparation, not an attempt number that has yet to
+be reserved. Keep the returned path for retries; never overwrite that directory.
+Read that file and use the profile launch below **only when all of these hold**:
 
 - `launch_ready` is exactly `true`;
-- `harness`, `route`, `profile`, `model`, `effort` and `cwd` equal the attempt and task;
+- `harness`, `route`, `profile`, `model`, `effort` and `cwd` equal the selected values and task;
 - `argv[0]` equals `harness`.
 
-Otherwise (a refusal, `launch_ready: false`, or any mismatch) keep today's
+An existing preparation directory or a failed attempt reservation is a state
+reconciliation problem, not a fallback condition. Follow the retry procedure
+in Ledger operations and keep the saved plan. For an unavailable/stale deployed
+profile, `launch_ready: false`, or a mismatch in the checks above, keep today's
 launch exactly as described in "Launch example" and "Model and effort per
 attempt", including the worker-floor settings and the `--tools` allowlist for
-implementation workers, and do not call the worker profile-isolated. `launch_ready` is true only for claude×hc, claude×agent and codex×hc (the
-2026-11-08 pro-dev canary). Herdr 1 (`--route herdr1`) stays on today's launch
-until its own canary passes; its plan says `launch_ready: false`. Record which launch
-was used in the `update --state running` note (`profile plan <plan-file>` or
-`launch_ready false: default launch`).
+implementation workers, and do not call the worker profile-isolated. `launch_ready`
+is true for claude×hc, claude×agent and codex×hc (2026-11-08), and claude×herdr1
+and codex×herdr1 (2026-11-09 pro-dev canary). Codex on the Agent tool remains
+unsupported. Prepare and validate the plan before reserving the attempt, then
+pass the same selected values and `--plan <absolute-plan-file>` to `attempt`
+only when launching from it. Check the returned attempt against the plan before
+creating a pane. Reuse follows the Ledger operations procedure: no preparation,
+no new launch, and inheritance of the original plan. Omit `--plan`
+on a fresh fallback and record `launch_ready false: default launch` (or the actual
+refusal/mismatch) in the `update --state running` note.
 
 ### Profile launch per route
 

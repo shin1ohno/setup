@@ -70,6 +70,9 @@ class WorkerProfilesRecipeTest(unittest.TestCase):
         cookbook = self.root / "cookbook"
         shutil.copytree(GENERATED, cookbook / "files/instructions/generated")
         shutil.copy(RECIPE, cookbook / "worker-profiles.rb")
+        generator = self.root / "codex-cli/files/generate_config.sh"
+        generator.parent.mkdir(parents=True)
+        shutil.copy(REPO / "cookbooks/codex-cli/files/generate_config.sh", generator)
         common = (GENERATED / "common.codex.md").read_bytes()
         # The recipe joins common and dev with one newline.
         filler = dev_codex_bytes - len(common) - 1
