@@ -4,7 +4,7 @@
 
 ## Context
 
-`ccs`（セッション検索のクライアント）の Python パッケージとテストは `cookbooks/session-search/files/ccs/` にあり、setup の CI が毎回そのスイートを回していました。パッケージは stdlib だけで動き、setup の helper に依存しません。
+`ccs`（セッション検索のクライアント）の Python パッケージとテストは `cookbooks/session-search/` の中に同梱され、setup の CI が毎回そのスイートを回していました。パッケージは stdlib だけで動き、setup の helper に依存しません。
 
 ADR 0013 は ai-memory について、アプリを独立リポへ移し、setup が 40 桁の SHA を pin して各ホストが匿名 HTTPS で取得する形を決めています（Decision 8、S3）。ccs にも同じ形を使います。ccs の配布先は CT 119 ではなく開発機と Mac で、取得は対象ユーザーの権限で動きます。
 
