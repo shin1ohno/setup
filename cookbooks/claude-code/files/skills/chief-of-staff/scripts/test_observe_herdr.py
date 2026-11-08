@@ -109,6 +109,62 @@ class HerdrObserveTest(unittest.TestCase):
         return self.mutate("update", "--state", "accepted", "--note", "review",
                            "--evidence", "independent fixture review", "--check", check, ok=ok)
 
+    def remote_start(self, kind="claude", model="sonnet"):
+        self.start(kind=kind, model=model, route="herdr1", bind=False)
+        self.mutate("bind", "--pane", "machine:mini-id#w1:p2")
+        self.mutate("update", "--state", "running", "--note", "remote fixture",
+                    "--evidence", str(self.evidence))
+
+    def remote_observe(self, path, cwd="/Users/remote/task", ok=True, prompt=PROMPT):
+        return self.mutate("observe", "--transcript", str(path),
+                           "--launch-prompt", prompt, "--remote-cwd", cwd, ok=ok)
+
+    def test_remote_claude_exact_cwd_allows_acceptance(self):
+        self.remote_start()
+        path = self.claude_log([self.turn()], cwd="/Users/remote/task")
+        self.observe(path, ok=False)
+        self.remote_observe(path)
+        self.assertEqual(self.attempt()["observed_remote_cwd"], "/Users/remote/task")
+        self.receive()
+        self.accept()
+
+    def test_remote_codex_exact_cwd_allows_acceptance(self):
+        self.remote_start(kind="codex", model="gpt-6.1-sol")
+        self.remote_observe(self.codex_log([self.context()], cwd="/Users/remote/task"))
+        self.receive()
+        self.accept()
+
+    def test_remote_mismatch_including_child_cwd_revokes_previous_proof(self):
+        self.remote_start()
+        for actual in ("/Users/remote/other", "/Users/remote/task/child"):
+            self.remote_observe(self.claude_log([self.turn()], cwd="/Users/remote/task"))
+            self.remote_observe(self.claude_log([self.turn()], cwd=actual), ok=False)
+            self.assertIsNone(self.attempt()["observed_model"])
+        self.receive()
+        self.accept(ok=False)
+
+    def test_remote_preserves_prompt_session_time_and_pair_checks(self):
+        self.remote_start()
+        cases = [
+            self.claude_log([self.turn()], cwd="/Users/remote/task", prompt="wrong"),
+        ]
+        self.remote_observe(cases[0], ok=False)
+        for turns in ([self.turn(at=BEFORE)], [self.turn(effort=None)],
+                      [self.turn(), self.turn(effort="high")],
+                      [self.turn(sessionId=CODEX_SESSION)]):
+            self.remote_observe(self.claude_log(turns, cwd="/Users/remote/task"), ok=False)
+        self.remote_observe(self.claude_log([self.turn(model="claude-haiku-5-5")],
+                                           cwd="/Users/remote/task"))
+        self.receive()
+        self.accept(ok=False)
+
+    def test_remote_cwd_requires_explicit_remote_binding_and_absolute_path(self):
+        self.start(route="herdr1")
+        path = self.claude_log([self.turn()])
+        self.assertIn("machine-qualified", self.remote_observe(path, ok=False)["error"])
+        for cwd in ("relative", "/", "/a/../b", "/a/./b", "/a/"):
+            self.assertIn("normalized absolute", self.remote_observe(path, cwd, ok=False)["error"])
+
     def test_terminal_routes_record_plan_bind_and_observe(self):
         for route in ("hc", "herdr1", "herdr"):
             with self.subTest(route=route):
