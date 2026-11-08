@@ -631,3 +631,181 @@ path depends on the cwd, as today. Codex writes rollouts under
 A route that cannot carry the profile text, the model and the effort together
 cannot meet a profile-isolated acceptance; use another route or report that
 blocker. The same rendered artifact supplies every route.
+
+## Remote worker through a saved Herdr machine
+
+Use this route when the owner authorizes work on another host. Driving a work
+host from a personal controller, including moving its brief, transcript and
+artifacts back, needs the owner's data-boundary decision first. `sh1-cloud` was
+not verified; the live canary used pro-dev → mini (2026-11-09). Do not infer
+reachability, trust or harness availability on another host from that result.
+
+Read the installed Herdr skill's "Use IDs and caller context" and verify the
+local controller first. Pane IDs **and agent names are scoped per machine**.
+Save `herdr machine list --json`; select an enabled saved profile's immutable
+ID as `machine`, and its exact SSH `target` as `host`. Use that same
+`--machine "$machine"` prefix for every remote API call. Never combine it with
+`--session`, use local IDs remotely, or rely on the TUI-selected machine.
+Forwarding requires a running compatible remote server; do not install, start,
+restart or upgrade one as an automatic fallback. Probe both APIs and SSH before
+launch. Use `ssh -n` for reads (SSH otherwise consumes a script's stdin).
+
+Set these values before running the Bash blocks: `ledger` (absolute local
+`tasks.py`), `owner` (verified local socket#pane), `local_cwd` (existing local
+checkout/artifact directory), `machine`, `host`, `remote_dir` (new private remote
+task directory), and `local_dir` (returned by `new`). For a canary, export
+`COS_STATE_DIR` to an isolated directory under the controller's task directory.
+Reserve with the ordinary `new` / `attempt` commands: `--route herdr1`, explicit
+model/effort/profile, and a reason naming the remote machine. Save their JSON;
+set `task`, `attempt` and `worker` from it. Keep the owner local. Record remote
+identity as `machine:<profile-id>#<pane-id>` in `bind --pane`; the ledger accepts
+this opaque string without a schema change. Keep `remote_dir`, target, remote
+session from the saved profile, agent name and transfer mapping in the running
+note and evidence. Never pass the qualified ledger string to Herdr: its target
+is the **raw remote** pane ID or agent name plus `--machine`.
+
+Probe remote `claude --help` and its existing trusted project entries before
+launch. Choose a task directory under an already trusted directory. Do not
+change trust settings or answer a trust dialog. Prepare the worker profile on
+the remote host using its deployed setup checkout, with the remote cwd and a
+plan directory inside `remote_dir`; apply the profile-plan gate above. Copy a
+ready plan back before recording `--plan`; use its remote environment and argv,
+not the controller's installed profile. A missing/stale profile uses the
+existing documented default-launch fallback, recorded explicitly. The example
+below is that fallback, for a small `common` canary (haiku / low); implementation
+and document work still require their existing worker-floor route additions.
+
+The controller writes `brief-<attempt>.md` in `local_dir`. It must specify both
+filesystems: the worker writes `report.txt`, `check.txt`, and
+`envelope-<attempt>.json` **inside `remote_dir`**, but the envelope's artifact and
+criterion evidence strings use the corresponding absolute paths in
+`local_dir`. Include task ID, attempt, exact criteria and envelope-v1 limits.
+Require the envelope to be written last, only after the other files close, and
+not modified afterwards. This predeclared mapping preserves the worker's exact
+envelope bytes and verdicts during transfer; the controller never upgrades a
+verdict or rewrites a path after receipt. Larger jobs declare their own finite
+file manifest before launch; never fetch paths supplied by an unvalidated
+worker envelope. Do not send local controller `COS_*` notification variables:
+that Stop hook would target the wrong server. The controller-side wait is the
+notification path, so omit the local notification command from the remote brief.
+
+The following uses simple controller-chosen absolute paths without spaces or
+shell metacharacters. Validate them before constructing SSH command strings;
+use subprocess argv plus remote-shell quoting for other path forms. Save all
+outputs under `local_dir`. Here a new isolated workspace is authorized; if it
+is not, first obtain an explicitly authorized remote topology. Never split,
+move or close someone else's pane to run this canary.
+
+```bash
+[[ "$remote_dir" =~ ^/[a-zA-Z0-9_./-]+$ && "$remote_dir" != *..* ]] || exit 1
+[[ "$attempt" =~ ^[1-9][0-9]*$ ]] || exit 1
+herdr --machine "$machine" agent list > "$local_dir/agents-before.json"
+# remote_dir was created exclusively for this task during profile preparation.
+scp "$local_dir/brief-$attempt.md" "$host:$remote_dir/brief-$attempt.md"
+herdr --machine "$machine" workspace create --cwd "$remote_dir" --label "$worker" --no-focus > "$local_dir/create.json"
+pane=$(jq -er '.result.root_pane.pane_id' "$local_dir/create.json")
+workspace=$(jq -er '.result.workspace.workspace_id' "$local_dir/create.json")
+python3 "$ledger" bind "$task" --owner "$owner" --pane "machine:$machine#$pane" > "$local_dir/bind.json"
+herdr --machine "$machine" pane run "$pane" 'unset CLAUDE_CODE_EFFORT_LEVEL COS_WORKER_TASK_ID COS_WORKER_ATTEMPT COS_CONTROLLER_PANE COS_CONTROLLER_SESSION COS_STATE_DIR'
+herdr --machine "$machine" pane process-info --pane "$pane" > "$local_dir/shell.json"
+```
+
+Read `shell.json` and confirm the foreground is the interactive shell; re-probe
+until ready, not a fixed sleep. Only then run the next block. A nonzero start
+is ambiguous delivery: read this pane and `agent get`, never blindly start a
+second worker. A blocked startup is a blocker, not consent to answer a dialog.
+
+```bash
+launch_prompt="Read $remote_dir/brief-$attempt.md and execute that brief exactly."
+herdr --machine "$machine" agent start "$worker" --kind claude --pane "$pane" -- --model haiku --effort low "$launch_prompt" > "$local_dir/start.json" 2> "$local_dir/start.err" &
+start_pid=$!
+activity=unobserved; deadline=$((SECONDS+60))
+while [ $SECONDS -lt $deadline ]; do
+  if herdr --machine "$machine" agent wait "$pane" --until working --until blocked --timeout 1000 > "$local_dir/activity.json" 2> "$local_dir/activity.err"; then
+    activity=observed; break
+  fi
+  sleep 1
+done
+if wait "$start_pid"; then start_rc=0; else start_rc=$?; fi
+printf 'start_rc=%s activity=%s\n' "$start_rc" "$activity"
+herdr --machine "$machine" agent get "$worker" > "$local_dir/identity.json"
+[ "$start_rc" = 0 ] && [ "$activity" = observed ]
+```
+
+Monitor the newly created raw pane concurrently with `agent start`: a short
+first turn can finish before start returns ready, so waiting only afterwards
+misses its working transition. The raw pane is the one just created, not an
+existing agent. Read the activity state (working versus blocked), start result
+and identity together. Unobserved activity is not proof of failure or permission
+to relaunch; reconcile files and live state first.
+
+Read the activity and identity, then record `update --state running --note ...
+--evidence <activity.json>` only for observed execution. Run this replacement
+for the **local-file** wait in the background on the controller. It checks the
+remote envelope directly, including while the worker is settled. SSH exit 1
+means no file; other errors mean transport failure, never worker disappearance.
+
+```bash
+end=$((SECONDS+600)); why=timeout
+while [ $SECONDS -lt $end ]; do
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$host" "test -f '$remote_dir/envelope-$attempt.json'"
+  rc=$?
+  if [ "$rc" = 0 ]; then why=envelope; break; fi
+  if [ "$rc" != 1 ]; then why=transport; break; fi
+  if ! herdr --machine "$machine" agent get "$worker" > "$local_dir/poll.json" 2> "$local_dir/poll.err"; then
+    why=gone; break
+  fi
+  if herdr --machine "$machine" agent wait "$worker" --until blocked --timeout 15000 > "$local_dir/wait.json" 2> "$local_dir/wait.err"; then
+    why=blocked; break
+  fi
+done
+echo "reason=$why"
+```
+
+`envelope`: transfer the predefined files, then `receive` below. `blocked`:
+read `agent get` and `agent read` on the same machine, report the dialog, and
+never answer it; after the owner resolves it, re-arm this wait. `gone` is only
+a candidate: repeat the remote file check and `agent get`, inspect its error
+and `pane get`; a connection error is `transport`, not an exited worker.
+`transport`: save the error, re-probe connectivity and reconcile remote state
+before any retry. `timeout`: inspect current progress and re-arm as with the
+local wait. A file appearing during the last wait can be found by the next
+file check; always recheck before declaring failure. Do not mistake a failed
+`agent wait` alone for completion.
+
+Only on `reason=envelope`, in a fresh attempt directory with none of the local
+destination files present, copy the artifacts first and publish the local
+envelope last. A transfer error stops receipt; keep partial files for diagnosis,
+reconcile before retrying, and never treat a partial envelope as completion.
+Run the block with Bash `set -e` so a failed copy cannot fall through to receive.
+
+```bash
+scp "$host:$remote_dir/report.txt" "$local_dir/report.txt"
+scp "$host:$remote_dir/check.txt" "$local_dir/check.txt"
+scp "$host:$remote_dir/envelope-$attempt.json" "$local_dir/envelope-$attempt.part"
+mv "$local_dir/envelope-$attempt.part" "$local_dir/envelope-$attempt.json"
+python3 "$ledger" receive "$task" --owner "$owner" --file "$local_dir/envelope-$attempt.json" > "$local_dir/receive.json"
+```
+
+`receive` validates local containment and criterion coverage and enters
+`reviewing`, **not accepted**. Independent review and `check` remain mandatory.
+For model/effort observation copy the worker's own session log without editing
+its cwd or prompt and use `observe` as above. The current ledger checks its cwd
+against the local task cwd: differing remote/local absolute paths (including
+the mini canary) cannot pass that gate. Report observed transcript values with
+the raw log, but leave the task in reviewing; do not forge a local cwd, use
+legacy hand-binding, or call the task accepted. Full ledger acceptance on this
+route currently requires matching absolute cwd paths on both hosts. This
+canary verifies dispatch and receipt, not that additional acceptance gate.
+
+After saving the worker output and any session log, close only the workspace
+returned by this launch, compare pre-existing agents by pane/terminal identity
+and name (their status can legitimately advance), and remove only the remote
+task directory created for this task. Save the final lists and absence probes.
+
+```bash
+herdr --machine "$machine" workspace close "$workspace" > "$local_dir/close.json"
+herdr --machine "$machine" agent list > "$local_dir/agents-after.json"
+herdr --machine "$machine" pane list > "$local_dir/panes-after.json"
+ssh -n "$host" "rm -rf -- '$remote_dir' && test ! -e '$remote_dir'"
+```
