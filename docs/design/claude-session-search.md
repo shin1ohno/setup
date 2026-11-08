@@ -200,7 +200,7 @@ Standard-mechanism check:
   - Rotating the key changes every tag from then on, and that is acceptable. One key per boundary.
 - **Fixed point**: masking already-masked text changes nothing (`redact(redact(x)) == redact(x)`), and the detector excludes `[REDACTED:…]` placeholders. A property test enforces both. Without this, `bearer`'s `\S{16,}` matches a 24-character placeholder and the server re-scan rejects already-masked input.
 - **Fail-closed**: with no key or an unreadable key, nothing is shipped and the cursor does not move. The error shows in `ccs status`.
-- **Relation to existing code**: new; neither repository has any redaction today. The single source is `memory-mcp/session_redact.py`, inside `memory-mcp/` because the work overlay rsyncs only that directory (`gcp-es-memory/default.rb:368-371`). The client cookbook copies it into the `ccs` package, and a check in `bin/check-memory-v2-manifest` asserts that the two copies are byte-identical.
+- **Relation to existing code**: new; neither repository has any redaction today. The single source is `memory-mcp/session_redact.py`, inside `memory-mcp/` because the work overlay rsyncs only that directory (`gcp-es-memory/default.rb:368-371`). `shin1ohno/session-search` vendors a copy under `vendor/memory-mcp/`, the client cookbook deploys it inside the `ccs` package, and a check in `bin/check-memory-v2-manifest` asserts that the copy at the pin is byte-identical to the server file (ADR 0014).
 
 ### 6.3 C3 `ccs ingest` — client shipper (every host, Python stdlib)
 
@@ -232,7 +232,7 @@ Standard-mechanism check:
 - **C5 responsibility**: catch everything the hook misses (kill -9, crash, headless runs with hooks disabled, hosts that were offline) and report gone files.
   - On Linux it is a systemd user timer: `OnBootSec=2min`, `OnActiveSec=2min`, `OnUnitInactiveSec=15min`.
   - On darwin it is a launchd agent with `StartInterval=900`.
-- **C5 relation to existing code**: a new cookbook `cookbooks/session-search/` owns the client package, the config file and the timer, following the platform-pure convention (`darwin.rb`/`linux.rb`).
+- **C5 relation to existing code**: a new cookbook `cookbooks/session-search/` owns the config file and the timer, following the platform-pure convention (`darwin.rb`/`linux.rb`), and places the client package from `shin1ohno/session-search` at the SHA in `cookbooks/session-search/session-search.pin` (ADR 0014).
 
 ### 6.5 C6 `sessions` app — server API (ES host, inside memory-mcp)
 
@@ -579,7 +579,7 @@ Scopes are `sessions:ingest`, `sessions:read` and `sessions:purge`. Hydra's `sco
 | Server modules (flat), MANIFEST entries | `cookbooks/lxc-es-memory/files/memory-mcp/sessions_*.py` | `shin1ohno/ai-memory` server |
 | Index JSON | `cookbooks/lxc-es-memory/files/es-indices-v2/memory-session{,-message}.json` | ai-memory |
 | Shared redactor | `cookbooks/lxc-es-memory/files/memory-mcp/session_redact.py` (single source; copy-sync check) | ai-memory |
-| Client package `ccs` + config + timer | new `cookbooks/session-search/` | package to ai-memory, cookbook stays |
+| Client package `ccs` + config + timer | `shin1ohno/session-search` (package and tests, pinned by SHA, ADR 0014) + `cookbooks/session-search/` (fetch, placement, config, timer) | cookbook stays |
 | Hook shim + settings registration | `cookbooks/claude-code/files/hooks/session-ingest.rb`, `files/settings.json` | per ADR 0013 Decision 9 |
 | Personal server side: env, retention timer, proxy body limit and log removal, `PROXY_SHARED_SECRET`, `ALLOWED_CLIENT_IDS`, per-host Hydra clients, SLM index list | setup (`lxc-es-memory`, `lxc-elasticsearch`, new `bin/register-session-search`) | unchanged |
 | Personal AWS: archive bucket (versioned, separate from ES snapshots), writer IAM user, CT 119 bootstrap principal, SSM parameters, nginx sessions location | home-monitor terraform | unchanged |
