@@ -7,6 +7,8 @@ import contextlib
 import io
 import json
 import tempfile
+import subprocess
+import sys
 
 spec = importlib.util.spec_from_file_location('caller', Path(__file__).with_name('caller-context.py'))
 m = importlib.util.module_from_spec(spec)
@@ -23,6 +25,134 @@ class CallerTest(unittest.TestCase):
         self.assertIsNone(m.inherited([self.p], env, {43}, self.info))
         self.assertIsNone(m.inherited([self.p], {}, {42}, self.info))
         with self.assertRaises(ValueError): m.inherited([self.p, self.p], env, {42}, self.info)
+
+    def test_hc_resolve_uses_cli_without_herdr_environment(self):
+        terminal = dict(address='t14', state='live', pid=40, foreground={'pid': 42})
+        for server, expected in [('', 'default'), (' survey ', 'survey')]:
+            env = dict(HC_TERMINAL_ID='t14', HC_SESSION=server)
+            with patch.dict(m.os.environ, env, clear=True), patch('sys.argv', ['caller', 'resolve']), patch.object(m, 'ancestors', return_value={40, 42, 99}), patch.object(m, 'inventory') as inventory, patch.object(m, 'run', return_value=json.dumps(terminal)) as run:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output): m.main()
+                self.assertEqual(json.loads(output.getvalue()), dict(
+                    verified=True, method='hc-foreground-ancestry', server=expected,
+                    terminal_id='t14', owner='hc:' + expected + '#t14'))
+                self.assertEqual(run.call_count, 2)
+                run.assert_called_with('hc', 'get', '--json', 't14')
+                inventory.assert_not_called()
+
+    def test_hc_rejects_unconfirmed_or_unrelated_terminal(self):
+        terminal = dict(address='t14', state='live', pid=40, foreground={'pid': 42})
+        env = dict(HC_TERMINAL_ID='t14')
+        for changed, reason in [
+                (dict(terminal, address='t15'), 'different terminal'),
+                (dict(terminal, state='finished'), 'not live'),
+                (dict(terminal, pid=41), 'not caller ancestors'),
+                (dict(terminal, foreground={'pid': 43}), 'not caller ancestors'),
+                (dict(terminal, foreground=None), 'evidence unavailable'),
+                (dict(terminal, pid=None), 'evidence unavailable'),
+                (dict(terminal, pid=True), 'evidence unavailable'),
+                (dict(terminal, foreground={'pid': '42'}), 'evidence unavailable'),
+                ([], 'different terminal')]:
+            with self.subTest(changed=changed), patch.object(m, 'run', return_value=json.dumps(changed)):
+                with self.assertRaisesRegex(ValueError, reason):
+                    m.hc_identity(env, {40, 42})
+        for failure in [FileNotFoundError(), subprocess.TimeoutExpired('hc', 15),
+                        subprocess.CalledProcessError(3, 'hc'), ValueError('bad json')]:
+            with self.subTest(failure=failure), patch.object(m, 'run', side_effect=failure):
+                with self.assertRaisesRegex(ValueError, 'hc get failed'):
+                    m.hc_identity(env, {40, 42})
+        with patch.object(m, 'run', return_value='invalid json'):
+            with self.assertRaisesRegex(ValueError, 'hc get failed'):
+                m.hc_identity(env, {40, 42})
+        with patch.object(m, 'run', side_effect=[json.dumps(terminal), json.dumps(dict(terminal, foreground={'pid': 43}))]):
+            with self.assertRaisesRegex(ValueError, 'changed during verification'):
+                m.hc_identity(env, {40, 42, 43})
+        for bad_env in [dict(HC_TERMINAL_ID='remote/t14'), dict(HC_TERMINAL_ID='--help'),
+                        dict(HC_TERMINAL_ID='t14', HC_SESSION='a#b')]:
+            with patch.object(m, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'invalid local'):
+                    m.hc_identity(bad_env, {40, 42})
+                run.assert_not_called()
+
+    def test_hc_failure_never_falls_back_to_herdr(self):
+        for sid in ['', 'claude-session', '01A1A8C6-8AB3-7783-BB82-58414C021A97']:
+            with self.subTest(sid=sid), patch.dict(m.os.environ, {'HC_TERMINAL_ID': 't14', 'CODEX_SESSION_ID': sid}, clear=True), patch('sys.argv', ['caller', 'resolve']), patch.object(m, 'ancestors', return_value={99}), patch.object(m, 'inventory') as inventory, patch.object(m, 'run', side_effect=FileNotFoundError()), patch.object(m, 'inherited') as inherited:
+                with self.assertRaisesRegex(ValueError, 'hc get failed'): m.main()
+                inventory.assert_not_called()
+                inherited.assert_not_called()
+
+    def test_hc_socket_override_cannot_claim_a_session_label(self):
+        terminal = dict(address='t14', state='live', pid=40, foreground={'pid': 42})
+        for socket in ['', '/run/user/1000/herdr-core/default.sock']:
+            env = dict(HC_TERMINAL_ID='t14', HC_SESSION='survey', HC_SOCKET=socket)
+            with self.subTest(socket=socket), patch.object(m, 'run', return_value=json.dumps(terminal)) as run:
+                with self.assertRaisesRegex(ValueError, 'HC_SOCKET overrides.*session name'):
+                    m.hc_identity(env, {40, 42})
+                run.assert_not_called()
+
+    def test_hc_daemon_can_use_independent_resume_proof(self):
+        # Same daemon input as the base-vs-head review: no HERDR_ENV, a stale
+        # hc ID, no terminal ancestry, and an exact live Codex resume UUID.
+        sid = '01a1a8c6-8ab3-7783-bb82-58414c021a97'
+        pane = dict(self.p, session='test')
+        info = {'foreground_processes': [{'pid': 42, 'argv': ['codex', 'resume', sid]}]}
+        terminal = dict(address='t9', state='live', pid=40, foreground={'pid': 42})
+        for hc in [False, True]:
+            env = dict(CODEX_SESSION_ID=sid)
+            if hc: env['HC_TERMINAL_ID'] = 't9'
+            with self.subTest(hc=hc), patch.dict(m.os.environ, env, clear=True), patch('sys.argv', ['caller', 'resolve']), patch.object(m, 'ancestors', return_value={99}), patch.object(m, 'inventory', return_value=[pane]) as inventory, patch.object(m, 'process', return_value=info) as process, patch.object(m, 'run', return_value=json.dumps(terminal)), patch.object(m, 'inherited', return_value=None) as inherited:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output): m.main()
+                self.assertEqual(json.loads(output.getvalue())['method'], 'foreground-resume-session')
+                self.assertEqual(inventory.call_count, 2)
+                self.assertEqual(process.call_count, 2)
+                if hc: inherited.assert_not_called()
+
+    def test_hc_and_resume_failure_preserves_hc_reason_without_inherited_proof(self):
+        sid = '01a1a8c6-8ab3-7783-bb82-58414c021a97'
+        pane = dict(self.p, session='test')
+        resumed = {'foreground_processes': [{'pid': 42, 'argv': ['codex', 'resume', sid]}]}
+        replaced = {'foreground_processes': [{'pid': 43, 'argv': ['codex', 'resume', sid]}]}
+        wrong_session = {'foreground_processes': [{'pid': 42, 'argv': ['codex', 'resume', 'other']}]}
+        cases = [([], [resumed], 'no verified caller'),
+                 ([pane, pane], [resumed, resumed], 'ambiguous live Codex resume session'),
+                 ([pane], [resumed, replaced], 'caller changed'),
+                 ([pane], [resumed, wrong_session], 'caller session changed'),
+                 ([pane], [OSError('private stderr')], 'OSError')]
+        for panes, observations, reason in cases:
+            with self.subTest(reason=reason), patch.dict(m.os.environ, {'HC_TERMINAL_ID': 't9', 'CODEX_SESSION_ID': sid}, clear=True), patch('sys.argv', ['caller', 'resolve']), patch.object(m, 'ancestors', return_value={99}), patch.object(m, 'inventory', return_value=panes), patch.object(m, 'process', side_effect=observations), patch.object(m, 'run', side_effect=FileNotFoundError()), patch.object(m, 'inherited', return_value=pane) as inherited:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), self.assertRaises(ValueError) as raised:
+                    m.main()
+                self.assertIn('hc get failed (FileNotFoundError)', str(raised.exception))
+                self.assertIn('independent Codex resume proof failed: ' + reason, str(raised.exception))
+                self.assertNotIn('private stderr', str(raised.exception))
+                self.assertEqual(output.getvalue(), '')
+                inherited.assert_not_called()
+
+    def test_herdr_environment_keeps_existing_route(self):
+        env = dict(HC_TERMINAL_ID='t14', HERDR_ENV='1', HERDR_PANE_ID='w1:p1', HERDR_WORKSPACE_ID='w1')
+        pane = dict(self.p, session='test')
+        with patch.dict(m.os.environ, env, clear=True), patch('sys.argv', ['caller', 'resolve']), patch.object(m, 'inventory', return_value=[pane]), patch.object(m, 'ancestors', return_value={42}), patch.object(m, 'hc_identity') as hc:
+            output = io.StringIO()
+            # inherited's default process function is bound at definition time.
+            with patch.object(m, 'api', return_value={'process_info': self.info(pane)}), contextlib.redirect_stdout(output): m.main()
+            self.assertEqual(json.loads(output.getvalue())['method'], 'foreground-ancestry')
+            hc.assert_not_called()
+
+    def test_prepare_non_uuid_has_actionable_cli_error(self):
+        for session in ['', 'claude-session', '../bad', 'ABCDEFAB-1234-1234-1234-123456789ABC']:
+            with self.subTest(session=session):
+                result = subprocess.run([sys.executable, str(Path(m.__file__)), 'prepare'],
+                                        env=dict(m.os.environ, CODEX_SESSION_ID=session),
+                                        text=True, capture_output=True)
+                self.assertEqual(result.returncode, 1)
+                error = json.loads(result.stderr)
+                self.assertFalse(error['verified'])
+                self.assertIn('canonical UUID CODEX_SESSION_ID', error['error'])
+                self.assertIn('hc controllers must use resolve', error['error'])
+                self.assertNotIn('badly formed', result.stderr)
+                self.assertEqual(result.stdout, '')
 
     def test_resumed_session_exact_unique_foreground_only(self):
         sid = '01a1a8c6-8ab3-7783-bb82-58414c021a97'
