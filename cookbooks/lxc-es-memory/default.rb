@@ -58,6 +58,99 @@ end
   end
 end
 
+# Paths the placement below writes to; the resources further down use them too.
+app_dir_v2        = "#{base_dir}/app-v2"
+es_indices_v2_dir = "#{base_dir}/es-indices-v2"
+keeper_dir        = "#{base_dir}/keeper"
+units_staging     = "#{node[:setup][:root]}/es-memory"
+
+# ai-memory comes from shin1ohno/ai-memory at the SHA in files/ai-memory.pin
+# (ADR 0013). The checkout sits outside /root/setup, which mitamae-runner cleans
+# every cycle, and outside /opt/es-memory/app*, which the v1 cleanup deletes.
+ai_memory_checkout = "#{base_dir}/ai-memory-src"
+ai_memory_marker   = "#{base_dir}/DEPLOYED_SHA"
+ai_memory_pin = File.read(File.join(File.dirname(__FILE__), "files", "ai-memory.pin")).strip
+raise "ai-memory.pin must be one 40-hex SHA" unless ai_memory_pin =~ /\A[0-9a-f]{40}\z/
+
+staged_user  = node[:setup][:user]
+staged_group = node[:setup][:group]
+ai_memory_placements = [
+  ["requirements.txt",            "#{base_dir}/requirements.txt",     "644", "root", "root"],
+  ["requirements-v2.txt",         "#{app_dir_v2}/requirements-v2.txt", "644", "root", "root"],
+  ["auth-proxy/proxy.py",         "#{app_dir_v2}/proxy.py",           "644", "root", "root"],
+  ["memory-keeper-health.sh",     "#{units_staging}/memory-keeper-health.sh", "755", staged_user, staged_group],
+]
+# memory-session{,-message}.json: the session search indices (design spec §7.1).
+# setup_indices_v2.sh skips them with a WARN when they are not deployed.
+%w[
+  memory-fact.json memory-knowledge.json memory-episode.json memory-stats.json
+  memory-session.json memory-session-message.json setup_indices_v2.sh
+].each do |f|
+  ai_memory_placements << ["es-indices-v2/#{f}", "#{es_indices_v2_dir}/#{f}", f.end_with?(".sh") ? "755" : "644", "root", "root"]
+end
+%w[
+  memory-mcp-v2.service memory-v2-proxy.service
+  memory-keeper-health.service memory-keeper-health.timer
+  memory-session-maint.service memory-session-maint.timer
+  memory-keeper-reconcile.service memory-keeper-reconcile.timer
+  memory-consolidate.service memory-consolidate.timer
+].each do |unit|
+  ai_memory_placements << ["systemd/#{unit}", "#{units_staging}/#{unit}", "644", staged_user, staged_group]
+end
+ai_memory_place_lines = ai_memory_placements.map { |src, dest, mode, own, grp| "place #{src} #{dest} #{mode} #{own} #{grp}" }.join("\n")
+
+# One execute, evaluated at converge time: nothing in the checkout is read while
+# the recipe compiles. The global and system git config are ignored so a host's
+# url rewrite cannot move this fetch onto SSH or a key. Each placed file must hash
+# to the pinned blob, and the marker is written last, so a partial run repeats.
+execute "place ai-memory at the pinned SHA" do
+  command <<~SH
+    set -eu
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0
+    umask 022
+    PIN=#{ai_memory_pin}
+    CO=#{ai_memory_checkout}
+    mkdir -p "$CO"
+    [ -d "$CO/.git" ] || git -C "$CO" init -q
+    git -C "$CO" config remote.origin.url https://github.com/shin1ohno/ai-memory.git
+    git -C "$CO" fetch -q --filter=blob:none origin +refs/heads/main:refs/remotes/origin/main
+    git -C "$CO" merge-base --is-ancestor "$PIN" refs/remotes/origin/main
+    mkdir -p "$CO/.git/info"
+    echo '* -text -eol -ident -filter -working-tree-encoding' > "$CO/.git/info/attributes"
+    git -C "$CO" -c advice.detachedHead=false checkout -q --force --detach "$PIN"
+    [ "$(git -C "$CO" rev-parse HEAD)" = "$PIN" ]
+
+    place() {
+      mkdir -p "$(dirname "$2")"
+      install -m "$3" -o "$4" -g "$5" "$CO/$1" "$2"
+      want=$(git -C "$CO" ls-tree HEAD -- "$1" | cut -f1 | cut -d' ' -f3)
+      got=$(git hash-object --no-filters "$2")
+      [ -n "$want" ] && [ "$want" = "$got" ]
+    }
+    manifest() {
+      sed 's/\\r$//; s/^[[:space:]]*//; s/[[:space:]]*$//' "$CO/$1/MANIFEST" | grep -vE '^(#|$)'
+    }
+
+    # A failed substitution in a for list does not trip set -e, and an empty
+    # list would write the marker with no runtime files placed.
+    [ -n "$(manifest memory-mcp)" ]
+    [ -n "$(manifest memory-keeper)" ]
+
+    #{ai_memory_place_lines}
+    for f in $(manifest memory-mcp); do place "memory-mcp/$f" "#{app_dir_v2}/$f" 644 root root; done
+    for f in $(manifest memory-keeper); do place "memory-keeper/$f" "#{keeper_dir}/$f" 644 root root; done
+
+    echo "$PIN" > #{ai_memory_marker}.tmp
+    mv #{ai_memory_marker}.tmp #{ai_memory_marker}
+  SH
+  # The marker alone would leave a lost staged unit missing, and the resources
+  # below fail on it. Content drift under a matching marker is not detected.
+  not_if (["test \"$(cat #{ai_memory_marker} 2>/dev/null)\" = #{ai_memory_pin}"] +
+          ai_memory_placements.map { |_, dest, _, _, _| "test -f #{dest}" }).join(" && ")
+  notifies :run, "execute[restart memory-mcp-v2]"
+  notifies :run, "execute[restart memory-v2-proxy]"
+end
+
 # Shared venv base requirements ---------------------------------------------
 # LOAD-BEARING for v2, despite the "v1" ancestry: requirements-v2.txt
 # deliberately omits aiohttp / PyJWT / opentelemetry ("those live in the proxy
@@ -66,13 +159,6 @@ end
 # retired v1 ones. Moved app/ -> base_dir with the v1 app dir; the .reqs.md5
 # sentinel embeds the old path, so the first converge reinstalls once and
 # rewrites it.
-remote_file "#{base_dir}/requirements.txt" do
-  source "files/requirements.txt"
-  owner "root"
-  group "root"
-  mode "644"
-end
-
 execute "create es-memory venv" do
   command "python3 -m venv #{venv_dir}"
   not_if "test -x #{venv_dir}/bin/python"
@@ -108,7 +194,6 @@ directory generated_dir do
 end
 
 # systemd units -------------------------------------------------------------
-units_staging = "#{node[:setup][:root]}/es-memory"
 directory units_staging do
   owner node[:setup][:user]
   group node[:setup][:group]
@@ -165,7 +250,6 @@ end
 # NOT a complete environment for memory-v2-proxy.
 # ==========================================================================
 
-app_dir_v2  = "#{base_dir}/app-v2"
 env_path_v2 = "#{base_dir}/memory-v2.env"
 
 directory app_dir_v2 do
@@ -180,13 +264,6 @@ end
 # base sentinel — the "pip install es-memory deps" execute above stays intact.
 # md5-only guard (no binary probe): the v2 wheels land in the shared venv
 # already populated by the base install above.
-remote_file "#{app_dir_v2}/requirements-v2.txt" do
-  source "files/requirements-v2.txt"
-  owner "root"
-  group "root"
-  mode "644"
-end
-
 execute "pip install memory v2 deps" do
   command "#{venv_dir}/bin/pip install -r #{app_dir_v2}/requirements-v2.txt && " \
           "md5sum #{app_dir_v2}/requirements-v2.txt > #{venv_dir}/.reqs-v2.md5"
@@ -196,45 +273,8 @@ execute "pip install memory v2 deps" do
   notifies :run, "execute[restart memory-v2-proxy]"
 end
 
-# v2 application code: every runtime file listed in files/memory-mcp/MANIFEST
-# + the auth proxy. The MANIFEST is the single distribution unit (ADR 0010):
-# bin/check-memory-v2-manifest fails CI when a non-test file in that directory
-# is not listed, so a new module can no longer be committed without being
-# deployed (the #895 merge_rules.py → ModuleNotFoundError class).
-# proxy.py (files/auth-proxy/proxy.py) was shared with the retired v1 stack; the v2
-# enforcement matrix is env-gated (MEMORY_AUDIENCES) so one file serves both
-# namespaces.
-# File.read + split, NOT File.readlines: mruby (the mitamae runtime) has no
-# File.readlines and aborts the compile with NoMethodError — caught by the
-# ADR 0010 design review against mitamae v1.14.0 (~/ManagedProjects/setup/.claude/rules/ruby.md
-# "mruby API constraints"). The MANIFEST is a committed source asset, so a
-# compile-time read is the right phase (unlike the `File.exist?`-on-generated-
-# file anti-pattern).
-memory_v2_manifest = ->(unit) {
-  File.read(File.join(File.dirname(__FILE__), "files", unit, "MANIFEST")).split("\n")
-      .map(&:strip).reject { |l| l.empty? || l.start_with?("#") }
-}
-memory_v2_manifest.call("memory-mcp").each do |mod|
-  remote_file "#{app_dir_v2}/#{mod}" do
-    source "files/memory-mcp/#{mod}"
-    owner "root"
-    group "root"
-    mode "644"
-    notifies :run, "execute[restart memory-mcp-v2]"
-  end
-end
-
-remote_file "#{app_dir_v2}/proxy.py" do
-  source "files/auth-proxy/proxy.py"
-  owner "root"
-  group "root"
-  mode "644"
-  notifies :run, "execute[restart memory-v2-proxy]"
-end
-
 # Standalone v2 ES index templates + setup script (the server self-bootstraps
 # indices via ensure_indices on startup; kept for manual ops / migration).
-es_indices_v2_dir = "#{base_dir}/es-indices-v2"
 directory es_indices_v2_dir do
   owner "root"
   group "root"
@@ -242,26 +282,12 @@ directory es_indices_v2_dir do
   action :create
 end
 
-# memory-session{,-message}.json: the session search indices (design spec §7.1).
-# setup_indices_v2.sh skips them with a WARN when they are not deployed.
-%w[
-  memory-fact.json memory-knowledge.json memory-episode.json memory-stats.json
-  memory-session.json memory-session-message.json setup_indices_v2.sh
-].each do |f|
-  remote_file "#{es_indices_v2_dir}/#{f}" do
-    source "files/es-indices-v2/#{f}"
-    owner "root"
-    group "root"
-    mode(f.end_with?(".sh") ? "755" : "644")
-  end
-end
-
 # v2 .env (EnvironmentFile) from SSM. SECOND require_external_auth block, gated
 # on the /memory/voyage-api-key param (the scoped fleet profile). The
 # skip_if is CONTENT-AWARE (grep VOYAGE_API_KEY), not File.exist? — per
 # ~/ManagedProjects/setup/.claude/rules/ruby.md the file-existence form makes a generator key change a
 # silent no-op on a host whose .env predates it.
-generate_env_v2_script = File.join(File.dirname(__FILE__), "files", "generate_env_v2.sh")
+generate_env_v2_script = "#{ai_memory_checkout}/generate_env_v2.sh"
 env_v2_temp_path = "#{generated_dir}/memory-v2.env"
 
 # Session search archive writer (design spec §6.5 Storage personal, §10). Its
@@ -360,12 +386,6 @@ end
 # v2 systemd units (units_staging is declared above).
 %w[memory-mcp-v2 memory-v2-proxy].each do |svc|
   staged = "#{units_staging}/#{svc}.service"
-  remote_file staged do
-    source "files/systemd/#{svc}.service"
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "644"
-  end
 
   systemd_unit "#{svc}.service" do
     staging_path staged
@@ -388,13 +408,6 @@ execute "create /var/lib/node_exporter/textfile for memory-keeper-health" do
   not_if "test -d /var/lib/node_exporter/textfile"
 end
 
-remote_file keeper_health_script_staging do
-  source "files/memory-keeper-health.sh"
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "755"
-end
-
 execute "install memory-keeper-health.sh to /usr/local/bin" do
   command "install -m 0755 -o root -g root #{keeper_health_script_staging} #{keeper_health_script_path}"
   not_if "test -f #{keeper_health_script_path} && " \
@@ -407,24 +420,12 @@ end
 # below covers the fresh-host case where staged == installed on first apply so
 # the activate execute's diff-q notify never fires.
 keeper_health_svc_staged = "#{units_staging}/memory-keeper-health.service"
-remote_file keeper_health_svc_staged do
-  source "files/systemd/memory-keeper-health.service"
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "644"
-end
 systemd_unit "memory-keeper-health.service" do
   staging_path keeper_health_svc_staged
   start false
 end
 
 keeper_health_timer_staged = "#{units_staging}/memory-keeper-health.timer"
-remote_file keeper_health_timer_staged do
-  source "files/systemd/memory-keeper-health.timer"
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "644"
-end
 systemd_unit "memory-keeper-health.timer" do
   staging_path keeper_health_timer_staged
 end
@@ -442,24 +443,12 @@ end
 # from the shared venv with the server's own env file. Same service + timer +
 # ensure-active shape as memory-keeper-health above.
 session_maint_svc_staged = "#{units_staging}/memory-session-maint.service"
-remote_file session_maint_svc_staged do
-  source "files/systemd/memory-session-maint.service"
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "644"
-end
 systemd_unit "memory-session-maint.service" do
   staging_path session_maint_svc_staged
   start false
 end
 
 session_maint_timer_staged = "#{units_staging}/memory-session-maint.timer"
-remote_file session_maint_timer_staged do
-  source "files/systemd/memory-session-maint.timer"
-  owner node[:setup][:user]
-  group node[:setup][:group]
-  mode "644"
-end
 systemd_unit "memory-session-maint.timer" do
   staging_path session_maint_timer_staged
 end
@@ -480,7 +469,6 @@ end
 # path __file__-relative or env-driven. Auth is a one-time operator step
 # (`claude setup-token` on this CT); the timers stay stopped until it succeeds.
 # ==========================================================================
-keeper_dir = "#{base_dir}/keeper"
 claude_bin = "/root/.local/bin/claude"
 
 # claude CLI (standalone binary — no node). Idempotent; on an already-installed
@@ -504,19 +492,6 @@ directory "#{keeper_dir}/prompts" do
   action :create
 end
 
-# keeper python + prompts — every runtime file listed in
-# files/memory-keeper/MANIFEST (ADR 0010; CI-checked, see the memory-mcp block
-# above). A changed .py is picked up on the NEXT timer fire (each tick is a
-# fresh /usr/bin/python3 process) — no unit restart needed.
-memory_v2_manifest.call("memory-keeper").each do |rel|
-  remote_file "#{keeper_dir}/#{rel}" do
-    source "files/memory-keeper/#{rel}"
-    owner "root"
-    group "root"
-    mode "644"
-  end
-end
-
 # systemd units: 2 oneshot services + 2 timers. Services are driven solely by
 # their timers (a timer's Unit= starts its service without the service being
 # `enable`d), so they are only INSTALLED here — nothing fires at boot. NOT via
@@ -527,12 +502,6 @@ end
   memory-consolidate.service memory-consolidate.timer
 ].each do |unit|
   staged = "#{units_staging}/#{unit}"
-  remote_file staged do
-    source "files/systemd/#{unit}"
-    owner node[:setup][:user]
-    group node[:setup][:group]
-    mode "644"
-  end
 
   execute "install #{unit}" do
     command "cp #{staged} /etc/systemd/system/#{unit} && systemctl daemon-reload"
