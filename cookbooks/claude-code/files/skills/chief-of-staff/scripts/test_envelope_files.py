@@ -82,7 +82,7 @@ class DescriptorRaceTest(unittest.TestCase):
     def test_nonregular_device_and_socket_are_not_opened(self):
         sock = socket.socket(socket.AF_UNIX)
         self.addCleanup(sock.close)
-        with tempfile.TemporaryDirectory(prefix="cos-s-", dir="/tmp") as short:
+        with tempfile.TemporaryDirectory(prefix="cos-s-") as short:
             path = Path(short).resolve() / "socket"
             sock.bind(str(path))
             with self.assertRaises(ValueError):
