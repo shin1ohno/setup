@@ -136,9 +136,9 @@ class ProfileTest(unittest.TestCase):
     def test_launch_ready_only_for_canaried_harness_route_pairs(self):
         self.deploy_fixture()
         catalog = self.codex_catalog("m")
-        # The 2026-11-08 pro-dev canary passed exactly these three pairs.
-        expected = {("claude", "hc"): True, ("claude", "agent"): True, ("claude", "herdr1"): False,
-                    ("codex", "hc"): True, ("codex", "agent"): False, ("codex", "herdr1"): False,
+        # The 2026-11-08/09 pro-dev canaries passed these five pairs.
+        expected = {("claude", "hc"): True, ("claude", "agent"): True, ("claude", "herdr1"): True,
+                    ("codex", "hc"): True, ("codex", "agent"): False, ("codex", "herdr1"): True,
                     ("claude", None): False, ("codex", None): False}
         for (harness, route), ready in expected.items():
             extra = ["--catalog", str(catalog)] if harness == "codex" else []

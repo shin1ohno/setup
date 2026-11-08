@@ -41,11 +41,12 @@ uploaded. Store enough context to resume, but never copy secrets into briefs.
 python3 <skill-dir>/scripts/tasks.py new --owner <socket#controller-pane> \
   --topic <topic> --cwd <absolute-dir> --scope <authorized-scope> \
   --acceptance <criterion> [--acceptance <criterion> ...]
-python3 <skill-dir>/scripts/tasks.py attempt <task-id> --owner <verified-owner> \
-  --kind codex --model <verified-model> --effort <verified-effort> --profile <profile> \
-  --reason <routing-or-repair-reason>
 # Prepare the launch plan; see "Worker profiles and launch plans".
 python3 <setup-checkout>/bin/worker-profile prepare --harness codex --route <hc|herdr1> --profile <profile> ...
+# When using the validated plan, record its path on the reserved attempt.
+python3 <skill-dir>/scripts/tasks.py attempt <task-id> --owner <verified-owner> \
+  --kind codex --model <verified-model> --effort <verified-effort> --profile <profile> \
+  --route <hc|herdr1> --plan <absolute-launch-plan.json> --reason <routing-or-repair-reason>
 python3 <skill-dir>/scripts/tasks.py bind <task-id> --owner <verified-owner> --pane <returned-pane-id>
 # Launch through the verified route.
 python3 <skill-dir>/scripts/tasks.py update <task-id> --owner <verified-owner> --state running \
@@ -66,7 +67,22 @@ python3 <skill-dir>/scripts/tasks.py list --owner <socket#controller-pane>
 python3 <skill-dir>/scripts/tasks.py show <task-id>
 ```
 
-`attempt` reserves the next attempt and a unique Herdr name before any mutation.
+Use the same route vocabulary in `prepare` and `attempt`: `hc` for Herdr 2,
+`herdr1` for Herdr 1, and `agent` for the Agent tool. Pass the route explicitly
+for every new dispatch; omission retains legacy `herdr` for old callers.
+`--plan` records
+the file used for a profile launch on the attempt (`show` exposes `route` and
+`plan`); omit it for a default launch, which records `plan: null`. The ledger
+stores this path as provenance, not as proof of launch or plan validation.
+
+Legacy `herdr` records, and records without a route, mean an unspecified
+terminal route: either `hc` or `herdr1`. They keep pane/terminal binding and
+session-log observation; never infer which route they used or rewrite their
+history. `--route herdr` remains accepted for old callers, but new callers use
+the three explicit routes. Reusing a worker requires the same recorded route;
+an unspecified legacy route is not automatically equivalent to either one.
+
+`attempt` reserves the next attempt and a unique Herdr name before any terminal mutation.
 When the user explicitly requests a new agent or separate pane, create the task
 with `new --fresh-worker`. Its attempt and bind operations reject reuse. Use a
 new pane returned by a fresh split, even if an old worker is idle.
@@ -276,7 +292,8 @@ not change the user's own profile for this. Use argv arrays; never interpolate a
 topic into shell code.
 
 Record the choice with `attempt --kind ... --model ... --effort ...
---profile <profile> --route <route> --reason ... --owner ...` (the reason names
+--profile <profile> --route <hc|herdr1|agent> [--plan <absolute-launch-plan.json>]
+--reason ... --owner ...` (the reason names
 the table row and any escalation). Record observed values only from evidence:
 
 - Herdr route (Herdr 1 panes and `hc` terminals): after the worker's first
@@ -369,11 +386,13 @@ file and use the profile launch below **only when all of these hold**:
 Otherwise (a refusal, `launch_ready: false`, or any mismatch) keep today's
 launch exactly as described in "Launch example" and "Model and effort per
 attempt", including the worker-floor settings and the `--tools` allowlist for
-implementation workers, and do not call the worker profile-isolated. `launch_ready` is true only for claude×hc, claude×agent and codex×hc (the
-2026-11-08 pro-dev canary). Herdr 1 (`--route herdr1`) stays on today's launch
-until its own canary passes; its plan says `launch_ready: false`. Record which launch
-was used in the `update --state running` note (`profile plan <plan-file>` or
-`launch_ready false: default launch`).
+implementation workers, and do not call the worker profile-isolated. `launch_ready`
+is true for claude×hc, claude×agent and codex×hc (2026-11-08), and claude×herdr1
+and codex×herdr1 (2026-11-09 pro-dev canary). Codex on the Agent tool remains
+unsupported. Prepare and validate the plan before reserving the attempt, then
+pass `--plan <absolute-plan-file>` only when launching from it. Omit `--plan`
+on fallback and record `launch_ready false: default launch` (or the actual
+refusal/mismatch) in the `update --state running` note.
 
 ### Profile launch per route
 

@@ -43,9 +43,10 @@ class HerdrObserveTest(unittest.TestCase):
     def mutate(self, command, *args, **kwargs):
         return self.call(command, self.task, "--owner", self.owner, *args, **kwargs)
 
-    def start(self, kind="claude", model="sonnet", effort="medium", bind=True):
+    def start(self, kind="claude", model="sonnet", effort="medium", bind=True, route="herdr", plan=None):
         self.mutate("attempt", "--profile", "dev", "--kind", kind, "--model", model, "--effort", effort,
-                    "--reason", "fixture", "--route", "herdr")
+                    "--reason", "fixture", "--route", route,
+                    *(["--plan", str(plan)] if plan else []))
         if bind:
             self.mutate("bind", "--pane", "t2")
             self.mutate("update", "--state", "running", "--note", "fixture",
@@ -107,6 +108,36 @@ class HerdrObserveTest(unittest.TestCase):
                             "--note", "fixture check")["check"]["id"]
         return self.mutate("update", "--state", "accepted", "--note", "review",
                            "--evidence", "independent fixture review", "--check", check, ok=ok)
+
+    def test_terminal_routes_record_plan_bind_and_observe(self):
+        for route in ("hc", "herdr1", "herdr"):
+            with self.subTest(route=route):
+                for kind in ("claude", "codex"):
+                    self.task = self.call("new", "--owner", self.owner, "--topic", "Route fixture",
+                                          "--cwd", str(self.root), "--scope", "fixture",
+                                          "--acceptance", "pass")["task"]["id"]
+                    plan = self.root / "launch-plan.json"
+                    plan.write_text("{}")
+                    self.start(kind=kind, route=route, plan=plan)
+                    attempt = self.attempt()
+                    self.assertEqual(attempt["route"], route)
+                    self.assertEqual(attempt["plan"], str(plan))
+                    self.mutate("bind", "--session", "wrong-identity", ok=False)
+                    self.mutate("bind", "--pane", "t2", "--model", "invented", ok=False)
+                    self.mutate("bind", "--pane", "t2", "--effort", "low", ok=False)
+                    log = (self.claude_log([self.turn()]) if kind == "claude"
+                           else self.codex_log([self.context()]))
+                    self.assertEqual(self.observe(log)["observed"]["effort"], "medium")
+
+    def test_old_record_without_route_or_plan_still_binds_and_observes(self):
+        self.start(bind=False)
+        path = self.directory / "task.json"
+        task = json.loads(path.read_text())
+        task["attempts"][-1].pop("route")
+        task["attempts"][-1].pop("plan")
+        path.write_text(json.dumps(task))
+        self.mutate("bind", "--pane", "t2")
+        self.assertEqual(self.observe(self.claude_log([self.turn()]))["observed"]["effort"], "medium")
 
     def test_claude_consistent_value_allows_acceptance(self):
         self.start()
