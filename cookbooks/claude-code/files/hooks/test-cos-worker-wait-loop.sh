@@ -144,7 +144,7 @@ chmod +x "$D/cbin/herdr"
 
 start() { # start <file> <name> <want-exit> <want-status|-> <want-renames>
   local f=$1 name=$2 want=$3 status=$4 renames=$5 got out n
-  out=$(WS=$WS s=test-session worker=cx pane=w1:pB model=m effort=low launch_prompt=go \
+  out=$(WS=$WS s=test-session worker=cx pane=w1:pB kind=${TEST_KIND:-codex} model=m effort=low launch_prompt=go \
     PATH="$D/cbin:$PATH" timeout 20 bash "$f" 2>/dev/null)
   got=$?
   n=$(grep -c ' agent rename w1:pB cx$' "$WS/calls")

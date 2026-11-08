@@ -47,6 +47,21 @@ and user preamble used by the main Codex config generator. This avoids reading
 a stale main config when claude-code converges before codex-cli. The mode emits
 only those two root keys; provider credentials and MCP settings are not copied.
 
+The profile config also sets `check_for_update_on_startup = false` so workers
+cannot stop at an update dialog. This is a worker-only setting: neither the
+normal config generator nor `~/.codex/config.toml` is changed. On the default
+route without a profile, pass `-c check_for_update_on_startup=false` at launch
+as shown in the CoS dispatch instructions. Codex 0.167.0 recognizes this key
+as a boolean; an invalid string value produces a config type error.
+
+This does not approve trust dialogs. An untrusted working directory on the
+default route, enabled hooks awaiting trust, or a remote workspace awaiting
+trust can still require owner intervention. Profile plans retain their existing
+inline cwd trust override from `bin/worker-profile`; this change adds no trust
+override and leaves hook and remote-workspace trust checks in place.
+The controller must report such a block instead of answering it or adding a
+trust bypass.
+
 Official references:
 
 - [Global instruction discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
@@ -58,6 +73,26 @@ starting a model turn: a private global sentinel survives while the project
 sentinel disappears with max_bytes=0. The regression also tests the complete
 rendered development profile. The conservative 32 KiB artifact guard stays even
 where global discovery is not bounded by the project-doc limit.
+
+## Worker update-dialog canary (2026-11-09)
+
+Codex 0.167.0, Herdr 1, `gpt-6-luna` / `low`: three isolated test homes
+used a fresh `version.json` cache with `latest_version = "0.168.0"` and no
+dismissal. This was an injected newer-version fixture; GitHub's latest release
+was still 0.167.0, so no real newer release was installed or claimed.
+The control without the setting stopped at `Update available · 0.167.0 →
+0.168.0`. The herdr1 profile plan (using config captured from the real recipe)
+and the documented default-route launch option both reached the prompt and
+returned their first requested nonce without an update choice. Both rollout
+logs recorded `gpt-6-luna` / `low`. The default/control homes reused the owner's
+existing directory trust; no test added a new trust exemption.
+
+The capture-only recipe regression checks the false boolean in all four
+profiles alongside inherited permissions. Removing only that key fails the
+regression. The normal generator output was compared byte for byte against
+`origin/main` with the same input, HOME and preamble; it and the owner's main
+config remained unchanged. All test agents and their named session were stopped
+and the test session deleted. No managed user environment was applied.
 
 ## Authentication
 

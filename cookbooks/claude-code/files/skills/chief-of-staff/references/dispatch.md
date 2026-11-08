@@ -194,9 +194,8 @@ herdr --session <verified-session> pane layout --pane <verified-caller-pane>
 herdr --session <verified-session> pane split --pane <verified-caller-pane> --direction right --cwd <task-cwd> --no-focus \
   [--env COS_WORKER_TASK_ID=<task-id> --env COS_WORKER_ATTEMPT=<attempt> \
    --env COS_CONTROLLER_PANE=<verified-caller-pane> --env COS_CONTROLLER_SESSION=<verified-session>]
-# Claude. For Codex use the start step below instead of these two lines.
-herdr --session <verified-session> agent start <reserved-agent-name> --kind claude --pane <returned-id> -- <launch-prompt>
-herdr --session <verified-session> agent wait <reserved-agent-name> --until working --until blocked --timeout 30000
+# Start either Claude or Codex with the common start step below.
+# It waits for working or blocked and restores a lost agent name.
 herdr --session <verified-session> agent get <reserved-agent-name>
 herdr --session <verified-session> agent read <reserved-agent-name> --source recent-unwrapped --lines 40
 # Then run the wait loop below in the background so the harness wakes the controller when it ends.
@@ -243,15 +242,25 @@ The last line decides the controller's next step:
 | `reason=gone` | `agent get` failed and no envelope exists | Treat as an abnormal exit: inspect the pane and logs, then repair or report. A failed socket call looks the same, so confirm with a second `agent get` |
 | `reason=timeout` | Ten minutes passed | Look now, not a failure. Re-check state and re-arm. Without observable progress, run the stall diagnosis in `SKILL.md` |
 
-Codex needs its own start step, because `agent start` with a first prompt can
-return `timeout` or `agent_name_not_found` while Codex keeps working. Set `s`,
-`worker`, `pane`, `model`, `effort` and `launch_prompt` first. The step accepts
+Both harnesses use this start step: `agent start` with a first prompt can
+return `timeout` or `agent_name_not_found` while the worker keeps working
+(observed for Codex and Claude on 2026-11-09). Set `s`, `worker`, `pane`,
+`kind` (`claude` or `codex`), `model`, `effort` and `launch_prompt` first.
+The step accepts
 those errors only when the wait that follows observes `working` or `blocked`. If
 the name is lost, it restores it through the pane and checks again:
 
 ```bash
-herdr --session "$s" agent start "$worker" --kind codex --pane "$pane" -- \
-  -m "$model" -c model_reasoning_effort="$effort" "$launch_prompt" || true
+case "$kind" in
+  claude) agent_args=("$launch_prompt" --model "$model" --effort "$effort") ;;
+  codex) agent_args=(-m "$model" -c "model_reasoning_effort=$effort"
+                    -c check_for_update_on_startup=false "$launch_prompt") ;;
+  *) echo "unknown harness: $kind" >&2; exit 1 ;;
+esac
+# Add the task's Claude settings/tools from "Model and effort per attempt".
+# With a ready plan, use its argv after the executable instead of agent_args.
+herdr --session "$s" agent start "$worker" --kind "$kind" --pane "$pane" -- \
+  "${agent_args[@]}" || true
 delivered=1
 for _ in $(seq 1 30); do
   if ! herdr --session "$s" agent get "$worker" >/dev/null 2>&1; then
@@ -265,7 +274,7 @@ done
 ```
 
 A non-zero exit is ambiguous delivery. Inspect the pane with `pane read` and do
-not launch again: the first Codex may still be running.
+not launch again: the first worker may still be running.
 
 Pass the four `COS_*` variables when the worker is Claude and the controller is
 a Herdr 1 pane; add `--env COS_STATE_DIR=<dir>` when the controller set it. They
@@ -425,7 +434,11 @@ launch plans"):
   `--tools Bash,Read,Edit,Write,Skill,ToolSearch,Agent,AskUserQuestion`. Keep
   `ToolSearch`: without it first-call usage rose by about 72k on pro-dev. Daily
   admin workers add neither.
-- Herdr Codex worker: `-- -m <model> -c model_reasoning_effort="<level>"`.
+- Herdr Codex worker: `-- -m <model> -c model_reasoning_effort="<level>"
+  -c check_for_update_on_startup=false`. This launch-only update setting keeps
+  the owner's interactive update notices; profile workers carry it in their
+  own config. It does not bypass workspace or hook trust dialogs: report those
+  blocks for the owner to resolve.
 
 Launch workers without `CLAUDE_CODE_EFFORT_LEVEL` in their environment (for
 example `env -u CLAUDE_CODE_EFFORT_LEVEL`); it overrides per-worker effort. Do
