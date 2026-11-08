@@ -780,6 +780,18 @@ jobs:
         bash cookbooks/claude-code/files/hooks/test-warn-background-launch-no-progress.sh \
           cookbooks/claude-code/files/hooks/warn-background-launch-no-progress.rb
 
+    - name: Chief of Staff worker Stop hook regression suite
+      run: |
+        # hooks/cos-worker-stop-notify.rb types into the controller pane, so the
+        # suite pins it down with a fake herdr: inert without its variables,
+        # silent until the envelope exists, then one fixed-format message. It
+        # also runs the settings.json command under hostile PATH and RUBY* values.
+        bash cookbooks/claude-code/files/hooks/test-cos-worker-stop-notify.sh \
+          cookbooks/claude-code/files/hooks/cos-worker-stop-notify.rb
+        # The controller's wait loop, extracted from the document it follows.
+        bash cookbooks/claude-code/files/hooks/test-cos-worker-wait-loop.sh \
+          cookbooks/claude-code/files/skills/chief-of-staff/references/dispatch.md
+
     - name: File-memory mirror hook regression suite
       run: |
         # hooks/mirror-file-memory.rb talks to a python3 fake token + MCP server on

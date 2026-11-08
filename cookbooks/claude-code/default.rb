@@ -236,7 +236,7 @@ end
 # pre-commit-test.rb and block-co-authored-by.rb load with require_relative, so
 # it ships next to them (listed first, ahead of its users) and is not wired in
 # settings.json.
-%w(git-command.rb pre-commit-test.rb check-trailing-newline.rb check-whitespace-lines.rb block-co-authored-by.rb post-compact-remind.rb mcp-health-check.rb detect-prose-menu.rb warn-loop-repo-shared-tree.rb warn-untracked-before-pull.rb warn-background-launch-no-progress.rb session-ingest.rb).each do |file_name|
+%w(git-command.rb pre-commit-test.rb check-trailing-newline.rb check-whitespace-lines.rb block-co-authored-by.rb post-compact-remind.rb mcp-health-check.rb detect-prose-menu.rb warn-loop-repo-shared-tree.rb warn-untracked-before-pull.rb warn-background-launch-no-progress.rb session-ingest.rb cos-worker-stop-notify.rb).each do |file_name|
   remote_file "#{node[:setup][:home]}/.claude/hooks/#{file_name}" do
     source "files/hooks/#{file_name}"
     owner node[:setup][:user]
