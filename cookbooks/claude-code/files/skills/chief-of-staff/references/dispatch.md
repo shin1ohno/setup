@@ -711,9 +711,14 @@ herdr --machine "$machine" pane process-info --pane "$pane" > "$local_dir/shell.
 ```
 
 Read `shell.json` and confirm the foreground is the interactive shell; re-probe
-until ready, not a fixed sleep. Only then run the next block. A nonzero start
-is ambiguous delivery: read this pane and `agent get`, never blindly start a
-second worker. A blocked startup is a blocker, not consent to answer a dialog.
+until ready, not a fixed sleep. Only then run the next block. The common start
+step in "Launch example" applies to **both Claude and Codex**, including remote
+workers: replace every `--session "$s"` with `--machine "$machine"`, keep its
+harness-specific `agent_args` (or the validated remote plan argv), and use the
+raw remote pane/name. Codex keeps `check_for_update_on_startup=false`; Claude
+keeps its model/effort and task-specific settings/tools. The following small
+Claude canary uses the same first-prompt argv delivery, with concurrent early
+observation because its first turn can finish before `agent start` returns.
 
 ```bash
 launch_prompt="Read $remote_dir/brief-$attempt.md and execute that brief exactly."
@@ -738,6 +743,17 @@ misses its working transition. The raw pane is the one just created, not an
 existing agent. Read the activity state (working versus blocked), start result
 and identity together. Unobserved activity is not proof of failure or permission
 to relaunch; reconcile files and live state first.
+
+A nonzero result from this canary block is ambiguous delivery, not an instruction
+to launch again. For a start `timeout` or `agent_name_not_found`, use the common
+start step's **recovery loop only**, on the same machine: `agent get` the reserved
+name, restore a lost name with `agent rename` on this raw pane, and wait for
+working or blocked. Do not repeat `agent start`. As in the shared step, a start
+error is tolerable only with observed working/blocked activity and reconciled
+identity; the saved concurrent observation can establish the short first turn.
+A blocked startup remains a blocker, never consent to answer a dialog. Remote
+Codex and these error-recovery paths were not part of the mini Claude canary;
+do not describe them as live-verified on mini.
 
 Read the activity and identity, then record `update --state running --note ...
 --evidence <activity.json>` only for observed execution. Run this replacement
