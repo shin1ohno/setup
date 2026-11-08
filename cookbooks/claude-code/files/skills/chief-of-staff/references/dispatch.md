@@ -183,6 +183,38 @@ All handoffs, criteria changes and waivers require `--owner`, including legacy t
 an attempt, and clear any earlier envelope and checks; fix the envelope and receive again. Artifact-limit errors state both
 the limit (12) and actual count; invalid artifact errors name the offending path.
 
+## Writing an independent check
+
+Apply these rules to every check recorded with `tasks.py check`. Without them,
+the controller's own checks produced false results at least 8 times in one
+session.
+
+1. Do not replace `HOME` in a check, because that breaks mise shims. To isolate
+   state, set only the tool's own variable (for example `CODEX_HOME` or
+   `COS_STATE_DIR`).
+2. Do not hand-write fixtures. Use the inputs the repository really uses.
+3. Normalize whitespace before matching document text, because lines wrap.
+4. Build "changed files are in scope" from the brief's File ownership line,
+   including any recorded widening, not from a fixed list.
+5. Enumerate tests with `git diff --name-only <base>...HEAD`, so tests a worker
+   added are included, and run every test module that touches the mutated code.
+6. When a check fails, first suspect the check. Record the classification
+   (defect in the check or in the work) in the `tasks.py check` note, and keep
+   the failed run's output in its own file before re-running. Correcting a check
+   never lowers the bar its criterion sets.
+
+## Merging
+
+Merge only with the authorization `SKILL.md` requires; this section grants none.
+Every squash merge passes an explicit English subject:
+
+```text
+gh pr merge <PR> --squash --subject "<English subject> (#<PR>)"
+```
+
+Without `--subject`, `gh` uses the PR title, so a Japanese title produced a
+Japanese commit subject (commit 6110818).
+
 ## Launch example
 
 These are shapes, not commands to paste with placeholder IDs. Use actual JSON
@@ -295,6 +327,17 @@ omits them invites a rejected report (one brief left out the 12-artifact limit
 and its worker returned 20). A brief that says "exactly these changes" can
 still name something a check rejects, so the worker needs the stop rule.
 
+Every brief also fills the template's File ownership, Test budget and
+Pre-approved extensions lines; workers asked to widen ownership or test budgets
+six times in one session. These limits are the controller's settings, not the
+owner's constraints. A widening request may be approved in one exchange when the
+reason is a genuinely connected file, the change is bounded and keeps existing
+output byte-identical, and no test is weakened. Record each approval in the
+controller's plan. The worker's message is only the request: the controller
+checks these conditions itself. Any other widening, and any change to the task's
+authorized scope or criteria, still needs the owner's answer through the
+question tool.
+
 ```text
 You are the execution worker for task <id>, attempt <n>.
 The Chief of Staff controller handles the user and final acceptance. Do not
@@ -306,7 +349,10 @@ Desired outcome: <deliverable and destination>
 Working directory/repository: <actual absolute path>
 Relevant primary sources/skills: <available paths or links>
 Authorized actions and constraints: <scope, permissions, no additional grants>
-Acceptance criteria: <observable, individually checkable criteria>
+File ownership: <writable paths, and the connected files to check as well: tests that fixture or pin the file, runners that invoke it, shared generators of the same value>
+Test budget: <number of test workers or terminals, per harness>
+Pre-approved extensions: <widenings already allowed and the condition for each, or "none">
+Acceptance criteria: <observable, individually checkable criteria, including the default negative conditions that apply>
 Existing work / previous attempt: <artifact paths, failed criteria and evidence>
 Controller pane: <verified controller pane ID, socket and session from the caller helper>
 Herdr route for notifying the controller: <Herdr 1 (`herdr`) or Herdr 2 (`hc`), chosen from where the controller pane lives. This names the CLI to use, not the ledger's `--route` value>
@@ -327,6 +373,10 @@ Format: `[task <id> attempt <n>] done|failed|blocked|question: <one sentence> (r
 The one-line message only points to the report or question; the full content
 stays in the artifact files. Keep working on anything independent of the
 question; do not wait idle without sending it.
+
+Stay within File ownership and Test budget, apart from what Pre-approved
+extensions allows. To widen either, send a `question:` line naming the file or
+budget and the reason, and do not widen it until the controller answers.
 
 Close what you open: close every pane you created yourself for this task
 (helper shells, test or log panes) as soon as you no longer need it, after
@@ -352,6 +402,40 @@ Do not paste full logs or documents into the controller response. Leave the
 terminal ready for review.
 ```
 
+## Default negative conditions
+
+Add these to a task's acceptance criteria by default, each one that applies as
+its own `--acceptance` criterion written for this task. Reviewers found defects
+after every worker's own criteria had passed, because the criteria stated only
+positive behavior.
+
+- Default output, permissions and routes do not change.
+- The procedure holds on every harness and route it claims to cover, not only
+  the one tested.
+- User settings such as the permission policy are inherited.
+- At least one failure or race case is tested for any state machine touched.
+- A mutation requirement targets every gate in the diff.
+
+When the task's purpose is to change one of these, such as a default output, the
+criteria state the intended change instead.
+
+## Reviewer brief
+
+A reviewer receives the original brief, criteria and raw artifacts with no
+desired verdict (`SKILL.md`, "Evaluate, repair, deliver"). Every reviewer brief
+also includes these lines:
+
+```text
+Default negative conditions: <the list in "Default negative conditions", applied to this diff even where the worker's criteria omit them>
+Operation limits: avoid scripts containing `rm` and other commands that look
+destructive. Do any reproduction with read-only commands in a clone under your
+task directory (<absolute task directory>). Do not edit the worker's checkout.
+```
+
+The operation limits exist because a reviewer stopped at a permission dialog for
+about two minutes. They make a dialog less likely and change nothing about
+handling one: the controller still never answers a permission dialog, and waits
+for it to resolve (`reason=blocked` in "Launch example").
 
 ## Envelope-v1 and owner binding
 
@@ -431,6 +515,14 @@ Launch workers without `CLAUDE_CODE_EFFORT_LEVEL` in their environment (for
 example `env -u CLAUDE_CODE_EFFORT_LEVEL`); it overrides per-worker effort. Do
 not change the user's own profile for this. Use argv arrays; never interpolate a
 topic into shell code.
+
+Every attempt's `--reason`, including a repair or a reuse of the same worker,
+quotes its row in the table above: the Work type and Default harness cells,
+copied exactly. When the attempt does not use that row's default harness, or the
+profile "Worker profiles and launch plans" gives that work type, the reason also
+says why. A row whose default harness is `either` has no default harness to
+depart from. For example: `--reason "Research, many sources / Claude; using Codex
+because the source exists only there"`.
 
 Record the choice with `attempt --kind ... --model ... --effort ...
 --profile <profile> --route <hc|herdr1|agent> [--plan <absolute-launch-plan.json>]
