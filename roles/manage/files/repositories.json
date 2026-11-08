@@ -59,6 +59,10 @@
     {
       "name": "ai-memory",
       "uri": "git@github.com:shin1ohno/ai-memory.git"
+    },
+    {
+      "name": "session-search",
+      "uri": "git@github.com:shin1ohno/session-search.git"
     }
   ]
 }
