@@ -133,6 +133,36 @@ The default `list` includes unreported terminal results. Only call `reported`
 after actually delivering the update; it clears `report_pending`. Earlier status
 updates do not hide a subsequently accepted result.
 
+For a verified pane move, use `bind <task-id> --owner <owner> --pane <new-pane>
+--rebind --evidence <observed-move>`. Without `--rebind`, a changed pane is refused.
+History retains the old pane and evidence; the old observation, envelope and checks
+are archived and cleared, so observe the replacement and review it again. Fresh
+worker restrictions still apply to the replacement pane.
+
+Transfer ownership explicitly with `handoff <task-id> --owner <current-owner>
+--to <new-owner> --note <handoff-reason>`. Only the new owner can mutate afterward;
+the timestamped history retains both identities and the note.
+
+When the owner changes acceptance criteria, use `criteria <task-id> --owner <owner>
+--acceptance <replacement> [--acceptance <replacement> ...] --note <owner-decision>`.
+This replaces the entire list on a nonterminal task without consuming an attempt.
+History retains the previous text, received envelope and recorded checks. The current
+envelope and checks are cleared: file a new envelope against the replacement text
+and run a new independent check, even when some criteria are unchanged. A queued
+or pre-route legacy task also supports this operation; completed tasks are immutable.
+
+For an explicit owner decision accepting a deviation, add
+`--waived-by-owner <owner-reason>` to `update --state accepted`. The nonblank reason,
+owner, original criteria and received envelope remain in timestamped history.
+File failed or unverified criteria honestly with envelope status `failed` or `blocked`;
+`done` still requires all criteria to pass. The waiver relaxes the envelope verdict
+only: a received envelope, observed matching model/effort and the latest passing
+independent check remain required for envelope-v1. It cannot waive failed checks.
+All handoffs, criteria changes and waivers require `--owner`, including legacy tasks.
+`receive` refusals record their reason and file path in history without consuming
+an attempt; fix the envelope and receive again. Artifact-limit errors state both
+the limit (12) and actual count; invalid artifact errors name the offending path.
+
 ## Launch example
 
 These are shapes, not commands to paste with placeholder IDs. Use actual JSON
@@ -292,8 +322,8 @@ authorization. Write full results and actual check output to artifact files insi
 task directory or checkout. Write the envelope below to
 `<task directory>/envelope-<n>.json` (at most 16 KiB) and return only that.
 Envelope limits: at most 12 artifacts; at most 8 open questions, each at most
-600 UTF-8 bytes; summary at most 1200 UTF-8 bytes. Cite a directory or log file
-instead of listing more than 12 paths.
+600 UTF-8 bytes; summary at most 1200 UTF-8 bytes. Cite a single log or index file
+instead of listing more than 12 paths; all cited paths must be regular files.
 If the specification cannot pass a required check (a lint, test or validator
 rejects what the brief asks for), stop. Report status `blocked` with the failing
 check, its output file, and the specification change it needs. Never deviate
@@ -419,6 +449,14 @@ the table row and any escalation). Record observed values only from evidence:
   `running` then, with a note saying so. Then run `observe <task-id> --owner <owner> --transcript <path>` on
   `~/.claude/projects/<cwd-slug>/<controller-session>/subagents/agent-<agent-id>.jsonl`.
   It reads the model and effort recorded on every assistant turn.
+  The controller files the Agent's returned final text as a task-local report and
+  its bounded envelope as a JSON file, preserving criterion verdicts and evidence
+  exactly; do not turn missing evidence into a pass. If the worker cannot write
+  files, save its returned evidence as task-local files and cite those files in
+  the envelope. After binding, explicitly record `running` as above, then `receive
+  --file <envelope>` to enter `reviewing`, run and record the independent `check`,
+  and accept with its check ID. This uses envelope-v1 on the same reserved attempt;
+  no invented pane or new attempt is needed for a synchronous result.
 
 On either route, exactly one (model, effort) pair must appear. No counted
 entry, an entry missing its model or effort, and mixed pairs (for example a

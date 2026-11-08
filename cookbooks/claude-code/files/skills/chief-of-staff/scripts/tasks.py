@@ -115,11 +115,17 @@ def parser():
     ls.add_argument("--owner", required=True, type=nonempty)
     ls.add_argument("--all", action="store_true", help="Include terminal tasks")
     for name in ("show", "attempt", "bind", "update", "reported", "extend", "receive", "observe",
-                 "check"):
+                 "check", "handoff", "criteria"):
         cmd = sub.add_parser(name)
         cmd.add_argument("task_id")
         cmd.add_argument("--owner", type=nonempty)
-        if name == "attempt":
+        if name in {"handoff", "criteria"}:
+            cmd.add_argument("--note", required=True, type=nonempty)
+            if name == "handoff":
+                cmd.add_argument("--to", required=True, type=nonempty)
+            else:
+                cmd.add_argument("--acceptance", action="append", required=True, type=nonempty)
+        elif name == "attempt":
             cmd.add_argument("--kind", choices=("claude", "codex"), required=True)
             cmd.add_argument("--model", required=True, type=nonempty)
             cmd.add_argument("--reason", required=True, type=nonempty)
@@ -133,6 +139,8 @@ def parser():
             cmd.add_argument("--reuse-agent", action="store_true",
                              help="Reuse the previous settled worker's identity")
         elif name == "bind":
+            cmd.add_argument("--rebind", action="store_true")
+            cmd.add_argument("--evidence", action="append", type=nonempty, default=[])
             identity = cmd.add_mutually_exclusive_group(required=True)
             identity.add_argument("--pane", type=nonempty)
             identity.add_argument("--session", type=nonempty)
@@ -152,6 +160,8 @@ def parser():
             cmd.add_argument("--exit-status", required=True, type=int)
             cmd.add_argument("--note", required=True, type=nonempty)
         elif name == "update":
+            cmd.add_argument("--waived-by-owner", type=nonempty,
+                             help="Owner decision waiving failed envelope criteria only")
             cmd.add_argument("--state", choices=TRANSITIONS, required=True)
             cmd.add_argument("--note", required=True, type=nonempty)
             cmd.add_argument("--evidence", action="append", type=nonempty, default=[])
@@ -422,9 +432,11 @@ def read_envelope(path, task, root):
             raise ValueError("invalid evidence path")
         p = Path(value)
         if not p.is_absolute() or not p.is_file() or not any(p.resolve().is_relative_to(r) for r in roots):
-            raise ValueError("artifact must be a file inside the task or checkout")
-    if not isinstance(envelope["artifacts"], list) or len(envelope["artifacts"]) > 12:
-        raise ValueError("invalid artifact list")
+            raise ValueError(f"artifact must be a regular file inside the task or checkout: {value}")
+    if not isinstance(envelope["artifacts"], list):
+        raise ValueError("artifacts must be a list")
+    if len(envelope["artifacts"]) > 12:
+        raise ValueError(f"artifact limit is 12; received {len(envelope['artifacts'])}")
     for value in envelope["artifacts"]:
         artifact(value)
     criteria = envelope["criteria"]
@@ -479,7 +491,27 @@ def run(args, root):
         raise ValueError("mutation requires this task's verified controller owner")
     if args.command == "show":
         return {"task": task}
-    if args.command == "attempt":
+    if args.command in {"handoff", "criteria"}:
+        if not args.owner:
+            raise ValueError("mutation requires this task's verified controller owner")
+        if args.command == "handoff":
+            old_owner = task["owner"]
+            task["owner"] = args.to
+            event(task, "Owner handoff: " + args.note)
+            task["history"][-1]["handoff"] = {"from": old_owner, "to": args.to}
+        else:
+            if task["state"] in TERMINAL:
+                raise ValueError("cannot change criteria of a completed task")
+            previous = {"acceptance": task["acceptance"],
+                        "envelope": task.pop("envelope", None), "checks": []}
+            if task["attempts"]:
+                previous["checks"] = task["attempts"][-1].pop("checks", [])
+            task["acceptance"] = args.acceptance
+            event(task, "Owner criteria change: " + args.note)
+            task["history"][-1]["criteria_change"] = {
+                "previous": previous, "acceptance": args.acceptance,
+                "attempt": len(task["attempts"])}
+    elif args.command == "attempt":
         if task["state"] not in {"queued", "retry", "needs-user"}:
             raise ValueError("reconcile the existing attempt before reserving another")
         if len(task["attempts"]) >= task["max_attempts"]:
@@ -535,21 +567,35 @@ def run(args, root):
                 and attempt.get("route", "herdr") != "agent":
             raise ValueError("bind cannot record model or effort for an envelope-v1 herdr attempt; "
                              "run observe --transcript <session-log> --launch-prompt <prompt> instead")
+        if args.rebind and (not args.pane or not args.evidence or not args.owner):
+            raise ValueError("--rebind requires --pane, --owner and --evidence")
         if args.session:
             if attempt.get("session") not in (None, args.session):
                 raise ValueError("session already bound")
             attempt["session"] = args.session
-        if args.pane and task.get("fresh_worker") and attempt["pane"] is None:
+        if args.pane and task.get("fresh_worker") and attempt["pane"] != args.pane:
             socket, _, controller = task["owner"].rpartition("#")
             if args.pane == controller:
                 raise ValueError("fresh worker cannot use the controller pane")
             for path in root.glob("*/task.json"):
                 other = json.loads(path.read_text(encoding="utf-8"))
                 if other["owner"].rpartition("#")[0] == socket:
-                    if any(a.get("pane") == args.pane for a in other["attempts"]):
+                    historical_panes = {h["rebind"]["from"] for h in other["history"]
+                                        if "rebind" in h}
+                    if (args.pane in historical_panes or
+                            any(a.get("pane") == args.pane for a in other["attempts"])):
                         raise ValueError("fresh worker cannot use a previously bound pane")
         if args.pane and attempt["pane"] is not None and attempt["pane"] != args.pane:
-            raise ValueError("pane already bound; reconcile a move before changing identity")
+            if not args.rebind:
+                raise ValueError("pane already bound; use --rebind with evidence")
+            event(task, "Rebound worker pane", args.evidence)
+            task["history"][-1]["rebind"] = {"from": attempt["pane"], "to": args.pane}
+            # The new process must be observed and reviewed independently.
+            task["history"][-1]["previous_observation"] = {
+                key: attempt.pop(key, None) for key in
+                ("observed_model", "observed_effort", "observed_source", "observed_session")}
+            task["history"][-1]["previous_checks"] = attempt.pop("checks", [])
+            task["history"][-1]["previous_envelope"] = task.pop("envelope", None)
         if args.pane:
             attempt["pane"] = args.pane
         if args.model:
@@ -593,7 +639,12 @@ def run(args, root):
     elif args.command == "receive":
         if task["state"] not in {"running", "reviewing"}:
             raise ValueError("receive requires a running or reviewing attempt")
-        envelope = read_envelope(args.file, task, root)
+        try:
+            envelope = read_envelope(args.file, task, root)
+        except (ValueError, OSError, KeyError, TypeError) as error:
+            event(task, "Receive refused: " + str(error), [str(args.file)])
+            save_task(root, task)
+            raise
         task["envelope"] = envelope
         task["state"] = "reviewing"
         event(task, "Received bounded envelope", [str(args.file)])
@@ -614,6 +665,8 @@ def run(args, root):
               ": " + args.note, [path])
         result["check"] = record
     elif args.command == "update":
+        if args.waived_by_owner and (args.state != "accepted" or not args.owner):
+            raise ValueError("--waived-by-owner requires accepted and --owner")
         if args.check and args.state != "accepted":
             raise ValueError("--check applies only to accepted")
         if args.state not in TRANSITIONS[task["state"]]:
@@ -627,7 +680,10 @@ def run(args, root):
                 raise ValueError("bind the observed pane before recording execution")
         if strict and args.state == "accepted":
             envelope = task.get("envelope", {})
-            if envelope.get("status") != "done" or not all(c["status"] == "pass" for c in envelope.get("criteria", [])):
+            if not envelope:
+                raise ValueError("acceptance requires a received envelope")
+            if not args.waived_by_owner and (envelope.get("status") != "done" or not all(
+                    c["status"] == "pass" for c in envelope.get("criteria", []))):
                 raise ValueError("acceptance requires a complete passing envelope and independent review")
             attempt = task["attempts"][-1]
             if (not model_matches(attempt.get("requested_model"), attempt.get("observed_model"))
@@ -640,6 +696,10 @@ def run(args, root):
         if task["state"] in TERMINAL or task["state"] == "needs-user":
             task["report_pending"] = True
         event(task, args.note, args.evidence)
+        if args.waived_by_owner:
+            task["history"][-1]["owner_waiver"] = {
+                "owner": args.owner, "reason": args.waived_by_owner,
+                "acceptance": task["acceptance"], "envelope": task.get("envelope")}
     elif args.command == "reported":
         task["last_report"] = {"at": now(), "note": args.note}
         task["report_pending"] = False
