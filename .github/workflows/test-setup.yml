@@ -648,6 +648,9 @@ jobs:
         /tmp/memory-mcp-venv/bin/pip install -q -r cookbooks/lxc-es-memory/files/requirements-v2.txt
         MEMORY_MCP_PYTHON=/tmp/memory-mcp-venv/bin/python ./bin/check-memory-v2-manifest
 
+    - name: pinned ai-memory — on main, distribution contract, equals setup's copies (ADR 0013)
+      run: MEMORY_MCP_PYTHON=/tmp/memory-mcp-venv/bin/python ./bin/check-ai-memory-pin
+
     - name: memory-mcp write-path regression suite
       run: |
         # cookbooks/lxc-es-memory/files/memory-mcp is the memory-v2 MCP server.

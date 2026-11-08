@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Guardrail for the pinned shin1ohno/ai-memory (ADR 0013).
+#
+# 1. cookbooks/lxc-es-memory/files/ai-memory.pin is one 40-hex line.
+# 2. The SHA can be fetched anonymously and is an ancestor of ai-memory main,
+#    so an unmerged branch SHA cannot reach the fleet.
+# 3. The distribution units at the pin pass bin/check-memory-v2-manifest.
+# 4. While setup still carries its copies, every mapped file equals the pin by
+#    (mode, OID). A pin switch must not change a byte on CT 119. Removed together
+#    with the copies in SH1-48.
+#
+# Usage: bin/check-ai-memory-pin [TREE-ISH]     # default HEAD; exit 1 on any failure
+#        MEMORY_MCP_PYTHON=.venv/bin/python bin/check-ai-memory-pin
+set -euo pipefail
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TREE="${1:-HEAD}"
+PIN_PATH=cookbooks/lxc-es-memory/files/ai-memory.pin
+T=$(mktemp -d "${TMPDIR:-/tmp}/ai-memory-pin.XXXXXX"); trap 'rm -rf "$T"' EXIT
+
+die() { echo "FAIL  $*" >&2; exit 1; }
+
+pin_body=$(git -C "$REPO" show "$TREE:$PIN_PATH")
+[ "$(printf '%s\n' "$pin_body" | grep -c .)" -eq 1 ] || die "$PIN_PATH must hold exactly one line"
+printf '%s\n' "$pin_body" | grep -Eqx '[0-9a-f]{40}' || die "$PIN_PATH is not a 40-hex SHA"
+pin=$pin_body
+
+# Ignore the runner's git config, so a url rewrite cannot change the transport.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0
+git -C "$T" init -q
+git -C "$T" config remote.origin.url https://github.com/shin1ohno/ai-memory.git
+git -C "$T" fetch -q --depth 1 origin "$pin" || die "pin $pin cannot be fetched anonymously"
+git -C "$T" fetch -q --filter=blob:none origin +refs/heads/main:refs/remotes/origin/main \
+  || die "ai-memory main cannot be fetched"
+git -C "$T" merge-base --is-ancestor "$pin" refs/remotes/origin/main \
+  || die "pin $pin is not an ancestor of ai-memory main"
+echo '* -text -eol -ident -filter -working-tree-encoding' > "$T/.git/info/attributes"
+git -C "$T" -c advice.detachedHead=false checkout -q --force --detach "$pin"
+echo "PASS  pin $pin is on ai-memory main"
+
+"$REPO/bin/check-memory-v2-manifest" "$T"
+
+MAP=(
+  cookbooks/lxc-es-memory/files/memory-mcp/=memory-mcp/
+  cookbooks/lxc-es-memory/files/memory-keeper/=memory-keeper/
+  cookbooks/lxc-es-memory/files/es-indices-v2/=es-indices-v2/
+  cookbooks/lxc-es-memory/files/systemd/=systemd/
+  cookbooks/lxc-es-memory/files/auth-proxy/proxy.py=auth-proxy/proxy.py
+  cookbooks/lxc-es-memory/files/auth-proxy/test_proxy.py=auth-proxy/test_proxy.py
+  cookbooks/lxc-es-memory/files/eval/eval_recall.py=eval/eval_recall.py
+  cookbooks/lxc-es-memory/files/generate_env_v2.sh=generate_env_v2.sh
+  cookbooks/lxc-es-memory/files/memory-keeper-health.sh=memory-keeper-health.sh
+  cookbooks/lxc-es-memory/files/requirements.txt=requirements.txt
+  cookbooks/lxc-es-memory/files/requirements-v2.txt=requirements-v2.txt
+  cookbooks/claude-code/files/hooks/mirror-file-memory.rb=hooks/mirror-file-memory.rb
+  cookbooks/claude-code/files/hooks/test-mirror-file-memory.sh=hooks/test-mirror-file-memory.sh
+  bin/register-memory-mirror=bin/register-memory-mirror
+)
+
+equal=0 different=0
+for pair in "${MAP[@]}"; do
+  src=${pair%%=*} dst=${pair#*=}
+  found=0
+  while IFS=$'\t' read -r -d '' meta path; do
+    case "$path" in */__pycache__/*) continue ;; esac
+    found=1
+    want=${meta%% *}:${meta##* }
+    case "$src" in
+      */) target=$dst${path#"$src"} ;;
+      *) target=$dst ;;
+    esac
+    rec=$(git -C "$T" ls-tree "$pin" -- "$target" | cut -f1)
+    got=${rec%% *}:${rec##* }
+    if [ "$want" = "$got" ]; then
+      equal=$((equal + 1))
+    else
+      different=$((different + 1))
+      echo "FAIL  $path differs from ai-memory:$target at the pin" >&2
+    fi
+  done < <(git -C "$REPO" ls-tree -r -z "$TREE" -- "$src")
+  [ "$found" -eq 1 ] || die "no file in $TREE for mapped path $src"
+done
+[ "$different" -eq 0 ] || die "$different mapped files differ from the pin"
+[ "$equal" -gt 0 ] || die "the path map matched no files"
+echo "PASS  $equal mapped files equal the pin by (mode, OID)"
