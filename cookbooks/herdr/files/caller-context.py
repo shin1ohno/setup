@@ -162,6 +162,9 @@ def emit(pane, method):
 
 def hc_identity(env, parent_pids):
     """Use hc's live local process observations, never the inherited ID alone."""
+    if "HC_SOCKET" in env:
+        raise ValueError("hc caller unverified: HC_SOCKET overrides the session endpoint; "
+                         "hc does not report its session name")
     terminal = env["HC_TERMINAL_ID"]
     server = env.get("HC_SESSION", "").strip() or "default"
     if not re.fullmatch(r"t[0-9a-z]+", terminal) or "#" in server:
@@ -199,26 +202,51 @@ def hc_identity(env, parent_pids):
             "owner": "hc:" + server + "#" + terminal}
 
 
+def emit_resumed(panes, session_id):
+    match = resumed_session(panes, session_id, process)
+    if match is None:
+        raise ValueError("no verified caller; use prepare then verify in separate tool calls")
+    pane, pids = match
+    live, info = recheck(pane, pids)
+    if resumed_session([live], session_id, lambda _: info) is None:
+        raise ValueError("caller session changed during verification")
+    emit(live, "foreground-resume-session")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["resolve", "prepare", "verify"])
     args = parser.parse_args()
     if args.action == "resolve":
         if os.environ.get("HC_TERMINAL_ID") and os.environ.get("HERDR_ENV") != "1":
-            print(json.dumps(hc_identity(os.environ, ancestors())))
+            try:
+                caller = hc_identity(os.environ, ancestors())
+            except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
+                # A daemon may carry a stale hc ID. Only the independent exact
+                # resume-session proof may recover it; never inherited env.
+                session_id = os.environ.get("CODEX_SESSION_ID", "")
+                try:
+                    canonical = str(uuid.UUID(session_id)) == session_id
+                except ValueError:
+                    canonical = False
+                if not canonical:
+                    raise
+                hc_reason = str(error) if isinstance(error, ValueError) else type(error).__name__
+                try:
+                    emit_resumed(inventory(), session_id)
+                except (ValueError, KeyError, OSError, subprocess.SubprocessError) as resume_error:
+                    reason = (str(resume_error) if isinstance(resume_error, ValueError)
+                              else type(resume_error).__name__)
+                    raise ValueError(hc_reason + "; independent Codex resume proof failed: " +
+                                     reason) from None
+                return
+            print(json.dumps(caller))
             return
         panes = inventory()
         pane = inherited(panes, os.environ, ancestors())
         if pane is None:
             session_id = os.environ.get("CODEX_SESSION_ID", "")
-            match = resumed_session(panes, session_id, process)
-            if match is None:
-                raise ValueError("no verified caller; use prepare then verify in separate tool calls")
-            pane, pids = match
-            live, info = recheck(pane, pids)
-            if resumed_session([live], session_id, lambda _: info) is None:
-                raise ValueError("caller session changed during verification")
-            emit(live, "foreground-resume-session")
+            emit_resumed(panes, session_id)
             return
         emit(pane, "foreground-ancestry")
         return

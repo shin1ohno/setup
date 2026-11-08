@@ -21,12 +21,21 @@ replacement. `HC_TERMINAL_ID` alone is not proof. An active Herdr 1 environment
 keeps the existing Herdr 1 verification route.
 
 Require `verified: true` and use the returned `owner` as the ledger's
-`--owner`: `hc:<server>#<terminal>`. Here `<server>` is the hc session selected
-by `HC_SESSION` (trimmed, `default` when empty/unset); it is not the core's
-display hostname. Never hand-build the key. If hc is unavailable, the terminal
-is absent/finished, process evidence is unavailable, ancestry does not match,
-or processes change during verification, dispatch is blocked. Report the
-specific helper error without selecting another terminal. `prepare`/`verify`
+`--owner`: `hc:<server>#<terminal>`. Here `<server>` is the hc CLI's session
+namespace from `HC_SESSION` (trimmed, `default` when empty/unset), not a
+session name attested by the core. The installed hc exposes a permanent core
+ID and display hostname, but not its session namespace. The helper therefore
+rejects hc verification whenever `HC_SOCKET` is set, since it can redirect
+that namespace to a different core. Never hand-build the key. If hc is
+unavailable, the terminal is absent/finished, process evidence is unavailable, ancestry does not match,
+or processes change during verification, hc proof fails. A daemon may have
+inherited a stale `HC_TERMINAL_ID`; only when `CODEX_SESSION_ID` is a canonical
+UUID does the helper then attempt the independent Herdr 1 Codex resume-session
+proof, including its live-process recheck. It never falls back to the Herdr 1
+inherited-environment route. A successful resume proof returns Herdr 1
+session/socket/pane fields, so use that route's owner key. If both proofs fail,
+dispatch is blocked and the error retains the hc reason. Report that error
+without selecting another terminal. `prepare`/`verify`
 require a canonical UUID `CODEX_SESSION_ID` and implement Herdr 1 Codex visual
 proof; they cannot verify hc controllers.
 

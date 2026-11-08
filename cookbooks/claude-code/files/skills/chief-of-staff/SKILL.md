@@ -29,12 +29,15 @@ alone and user assertions are not caller proof. If verification fails, dispatch
 is blocked; report the observed failure without selecting another pane. Record
 the verified socket + controller pane as the ledger's `--owner` key. On the
 owner-approved hc route, run `python3 ~/.agents/skills/herdr/caller-context.py
-resolve` inside the controller terminal (Codex: `--no-daemon`). With
+resolve` inside the controller terminal. Start the Codex controller itself
+with `--no-daemon`; this is a Codex launch flag, not a helper argument. With
 `HC_TERMINAL_ID` and no active Herdr 1 environment, the helper checks the live
 terminal and process ancestry through `hc get`; use its verified `owner`
 (`hc:<server>#<terminal>`) for `--owner`. Do not construct it from environment
-variables. An unverified hc caller blocks dispatch; `prepare`/`verify` are
-Herdr 1 Codex visual proof, not an hc fallback.
+variables. If hc verification fails, a canonical `CODEX_SESSION_ID` permits
+only the independent Herdr 1 Codex resume-session proof; inherited Herdr 1
+environment is never a fallback. If neither proof verifies, dispatch is
+blocked. `prepare`/`verify` are Herdr 1 Codex visual proof, not an hc fallback.
 
 Before dispatch, the controller may inspect only skills, routing and capability,
 Herdr context/topology, and its ledger. Do not investigate the task repository,
