@@ -70,6 +70,12 @@ Dir.mktmpdir("ccs-launcher-") do |work|
   share = "#{home}/.local/share/session-search"
   FileUtils.mkdir_p([root_bin, shims, File.dirname(python), "#{share}/ccs", "#{home}/.local/bin"])
   File.symlink(real_python.strip, python)
+  # macOS framework Python canonicalizes executable symlinks; Linux may keep
+  # them. Measure the fixture interpreter's own answer on either platform.
+  fixture_python, status = Open3.capture2(python, "-I", "-c", "import sys; print(sys.executable)")
+  raise "Fixture interpreter failed" unless status.success?
+
+  expected_python = fixture_python.strip
   File.write("#{share}/ccs/__init__.py", "")
   File.write("#{share}/ccs/cli.py", "import sys\ndef main(args):\n print(sys.executable)\n print(repr(args))\n return 0\n")
 
@@ -90,6 +96,7 @@ Dir.mktmpdir("ccs-launcher-") do |work|
     [ "$PWD" = "$HOME" ] || exit 94
     [ "$PYENV_ROOT" = "$HOME/.pyenv" ] || exit 95
     [ -z "${PYENV_VERSION+x}" ] && [ -z "${PYENV_DIR+x}" ] || exit 96
+    printf '%s' "$HOME" > "$HOME/probe-home"
     exec "$HOME/.pyenv/versions/fixture/bin/python3" "$@"
   SH
   write_executable.call("#{shims}/python3", shim_body)
@@ -105,17 +112,17 @@ Dir.mktmpdir("ccs-launcher-") do |work|
   end
   launcher = render.call(true, root_env)
   assert("root apply records the target user's real Python in launcher PY (got #{launcher.lines[4].strip})",
-         launcher.include?(%(PY="#{python}")))
+         launcher.include?(%(PY="#{expected_python}")) && File.read("#{home}/probe-home") == home)
 
   launcher_path = "#{home}/.local/bin/ccs"
   File.write(launcher_path, launcher)
   File.chmod(0o755, launcher_path)
   out, err, status = Open3.capture3(root_env, launcher_path, "hello world", "--flag")
   assert("rendered launcher bypasses the root PATH and preserves arguments",
-         status.success? && err.empty? && out.lines.map(&:strip) == [python, "['hello world', '--flag']"])
+         status.success? && err.empty? && out.lines.map(&:strip) == [expected_python, "['hello world', '--flag']"])
 
   user_env = root_env.merge("HOME" => home, "PATH" => File.dirname(python) + ":/usr/bin:/bin")
-  assert("non-root apply still records its current Python", render.call(false, user_env).include?(%(PY="#{python}")))
+  assert("non-root apply still records its current Python", render.call(false, user_env).include?(%(PY="#{expected_python}")))
 
   # A failed interpreter may write a plausible path before exiting nonzero.
   write_executable.call("#{shims}/python3", "echo #{python}; exit 1")
@@ -125,6 +132,9 @@ Dir.mktmpdir("ccs-launcher-") do |work|
   write_executable.call("#{shims}/python3", "exit 1")
   assert("unavailable target Python leaves PY empty", render.call(true, root_env).include?('PY=""'))
 
+  # Record the fixture symlink explicitly, then remove it, including on macOS
+  # where the real probe above records the canonical executable instead.
+  File.write(launcher_path, launcher.sub(%(PY="#{expected_python}"), %(PY="#{python}")))
   File.unlink(python)
   fallback_env = user_env.merge("PATH" => File.dirname(real_python.strip) + ":/usr/bin:/bin")
   out, err, status = Open3.capture3(fallback_env, launcher_path, "fallback")
