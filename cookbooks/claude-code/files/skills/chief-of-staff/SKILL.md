@@ -81,8 +81,8 @@ it says `launch_ready: true`; otherwise launch as before (dispatch.md, "Worker
 profiles and launch plans"). Workers receive a self-contained brief and must **not**
 invoke Chief of Staff or create their own worker trees unless this task requires
 and authorizes it. Keep orchestration in the controller. Every brief names the
-controller pane and the Herdr route (Herdr 1 `herdr` or Herdr 2 `hc`, chosen
-from where that pane lives) so the worker can type a one-line completion or
+controller pane and the Herdr CLI (Herdr 1 `herdr` or Herdr 2 `hc`, chosen
+from where that pane lives; this is not the ledger's `--route` value) so the worker can type a one-line completion or
 question message into it, and tells the worker to close the panes it created
 once it no longer needs them (dispatch.md, "Worker brief"). The controller still
 closes the worker's own pane after acceptance.

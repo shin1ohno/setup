@@ -259,7 +259,7 @@ Authorized actions and constraints: <scope, permissions, no additional grants>
 Acceptance criteria: <observable, individually checkable criteria>
 Existing work / previous attempt: <artifact paths, failed criteria and evidence>
 Controller pane: <verified controller pane ID, socket and session from the caller helper>
-Herdr route for notifying the controller: <Herdr 1 (`herdr`) or Herdr 2 (`hc`), chosen from where the controller pane lives>
+Herdr route for notifying the controller: <Herdr 1 (`herdr`) or Herdr 2 (`hc`), chosen from where the controller pane lives. This names the CLI to use, not the ledger's `--route` value>
 Task directory: <absolute task directory>
 
 Notify the controller: when you finish (done, failed or blocked) and whenever
@@ -518,17 +518,28 @@ path depends on the cwd, as today. Codex writes rollouts under
 
   ```text
   herdr --session <s> pane split --pane <caller> --direction right --cwd <plan.cwd> --no-focus \
-    --env <KEY>=<VALUE> [--env ...]
+    --env <KEY>=<VALUE> [--env ...] [--env COS_...]
   herdr --session <s> pane run <returned-id> unset <env_unset names>
-  herdr --session <s> agent start <reserved-agent-name> --kind <plan.harness> --pane <returned-id> \
-    -- <plan.argv[1:]> [route additions without the prompt]
-  herdr --session <s> agent prompt <reserved-agent-name> <brief-text> --wait --timeout 30000
+  # Claude:
+  herdr --session <s> agent start <reserved-agent-name> --kind claude --pane <returned-id> \
+    -- <plan.argv[1:]> <launch-prompt> [route additions]
+  herdr --session <s> agent wait <reserved-agent-name> --until working --until blocked --timeout 30000
   ```
+
+  For Codex, run the Codex start step in "Launch example" with `<plan.argv[1:]>`
+  in place of its `-m` and `-c` options and the prompt still last. Do not send the
+  first prompt with `agent prompt`: "Launch example" explains why. Then start the
+  background wait loop from that section.
+
+  The four `COS_*` variables from "Launch example" apply to a profile launch
+  under the same condition: a Claude worker and a Herdr 1 controller.
 
 - **Herdr 2 (`hc`), Claude or Codex.** Wrap the plan argv in `/usr/bin/env`, one
   `-u <NAME>` per `env_unset` entry and one `<KEY>=<VALUE>` per `env_set` entry,
   plus the controller's PATH (see `hc-route.md`). `env` resolves `argv[0]`
-  through that PATH; confirm it finds `~/.local/bin/claude` or `codex` first.
+  through that PATH; confirm it finds `~/.local/bin/claude` or `codex` first. With
+  a Herdr 1 controller and a Claude worker, add the `COS_*` variables as
+  `<KEY>=<VALUE>` too.
 
   ```text
   hc run --bg --name <name> --cwd <plan.cwd> -- /usr/bin/env -u <NAME> [...] \
