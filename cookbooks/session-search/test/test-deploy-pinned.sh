@@ -10,6 +10,8 @@
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Run before replacing HOME: Ruby/Python tool-manager shims need the real HOME.
+ruby "$HERE/test-launcher.rb" || exit 1
 SCRIPT="${DEPLOY_SCRIPT:-$HERE/../files/deploy-pinned.sh}"
 CHECK_PIN="$HERE/check-pin.sh"
 
