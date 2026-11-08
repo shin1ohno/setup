@@ -1,7 +1,8 @@
 # Worker instruction profile canary
 
 Status: SH1-68/69/72/73/74/78. The pro-dev canary of 2026-11-08 passed for Claude on
-Herdr 2 (`hc`), Claude on the Agent tool and Codex on `hc`; `bin/worker-profile prepare
+Herdr 2 (`hc`), Claude on the Agent tool and Codex on `hc`. The 2026-11-09 canary
+also passed for Claude and Codex on Herdr 1. `bin/worker-profile prepare
 --route <route>` reports `launch_ready: true` for exactly those pairs. The preparation
 helper never launches, migrates accounts, copies credentials or applies cookbooks.
 
@@ -36,11 +37,15 @@ does not disable global instructions. `--system-prompt` is not used.
 
 Codex plans point `CODEX_HOME` at the fixed per-profile home
 `~/.agents/codex-homes/<profile>/` that `worker-profiles.rb` creates (mode 700:
-profile `AGENTS.md`, a two-key `config.toml`, and `auth.json` as a symlink to
+profile `AGENTS.md`, a `config.toml`, and `auth.json` as a symlink to
 `~/.codex/auth.json`, the file credential store). They pass `project_doc_max_bytes=0`,
 the observed `--no-daemon` option and an inline-table trust override for the cwd,
 and unset ambient API-key variables. The helper reads only the home's `AGENTS.md`;
-it never opens `auth.json`.
+it never opens `auth.json`. The profile config includes `approval_policy` and
+`sandbox_mode` from `generate_config.sh --permission-policy`, the same defaults
+and user preamble used by the main Codex config generator. This avoids reading
+a stale main config when claude-code converges before codex-cli. The mode emits
+only those two root keys; provider credentials and MCP settings are not copied.
 
 Official references:
 
@@ -125,11 +130,8 @@ at the same moment on one home both answered and wrote separate rollouts.
 
 Open issues:
 
-- Herdr 1 launches (`herdr pane split --env`, `pane run unset`, `agent start --kind`)
-  were not exercised, so `--route herdr1` stays not launch-ready.
-- `dispatch.md` and `hc-route.md` call `prepare` without `--route`, which now yields
-  `launch_ready: false`; they need to pass the attempt's route before any worker
-  launches from a plan.
+- Herdr 1 was not exercised in this November 8 run; its separate November 9
+  canary is recorded below.
 - A simultaneous OAuth token refresh by two workers on one `auth.json` was not
   exercised (no refresh happened during the short turns).
 
@@ -154,6 +156,69 @@ SH1-68's November 4 measurements remain historical evidence; before/after floor
 tables, owner reduction targets and numerical delegation thresholds are
 unmeasured/unset. Do not replace them with estimates.
 
-Remaining before default rollout (SH1-72/73 step D): the Herdr 1 route, the
-dispatch.md `--route` pass-through, required integrations under the worker-floor
-settings, and a local cookbook dry-run of the default recipe.
+Remaining before default rollout (SH1-72/73 step D): required integrations under
+the worker-floor settings and a local cookbook dry-run of the default recipe.
+
+## Herdr 1 canary, 2026-11-09
+
+The pro-dev canary used sibling panes created with `pane split --env`, sent
+the plan's `env_unset` through `pane run unset`, then passed `argv[1:]` to
+`agent start --kind`. Both harnesses answered unique nonce prompts. Their
+session logs contain the complete deployed dev profile. `tasks.py observe`
+recorded `claude-haiku-5-5` / `low` and `gpt-6-luna` / `low` respectively.
+`herdr1` was added to `CANARIED` only after these observations.
+
+Claude's with-profile session was `7dd923b9-ec1b-42f7-97d6-d9d2469f9468`;
+the without-profile baseline was `ffcfe147-b945-4523-a793-274517664a05`.
+Both used `haiku`, effort `low`, the same worktree
+`~/ManagedProjects/setup/.claude/worktrees/cos-profile-routes`, the same nonce
+prompt, `--settings ~/.claude/worker-floor/impl.json`, and
+`--tools Bash,Read,Edit,Write,Skill,ToolSearch,Agent,AskUserQuestion`.
+The baseline omitted only `--append-system-prompt-file` and
+`CLAUDE_CODE_DISABLE_CLAUDE_MDS`; both sent `unset CLAUDE_CODE_EFFORT_LEVEL`.
+Separate `--session-id` values identified the two logs. The targeted ambient
+variables were not set in the inspected environment; sending `unset` and its
+exit status do not demonstrate removal of a populated variable. This canary
+does not prove that environment-clearing behavior.
+
+| Claude launch | First-call input tokens |
+|---|---:|
+| Without profile | 79,748 |
+| With dev profile | 54,168 |
+| Reduction | 25,580 |
+
+Counts include input, cache creation and cache read from the first assistant
+API usage. The same-condition reduction exceeds the owner's 15,000-token
+acceptance threshold. These observations do not establish an absolute 50k
+ceiling or a comparison to the November 8 launches without floor/tools.
+
+Evidence is retained under chief-of-staff task `4e44aceb101e4527` in
+`~/.local/state/chief-of-staff/`: `evidence/comparison.json`,
+`evidence/profile-claude-first-call.json`, `evidence/claude-first-call.json`,
+`evidence/profile-claude-observe.txt`, and `evidence/codex-observe.txt`.
+The original with-profile evidence was copied from task `3c32d0d312284686`.
+
+The ledger now records `hc`, `herdr1`, or `agent` and the used plan file in
+`attempt --plan`. A default launch omits the plan. Legacy `herdr` (or a missing
+route) stays an unspecified terminal route; it supports `bind --pane` and
+`observe` without guessing whether the launch used Herdr 1 or Herdr 2. Reuse
+inherits the original plan, while a different supplied plan is refused. New
+plan arguments must be existing absolute JSON files with the same route.
+
+### Tool-using Codex canary
+
+The initial nonce canary made no tool calls and did not verify permissions.
+The follow-up session `01a1bbf1-73fc-7693-bfb0-ba0a22cf9ca9` used the real
+recipe's generated config in a task-local Codex home (with the existing auth
+file linked, not copied). Its `turn_context` recorded `approval_policy: never`
+and `sandbox_policy.type: danger-full-access`, matching the user's policy.
+The worker executed a probe script that wrote a task-local file, committed in
+a throwaway repository and its linked worktree, called read-only `gh api user`,
+and ran `herdr --session default agent list`. All five probes succeeded; the
+controller re-read the output file and both commit IDs. The pane was closed.
+
+Task `4e44aceb101e4527` retains `evidence-2/canary-turn-context.json`,
+`evidence-2/canary-verification.json`, and one `tool-*.json` result per probe.
+The permission-mode change leaves normal generator output byte-identical in
+five fixtures (defaults, either override, both overrides, and nested profile
+keys), recorded in `evidence-2/generator-comparison.json` with before/after TOML.

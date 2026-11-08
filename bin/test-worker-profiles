@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -20,6 +21,76 @@ class ProfileTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+
+    def test_recipe_config_inherits_real_generated_permission_values(self):
+        # Evaluate the real recipe with a capture-only resource DSL. Its real
+        # policy generator runs; no resource is applied and no real home is read.
+        probe = self.root / "capture.rb"
+        probe.write_text('''require "json"
+require "ostruct"
+class Capture
+  attr_reader :configs
+  def initialize(home)
+    @node = {setup: {home: home, user: "fixture", group: "fixture"}}
+    @configs = {}
+  end
+  def node; @node; end
+  def directory(*); end
+  def link(*); end
+  def run_command(command)
+    output = IO.popen(command, &:read)
+    raise "generator failed" unless $?.success?
+    OpenStruct.new(stdout: output)
+  end
+  def file(path, &block)
+    resource = Object.new
+    fixture_node = @node
+    resource.define_singleton_method(:node) { fixture_node }
+    def resource.content(value); @content = value; end
+    def resource.owner(*); end
+    def resource.group(*); end
+    def resource.mode(*); end
+    resource.instance_eval(&block)
+    @configs[path] = resource.instance_variable_get(:@content) if path.end_with?("/config.toml")
+  end
+end
+capture = Capture.new(ARGV[0])
+capture.instance_eval(File.read(ARGV[1]), ARGV[1])
+puts JSON.generate(capture.configs)
+''')
+        recipe = BIN.parent / "cookbooks/claude-code/worker-profiles.rb"
+        generator = BIN.parent / "cookbooks/codex-cli/files/generate_config.sh"
+        # Resolve outside the private HOME so a version-manager shim does not
+        # mistake this fixture for a new, untrusted user configuration.
+        ruby = subprocess.check_output(
+            ["ruby", "-rrbconfig", "-e", "puts RbConfig.ruby"], text=True).strip()
+        home = self.root / "home"
+        (home / ".codex").mkdir(parents=True)
+        env = dict(os.environ, HOME=str(home))
+        env.pop("CODEX_CONFIG_PREAMBLE", None)
+        minimal_path = self.root / "only-awk"
+        minimal_path.mkdir()
+        (minimal_path / "awk").symlink_to(shutil.which("awk"))
+        bash = shutil.which("bash")
+        for preamble in [None, 'approval_policy = "on-request"\nsandbox_mode = "read-only"\n',
+                         "approval_policy = 'never' # root override\nsandbox_mode = 'workspace-write'\n"]:
+            if preamble:
+                (home / ".codex/config-preamble.toml").write_text(preamble)
+            expected = tomllib.loads(subprocess.check_output(
+                ["bash", str(generator), "--permission-policy"], env=env, text=True))
+            minimal = subprocess.check_output([bash, str(generator), "--permission-policy"],
+                                             env=dict(env, PATH=str(minimal_path)), text=True)
+            self.assertEqual(tomllib.loads(minimal), expected)
+            self.assertEqual(set(expected), {"approval_policy", "sandbox_mode"})
+            configs = json.loads(subprocess.check_output(
+                [ruby, str(probe), str(home), str(recipe)], env=env, text=True))
+            self.assertEqual(len(configs), 4)
+            for config in configs.values():
+                actual = tomllib.loads(config)
+                for key in ("approval_policy", "sandbox_mode"):
+                    self.assertEqual(actual[key], expected[key])
+                self.assertEqual(actual["project_doc_max_bytes"], 0)
+                self.assertEqual(actual["cli_auth_credentials_store"], "file")
 
     def test_byte_guard_checks_exact_artifact_including_multibyte_text(self):
         file = self.root / "AGENTS.md"
@@ -136,9 +207,9 @@ class ProfileTest(unittest.TestCase):
     def test_launch_ready_only_for_canaried_harness_route_pairs(self):
         self.deploy_fixture()
         catalog = self.codex_catalog("m")
-        # The 2026-11-08 pro-dev canary passed exactly these three pairs.
-        expected = {("claude", "hc"): True, ("claude", "agent"): True, ("claude", "herdr1"): False,
-                    ("codex", "hc"): True, ("codex", "agent"): False, ("codex", "herdr1"): False,
+        # The 2026-11-08/09 pro-dev canaries passed these five pairs.
+        expected = {("claude", "hc"): True, ("claude", "agent"): True, ("claude", "herdr1"): True,
+                    ("codex", "hc"): True, ("codex", "agent"): False, ("codex", "herdr1"): True,
                     ("claude", None): False, ("codex", None): False}
         for (harness, route), ready in expected.items():
             extra = ["--catalog", str(catalog)] if harness == "codex" else []

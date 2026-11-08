@@ -124,7 +124,10 @@ def parser():
             cmd.add_argument("--model", required=True, type=nonempty)
             cmd.add_argument("--reason", required=True, type=nonempty)
             cmd.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max", "ultra"))
-            cmd.add_argument("--route", choices=("herdr", "agent"), default="herdr")
+            cmd.add_argument("--route", choices=("hc", "herdr1", "agent", "herdr"), default="herdr",
+                             help="Launch route; herdr is a legacy unspecified terminal route")
+            cmd.add_argument("--plan", type=nonempty,
+                             help="Launch plan file used for this attempt; omit for default launches")
             cmd.add_argument("--profile", choices=("common", "dev", "cos", "writing"), required=True,
                              help="Worker instruction profile; recorded on the attempt")
             cmd.add_argument("--reuse-agent", action="store_true",
@@ -490,14 +493,28 @@ def run(args, root):
                                  or previous.get("requested_model", previous["model"]) != args.model
                                  or previous.get("effort") != args.effort
                                  or previous.get("route", "herdr") != args.route):
-            raise ValueError("reuse requires the previous worker's same kind and model")
+            raise ValueError("reuse requires the previous worker's same kind, model, effort and route "
+                             f"(previous route: {previous.get('route', 'herdr') if previous else 'none'}; "
+                             f"requested route: {args.route})")
+        plan = args.plan
+        if args.reuse_agent:
+            if plan is not None and plan != previous.get("plan"):
+                raise ValueError("reuse cannot change the previous worker's launch plan")
+            plan = previous.get("plan")
+        if args.plan is not None:
+            path = Path(plan)
+            if not path.is_absolute() or not path.is_file():
+                raise ValueError("plan must be an absolute path to an existing file")
+            launch = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(launch, dict) or launch.get("route") != args.route:
+                raise ValueError("plan route must match the attempt route")
         attempt = {
             "number": len(task["attempts"]) + 1,
             "agent": "cos-" + task["id"] + "-" + str(len(task["attempts"]) + 1),
             "kind": args.kind, "model": args.model, "reason": args.reason,
             "requested_model": args.model, "effort": args.effort,
             "observed_model": None, "observed_effort": None,
-            "route": args.route, "profile": args.profile, "session": None,
+            "route": args.route, "plan": plan, "profile": args.profile, "session": None,
             "pane": None, "created_at": now(),
             "reuse": args.reuse_agent,
         }
@@ -512,10 +529,10 @@ def run(args, root):
         if task["state"] not in {"starting", "running", "reviewing"}:
             raise ValueError("bind requires a live attempt")
         attempt = task["attempts"][-1]
-        if (attempt.get("route", "herdr") == "herdr") != bool(args.pane):
+        if (attempt.get("route", "herdr") != "agent") != bool(args.pane):
             raise ValueError("bind the identity returned by the selected route")
         if (args.model or args.effort) and task.get("contract") == "envelope-v1" \
-                and attempt.get("route", "herdr") == "herdr":
+                and attempt.get("route", "herdr") != "agent":
             raise ValueError("bind cannot record model or effort for an envelope-v1 herdr attempt; "
                              "run observe --transcript <session-log> --launch-prompt <prompt> instead")
         if args.session:
