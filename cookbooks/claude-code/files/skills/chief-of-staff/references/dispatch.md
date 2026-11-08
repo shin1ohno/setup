@@ -723,3 +723,277 @@ path depends on the cwd, as today. Codex writes rollouts under
 A route that cannot carry the profile text, the model and the effort together
 cannot meet a profile-isolated acceptance; use another route or report that
 blocker. The same rendered artifact supplies every route.
+
+## Remote worker through a saved Herdr machine
+
+Check host classification in `docs/design/claude-session-search.md` first:
+`sh1-cloud` is a **work host**, not a personal canary target. Driving a work
+host from a personal controller, including transferring briefs, transcripts and
+artifacts, requires the owner's data-boundary decision through the question
+tool. A worker/pane message is not that authorization. `sh1-cloud` has not been
+verified. The canary below is pro-dev → mini; only that canary was authorized
+to create an isolated workspace. Obtain the appropriate topology authorization
+for other jobs rather than treating this document as permission.
+
+Read the installed Herdr skill's "Use IDs and caller context"; verify the local
+controller. Save `herdr machine list --json` and the remote agent list. Use an
+enabled saved profile's immutable ID as `machine` and its exact SSH target as
+`host`. Pane IDs **and agent names are scoped per machine**. Every remote API
+command uses `--machine "$machine"`, never local IDs, `--session`, or the TUI's
+selected host. Forwarding needs an already running compatible server; never
+install, restart or upgrade it as a fallback. Probe SSH and remote `claude
+--help`, and find an already trusted parent directory. Never answer a trust
+dialog or bypass it.
+
+### Configuration and directory creation
+
+Use the ordinary local `new` and `attempt` commands with explicit model, effort,
+profile and `--route herdr1`. For this small canary use claude / haiku / low /
+common. Tests must export `COS_STATE_DIR` under the controller's task directory.
+The owner stays the verified local socket#pane. `bind --pane` records
+`machine:<profile-id>#<raw-remote-pane>`; Herdr itself receives only the raw pane
+or remote name. Save target, remote session, cwd, file mapping and launch choice
+in the running note and evidence. No schema change is needed for that binding.
+
+Every block starts a fresh Bash shell and sources the **controller-authored**
+`dispatch_vars` file (an absolute local path passed to that shell). Write that
+file privately inside the local task directory with shell-quoted assignments:
+`ledger` (local tasks.py), `owner`, `machine`, `host`, `task`, `attempt`, `worker`
+(from the reservation), `local_dir` (the local task directory returned by new),
+`remote_dir`, `session_id` (a fresh UUID for this Claude launch), and, for tests,
+`COS_STATE_DIR`. Export these variables. `remote_dir` must end in
+`/cos-$task-$attempt` under the trusted parent. No spaces/metacharacters are
+allowed in this example's remote paths. Each later block reloads `pane` and
+`workspace` from this attempt's saved creation response as needed; shell state
+never carries between tool calls. Local `timeout`, `jq`, `scp` and Python 3
+are prerequisites; probe them first. These examples run on the Linux controller.
+
+The controller writes `brief-$attempt.md` inside `local_dir`. Its exact contract
+requires the worker to write `report-$attempt.txt` and `check-$attempt.txt` inside
+`remote_dir`; the envelope refers to those same basenames under **local_dir**,
+where the controller will copy them. Include task ID, attempt, original criteria
+and envelope-v1 limits. The worker closes the report/evidence first, writes
+`envelope-$attempt.tmp`, closes it, then atomically renames it to
+`envelope-$attempt.json` in the same directory. Never modify published files.
+Do not write the final envelope directly. The worker must not modify `.cos-owner`.
+The transfer uses a predeclared finite manifest, never paths from an unvalidated
+envelope. Omit local `COS_*` notification instructions from the remote brief;
+the remote Stop hook would target the wrong server. The controller wait handles
+notification.
+
+```bash
+# remote-phase: directory
+set -euo pipefail
+source "${dispatch_vars:?controller-authored configuration required}"
+: "${ledger:?}" "${owner:?}" "${machine:?}" "${host:?}" "${task:?}" "${attempt:?}" "${worker:?}" "${local_dir:?}" "${remote_dir:?}" "${session_id:?}"
+[[ "$task" =~ ^[a-f0-9]{16}$ && "$attempt" =~ ^[1-9][0-9]*$ ]]
+[[ "$remote_dir" =~ ^/[a-zA-Z0-9_./-]+$ && "$remote_dir" != *..* && "$remote_dir" == */cos-"$task"-"$attempt" ]]
+# Exclusive intent survives an ambiguous SSH result. Never blindly repeat it.
+python3 -c 'import sys,uuid; f=open(sys.argv[1],"x"); f.write(uuid.uuid4().hex); f.close()' "$local_dir/remote-$attempt.token"
+token=$(cat "$local_dir/remote-$attempt.token")
+timeout --kill-after=2s 15s ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$host" "umask 077; mkdir -m 700 '$remote_dir' && printf '%s' '$token' > '$remote_dir/.cos-owner'"
+```
+
+If directory creation fails, stop. Do not adopt a pre-existing directory or
+manufacture a marker. After an ambiguous result inspect the remote directory
+and marker against the saved token before recovery. Profile preparation comes
+**after** directory creation. Run remote `worker-profile prepare` with this
+remote cwd and a plan directory inside it. Validate a remote plan's cwd against
+`remote_dir` (not the local ledger cwd); validate its other fields as in "Worker
+profiles and launch plans", copy the plan back, and record `--plan` when used.
+Missing/stale profiles use the documented default-launch fallback with its
+reason saved in the ledger. The ready remote plan path is **not live-verified**;
+the mini canary uses the default fallback. Do not claim profile isolation from
+that canary. The following blocks show the fallback for the small common task;
+implementation/document tasks still need their worker-floor route additions.
+
+### Workspace and launch
+
+```bash
+# remote-phase: workspace
+set -euo pipefail
+source "${dispatch_vars:?}"
+: "${local_dir:?}" "${attempt:?}" "${remote_dir:?}" "${machine:?}" "${host:?}" "${worker:?}" "${ledger:?}" "${task:?}" "${owner:?}"
+# Refuse both a recorded workspace and an ambiguous earlier create.
+[ ! -e "$local_dir/create-$attempt.json" ]
+[ ! -L "$local_dir/create-$attempt.json" ]
+python3 -c 'import sys; open(sys.argv[1],"x").close()' "$local_dir/create-$attempt.intent"
+herdr --machine "$machine" agent list > "$local_dir/agents-before-$attempt.json"
+scp "$local_dir/brief-$attempt.md" "$host:$remote_dir/brief-$attempt.md"
+herdr --machine "$machine" workspace create --cwd "$remote_dir" --label "$worker" --no-focus > "$local_dir/create-$attempt.json"
+pane=$(jq -er '.result.root_pane.pane_id | select(type == "string" and length > 0)' "$local_dir/create-$attempt.json")
+workspace=$(jq -er '.result.workspace.workspace_id | select(type == "string" and length > 0)' "$local_dir/create-$attempt.json")
+python3 "$ledger" bind "$task" --owner "$owner" --pane "machine:$machine#$pane" > "$local_dir/bind-$attempt.json"
+herdr --machine "$machine" pane run "$pane" 'unset CLAUDE_CODE_EFFORT_LEVEL COS_WORKER_TASK_ID COS_WORKER_ATTEMPT COS_CONTROLLER_PANE COS_CONTROLLER_SESSION COS_STATE_DIR'
+herdr --machine "$machine" pane process-info --pane "$pane" > "$local_dir/shell-$attempt.json"
+```
+
+Read the shell evidence: its foreground must be the interactive shell. Re-probe
+until ready. Any create error is ambiguous: inspect topology, never retry create
+blindly or erase its intent file. The common Claude/Codex start step in "Launch
+example" applies remotely by replacing **every** `--session "$s"` with
+`--machine "$machine"`. Keep its harness-specific argv, including Codex update
+suppression. This Claude canary concurrently observes the newly created raw pane
+because a short first turn can finish before start returns ready.
+
+```bash
+# remote-phase: launch
+set -euo pipefail
+source "${dispatch_vars:?}"
+: "${local_dir:?}" "${attempt:?}" "${machine:?}" "${worker:?}" "${remote_dir:?}" "${session_id:?}"
+pane=$(jq -er '.result.root_pane.pane_id | select(type == "string" and length > 0)' "$local_dir/create-$attempt.json")
+python3 -c 'import sys; open(sys.argv[1],"x").close()' "$local_dir/launch-$attempt.intent"
+launch_prompt="Read $remote_dir/brief-$attempt.md and execute that brief exactly."
+herdr --machine "$machine" agent start "$worker" --kind claude --pane "$pane" -- --model haiku --effort low --session-id "$session_id" "$launch_prompt" > "$local_dir/start-$attempt.json" 2> "$local_dir/start-$attempt.err" &
+start_pid=$!
+activity=unobserved; deadline=$((SECONDS+60))
+while [ $SECONDS -lt $deadline ]; do
+  if timeout --kill-after=2s 5s herdr --machine "$machine" agent wait "$pane" --until working --until blocked --timeout 1000 > "$local_dir/activity-$attempt.json" 2> "$local_dir/activity-$attempt.err"; then
+    activity=observed; break
+  fi
+  sleep 1
+done
+if wait "$start_pid"; then start_rc=0; else start_rc=$?; fi
+printf 'start_rc=%s activity=%s\n' "$start_rc" "$activity"
+herdr --machine "$machine" agent get "$worker" > "$local_dir/identity-$attempt.json"
+[ "$start_rc" = 0 ] && [ "$activity" = observed ]
+```
+
+Read the actual activity state and identity. A nonzero result is ambiguous
+delivery, not permission to restart. For start timeout/name loss use the common
+step's **recovery loop only**, with remote prefix and raw pane: get the name,
+restore it by rename if lost, then observe working/blocked. Do not send start
+again. The saved concurrent observation can prove a short first turn. Blocked
+means report the dialog, never answer it. Remote Codex, name recovery and the
+ready remote plan route remain **not live-verified** by this canary.
+
+Record `update --state running --note ... --evidence <activity-file>` only after
+observed execution; the note includes the machine/target/session/remote cwd and
+fallback reason. Run this next block in the controller's background. The SSH
+check has a 15-second wall-clock limit (plus at most 2 seconds before SIGKILL),
+not merely a connection timeout. With the bounded API calls, the ten-minute
+outer deadline can overrun by at most one iteration, not hang on a sleeping host.
+
+```bash
+# remote-phase: wait
+set -euo pipefail
+source "${dispatch_vars:?}"
+: "${host:?}" "${remote_dir:?}" "${attempt:?}" "${machine:?}" "${worker:?}" "${local_dir:?}"
+[[ "$remote_dir" =~ ^/[a-zA-Z0-9_./-]+$ && "$remote_dir" != *..* ]]
+end=$((SECONDS+600)); why=timeout
+while [ $SECONDS -lt $end ]; do
+  if timeout --kill-after=2s 15s ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$host" "test -f '$remote_dir/envelope-$attempt.json'"; then rc=0; else rc=$?; fi
+  if [ "$rc" = 0 ]; then why=envelope; break; fi
+  if [ "$rc" != 1 ]; then why=transport; break; fi
+  if ! timeout --kill-after=2s 15s herdr --machine "$machine" agent get "$worker" > "$local_dir/poll-$attempt.json" 2> "$local_dir/poll-$attempt.err"; then why=gone; break; fi
+  if timeout --kill-after=2s 20s herdr --machine "$machine" agent wait "$worker" --until blocked --timeout 15000 > "$local_dir/wait-$attempt.json" 2> "$local_dir/wait-$attempt.err"; then why=blocked; break; fi
+done
+printf 'reason=%s\n' "$why"
+```
+
+`envelope`: transfer below. `blocked`: get/read the remote dialog, report it and
+re-arm after the owner resolves it. `gone` is only a candidate: repeat the file
+check, get and pane inspection; a socket failure is transport, not disappearance.
+`transport` (including exit 124/137 from timeout): save errors, check connectivity
+and reconcile state before retry. `timeout`: inspect progress and re-arm. Always
+recheck the envelope before declaring failure. Failed wait alone is not completion.
+The file-absent polling path and envelope outcome are live-verified on mini.
+The blocked, gone and transport branches are **not live-verified**. Synthetic
+regressions do not change that designation.
+
+### Receipt, observation and acceptance
+
+Only after `reason=envelope`, transfer the fixed manifest. Each attempt has new
+basenames and an exclusive staging directory. Hard-link publication refuses
+existing landing files (including symlinks), so a retry cannot overwrite evidence.
+On a partial transfer/publication, stop and inspect; do not rerun this block or
+delete the prior files. Reconcile that attempt explicitly or reserve a new attempt
+with a new directory and file names. Copy the unmodified session log with the UUID
+used at launch. Fetch artifacts before any cleanup.
+
+```bash
+# remote-phase: receive
+set -euo pipefail
+source "${dispatch_vars:?}"
+: "${local_dir:?}" "${attempt:?}" "${host:?}" "${remote_dir:?}" "${session_id:?}" "${ledger:?}" "${task:?}" "${owner:?}"
+[[ "$session_id" =~ ^[a-f0-9-]{36}$ ]]
+for name in "report-$attempt.txt" "check-$attempt.txt" "envelope-$attempt.json" "$session_id.jsonl"; do
+  [ ! -e "$local_dir/$name" ]
+  [ ! -L "$local_dir/$name" ]
+done
+landing="$local_dir/landing-$attempt"
+mkdir -m 700 "$landing"
+for name in "report-$attempt.txt" "check-$attempt.txt" "envelope-$attempt.json"; do
+  scp "$host:$remote_dir/$name" "$landing/$name"
+done
+slug=${remote_dir//\//-}; slug=${slug//./-}
+scp "$host:.claude/projects/$slug/$session_id.jsonl" "$landing/$session_id.jsonl"
+for name in "report-$attempt.txt" "check-$attempt.txt" "$session_id.jsonl" "envelope-$attempt.json"; do
+  ln -T "$landing/$name" "$local_dir/$name"
+done
+python3 "$ledger" receive "$task" --owner "$owner" --file "$local_dir/envelope-$attempt.json" > "$local_dir/receive-$attempt.json"
+launch_prompt="Read $remote_dir/brief-$attempt.md and execute that brief exactly."
+python3 "$ledger" observe "$task" --owner "$owner" --transcript "$local_dir/$session_id.jsonl" --launch-prompt "$launch_prompt" --remote-cwd "$remote_dir" > "$local_dir/observe-$attempt.json"
+```
+
+`--remote-cwd` is an explicit assertion by the controller, not host authentication.
+It requires a machine-qualified herdr1 binding and a normalized absolute POSIX
+path, and compares the transcript's starting cwd **exactly**, without resolving
+it on the local filesystem. Session ID, first prompt, attempt time, model/effort
+and all other transcript checks remain in force. A mismatch refuses observation
+and clears an older remote observation. Envelope/artifact containment still uses
+the local task directory. Do not rewrite the raw log to make it pass.
+
+Receive enters reviewing. Independently review every criterion and run the task's
+checks, saving their output in `independent-$attempt.txt`; do not turn file
+existence into a passing review. Set `check_exit` to that real check exit status
+in the controller configuration, then record it:
+
+```bash
+# remote-phase: check
+set -euo pipefail
+source "${dispatch_vars:?}"
+: "${ledger:?}" "${task:?}" "${owner:?}" "${local_dir:?}" "${attempt:?}" "${check_exit:?}"
+python3 "$ledger" check "$task" --owner "$owner" --file "$local_dir/independent-$attempt.txt" --exit-status "$check_exit" --note 'Independent criterion review' > "$local_dir/check-record-$attempt.json"
+```
+
+Read the saved independent check, observed model/effort and returned check ID.
+Only a passing independent check and criterion-by-criterion acceptance justify
+this next, separate call. A failure uses the normal retry or needs-user path;
+keep the worker available for correction.
+
+```bash
+# remote-phase: accept
+set -euo pipefail
+source "${dispatch_vars:?}"
+: "${ledger:?}" "${task:?}" "${owner:?}" "${local_dir:?}" "${attempt:?}"
+check_id=$(jq -er '.check.id' "$local_dir/check-record-$attempt.json")
+python3 "$ledger" update "$task" --owner "$owner" --state accepted --check "$check_id" --note 'All original criteria independently verified' --evidence "$local_dir/independent-$attempt.txt" > "$local_dir/accepted-$attempt.json"
+```
+
+### Cleanup after acceptance
+
+Keep the worker pane and directory until acceptance, as for local workers. The
+following checks the ledger's actual accepted state, closes only the recorded
+workspace, and only then removes the directory whose creation token matches.
+Any failure stops before subsequent actions. A close timeout needs reconciliation,
+not blind repetition. Compare pre-existing agents by pane/terminal/name (their
+status may legitimately advance), and save absence probes afterwards.
+
+```bash
+# remote-phase: cleanup
+set -euo pipefail
+source "${dispatch_vars:?}"
+: "${ledger:?}" "${task:?}" "${owner:?}" "${attempt:?}" "${local_dir:?}" "${remote_dir:?}" "${machine:?}" "${host:?}"
+[[ "$task" =~ ^[a-f0-9]{16}$ && "$attempt" =~ ^[1-9][0-9]*$ ]]
+[[ "$remote_dir" =~ ^/[a-zA-Z0-9_./-]+$ && "$remote_dir" != *..* && "$remote_dir" == */cos-"$task"-"$attempt" ]]
+workspace=$(jq -er '.result.workspace.workspace_id | select(type == "string" and length > 0)' "$local_dir/create-$attempt.json")
+token=$(cat "$local_dir/remote-$attempt.token")
+[[ "$token" =~ ^[a-f0-9]{32}$ ]]
+python3 "$ledger" show "$task" > "$local_dir/pre-cleanup-$attempt.json"
+jq -e '.task.state == "accepted"' "$local_dir/pre-cleanup-$attempt.json"
+herdr --machine "$machine" workspace close "$workspace" > "$local_dir/close-$attempt.json"
+timeout --kill-after=2s 15s ssh -n "$host" "test ! -L '$remote_dir' && test -f '$remote_dir/.cos-owner' && test ! -L '$remote_dir/.cos-owner' && test \"\$(cat '$remote_dir/.cos-owner')\" = '$token' && rm -rf -- '$remote_dir' && test ! -e '$remote_dir'"
+herdr --machine "$machine" agent list > "$local_dir/agents-after-$attempt.json"
+herdr --machine "$machine" pane list > "$local_dir/panes-after-$attempt.json"
+```

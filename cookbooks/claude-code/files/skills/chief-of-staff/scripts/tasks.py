@@ -8,7 +8,7 @@ import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import stat
 import sys
@@ -154,6 +154,9 @@ def parser():
                                   "worker's Claude <session>.jsonl or Codex rollout-*.jsonl")
             cmd.add_argument("--launch-prompt", type=nonempty,
                              help="herdr route: the exact prompt the worker was launched with")
+            cmd.add_argument("--remote-cwd", type=nonempty,
+                             help="Exact absolute POSIX cwd in a fetched remote transcript; "
+                                  "requires a machine-qualified herdr1 pane")
         elif name == "check":
             cmd.add_argument("--file", required=True, type=Path,
                              help="Saved output of the controller's independent check")
@@ -300,7 +303,12 @@ def agent_pairs(path, session):
     return pairs
 
 
-def claude_pairs(path, cwd, since, prompt):
+def transcript_cwd_matches(value, cwd, remote_cwd):
+    # Remote paths belong to another filesystem: never resolve them locally.
+    return value == remote_cwd if remote_cwd is not None else inside(value, cwd)
+
+
+def claude_pairs(path, cwd, since, prompt, remote_cwd=None):
     """(model, effort) of the worker's own assistant turns since the attempt began.
 
     Harness-inserted `<synthetic>` turns and sidechain (subagent) turns are
@@ -313,7 +321,7 @@ def claude_pairs(path, cwd, since, prompt):
         if record.get("sessionId", session) != session:
             raise ValueError("a log entry belongs to another session")
         if not started and "cwd" in record:
-            if not inside(record["cwd"], cwd):
+            if not transcript_cwd_matches(record["cwd"], cwd, remote_cwd):
                 raise ValueError("the session did not start inside the task directory")
             started = True
         if record.get("type") == "user" and first is None and record.get("isMeta") is not True \
@@ -334,7 +342,7 @@ def claude_pairs(path, cwd, since, prompt):
     return pairs, session
 
 
-def codex_pairs(path, cwd, since, prompt):
+def codex_pairs(path, cwd, since, prompt, remote_cwd=None):
     """(model, effort) of every Codex turn_context since the attempt began."""
     match = ROLLOUT_LOG.fullmatch(path.name)
     if not match:
@@ -343,7 +351,7 @@ def codex_pairs(path, cwd, since, prompt):
     meta = records[0].get("payload") if records and records[0].get("type") == "session_meta" else None
     if not isinstance(meta, dict) or meta.get("id") != match.group(1):
         raise ValueError("the rollout does not open with this session's session_meta")
-    if not inside(meta.get("cwd"), cwd):
+    if not transcript_cwd_matches(meta.get("cwd"), cwd, remote_cwd):
         raise ValueError("the session did not start inside the task directory")
     first = None
     for record in records:
@@ -632,6 +640,19 @@ def run(args, root):
         if task["state"] not in {"starting", "running", "reviewing"}:
             raise ValueError("observe requires a live attempt")
         attempt = task["attempts"][-1]
+        if args.remote_cwd is not None or attempt.get("observed_remote_cwd") is not None:
+            # A failed remote re-observation must not leave a usable old proof.
+            attempt["observed_model"] = attempt["observed_effort"] = None
+            attempt["observed_remote_cwd"] = None
+            save_task(root, task)
+        if args.remote_cwd is not None:
+            remote = PurePosixPath(args.remote_cwd)
+            if (not remote.is_absolute() or ".." in remote.parts
+                    or str(remote) != args.remote_cwd or str(remote) == "/"):
+                raise ValueError("remote cwd must be a normalized absolute POSIX directory")
+            if (attempt.get("route") != "herdr1"
+                    or not re.fullmatch(r"machine:[^#\s]+#[^#\s]+", attempt.get("pane") or "")):
+                raise ValueError("remote cwd requires a machine-qualified herdr1 pane")
         if (attempt.get("route") == "agent") == bool(args.launch_prompt):
             raise ValueError("--launch-prompt is required on the herdr route and only there")
         if attempt.get("route") == "agent":
@@ -644,7 +665,7 @@ def run(args, root):
             reader = claude_pairs if attempt["kind"] == "claude" else codex_pairs
             pairs, session = reader(args.transcript, Path(task["cwd"]).resolve(),
                                     datetime.fromisoformat(attempt["created_at"]),
-                                    args.launch_prompt)
+                                    args.launch_prompt, remote_cwd=args.remote_cwd)
         pair, refusal = single_pair(pairs)
         if any(h.get("previous_observation", {}).get("observed_session") == session
                for h in task["history"] if "rebind" in h):
@@ -660,6 +681,8 @@ def run(args, root):
         model, effort = pair
         attempt["observed_model"] = model
         attempt["observed_effort"] = effort
+        if args.remote_cwd is not None:
+            attempt["observed_remote_cwd"] = args.remote_cwd
         event(task, "Observed " + model + " / " + effort + " in the worker log",
               [str(args.transcript)])
         result["observed"] = {"model": model, "effort": effort}
