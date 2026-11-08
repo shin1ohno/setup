@@ -160,6 +160,23 @@ Relevant primary sources/skills: <available paths or links>
 Authorized actions and constraints: <scope, permissions, no additional grants>
 Acceptance criteria: <observable, individually checkable criteria>
 Existing work / previous attempt: <artifact paths, failed criteria and evidence>
+Controller pane: <verified controller pane ID, socket and session from the caller helper>
+Herdr route for notifying the controller: <Herdr 1 (`herdr`) or Herdr 2 (`hc`), chosen from where the controller pane lives>
+
+Notify the controller: when you finish (done, failed or blocked) and whenever
+you have a question only the controller or user can answer, type a one-line
+message into the controller pane through the Herdr route above, following the
+installed herdr / herdr-core skill (address the pane explicitly, send the text,
+confirm it was submitted). Format: `[task <id> attempt <n>] done|failed|blocked|question: <one sentence> (report: <absolute path>)`.
+The one-line message only points to the report or question; the full content
+stays in the artifact files. Keep working on anything independent of the
+question; do not wait idle without sending it.
+
+Close what you open: close every pane you created yourself for this task
+(helper shells, test or log panes) as soon as you no longer need it, after
+reading anything you still need from it. Close only panes you created, never
+the controller pane and never your own worker pane (the controller closes that
+after acceptance, because a correction may still need it).
 
 Complete the authorized work and perform the relevant checks. Distinguish facts
 from assumptions; report concrete blockers rather than answering permission
