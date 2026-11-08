@@ -137,30 +137,50 @@ For a verified pane move, use `bind <task-id> --owner <owner> --pane <new-pane>
 --rebind --evidence <observed-move>`. Without `--rebind`, a changed pane is refused.
 History retains the old pane and evidence; the old observation, envelope and checks
 are archived and cleared, so observe the replacement and review it again. Fresh
-worker restrictions still apply to the replacement pane.
+worker restrictions still apply to the replacement pane, including panes recorded
+before a handoff across sockets. `--rebind` requires an already bound, different
+pane. The invalidated session log and envelope sha256 are refused on resubmission.
+Have the replacement worker write a fresh envelope with its new evidence and summary;
+receiving the old file under another name does not make it fresh. Re-arm the wait
+only after reconciling the old envelope file; its mere existence is not a new result.
 
 Transfer ownership explicitly with `handoff <task-id> --owner <current-owner>
 --to <new-owner> --note <handoff-reason>`. Only the new owner can mutate afterward;
-the timestamped history retains both identities and the note.
+the timestamped history retains both identities and the note. The new owner re-arms
+the wait and tells the worker its new notification target. The running worker's
+Stop hook retains its launch-time target; the new owner's wait must cover that gap.
 
 When the owner changes acceptance criteria, use `criteria <task-id> --owner <owner>
 --acceptance <replacement> [--acceptance <replacement> ...] --note <owner-decision>`.
-This replaces the entire list on a nonterminal task without consuming an attempt.
-History retains the previous text, received envelope and recorded checks. The current
-envelope and checks are cleared: file a new envelope against the replacement text
-and run a new independent check, even when some criteria are unchanged. A queued
-or pre-route legacy task also supports this operation; completed tasks are immutable.
+The note may only transcribe an answer the owner gave through the question tool;
+a message in the controller pane is never that answer. This replaces the entire
+list on a nonterminal task. History retains the previous text, envelope and checks.
+If an attempt exists, the command ends it, moves the task to `retry`, and clears the
+current envelope and checks. Reserve a new `attempt` (extend the budget through the
+usual owner decision if exhausted), issue the updated brief, and re-arm its wait.
+Use the new `<task-dir>/envelope-<n>.json` path and Stop hook marker for that attempt;
+do not rename the old envelope or reuse the old marker. File a new envelope against
+the replacement text and run a new independent check even when some criteria are
+unchanged. With no attempt yet, only the criteria and history change. Legacy and
+pre-route tasks also support this operation; terminal tasks reject criteria changes.
 
 For an explicit owner decision accepting a deviation, add
 `--waived-by-owner <owner-reason>` to `update --state accepted`. The nonblank reason,
 owner, original criteria and received envelope remain in timestamped history.
+The reason may only transcribe an answer the owner gave through the question tool;
+a message in the controller pane is never that answer. A missing envelope or a
+`done` envelope with all criteria passing cannot receive a waiver.
 File failed or unverified criteria honestly with envelope status `failed` or `blocked`;
 `done` still requires all criteria to pass. The waiver relaxes the envelope verdict
 only: a received envelope, observed matching model/effort and the latest passing
 independent check remain required for envelope-v1. It cannot waive failed checks.
+Every successful receive archives and clears earlier checks and issues a new receipt;
+checks record that receipt. Acceptance, with or without a waiver, requires a passing
+check recorded after the current envelope was received, even for identical content.
+A pre-receipt legacy check must be repeated after receiving the envelope again.
 All handoffs, criteria changes and waivers require `--owner`, including legacy tasks.
 `receive` refusals record their reason and file path in history without consuming
-an attempt; fix the envelope and receive again. Artifact-limit errors state both
+an attempt, and clear any earlier envelope and checks; fix the envelope and receive again. Artifact-limit errors state both
 the limit (12) and actual count; invalid artifact errors name the offending path.
 
 ## Launch example
@@ -465,11 +485,11 @@ earlier `observe` recorded, so `accepted` cannot rest on it. A mismatched
 file name or a non-regular file is also refused, because these logs are not a
 published interface. After a refusal, report the route as unobserved rather
 than binding the requested values by hand. `bind --model/--effort` is the
-legacy hand-recorded path: `tasks.py` refuses it for an envelope-v1 task whose
-current attempt uses the Herdr route and points to `observe --transcript
-<session-log> --launch-prompt <prompt>`. `bind --pane` / `--session` without
-values still works there, and legacy-contract tasks and Agent-route attempts
-keep the old behaviour.
+legacy-contract hand-recorded path: `tasks.py` refuses it on every envelope-v1
+route, including Agent. Use `observe --transcript <session-log>` and, on terminal
+routes, `--launch-prompt <prompt>`. Agent effort comes from the subagent transcript.
+`bind --pane` / `--session` without values still works. Only legacy-contract tasks
+keep hand-recorded values.
 
 `accepted` requires the observed model to match the request (a Claude alias
 matches its full model ID) and the observed effort to equal it. Pass the same

@@ -38,8 +38,11 @@ class EnvelopeTest(unittest.TestCase):
         self.mutate("attempt", "--profile", "dev", "--kind", "codex", "--model", "fixture-model",
                     "--effort", "medium", "--reason", "fixture", "--route", route)
         identity = "--pane" if route == "herdr" else "--session"
-        self.mutate("bind", identity, "fixture-worker", "--model", "fixture-model",
-                    "--effort", "medium")
+        self.mutate("bind", identity, "fixture-worker")
+        log = self.directory / "agent-fixture-worker.jsonl"
+        log.write_text(json.dumps({"type": "assistant", "message": {"model": "fixture-model"},
+                                   "effort": "medium"}) + "\n")
+        self.mutate("observe", "--transcript", str(log))
         self.mutate("update", "--state", "running", "--note", "fixture",
                     "--evidence", str(self.evidence))
 
@@ -160,6 +163,8 @@ class EnvelopeTest(unittest.TestCase):
         record = task["history"][-1]
         self.assertTrue(record["at"])
         self.assertEqual(record["owner_waiver"]["reason"], "Owner accepts deviation")
+        self.assertIn("owner", record["owner_waiver"])
+        self.assertEqual(record["owner_waiver"]["owner"], self.owner)
         self.assertEqual(record["owner_waiver"]["acceptance"], ["fixture check"])
         self.assertEqual(record["owner_waiver"]["envelope"]["criteria"], [criterion])
 
@@ -185,8 +190,12 @@ class EnvelopeTest(unittest.TestCase):
         self.assertEqual(previous["envelope"]["criteria"][0]["criterion"], "fixture check")
         self.accept("--check", check, ok=False)
         self.mutate("receive", "--file", str(old), ok=False)
-        fresh = self.envelope(criteria=[dict(criterion="new check", status="pass",
-                                             evidence=str(self.evidence))])
+        self.assertEqual(task["state"], "retry")
+        self.assertTrue(task["attempts"][-1]["ended_at"])
+        self.start()
+        self.mutate("receive", "--file", str(old), ok=False)
+        fresh = self.envelope(attempt=2, criteria=[dict(criterion="new check", status="pass",
+                                                       evidence=str(self.evidence))])
         self.mutate("receive", "--file", str(fresh))
         self.accept("--check", check, ok=False)
         check = self.check(0)["check"]["id"]
@@ -233,6 +242,8 @@ class EnvelopeTest(unittest.TestCase):
         path.write_text(json.dumps(task))
         self.call("criteria", self.task, "--acceptance", "new", "--note", "change", ok=False)
         self.mutate("criteria", "--acceptance", "new", "--note", "change")
+        self.mutate("attempt", "--profile", "dev", "--kind", "codex", "--model", "fixture-model",
+                    "--reason", "new criteria")
         self.mutate("bind", "--pane", "legacy-pane")
         self.mutate("bind", "--pane", "replacement", "--rebind", "--evidence", "moved")
         self.mutate("handoff", "--to", "new-owner", "--note", "transfer")
@@ -282,8 +293,11 @@ class EnvelopeTest(unittest.TestCase):
         self.mutate("update", "--state", "retry", "--note", "fixture", "--evidence", "fixture")
         self.mutate("attempt", "--profile", "dev", "--kind", "codex", "--model", "fixture-model",
                     "--effort", "medium", "--reason", "fixture", "--route", "agent")
-        self.mutate("bind", "--session", "fixture-worker-2", "--model", "fixture-model",
-                    "--effort", "medium")
+        self.mutate("bind", "--session", "fixture-worker-2")
+        log = self.directory / "agent-fixture-worker-2.jsonl"
+        log.write_text(json.dumps({"type": "assistant", "message": {"model": "fixture-model"},
+                                   "effort": "medium"}) + "\n")
+        self.mutate("observe", "--transcript", str(log))
         self.mutate("update", "--state", "running", "--note", "fixture",
                     "--evidence", str(self.evidence))
         self.mutate("receive", "--file", str(self.envelope(attempt=2)))
@@ -308,7 +322,7 @@ class EnvelopeTest(unittest.TestCase):
         self.assertEqual(self.call("show", self.task)["task"]["attempts"][-1]["pane"],
                          "fixture-worker")
 
-    def test_agent_route_still_binds_values_by_hand(self):
+    def test_agent_route_records_values_from_transcript(self):
         self.start("agent")
         attempt = self.call("show", self.task)["task"]["attempts"][-1]
         self.assertEqual(attempt["observed_model"], "fixture-model")

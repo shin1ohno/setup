@@ -399,12 +399,14 @@ def check_file(path, task, root):
     return str(resolved), digest.hexdigest()
 
 
-def require_passing_check(attempt, check_id):
+def require_passing_check(attempt, check_id, receipt):
     """envelope-v1 acceptance cites the latest check recorded by an earlier call."""
     checks = attempt.get("checks") or []
     if not checks:
         raise ValueError("acceptance requires a check recorded for this attempt; run `check` first")
     latest = checks[-1]
+    if not receipt or latest.get("envelope_receipt") != receipt:
+        raise ValueError("record a check after receiving the current envelope")
     if latest["exit_status"] != 0:
         raise ValueError("the latest recorded check failed (exit " +
                          str(latest["exit_status"]) + "); fix and record a new check")
@@ -416,7 +418,13 @@ def read_envelope(path, task, root):
     """Validate structure and evidence locations; never claim artifact quality."""
     roots = [Path(task["cwd"]).resolve(), task_path(root, task["id"]).parent.resolve()]
     data = envelope_bytes(path, roots)
+    digest = hashlib.sha256(data).hexdigest()
+    if digest in task["attempts"][-1].get("invalidated_envelope_sha256", []):
+        raise ValueError("envelope was invalidated by rebind; require a freshly written envelope")
     envelope = json.loads(data.decode("utf-8"))
+    # Pre-hash ledgers retain the parsed envelope in rebind history.
+    if any(h.get("previous_envelope") == envelope for h in task["history"] if "rebind" in h):
+        raise ValueError("envelope was invalidated by rebind; require a freshly written envelope")
     expected = {"task_id", "attempt", "status", "summary", "artifacts", "criteria", "open_questions"}
     if not isinstance(envelope, dict) or set(envelope) != expected:
         raise ValueError("invalid envelope fields")
@@ -457,7 +465,7 @@ def read_envelope(path, task, root):
     questions = envelope["open_questions"]
     if not isinstance(questions, list) or len(questions) > 8 or any(not isinstance(q, str) or len(q.encode("utf-8")) > 600 for q in questions):
         raise ValueError("invalid open questions")
-    return envelope
+    return envelope, digest
 
 
 def run(args, root):
@@ -506,6 +514,10 @@ def run(args, root):
                         "envelope": task.pop("envelope", None), "checks": []}
             if task["attempts"]:
                 previous["checks"] = task["attempts"][-1].pop("checks", [])
+                task["attempts"][-1]["ended_at"] = now()
+                task["state"] = "retry"
+            previous["envelope_receipt"] = task.pop("envelope_receipt", None)
+            previous["envelope_sha256"] = task.pop("envelope_sha256", None)
             task["acceptance"] = args.acceptance
             event(task, "Owner criteria change: " + args.note)
             task["history"][-1]["criteria_change"] = {
@@ -553,6 +565,8 @@ def run(args, root):
         if args.reuse_agent:
             attempt["agent"] = previous["agent"]
         task.pop("envelope", None)
+        task.pop("envelope_receipt", None)
+        task.pop("envelope_sha256", None)
         task["attempts"].append(attempt)
         task["state"] = "starting"
         event(task, args.reason)
@@ -563,12 +577,13 @@ def run(args, root):
         attempt = task["attempts"][-1]
         if (attempt.get("route", "herdr") != "agent") != bool(args.pane):
             raise ValueError("bind the identity returned by the selected route")
-        if (args.model or args.effort) and task.get("contract") == "envelope-v1" \
-                and attempt.get("route", "herdr") != "agent":
-            raise ValueError("bind cannot record model or effort for an envelope-v1 herdr attempt; "
-                             "run observe --transcript <session-log> --launch-prompt <prompt> instead")
+        if (args.model or args.effort) and strict:
+            raise ValueError("bind cannot record model or effort for any envelope-v1 attempt; "
+                             "run observe --transcript <session-log> (with --launch-prompt on terminal routes) instead")
         if args.rebind and (not args.pane or not args.evidence or not args.owner):
             raise ValueError("--rebind requires --pane, --owner and --evidence")
+        if args.rebind and args.pane and (attempt.get("pane") is None or attempt["pane"] == args.pane):
+            raise ValueError("--rebind requires a change from an already bound pane")
         if args.session:
             if attempt.get("session") not in (None, args.session):
                 raise ValueError("session already bound")
@@ -579,7 +594,10 @@ def run(args, root):
                 raise ValueError("fresh worker cannot use the controller pane")
             for path in root.glob("*/task.json"):
                 other = json.loads(path.read_text(encoding="utf-8"))
-                if other["owner"].rpartition("#")[0] == socket:
+                owners = {other["owner"]}
+                owners.update(h["handoff"][key] for h in other["history"]
+                              if "handoff" in h for key in ("from", "to"))
+                if socket in {owner.rpartition("#")[0] for owner in owners}:
                     historical_panes = {h["rebind"]["from"] for h in other["history"]
                                         if "rebind" in h}
                     if (args.pane in historical_panes or
@@ -596,6 +614,12 @@ def run(args, root):
                 ("observed_model", "observed_effort", "observed_source", "observed_session")}
             task["history"][-1]["previous_checks"] = attempt.pop("checks", [])
             task["history"][-1]["previous_envelope"] = task.pop("envelope", None)
+            task["history"][-1]["previous_envelope_sha256"] = task.pop("envelope_sha256", None)
+            task["history"][-1]["previous_envelope_receipt"] = task.pop("envelope_receipt", None)
+            invalidated = attempt.setdefault("invalidated_envelope_sha256", [])
+            invalidated.extend(h["envelope_sha256"] for h in task["history"]
+                               if h.get("attempt") == attempt["number"] and h.get("envelope_sha256")
+                               and h["envelope_sha256"] not in invalidated)
         if args.pane:
             attempt["pane"] = args.pane
         if args.model:
@@ -622,6 +646,9 @@ def run(args, root):
                                     datetime.fromisoformat(attempt["created_at"]),
                                     args.launch_prompt)
         pair, refusal = single_pair(pairs)
+        if any(h.get("previous_observation", {}).get("observed_session") == session
+               for h in task["history"] if "rebind" in h):
+            refusal = "session was invalidated by rebind; observe the replacement worker"
         attempt["observed_source"] = str(args.transcript)
         attempt["observed_session"] = session
         if refusal:
@@ -640,14 +667,24 @@ def run(args, root):
         if task["state"] not in {"running", "reviewing"}:
             raise ValueError("receive requires a running or reviewing attempt")
         try:
-            envelope = read_envelope(args.file, task, root)
+            envelope, digest = read_envelope(args.file, task, root)
         except (ValueError, OSError, KeyError, TypeError) as error:
             event(task, "Receive refused: " + str(error), [str(args.file)])
+            task["history"][-1]["previous_envelope"] = task.pop("envelope", None)
+            task["history"][-1]["previous_envelope_receipt"] = task.pop("envelope_receipt", None)
+            task["history"][-1]["previous_envelope_sha256"] = task.pop("envelope_sha256", None)
+            task["history"][-1]["previous_checks"] = task["attempts"][-1].pop("checks", [])
             save_task(root, task)
             raise
         task["envelope"] = envelope
+        task["envelope_sha256"] = digest
+        task["envelope_receipt"] = uuid.uuid4().hex
         task["state"] = "reviewing"
         event(task, "Received bounded envelope", [str(args.file)])
+        task["history"][-1].update(
+            envelope_sha256=digest, envelope_receipt=task["envelope_receipt"],
+            attempt=len(task["attempts"]),
+            previous_checks=task["attempts"][-1].pop("checks", []))
         save_task(root, task)
         return {"task_id": task["id"], "state": task["state"], "envelope": envelope}
     elif args.command == "check":
@@ -658,7 +695,7 @@ def run(args, root):
         record = {
             "id": uuid.uuid4().hex[:12], "at": now(), "file": path, "sha256": digest,
             "exit_status": args.exit_status, "passed": args.exit_status == 0,
-            "note": args.note,
+            "note": args.note, "envelope_receipt": task.get("envelope_receipt"),
         }
         attempt.setdefault("checks", []).append(record)
         event(task, "Recorded check " + record["id"] + " exit " + str(args.exit_status) +
@@ -673,15 +710,22 @@ def run(args, root):
             raise ValueError("invalid transition: " + task["state"] + " -> " + args.state)
         if args.state in {"starting", "running", "reviewing", "accepted", "retry"} and not args.evidence:
             raise ValueError("this transition requires observed evidence")
+        if (task["attempts"] and task["attempts"][-1].get("ended_at")
+                and args.state in {"starting", "running", "reviewing", "accepted"}):
+            raise ValueError("criteria ended this attempt; reserve a new attempt")
         if args.state == "starting" and not task["attempts"]:
             raise ValueError("reserve an attempt before resuming startup")
         if args.state in {"running", "reviewing", "accepted"}:
             if not task["attempts"] or not (task["attempts"][-1].get("pane") or task["attempts"][-1].get("session")):
                 raise ValueError("bind the observed pane before recording execution")
-        if strict and args.state == "accepted":
+        if args.waived_by_owner or (strict and args.state == "accepted"):
             envelope = task.get("envelope", {})
             if not envelope:
                 raise ValueError("acceptance requires a received envelope")
+            if (args.waived_by_owner and envelope.get("status") == "done"
+                    and all(c["status"] == "pass" for c in envelope.get("criteria", []))):
+                raise ValueError("a complete passing envelope does not need an owner waiver")
+        if strict and args.state == "accepted":
             if not args.waived_by_owner and (envelope.get("status") != "done" or not all(
                     c["status"] == "pass" for c in envelope.get("criteria", []))):
                 raise ValueError("acceptance requires a complete passing envelope and independent review")
@@ -689,7 +733,7 @@ def run(args, root):
             if (not model_matches(attempt.get("requested_model"), attempt.get("observed_model"))
                     or attempt.get("observed_effort") != attempt.get("effort")):
                 raise ValueError("effective model/effort has not been observed to match the request")
-            require_passing_check(attempt, args.check)
+            require_passing_check(attempt, args.check, task.get("envelope_receipt"))
         task["state"] = args.state
         if args.state == "retry" and len(task["attempts"]) >= task["max_attempts"]:
             task["state"] = "needs-user"
