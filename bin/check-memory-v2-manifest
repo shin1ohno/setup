@@ -112,18 +112,36 @@ for unit in memory-mcp memory-keeper; do
     fi
   fi
 done
-# 5. The session redactor has ONE source (memory-mcp/session_redact.py, design
-#    spec §6.2). The client cookbook carries a copy inside the ccs package; the
-#    two must be byte-identical, or the client masks with one ruleset while the
-#    server re-scans with another and every mismatch becomes a 422 (or worse, a
-#    secret the client no longer masks).
-redact_src="$BASE/memory-mcp/session_redact.py"
-redact_copy="$REPO/cookbooks/session-search/files/ccs/session_redact.py"
-if [[ ! -f "$redact_copy" ]]; then
-  echo "NOTICE session_redact.py: no client copy at cookbooks/session-search/files/ccs/ yet — copy-sync check passes vacuously"
-elif cmp -s "$redact_src" "$redact_copy"; then
-  echo "PASS  session_redact.py: client copy is byte-identical to memory-mcp/session_redact.py"
+# 5. The session redactor and the codex adapter have ONE source (memory-mcp/,
+#    design spec §6.2). shin1ohno/session-search vendors copies, deployed inside
+#    the ccs package (ADR 0014); at the pin they must be byte-identical to the
+#    server's, or the client masks with one ruleset while the server re-scans
+#    with another and every mismatch becomes a 422 (or worse, a secret the client
+#    no longer masks). Equal OIDs are equal bytes. A copy that is missing or
+#    cannot be fetched is a failure: nothing here passes vacuously.
+ss_pin_file="$REPO/cookbooks/session-search/session-search.pin"
+ss_origin=https://github.com/shin1ohno/session-search.git
+ss_co="$T/session-search"
+ss_git() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 git "$@"; }
+ss_pin="$(cat "$ss_pin_file" 2>/dev/null || true)"
+if ! [[ "$ss_pin" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "FAIL  session-search.pin: $ss_pin_file is not one 40-hex SHA"; fail=1
+elif ! { ss_git init -q "$ss_co" && ss_git -C "$ss_co" fetch -q --depth 1 "$ss_origin" "$ss_pin"; }; then
+  echo "FAIL  session-search: pin $ss_pin cannot be fetched from $ss_origin"; fail=1
 else
-  echo "FAIL  session_redact.py: cookbooks/session-search/files/ccs/session_redact.py differs from cookbooks/lxc-es-memory/files/memory-mcp/session_redact.py (copy the server file over the client copy)"; fail=1
+  for f in session_redact.py session_codex.py; do
+    server="$BASE/memory-mcp/$f"
+    vendored="vendor/memory-mcp/$f"
+    want="$(ss_git -C "$ss_co" rev-parse -q --verify "$ss_pin:$vendored" || true)"
+    if [[ ! -f "$server" ]]; then
+      echo "FAIL  $f: no server file at $server"; fail=1
+    elif [[ -z "$want" ]]; then
+      echo "FAIL  $f: session-search has no $vendored at the pin $ss_pin"; fail=1
+    elif [[ "$(ss_git hash-object --no-filters "$server")" == "$want" ]]; then
+      echo "PASS  $f: $vendored at the pin is byte-identical to memory-mcp/$f"
+    else
+      echo "FAIL  $f: $vendored at the pin $ss_pin differs from memory-mcp/$f (update the vendored copy in session-search, then move the pin)"; fail=1
+    fi
+  done
 fi
 [[ $fail -eq 0 ]] && echo "OK: memory-v2 distribution units are complete and importable." || { echo "FAIL: see above"; exit 1; }

@@ -3,7 +3,7 @@
 # session-search (shared half): the `ccs` client package, its launcher, and —
 # on personal hosts only — the client config and its two secrets.
 # Design: docs/design/claude-session-search.md §6.3 (C3), §6.4 (C5), §6.6 (C7),
-# §6.8 (C9), §7.5 (client files).
+# §6.8 (C9), §7.5 (client files). Source of the package: docs/adr/0014.
 #
 # Included first by darwin.rb and linux.rb, which then add the sweep timer
 # (launchd agent / systemd user timer). Locals do not cross an include_recipe
@@ -11,22 +11,27 @@
 # node[:session_search].
 #
 # Layout (for the target user):
-#   ~/.local/share/session-search/ccs/      the Python package (stdlib only)
-#   ~/.local/share/session-search/ccs/session_redact.py
-#                                           the shared redactor, copied at
-#                                           converge from the server tree (single
-#                                           source, §6.2) — never committed here
+#   ~/.local/share/session-search/deploy-pinned.sh
+#                                           fetches and verifies the package
+#   ~/.local/share/session-search/src/      git repository the pin is fetched into
+#   ~/.local/share/session-search/ccs/      the Python package (stdlib only) from
+#                                           shin1ohno/session-search at the SHA in
+#                                           session-search.pin, including the
+#                                           vendored session_redact.py and
+#                                           session_codex.py
+#   ~/.local/share/session-search/DEPLOYED_{SHA,MANIFEST}
+#                                           what was verified and deployed
 #   ~/.local/bin/ccs                        launcher
 #   ~/.claude/session-search/               state.json, lock, breaker.json (0700)
 #   ~/.config/session-search/               config.json, client.secret, hmac.key
 #                                           (personal hosts; work hosts get them
 #                                           from the private overlay)
 #
-# Redactor guard: session_redact.py is owned by the server stream
-# (cookbooks/lxc-es-memory/files/memory-mcp/). Until it exists in this
-# checkout, every resource below is skipped by a converge-time
-# `only_if "test -f <redactor>"` and a WARN is logged — the client must never
-# be installed without its masking library (fail closed, §6.2).
+# Deployment guard: the package ships with its masking library, and everything
+# that depends on the package is skipped by a converge-time `only_if` on
+# `deploy-pinned.sh check` until a verified deployment of the pin exists. A WARN
+# is logged meanwhile — the client must never run without the redactor (fail
+# closed, §6.2).
 #
 # Target user: a non-root apply (Macs, a manual apply) uses node[:setup].
 # pro-dev's auto-mitamae applies as root, where node[:setup] is /root, so the
@@ -69,13 +74,20 @@ else
 end
 
 share_dir    = "#{target_home}/.local/share/session-search"
-pkg_dir      = "#{share_dir}/ccs"
 bin_dir      = "#{target_home}/.local/bin"
 launcher     = "#{bin_dir}/ccs"
 state_dir    = "#{target_home}/.claude/session-search"
 config_dir   = "#{target_home}/.config/session-search"
-redactor_src = File.expand_path(File.join(File.dirname(__FILE__), "..", "lxc-es-memory", "files", "memory-mcp", "session_redact.py"))
-redactor_ok  = "test -f #{redactor_src}"
+
+session_search_pin = File.read(File.join(File.dirname(__FILE__), "session-search.pin")).strip
+raise "session-search.pin must be one 40-hex SHA" unless session_search_pin =~ /\A[0-9a-f]{40}\z/
+
+deploy_script = "#{share_dir}/deploy-pinned.sh"
+deploy_check  = "/bin/bash #{deploy_script} check #{session_search_pin} #{share_dir}"
+# The script belongs to the target user, so a root apply must not run it as root.
+# The id test is at run time so a guard already running as that user does not
+# call sudo again, which could ask for a password.
+deployment_ok = %(if [ "$(id -u)" = 0 ]; then sudo -H -u #{target_user} -- #{deploy_check}; else #{deploy_check}; fi)
 
 node.reverse_merge!(
   session_search: {
@@ -84,26 +96,56 @@ node.reverse_merge!(
     home: target_home,
     group: target_group,
     launcher: launcher,
-    redactor_gate: redactor_ok,
+    redactor_gate: deployment_ok,
   },
 )
 
-local_ruby_block "session-search: warn when the shared redactor is absent" do
-  block do
-    MItamae.logger.warn(
-      "session-search: #{redactor_src} not found — the ccs client is not installed " \
-      "(it ships only together with its masking library).",
-    )
-  end
-  not_if redactor_ok
-end
-
-# No mode on the shared parents: other cookbooks own their permissions.
-["#{target_home}/.local", "#{target_home}/.local/share", "#{target_home}/.config", "#{target_home}/.claude"].each do |d|
+# No mode on the shared parents: other cookbooks own their permissions. These
+# and share_dir exist before the first deploy, so they cannot wait for one.
+["#{target_home}/.local", "#{target_home}/.local/share"].each do |d|
   directory d do
     owner target_user
     group target_group
-    only_if redactor_ok
+  end
+end
+
+directory share_dir do
+  owner target_user
+  group target_group
+  mode "755"
+end
+
+# Installed where the target user can read it: pro-dev's auto-mitamae applies as
+# root from a checkout that user cannot read.
+remote_file deploy_script do
+  source "files/deploy-pinned.sh"
+  owner target_user
+  group target_group
+  mode "755"
+end
+
+execute "deploy ccs from the pinned session-search" do
+  command "/bin/bash #{deploy_script} deploy #{session_search_pin} #{share_dir}"
+  user target_user
+  not_if deployment_ok
+end
+
+# After the deploy step, so a first deploy that succeeded does not warn.
+local_ruby_block "session-search: warn when no verified deployment exists" do
+  block do
+    MItamae.logger.warn(
+      "session-search: no verified deployment of #{session_search_pin} in #{share_dir} — " \
+      "the ccs client is not installed or updated (it ships only together with its masking library).",
+    )
+  end
+  not_if deployment_ok
+end
+
+["#{target_home}/.config", "#{target_home}/.claude"].each do |d|
+  directory d do
+    owner target_user
+    group target_group
+    only_if deployment_ok
   end
 end
 
@@ -111,16 +153,7 @@ directory bin_dir do
   owner target_user
   group target_group
   mode "755"
-  only_if redactor_ok
-end
-
-[share_dir, pkg_dir].each do |d|
-  directory d do
-    owner target_user
-    group target_group
-    mode "755"
-    only_if redactor_ok
-  end
+  only_if deployment_ok
 end
 
 [state_dir, config_dir].each do |d|
@@ -128,41 +161,8 @@ end
     owner target_user
     group target_group
     mode "700"
-    only_if redactor_ok
+    only_if deployment_ok
   end
-end
-
-# Explicit list (mruby has no Dir.glob guarantee); tests/ is not installed.
-%w[__init__.py __main__.py api.py cli.py codex.py config.py extract.py fallback.py helper.py ingest.py picker.py resume.py util.py].each do |f|
-  remote_file "#{pkg_dir}/#{f}" do
-    source "files/ccs/ccs/#{f}"
-    owner target_user
-    group target_group
-    mode "644"
-    only_if redactor_ok
-  end
-end
-
-# The same native-record adapter drives server indexing and local fallback.
-remote_file "#{pkg_dir}/session_codex.py" do
-  source File.join(File.dirname(redactor_src), "session_codex.py")
-  owner target_user
-  group target_group
-  mode "644"
-  sensitive true
-  only_if redactor_ok
-end
-
-# No secret inside, but `sensitive` keeps the redactor's pattern table out of
-# the runner log diff (and satisfies lint check 15, which cannot tell a
-# checked-in absolute source from a converge-time generator output).
-remote_file "#{pkg_dir}/session_redact.py" do
-  source redactor_src
-  owner target_user
-  group target_group
-  mode "644"
-  sensitive true
-  only_if redactor_ok
 end
 
 # The interpreter is resolved once, here, to the real binary behind `python3`:
@@ -192,7 +192,7 @@ file launcher do
   owner target_user
   group target_group
   mode "755"
-  only_if redactor_ok
+  only_if deployment_ok
 end
 
 # --- personal config (pro-dev, mini, neo) -----------------------------------
@@ -211,13 +211,6 @@ unless personal_host
     "session-search: host '#{hostname}' (label=#{label.inspect}) is not a personal host — " \
     "config.json is not rendered here (work hosts get it from the private overlay).",
   )
-  return
-end
-
-# The redactor file is checked in (not produced by a resource), so reading its
-# presence at compile time is safe; it only decides whether to run the SSM gate
-# at all — no point prompting for secrets of a client that will not install.
-unless run_command(redactor_ok, error: false).exit_status == 0
   return
 end
 
@@ -262,6 +255,9 @@ require_external_auth(
       printf '%s' "$SECRET" > #{secret_tmp}
       printf '%s' "$HKEY" > #{hmac_tmp}
     SH
+    # With no deployment config_dir is not created, so a decrypted temp file
+    # could not be placed and would stay on disk.
+    only_if deployment_ok
   end
 end
 
