@@ -89,6 +89,7 @@ puts JSON.generate(capture.configs)
                 actual = tomllib.loads(config)
                 for key in ("approval_policy", "sandbox_mode"):
                     self.assertEqual(actual[key], expected[key])
+                self.assertIs(actual["check_for_update_on_startup"], False)
                 self.assertEqual(actual["project_doc_max_bytes"], 0)
                 self.assertEqual(actual["cli_auth_credentials_store"], "file")
 

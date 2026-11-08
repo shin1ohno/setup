@@ -251,7 +251,8 @@ the name is lost, it restores it through the pane and checks again:
 
 ```bash
 herdr --session "$s" agent start "$worker" --kind codex --pane "$pane" -- \
-  -m "$model" -c model_reasoning_effort="$effort" "$launch_prompt" || true
+  -m "$model" -c model_reasoning_effort="$effort" \
+  -c check_for_update_on_startup=false "$launch_prompt" || true
 delivered=1
 for _ in $(seq 1 30); do
   if ! herdr --session "$s" agent get "$worker" >/dev/null 2>&1; then
@@ -425,7 +426,11 @@ launch plans"):
   `--tools Bash,Read,Edit,Write,Skill,ToolSearch,Agent,AskUserQuestion`. Keep
   `ToolSearch`: without it first-call usage rose by about 72k on pro-dev. Daily
   admin workers add neither.
-- Herdr Codex worker: `-- -m <model> -c model_reasoning_effort="<level>"`.
+- Herdr Codex worker: `-- -m <model> -c model_reasoning_effort="<level>"
+  -c check_for_update_on_startup=false`. This launch-only update setting keeps
+  the owner's interactive update notices; profile workers carry it in their
+  own config. It does not bypass workspace or hook trust dialogs: report those
+  blocks for the owner to resolve.
 
 Launch workers without `CLAUDE_CODE_EFFORT_LEVEL` in their environment (for
 example `env -u CLAUDE_CODE_EFFORT_LEVEL`); it overrides per-worker effort. Do
