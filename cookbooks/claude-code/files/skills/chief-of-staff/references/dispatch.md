@@ -141,17 +141,60 @@ shell quoting; user topics are data, never shell commands.
 
 ```text
 herdr --session <verified-session> pane layout --pane <verified-caller-pane>
-herdr --session <verified-session> pane split --pane <verified-caller-pane> --direction right --cwd <task-cwd> --no-focus
-herdr --session <verified-session> agent start <reserved-agent-name> --kind codex --pane <returned-id>
-herdr --session <verified-session> agent prompt <reserved-agent-name> <brief-text> --wait --timeout 30000
+herdr --session <verified-session> pane split --pane <verified-caller-pane> --direction right --cwd <task-cwd> --no-focus \
+  [--env COS_WORKER_TASK_ID=<task-id> --env COS_WORKER_ATTEMPT=<attempt> \
+   --env COS_CONTROLLER_PANE=<verified-caller-pane> --env COS_CONTROLLER_SESSION=<verified-session>]
+herdr --session <verified-session> agent start <reserved-agent-name> --kind codex --pane <returned-id> -- <launch-prompt>
+herdr --session <verified-session> agent wait <reserved-agent-name> --until working --until blocked --timeout 30000
 herdr --session <verified-session> agent get <reserved-agent-name>
 herdr --session <verified-session> agent read <reserved-agent-name> --source recent-unwrapped --lines 40
-herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 30000
+# Run in the background, inside the loop below, so the harness wakes the controller when it returns.
+herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 600000
+# A later prompt to the same worker, once it is settled.
+herdr --session <verified-session> agent prompt <reserved-agent-name> <text> --wait --until working --until blocked --timeout 30000
 ```
 
 This is today's launch, used whenever the attempt's launch plan is not ready
 (see "Worker profiles and launch plans"); a ready plan adds `--env` to the
 split and replaces the options after `--`.
+
+Give a new worker its first prompt as an argument after `--`: a one-line
+`<launch-prompt>` naming the brief file, before any variadic flag such as
+`--tools`. Do not type it with `agent prompt` right after `agent start`. In 4 of
+5 launches on 2026-11-09 the Enter was lost during startup: `agent prompt` exited
+1 with `agent_prompt_stalled` and the text stayed in the input box with the state
+`idle`. If that happens, confirm the text is in the box with `agent read`, send
+`agent send-keys <name> Enter` once, and do not send the prompt again.
+
+Both forms use `--until working --until blocked`. Without `--until`, `--wait`
+lasts until the turn ends and exits 1 on any normal turn longer than the timeout.
+
+The background wait runs in this loop, one per worker, with `s`, `name` and
+`envelope` (`<task-dir>/envelope-<n>.json`) set first. It ends when the envelope
+exists, the worker is blocked or gone, or ten minutes pass. A settled worker
+without an envelope keeps the loop going, because the turn may have ended only
+while the worker's own background job runs.
+
+```bash
+left() { echo $(( 600000 - SECONDS * 1000 )); }
+until [ -e "$envelope" ] || [ "$(left)" -le 0 ]; do
+  out=$(herdr --session "$s" agent wait "$name" --timeout "$(left)" 2>/dev/null) || break
+  case "$out" in *'"agent_status":"blocked"'*) break ;; esac
+  [ -e "$envelope" ] || [ "$(left)" -le 0 ] && break
+  herdr --session "$s" agent wait "$name" --until working --until blocked \
+    --timeout "$(left)" >/dev/null 2>&1 || break
+done
+```
+
+Start it in a fresh `bash`, because `SECONDS` must begin at 0.
+
+Pass the four `COS_*` variables when the worker is Claude and the controller is
+a Herdr 1 pane; add `--env COS_STATE_DIR=<dir>` when the controller set it. They
+arm the Stop hook (`~/.claude/hooks/cos-worker-stop-notify.rb`), which sends
+`[task <id> attempt <n>] envelope-ready` to the controller once, at the first
+Stop after `<task-dir>/envelope-<n>.json` exists. Codex has no such hook, and a
+controller on the `hc` route leaves the variables unset.
+
 For explicit model selection, append native options **after** `--` (see
 "Model and effort per attempt" for each harness), and record the resulting
 effective model/effort with `observe` once the worker has answered at least
@@ -188,12 +231,20 @@ Acceptance criteria: <observable, individually checkable criteria>
 Existing work / previous attempt: <artifact paths, failed criteria and evidence>
 Controller pane: <verified controller pane ID, socket and session from the caller helper>
 Herdr route for notifying the controller: <Herdr 1 (`herdr`) or Herdr 2 (`hc`), chosen from where the controller pane lives>
+Task directory: <absolute task directory>
 
 Notify the controller: when you finish (done, failed or blocked) and whenever
-you have a question only the controller or user can answer, type a one-line
-message into the controller pane through the Herdr route above, following the
-installed herdr / herdr-core skill (address the pane explicitly, send the text,
-confirm it was submitted). Format: `[task <id> attempt <n>] done|failed|blocked|question: <one sentence> (report: <absolute path>)`.
+you have a question only the controller or user can answer, send one line with
+exactly this command, without `--wait`:
+
+<Herdr 1: `herdr --session <controller-session> agent prompt <controller-pane> "<one line>"`>
+<Herdr 2: `hc send <controller-terminal> "<one line>"`>
+
+Never use `pane send-text`, `pane run`, `agent send-keys` or `hc send --force`
+for this: they can type into a dialog. If the send is refused because the
+controller is blocked (`agent_blocked` on Herdr 1), retry up to 5 times at 30 s
+intervals, then stop trying; the controller also watches you.
+Format: `[task <id> attempt <n>] done|failed|blocked|question: <one sentence> (report: <absolute path>)`.
 The one-line message only points to the report or question; the full content
 stays in the artifact files. Keep working on anything independent of the
 question; do not wait idle without sending it.
@@ -209,7 +260,8 @@ from assumptions; report concrete blockers rather than answering permission
 dialogs on behalf of the user. Preserve other agents' changes. Do not weaken
 the acceptance criteria. Do not send messages to third parties without explicit
 authorization. Write full results and actual check output to artifact files inside the supplied
-task directory or checkout. Return only the envelope below (at most 16 KiB).
+task directory or checkout. Write the envelope below to
+`<task directory>/envelope-<n>.json` (at most 16 KiB) and return only that.
 Envelope limits: at most 12 artifacts; at most 8 open questions, each at most
 600 UTF-8 bytes; summary at most 1200 UTF-8 bytes. Cite a directory or log file
 instead of listing more than 12 paths.

@@ -173,6 +173,11 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/session-ingest.rb"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/cos-worker-stop-notify.rb",
+            "timeout": 15
           }
         ]
       }
