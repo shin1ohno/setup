@@ -80,7 +80,9 @@ profiles.each do |profile|
   end
 
   file "#{home}/config.toml" do
-    content "project_doc_max_bytes = 0\ncli_auth_credentials_store = \"file\"\n#{permission_policy}"
+    # Workers must not wait for an interactive update choice. The owner's
+    # normal Codex home retains its own update policy.
+    content "check_for_update_on_startup = false\nproject_doc_max_bytes = 0\ncli_auth_credentials_store = \"file\"\n#{permission_policy}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "600"
