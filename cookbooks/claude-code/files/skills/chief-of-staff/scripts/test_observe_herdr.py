@@ -159,6 +159,31 @@ class HerdrObserveTest(unittest.TestCase):
         self.receive()
         self.accept()
 
+    def test_claude_raw_unicode_separators_allow_observation(self):
+        self.start()
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                path = self.claude_log([self.turn()], prompt=PROMPT + separator + "tail")
+                # json.dumps defaults to ASCII escapes, which mask this defect.
+                path.write_text(path.read_text().replace(
+                    json.dumps(separator)[1:-1], separator), encoding="utf-8")
+                self.assertIn(separator.encode("utf-8"), path.read_bytes())
+                result = self.observe(path, prompt=PROMPT + separator + "tail")
+                self.assertEqual(result["observed"],
+                                 {"model": "claude-sonnet-5-5", "effort": "medium"})
+
+    def test_codex_raw_unicode_separators_allow_observation(self):
+        self.start(kind="codex", model="gpt-6.1-sol")
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                path = self.codex_log([self.context()], prompt=PROMPT + separator + "tail")
+                path.write_text(path.read_text().replace(
+                    json.dumps(separator)[1:-1], separator), encoding="utf-8")
+                self.assertIn(separator.encode("utf-8"), path.read_bytes())
+                result = self.observe(path, prompt=PROMPT + separator + "tail")
+                self.assertEqual(result["observed"],
+                                 {"model": "gpt-6.1-sol", "effort": "medium"})
+
     def test_claude_model_switch_is_refused_and_clears_earlier_values(self):
         self.start()
         self.observe(self.claude_log([self.turn()]))
