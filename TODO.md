@@ -556,42 +556,6 @@ Status 2026-09-06: not applied. `~/.claude/docs/rust.md` (4935 B, mtime Aug 1)
 matches neither `EPERM` nor `sandbox`; positive control `Rust|cargo` = 14 hits, so
 the file is being read and the addendum is genuinely absent.
 
-## H2: MCP auth-proxy resource isolation (REVIEW NEEDED — post-cognee-decommission)
-
-Status 2026-07-05: the cognee LXC/cookbook was decommissioned and the
-surviving shared auth-proxy is `cookbooks/lxc-es-memory/files/auth-proxy/
-proxy.py` (es-memory / v2 "memory" MCP). This item was written 2026-06-07
-against the now-deleted cognee + ai-memory proxies and its earlier "audience
-enforcement infeasible" conclusion PRE-DATES the es-memory rewrite — the
-surviving proxy has since grown a v2 audience/subject enforcement matrix, so
-the security posture must be RE-AUDITED before acting. FLAGGED for human review.
-
-- Original concern: the auth-proxies pass `options={"verify_aud": False}` on
-  the raw JWT signature-decode path (still present in the es-memory proxy at
-  ~lines 134/147), i.e. the decode itself does not check audience.
-- Surviving state: the es-memory proxy now DOES add a v2 audience/subject
-  enforcement matrix at authorization time — `client_credentials` grants
-  require `aud ∩ MEMORY_AUDIENCES` AND `client_id ∈ ALLOWED_CLIENT_IDS`
-  (else 403 forbidden_audience); `authorization_code` claude.ai tokens carry
-  `aud=[]` so aud is not required on that path. Whether this already closes
-  the original cross-resource-reuse gap needs a fresh audit against the
-  current code.
-- WHY LOW: only `sh1@mercari.com` passes the consent ALLOWED_EMAILS gate, so
-  the cross-resource-reuse gap requires a token leak AND a second principal
-  to isolate from — the latter does not exist. Defense-in-depth gap, not a
-  multi-tenant isolation failure.
-- OPTIONS if a gap remains after the re-audit (each needs design):
-  1. RFC-8707: make claude.ai send `resource=https://mcp.ohno.be/<svc>` and
-     hydra/consent populate aud from `grant_access_token_audience`, THEN
-     enforce `audience` in the proxy. Correct but largest scope.
-  2. Scope-based isolation (mint/enforce a per-resource scope claim) — first
-     confirm what `scope` a real claude.ai token carries.
-  3. Keep as documented known-limitation.
-- First step when revisiting: re-run the log-first probe against the
-  es-memory proxy to confirm current claim shapes (aud/scope on a REAL
-  claude.ai token vs the monitoring `client_credentials` prober), then decide
-  whether the v2 matrix already suffices or option 1/2 is still wanted.
-
 ## auto-mitamae alert delivery — fired but unnoticed for 11 days
 
 - Symptom: auto-mitamae ran silently dead 2026-05-19 → 2026-05-30 (cron
@@ -1071,44 +1035,6 @@ all three are needed: the `icloud:` remote (with the bisync guard above), a real
 `cookbooks/s3-backup` that enables its timer the way the obsidian cookbook does.
 Also reconcile `mp0` with `SOURCE_DIR` -- they currently disagree.
 
-## Nothing catches a keeper file that is imported but never deployed (Medium)
-
-`memory-keeper-reconcile.service` on CT 119 crashed on every tick from
-2026-08-26 19:26 to 2026-08-29 16:00 with `ModuleNotFoundError: No module named
-'merge_rules'`. PR #895 added `merge_rules.py` and an `import merge_rules` to
-both `reconcile.py` and `consolidate.py`, but not the corresponding entry in the
-explicit deploy map in `cookbooks/lxc-es-memory/default.rb`. The PR that adds
-this entry restores the missing line; two mechanisms that should have caught it
-did not.
-
-- **`bin/lint-cookbooks` check 6 is deploy-list drift, but only for
-  `claude-code`** (`files/{rules,docs,workflows,agents}/`). Every other cookbook
-  that ships a hand-maintained `{src => dest}` map — `lxc-es-memory`'s keeper
-  python being the one that broke — has no equivalent check. The generic form is
-  cheap: for a cookbook whose `files/<dir>/` holds python, parse the top-level
-  `import`/`from` statements of each deployed module and FAIL when a sibling
-  module they name is absent from the map.
-- **`memory-keeper-health.sh` reports `memory_keeper_raw_backlog` and
-  `memory_keeper_stats_age_seconds`, neither of which moved when the unit died.**
-  Backlog was 0 throughout (nothing was arriving), so the fleet looked healthy
-  while reconcile had never once completed. `stats_age` was worse than blind: its
-  extraction grep could never match, because `docvalue_fields` with
-  `format: epoch_millis` returns a QUOTED string, so the metric had been pinned
-  to its `-1` sentinel since the day it was written. That grep is fixed
-  separately; what remains is that a permanently-failing oneshot with an empty
-  queue still looks identical to a healthy idle one, because no metric carries
-  the unit's exit status.
-
-**First step**: add the import-vs-deploy-map check to `bin/lint-cookbooks` as a
-FAIL-tier check (it is mechanical and has no false positives — a named sibling
-module either is in the map or is not), and emit
-`memory_keeper_reconcile_last_exit_code` from `memory-keeper-health.sh` via
-`systemctl show -p ExecMainStatus memory-keeper-reconcile.service` so a dead
-tick is visible with an empty queue. Delete this entry in the resolving commit.
-
-Status 2026-09-06: the lint check is still absent. `bin/lint-cookbooks` (43 KB)
-matches none of `import_|imported|deploy map|deploy_map`.
-
 ## wlx313 syslog depends on a DHCP lease that nothing reserves (Medium)
 
 wlx313 (ITM) started shipping syslog on 2026-09-06 (#949): `syslog host
@@ -1332,30 +1258,6 @@ load-bearing and would have read as a setting with no surviving reason.
 - **First step**: apply the same target-user resolution to `cookbooks/claude-code`
   when running as root on pro-dev (see `cookbooks/memory-mirror/default.rb`),
   dry-run it as root, and confirm owner/mode of the rendered files.
-
-## memory-mirror follow-ups after the first rollout (Medium)
-
-- **Failure class**: the machine client `memory-mirror` (CLIENT_POLICY:
-  ingest,forget@file-memory) shipped with accepted gaps.
-  - ingest supersedes any `file-memory` doc with the same doc_key, whoever wrote
-    it — needed once so the first sweep can take over the 105 docs migrated by
-    hand on 2026-09-26, but a leaked credential can overwrite other hosts' docs.
-  - `PROXY_SHARED_SECRET` is unset on CT119, so a local process there can forge
-    `X-Verified-*` and bypass the policy. Once set, read tools also need it
-    (the gate now parses identity on every tools/call).
-  - CT119 has no persistent journald, so `POLICY` / `AUDIT deny` lines are lost
-    on restart.
-  - memory-work (sh1-cloud) runs the same server code from the private overlay.
-    `server.py` falls back to an ungated FastMCP when `policy_mcp.py` is absent
-    and CLIENT_POLICY is unset, but whether the overlay deploys by MANIFEST and
-    whether it should adopt a CLIENT_POLICY of its own is unverified (air and
-    the overlay were unreachable from pro-dev).
-  - neo is offline (118 days); it needs the interactive darwin apply, `--check`
-    and a first manual `--sweep` when it returns.
-- **First step**: after the first sweep on every personal host, add a
-  `provenance.agent` condition to `_supersede_prior_doc` for client_credentials
-  callers (or split into per-host clients bound to a doc_key prefix), then set
-  `PROXY_SHARED_SECRET` in both units.
 
 ## mcp-probe's memory e2e has been red since 2026-08-29 and sends its secret over LAN HTTP (Medium)
 
