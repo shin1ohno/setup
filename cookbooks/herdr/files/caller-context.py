@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import sys
@@ -107,8 +108,13 @@ def challenge_match(panes, state, session_id, now, read, get_process=process):
 
 
 def state_path(session_id):
-    if str(uuid.UUID(session_id)) != session_id:
-        raise ValueError("invalid CODEX_SESSION_ID")
+    try:
+        valid = str(uuid.UUID(session_id)) == session_id
+    except (ValueError, AttributeError, TypeError):
+        valid = False
+    if not valid:
+        raise ValueError("prepare/verify require a canonical UUID CODEX_SESSION_ID for "
+                         "Herdr 1 Codex visual proof; hc controllers must use resolve")
     root = Path.home() / ".local/state/herdr-caller"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     return root / (session_id + ".json")
@@ -154,23 +160,93 @@ def emit(pane, method):
                       **{k: pane[k] for k in ("session", "socket", "pane_id", "workspace_id", "tab_id")}}))
 
 
+def hc_identity(env, parent_pids):
+    """Use hc's live local process observations, never the inherited ID alone."""
+    if "HC_SOCKET" in env:
+        raise ValueError("hc caller unverified: HC_SOCKET overrides the session endpoint; "
+                         "hc does not report its session name")
+    terminal = env["HC_TERMINAL_ID"]
+    server = env.get("HC_SESSION", "").strip() or "default"
+    if not re.fullmatch(r"t[0-9a-z]+", terminal) or "#" in server:
+        raise ValueError("hc caller unverified: invalid local terminal or server identifier")
+
+    def observe():
+        try:
+            info = json.loads(run("hc", "get", "--json", terminal))
+        except subprocess.CalledProcessError as error:
+            reason = "terminal not found" if error.returncode == 3 else "exit " + str(error.returncode)
+            raise ValueError("hc caller unverified: hc get failed (" + reason + ")") from None
+        except subprocess.TimeoutExpired:
+            raise ValueError("hc caller unverified: hc get failed (timed out)") from None
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            raise ValueError("hc caller unverified: hc get failed (" +
+                             type(error).__name__ + ")") from None
+        if not isinstance(info, dict) or info.get("address") != terminal:
+            raise ValueError("hc caller unverified: hc returned a different terminal")
+        if info.get("state") != "live":
+            raise ValueError("hc caller unverified: terminal is not live")
+        foreground = info.get("foreground")
+        pid = info.get("pid")
+        fg_pid = foreground.get("pid") if isinstance(foreground, dict) else None
+        if any(type(p) is not int or p <= 1 for p in (pid, fg_pid)):
+            raise ValueError("hc caller unverified: terminal process evidence unavailable")
+        if pid not in parent_pids or fg_pid not in parent_pids:
+            raise ValueError("hc caller unverified: terminal processes are not caller ancestors")
+        return pid, fg_pid
+
+    first = observe()
+    if observe() != first:
+        raise ValueError("hc caller unverified: terminal processes changed during verification")
+    return {"verified": True, "method": "hc-foreground-ancestry",
+            "server": server, "terminal_id": terminal,
+            "owner": "hc:" + server + "#" + terminal}
+
+
+def emit_resumed(panes, session_id):
+    match = resumed_session(panes, session_id, process)
+    if match is None:
+        raise ValueError("no verified caller; use prepare then verify in separate tool calls")
+    pane, pids = match
+    live, info = recheck(pane, pids)
+    if resumed_session([live], session_id, lambda _: info) is None:
+        raise ValueError("caller session changed during verification")
+    emit(live, "foreground-resume-session")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["resolve", "prepare", "verify"])
     args = parser.parse_args()
     if args.action == "resolve":
+        if os.environ.get("HC_TERMINAL_ID") and os.environ.get("HERDR_ENV") != "1":
+            try:
+                caller = hc_identity(os.environ, ancestors())
+            except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
+                # A daemon may carry a stale hc ID. Only the independent exact
+                # resume-session proof may recover it; never inherited env.
+                session_id = os.environ.get("CODEX_SESSION_ID", "")
+                try:
+                    canonical = str(uuid.UUID(session_id)) == session_id
+                except ValueError:
+                    canonical = False
+                if not canonical:
+                    raise
+                hc_reason = str(error) if isinstance(error, ValueError) else type(error).__name__
+                try:
+                    emit_resumed(inventory(), session_id)
+                except (ValueError, KeyError, OSError, subprocess.SubprocessError) as resume_error:
+                    reason = (str(resume_error) if isinstance(resume_error, ValueError)
+                              else type(resume_error).__name__)
+                    raise ValueError(hc_reason + "; independent Codex resume proof failed: " +
+                                     reason) from None
+                return
+            print(json.dumps(caller))
+            return
         panes = inventory()
         pane = inherited(panes, os.environ, ancestors())
         if pane is None:
             session_id = os.environ.get("CODEX_SESSION_ID", "")
-            match = resumed_session(panes, session_id, process)
-            if match is None:
-                raise ValueError("no verified caller; use prepare then verify in separate tool calls")
-            pane, pids = match
-            live, info = recheck(pane, pids)
-            if resumed_session([live], session_id, lambda _: info) is None:
-                raise ValueError("caller session changed during verification")
-            emit(live, "foreground-resume-session")
+            emit_resumed(panes, session_id)
             return
         emit(pane, "foreground-ancestry")
         return
