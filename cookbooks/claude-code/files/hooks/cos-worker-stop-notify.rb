@@ -22,6 +22,12 @@
 # `herdr agent prompt` refuses a target waiting at a dialog before sending any
 # input; `pane send-text` has no such guard and could answer the dialog.
 #
+# An inherited environment must not change what this hook runs or prints.
+# herdr runs by absolute path under the account's own home, and the settings.json
+# registration removes RUBYOPT, RUBYLIB and RUBYPATH before Ruby starts. This
+# guards against an inherited or accidental environment only: a worker runs as
+# the same OS user as the controller and can call herdr itself.
+#
 # Never fails the worker's turn: any problem -> no output, exit 0.
 
 TASK_ID_RE = /\A[0-9a-f]{16}\z/
@@ -51,15 +57,15 @@ def run_herdr(argv)
   "timeout"
 end
 
-# A worker started through hc has a PATH without ~/.local/bin.
+# cookbooks/herdr installs the binary here. The passwd entry, not HOME or PATH,
+# names the directory.
+def herdr_bin
+  File.join(Etc.getpwuid(Process.uid).dir, ".local/bin/herdr")
+end
+
 def spawn_herdr(argv)
-  ["herdr", File.expand_path("~/.local/bin/herdr")].each do |program|
-    begin
-      return Process.spawn(program, *argv, in: File::NULL, out: File::NULL, err: File::NULL)
-    rescue Errno::ENOENT, Errno::EACCES
-      next
-    end
-  end
+  Process.spawn(herdr_bin, *argv, in: File::NULL, out: File::NULL, err: File::NULL)
+rescue Errno::ENOENT, Errno::EACCES
   nil
 end
 
@@ -83,6 +89,7 @@ def main
   return unless TASK_ID_RE.match?(task.to_s) && ATTEMPT_RE.match?(attempt.to_s)
   return unless PANE_RE.match?(pane.to_s) && SESSION_RE.match?(session.to_s)
 
+  require "etc"
   require "json"
   payload = JSON.parse($stdin.read)
   return unless payload.is_a?(Hash) && payload["hook_event_name"] == "Stop"

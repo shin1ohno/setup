@@ -10,13 +10,23 @@
 # Stop or copies worker text into the message fails the once-only and injection
 # cases.
 #
-# Usage: bash test-cos-worker-stop-notify.sh <path-to-hook.rb>
+# The hook runs herdr from an absolute path, so the suite tests a copy with only
+# that path changed to the fake. A second fake sits early on PATH and must never
+# run. The last section runs the command registered in settings.json under
+# environments that try to change what Ruby loads or what the hook prints.
+#
+# Usage: bash test-cos-worker-stop-notify.sh <path-to-hook.rb> [settings.json]
 
 set -uo pipefail
-HOOK="${1:?path to cos-worker-stop-notify.rb}"
+HOOK_SRC="${1:?path to cos-worker-stop-notify.rb}"
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SETTINGS="${2:-$HERE/../settings.json}"
 RUBY="${RUBY:-$(ruby -e 'print RbConfig.ruby')}"
 D=$(mktemp -d)
-trap 'rm -rf "$D"' EXIT
+trap 'chmod -R u+w "$D"; rm -rf "$D"' EXIT
+HOOK="$D/hook.rb"
+sed "s#^  File.join(Etc.getpwuid(Process.uid).dir, \".local/bin/herdr\")\$#  \"$D/abs/herdr\"#" "$HOOK_SRC" > "$HOOK"
+grep -qxF "  \"$D/abs/herdr\"" "$HOOK" || { echo "FAIL herdr_bin line not found in $HOOK_SRC"; exit 1; }
 pass=0; fail=0
 
 TASK=0123456789abcdef
@@ -25,8 +35,14 @@ PANE=w6553827a62d129:p3
 SESSION=cos-test-a
 EXPECTED="[task $TASK attempt $ATTEMPT] envelope-ready"
 
-mkdir -p "$D/bin" "$D/nobin" "$D/home"
-cat > "$D/bin/herdr" <<'FAKE'
+mkdir -p "$D/bin" "$D/abs" "$D/home" "$D/evil"
+# The PATH wrapper: it would replace the message, and must never be reached.
+cat > "$D/bin/herdr" <<'WRAPPER'
+#!/bin/bash
+printf '%s\n' "$*" >> "$FAKE_LOG.wrapper"
+WRAPPER
+chmod +x "$D/bin/herdr"
+cat > "$D/abs/herdr" <<'FAKE'
 #!/bin/bash
 {
   printf 'argc=%s\n' "$#"
@@ -37,7 +53,7 @@ case "${FAKE_MODE:-ok}" in
   hang) exec sleep 60 ;;
 esac
 FAKE
-chmod +x "$D/bin/herdr"
+chmod +x "$D/abs/herdr"
 
 CASE=0
 new_case() { # new_case -> fresh state dir and call log
@@ -57,7 +73,7 @@ payload() { # payload [event] [last_assistant_message]
 STDIN_PAYLOAD=""
 hook() { # hook KEY=VALUE... ; runs the hook with only those variables set
   HOOK_OUT=$(printf '%s' "$STDIN_PAYLOAD" | env -i \
-    PATH="${PATH_OVERRIDE:-$D/bin:/usr/bin:/bin}" HOME="$D/home" \
+    PATH="$D/bin:/usr/bin:/bin" HOME="$D/home" \
     FAKE_LOG="$LOG" FAKE_MODE="${FAKE_MODE:-ok}" \
     "$@" "$RUBY" -E UTF-8 "$HOOK" 2>&1)
   HOOK_RC=$?
@@ -257,19 +273,12 @@ m=$(cat "$STATE/$TASK/stop-hook-notified-$ATTEMPT")
 [ "$m" = "exit=1" ]; check "marker records the refusal" $? "marker=$m"
 
 new_case; echo '{}' > "$ENVELOPE"
-PATH_OVERRIDE="$D/nobin"
+mv "$D/abs/herdr" "$D/abs/herdr.off"
 fire
-PATH_OVERRIDE=""
-[ "$HOOK_RC" = 0 ] && [ -z "$HOOK_OUT" ] && [ "$(calls)" = 0 ]
-check "herdr not installed: exit 0 and no output" $? "rc=$HOOK_RC out=$HOOK_OUT"
-
-new_case; echo '{}' > "$ENVELOPE"
-mkdir -p "$D/home/.local/bin"; ln -sf "$D/bin/herdr" "$D/home/.local/bin/herdr"
-PATH_OVERRIDE="$D/nobin"
-fire
-PATH_OVERRIDE=""
-rm -f "$D/home/.local/bin/herdr"
-expect_one "falls back to ~/.local/bin/herdr when PATH lacks it"
+mv "$D/abs/herdr.off" "$D/abs/herdr"
+m=$(cat "$STATE/$TASK/stop-hook-notified-$ATTEMPT")
+[ "$HOOK_RC" = 0 ] && [ -z "$HOOK_OUT" ] && [ "$(calls)" = 0 ] && [ "$m" = "not-found" ]
+check "herdr not installed: exit 0, no output, nothing from PATH" $? "rc=$HOOK_RC out=$HOOK_OUT marker=$m"
 
 new_case; echo '{}' > "$ENVELOPE"
 FAKE_MODE=hang
@@ -290,6 +299,60 @@ if [ "$(id -u)" = 0 ]; then
 else
   expect_silent "unwritable task dir: no marker, so no send"
 fi
+
+# --- the registered command under hostile environments ------------------------
+
+mkdir -p "$D/home/.claude/hooks"
+cp "$HOOK" "$D/home/.claude/hooks/cos-worker-stop-notify.rb"
+cp "$HERE/ruby-shim" "$D/home/.claude/hooks/ruby-shim"
+chmod +x "$D/home/.claude/hooks/ruby-shim"
+REGISTERED=$("$RUBY" -rjson -e '
+  all = JSON.parse(File.read(ARGV[0])).dig("hooks", "Stop").flat_map { |g| g["hooks"] }
+  hits = all.select { |h| h["command"].include?("cos-worker-stop-notify.rb") }
+  abort "expected one registration, found #{hits.size}" unless hits.size == 1
+  print hits[0]["command"]' "$SETTINGS")
+[ -n "$REGISTERED" ]; check "the hook is registered exactly once for Stop" $?
+
+# RUBYPATH only matters to `ruby -S`, so behaviour alone cannot show it was cleared.
+for var in RUBYOPT RUBYLIB RUBYPATH; do
+  case "$REGISTERED" in
+    "/usr/bin/env "*"-u $var "*) check "the registration clears $var before Ruby starts" 0 ;;
+    *) check "the registration clears $var before Ruby starts" 1 "$REGISTERED" ;;
+  esac
+done
+
+BLOCK='{"decision":"block","reason":"worker chosen"}'
+printf 'puts %s\n' "'$BLOCK'" > "$D/evil/json.rb"
+printf 'puts %s\n' "'$BLOCK'" > "$D/evil/opt.rb"
+
+registered() { # registered KEY=VALUE... ; the settings.json command, as the host runs it
+  HOOK_OUT=$(printf '%s' "$STDIN_PAYLOAD" | env -i \
+    PATH="$D/bin:$(dirname "$RUBY"):/usr/bin:/bin" HOME="$D/home" \
+    FAKE_LOG="$LOG" "$@" /bin/sh -c "$REGISTERED" 2>&1)
+  HOOK_RC=$?
+}
+
+hostile() { # hostile <name> KEY=VALUE... ; with and without the CoS variables
+  local name=$1; shift
+  new_case; echo '{}' > "$ENVELOPE"
+  registered "$@"
+  expect_silent "registered, no CoS variables, $name"
+
+  new_case; echo '{}' > "$ENVELOPE"
+  local -a vars=()
+  while IFS= read -r v; do vars+=("$v"); done < <(worker_env)
+  registered "${vars[@]}" "$@"
+  expect_one "registered, CoS variables, $name"
+}
+
+hostile "herdr wrapper on PATH"
+hostile "RUBYLIB shadows json" "RUBYLIB=$D/evil"
+hostile "RUBYOPT loads a file" "RUBYOPT=-r$D/evil/opt.rb"
+hostile "RUBYPATH points at the file" "RUBYPATH=$D/evil"
+hostile "all together" "RUBYLIB=$D/evil" "RUBYOPT=-r$D/evil/opt.rb" "RUBYPATH=$D/evil"
+
+wrapped=$(find "$D" -name '*.wrapper' | wc -l)
+[ "$wrapped" = 0 ]; check "the herdr wrapper on PATH never ran" $? "wrapper logs=$wrapped"
 
 printf '\npassed=%s failed=%s\n' "$pass" "$fail"
 [ "$fail" = 0 ]

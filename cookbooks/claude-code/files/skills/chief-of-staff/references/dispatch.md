@@ -144,12 +144,12 @@ herdr --session <verified-session> pane layout --pane <verified-caller-pane>
 herdr --session <verified-session> pane split --pane <verified-caller-pane> --direction right --cwd <task-cwd> --no-focus \
   [--env COS_WORKER_TASK_ID=<task-id> --env COS_WORKER_ATTEMPT=<attempt> \
    --env COS_CONTROLLER_PANE=<verified-caller-pane> --env COS_CONTROLLER_SESSION=<verified-session>]
-herdr --session <verified-session> agent start <reserved-agent-name> --kind codex --pane <returned-id> -- <launch-prompt>
+# Claude. For Codex use the start step below instead of these two lines.
+herdr --session <verified-session> agent start <reserved-agent-name> --kind claude --pane <returned-id> -- <launch-prompt>
 herdr --session <verified-session> agent wait <reserved-agent-name> --until working --until blocked --timeout 30000
 herdr --session <verified-session> agent get <reserved-agent-name>
 herdr --session <verified-session> agent read <reserved-agent-name> --source recent-unwrapped --lines 40
-# Run in the background, inside the loop below, so the harness wakes the controller when it returns.
-herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 600000
+# Then run the wait loop below in the background so the harness wakes the controller when it ends.
 # A later prompt to the same worker, once it is settled.
 herdr --session <verified-session> agent prompt <reserved-agent-name> <text> --wait --until working --until blocked --timeout 30000
 ```
@@ -169,24 +169,53 @@ Give a new worker its first prompt as an argument after `--`: a one-line
 Both forms use `--until working --until blocked`. Without `--until`, `--wait`
 lasts until the turn ends and exits 1 on any normal turn longer than the timeout.
 
-The background wait runs in this loop, one per worker, with `s`, `name` and
-`envelope` (`<task-dir>/envelope-<n>.json`) set first. It ends when the envelope
-exists, the worker is blocked or gone, or ten minutes pass. A settled worker
-without an envelope keeps the loop going, because the turn may have ended only
-while the worker's own background job runs.
+The background wait runs in this loop, one per worker, with `s`, `worker` and
+`envelope` (`<task-dir>/envelope-<n>.json`) set first. It reads the envelope file
+directly, so a worker that writes it while settled cannot be missed, and a turn
+that ends while the worker's own background job runs costs no wake.
 
 ```bash
-left() { echo $(( 600000 - SECONDS * 1000 )); }
-until [ -e "$envelope" ] || [ "$(left)" -le 0 ]; do
-  out=$(herdr --session "$s" agent wait "$name" --timeout "$(left)" 2>/dev/null) || break
-  case "$out" in *'"agent_status":"blocked"'*) break ;; esac
-  [ -e "$envelope" ] || [ "$(left)" -le 0 ] && break
-  herdr --session "$s" agent wait "$name" --until working --until blocked \
-    --timeout "$(left)" >/dev/null 2>&1 || break
+end=$((SECONDS+600)); why=timeout
+while [ $SECONDS -lt $end ]; do
+  [ -f "$envelope" ] && { why=envelope; break; }
+  herdr --session "$s" agent get "$worker" >/dev/null 2>&1 || { why=gone; break; }
+  herdr --session "$s" agent wait "$worker" --until blocked --timeout 15000 >/dev/null 2>&1 && { why=blocked; break; }
 done
+echo "reason=$why"
 ```
 
-Start it in a fresh `bash`, because `SECONDS` must begin at 0.
+The last line decides the controller's next step:
+
+| Output | Meaning | Next step |
+| --- | --- | --- |
+| `reason=envelope` | The attempt's envelope exists | Run `receive`, then review |
+| `reason=blocked` | The worker is at a dialog | Read the dialog and report it; never answer it. Wait in the background with `--until working --until idle --until done`, then re-arm the loop |
+| `reason=gone` | `agent get` failed and no envelope exists | Treat as an abnormal exit: inspect the pane and logs, then repair or report. A failed socket call looks the same, so confirm with a second `agent get` |
+| `reason=timeout` | Ten minutes passed | Look now, not a failure. Re-check state and re-arm. Without observable progress, run the stall diagnosis in `SKILL.md` |
+
+Codex needs its own start step, because `agent start` with a first prompt can
+return `timeout` or `agent_name_not_found` while Codex keeps working. Set `s`,
+`worker`, `pane`, `model`, `effort` and `launch_prompt` first. The step accepts
+those errors only when the wait that follows observes `working` or `blocked`. If
+the name is lost, it restores it through the pane and checks again:
+
+```bash
+herdr --session "$s" agent start "$worker" --kind codex --pane "$pane" -- \
+  -m "$model" -c model_reasoning_effort="$effort" "$launch_prompt" || true
+delivered=1
+for _ in $(seq 1 30); do
+  if ! herdr --session "$s" agent get "$worker" >/dev/null 2>&1; then
+    herdr --session "$s" agent rename "$pane" "$worker" >/dev/null 2>&1 || { sleep 1; continue; }
+  fi
+  out=$(herdr --session "$s" agent wait "$worker" --until working --until blocked --timeout 30000 2>&1) \
+    && { echo "$out"; delivered=0; break; }
+  case "$out" in *agent_not_found*) sleep 1 ;; *) echo "$out" >&2; break ;; esac
+done
+[ "$delivered" = 0 ]
+```
+
+A non-zero exit is ambiguous delivery. Inspect the pane with `pane read` and do
+not launch again: the first Codex may still be running.
 
 Pass the four `COS_*` variables when the worker is Claude and the controller is
 a Herdr 1 pane; add `--env COS_STATE_DIR=<dir>` when the controller set it. They

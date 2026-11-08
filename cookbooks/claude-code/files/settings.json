@@ -176,7 +176,7 @@
           },
           {
             "type": "command",
-            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/cos-worker-stop-notify.rb",
+            "command": "/usr/bin/env -u RUBYOPT -u RUBYLIB -u RUBYPATH ~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/cos-worker-stop-notify.rb",
             "timeout": 15
           }
         ]
