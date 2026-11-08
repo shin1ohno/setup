@@ -62,6 +62,9 @@ constraints/authorization, output destination, and observable acceptance criteri
 Derive reasonable defaults from conversation context and prepare the worker brief
 while any necessary intent question is pending. Keep criteria fixed across retries unless
 the user changes the goal; do not lower the bar to obtain a pass.
+Criteria also carry, where they apply, the conditions in dispatch.md ("Default
+negative conditions"), because criteria that state only positive behavior let
+defects through to review.
 
 Create a ledger task before dispatch. Keep multiple independent topics in
 separate tasks. Relate follow-ups to their existing task; do not duplicate it.
@@ -74,7 +77,10 @@ own provider is best. Record one concrete reason and the actual model observed
 after startup separately from the requested selection. Choose model and effort
 explicitly for every attempt; an inherited default is not an observed choice.
 Start from the work-type table in dispatch.md, then validate host capabilities
-before launch. Tune effort before switching model; escalate by failure type
+before launch. Every attempt's reason quotes its row in that table and says why
+whenever the row's default harness or profile is not used (dispatch.md, "Model
+and effort per attempt").
+Tune effort before switching model; escalate by failure type
 (wrong with full context: stronger model; skipped files or tests: more effort),
 one step at a time. Use cheaper workers only for independent fan-out or work
 beyond one context window. Use xhigh/max only for work over 30 minutes or with
@@ -95,7 +101,9 @@ controller pane and the Herdr CLI (Herdr 1 `herdr` or Herdr 2 `hc`, chosen
 from where that pane lives; this is not the ledger's `--route` value) so the worker can type a one-line completion or
 question message into it, and tells the worker to close the panes it created
 once it no longer needs them (dispatch.md, "Worker brief"). The controller still
-closes the worker's own pane after acceptance.
+closes the worker's own pane after acceptance. Every brief also sets File
+ownership, Test budget and Pre-approved extensions; the same section says when
+the controller may widen them.
 
 Pass a new worker's first prompt as an argument at `agent start`, then confirm
 with `herdr agent wait ... --until working --until blocked --timeout 30000`.
@@ -182,13 +190,16 @@ long reads to an authorized read-only reviewer returning a bounded verdict and
 file/line citations. A worker's passing claim still needs independent checks.
 Evaluate **each acceptance criterion** and record evidence: test output, file and
 line, receiving-system state, or a source URL. Re-run an appropriate independent
-check when the result depends on behavior. For research/writing/decisions, check
+check when the result depends on behavior, following dispatch.md ("Writing an
+independent check"). For research/writing/decisions, check
 primary-source support, dates, scope, contradictions, uncertainty, and usefulness
 to the requested decision. Worker confidence or a second model's agreement is
 not independent verification.
 
 When another evaluator adds value, start a separate reviewer in a Herdr pane
 with the original brief, criteria, and raw artifacts. Give it no desired verdict.
+Its brief also carries the default negative conditions and the operation limits
+in dispatch.md ("Reviewer brief").
 Use read-only review and keep the controller responsible for the final judgment.
 Do not let a worker approve its own work. Shared code directories have at most
 one writer; concurrent implementation topics use isolated worktrees/checkouts
@@ -222,6 +233,7 @@ need it. Session logs and artifacts remain after the pane closes. Never close a
 pane you did not create.
 Do not merge, deploy, post messages, or spend money beyond the
 authorization in the original task. Prior authorization remains valid.
+An authorized squash merge follows dispatch.md ("Merging").
 
 ## Communication contract
 
