@@ -55,6 +55,10 @@
     {
       "name": "mcat",
       "uri": "git@github.com:shin1ohno/mcat.git"
+    },
+    {
+      "name": "ai-memory",
+      "uri": "git@github.com:shin1ohno/ai-memory.git"
     }
   ]
 }
