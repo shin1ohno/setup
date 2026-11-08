@@ -151,6 +151,69 @@ class TasksTest(unittest.TestCase):
         self.call("attempt", self.task, "--profile", "dev", "--kind", "claude", "--model", "default",
                   "--reason", "Mismatched reuse", "--reuse-agent", ok=False)
 
+    def reserve_route(self, route="herdr1", *extra, ok=True):
+        return self.call("attempt", self.task, "--profile", "dev", "--kind", "codex",
+                         "--model", "default", "--reason", "Route test", "--route", route,
+                         *extra, ok=ok)
+
+    def retry_route(self):
+        self.call("bind", self.task, "--pane", "w1:p2")
+        self.update("reviewing")
+        self.update("retry")
+
+    def plan_file(self, name="plan.json", route="herdr1"):
+        path = Path(self.tmp.name) / name
+        path.write_text(json.dumps({"route": route}))
+        return str(path)
+
+    def test_default_route_preserves_legacy_callers(self):
+        attempt = self.attempt()
+        self.assertEqual(attempt["route"], "herdr")
+        self.assertIsNone(attempt["plan"])
+
+    def test_reuse_inherits_plan_when_omitted_or_identical(self):
+        plan = self.plan_file()
+        first = self.reserve_route("herdr1", "--plan", plan)["attempt"]
+        self.retry_route()
+        second = self.reserve_route("herdr1", "--reuse-agent")["attempt"]
+        self.assertEqual(second["plan"], plan)  # Review S1.
+        self.assertEqual(second["agent"], first["agent"])
+        self.retry_route()
+        third = self.reserve_route("herdr1", "--reuse-agent", "--plan", plan)["attempt"]
+        self.assertEqual(third["plan"], plan)
+        self.assertEqual(self.call("show", self.task)["task"]["attempts"][-1]["plan"], plan)
+
+    def test_reuse_cannot_attach_a_plan_to_default_launch(self):
+        self.reserve_route()
+        self.retry_route()
+        error = self.reserve_route("herdr1", "--reuse-agent", "--plan", self.plan_file(), ok=False)
+        self.assertIn("launch plan", error["error"])  # Review S2.
+        self.assertEqual(len(self.call("show", self.task)["task"]["attempts"]), 1)
+        self.assertIsNone(self.reserve_route("herdr1", "--reuse-agent")["attempt"]["plan"])
+
+    def test_reuse_cannot_replace_plan_or_route(self):
+        self.reserve_route("hc", "--plan", self.plan_file(route="hc"))
+        self.retry_route()
+        error = self.reserve_route("hc", "--reuse-agent", "--plan",
+                                   self.plan_file("other.json", "hc"), ok=False)
+        self.assertIn("launch plan", error["error"])
+        error = self.reserve_route("herdr1", "--reuse-agent", ok=False)
+        self.assertIn("route", error["error"])
+        self.assertIn("hc", error["error"])
+        self.assertIn("herdr1", error["error"])
+        self.assertEqual(len(self.call("show", self.task)["task"]["attempts"]), 1)
+
+    def test_plan_requires_existing_absolute_file_and_matching_route(self):
+        invalid = ["relative.json", str(Path(self.tmp.name) / "missing.json"), self.tmp.name,
+                   self.plan_file("wrong-route.json", "hc")]
+        malformed = Path(self.tmp.name) / "malformed.json"
+        malformed.write_text("not json")
+        invalid.append(str(malformed))
+        for path in invalid:
+            with self.subTest(path=path):
+                self.reserve_route("herdr1", "--plan", path, ok=False)
+                self.assertEqual(self.call("show", self.task)["task"]["attempts"], [])
+
     def test_context_block_before_dispatch_cannot_invent_an_attempt(self):
         self.update("needs-user", evidence=False)
         self.update("starting", ok=False)

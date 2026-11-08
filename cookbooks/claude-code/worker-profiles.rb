@@ -31,6 +31,14 @@ profiles.each do |profile|
   raise "Codex #{profile} profile exceeds 32768 bytes" if contents[profile]["codex"].bytesize > 32768
 end
 
+# Read the same defaults and user preamble as the main Codex config generator.
+# claude-code runs before codex-cli, so reading ~/.codex/config.toml would use
+# stale policy (or fail on first apply). This mode emits only the two root keys.
+policy_generator = File.expand_path("../codex-cli/files/generate_config.sh", File.dirname(__FILE__))
+policy_home = "'#{node[:setup][:home].gsub("'", "'\"'\"'")}'"
+policy_script = "'#{policy_generator.gsub("'", "'\"'\"'")}'"
+permission_policy = run_command("env -u CODEX_CONFIG_PREAMBLE HOME=#{policy_home} bash #{policy_script} --permission-policy").stdout
+
 directory codex_homes do
   owner node[:setup][:user]
   group node[:setup][:group]
@@ -72,7 +80,7 @@ profiles.each do |profile|
   end
 
   file "#{home}/config.toml" do
-    content "project_doc_max_bytes = 0\ncli_auth_credentials_store = \"file\"\n"
+    content "project_doc_max_bytes = 0\ncli_auth_credentials_store = \"file\"\n#{permission_policy}"
     owner node[:setup][:user]
     group node[:setup][:group]
     mode "600"

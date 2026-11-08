@@ -493,14 +493,28 @@ def run(args, root):
                                  or previous.get("requested_model", previous["model"]) != args.model
                                  or previous.get("effort") != args.effort
                                  or previous.get("route", "herdr") != args.route):
-            raise ValueError("reuse requires the previous worker's same kind and model")
+            raise ValueError("reuse requires the previous worker's same kind, model, effort and route "
+                             f"(previous route: {previous.get('route', 'herdr') if previous else 'none'}; "
+                             f"requested route: {args.route})")
+        plan = args.plan
+        if args.reuse_agent:
+            if plan is not None and plan != previous.get("plan"):
+                raise ValueError("reuse cannot change the previous worker's launch plan")
+            plan = previous.get("plan")
+        if args.plan is not None:
+            path = Path(plan)
+            if not path.is_absolute() or not path.is_file():
+                raise ValueError("plan must be an absolute path to an existing file")
+            launch = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(launch, dict) or launch.get("route") != args.route:
+                raise ValueError("plan route must match the attempt route")
         attempt = {
             "number": len(task["attempts"]) + 1,
             "agent": "cos-" + task["id"] + "-" + str(len(task["attempts"]) + 1),
             "kind": args.kind, "model": args.model, "reason": args.reason,
             "requested_model": args.model, "effort": args.effort,
             "observed_model": None, "observed_effort": None,
-            "route": args.route, "plan": args.plan, "profile": args.profile, "session": None,
+            "route": args.route, "plan": plan, "profile": args.profile, "session": None,
             "pane": None, "created_at": now(),
             "reuse": args.reuse_agent,
         }

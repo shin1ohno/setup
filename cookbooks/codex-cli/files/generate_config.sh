@@ -7,8 +7,13 @@
 
 set -euo pipefail
 
-YAML_FILE="$1"
-OUTPUT_FILE="$2"
+if [ "${1:-}" = "--permission-policy" ]; then
+  YAML_FILE=""
+  OUTPUT_FILE=""
+else
+  YAML_FILE="$1"
+  OUTPUT_FILE="$2"
+fi
 HOME_DIR="${HOME}"
 MANAGED_PROJECTS_DIR="${HOME_DIR}/ManagedProjects"
 
@@ -37,6 +42,35 @@ preamble_has_key() {
   ' "${PREAMBLE_FILE}"
 }
 
+emit_permission_defaults() {
+  if ! preamble_has_key approval_policy; then
+    echo 'approval_policy = "never"'
+  fi
+  if ! preamble_has_key sandbox_mode; then
+    echo 'sandbox_mode = "danger-full-access"'
+  fi
+}
+
+# Share the generated root policy with worker homes without copying providers,
+# credentials, MCP servers or project trust. The normal output is unchanged.
+if [ "${1:-}" = "--permission-policy" ]; then
+  {
+    emit_permission_defaults
+    if [ -f "${PREAMBLE_FILE}" ]; then
+      cat "${PREAMBLE_FILE}"
+    fi
+  } | python3 -c '
+import json, sys, tomllib
+config = tomllib.loads(sys.stdin.read())
+for key in ("approval_policy", "sandbox_mode"):
+    value = config[key]
+    if not isinstance(value, str):
+        raise ValueError(key + " must be a root string")
+    print(key + " = " + json.dumps(value))
+'
+  exit 0
+fi
+
 # Detect yq version and set appropriate command for YAML to JSON conversion
 # Python yq (kislyuk/yq): yq '.' file.yaml
 # Go yq (mikefarah/yq): yq -o json file.yaml
@@ -64,12 +98,7 @@ fetch_ssm() {
 # Start building config.toml
 {
   # Default to full access for CLI and Remote sessions; local preambles may override.
-  if ! preamble_has_key approval_policy; then
-    echo 'approval_policy = "never"'
-  fi
-  if ! preamble_has_key sandbox_mode; then
-    echo 'sandbox_mode = "danger-full-access"'
-  fi
+  emit_permission_defaults
   echo ""
 
   # Optional preamble injected before the generated [projects.*] tables. A

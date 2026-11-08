@@ -37,11 +37,15 @@ does not disable global instructions. `--system-prompt` is not used.
 
 Codex plans point `CODEX_HOME` at the fixed per-profile home
 `~/.agents/codex-homes/<profile>/` that `worker-profiles.rb` creates (mode 700:
-profile `AGENTS.md`, a two-key `config.toml`, and `auth.json` as a symlink to
+profile `AGENTS.md`, a `config.toml`, and `auth.json` as a symlink to
 `~/.codex/auth.json`, the file credential store). They pass `project_doc_max_bytes=0`,
 the observed `--no-daemon` option and an inline-table trust override for the cwd,
 and unset ambient API-key variables. The helper reads only the home's `AGENTS.md`;
-it never opens `auth.json`.
+it never opens `auth.json`. The profile config includes `approval_policy` and
+`sandbox_mode` from `generate_config.sh --permission-policy`, the same defaults
+and user preamble used by the main Codex config generator. This avoids reading
+a stale main config when claude-code converges before codex-cli. The mode emits
+only those two root keys; provider credentials and MCP settings are not copied.
 
 Official references:
 
@@ -157,7 +161,7 @@ the worker-floor settings and a local cookbook dry-run of the default recipe.
 
 ## Herdr 1 canary, 2026-11-09
 
-The pro-dev canary used sibling panes created with `pane split --env`, cleared
+The pro-dev canary used sibling panes created with `pane split --env`, sent
 the plan's `env_unset` through `pane run unset`, then passed `argv[1:]` to
 `agent start --kind`. Both harnesses answered unique nonce prompts. Their
 session logs contain the complete deployed dev profile. `tasks.py observe`
@@ -171,8 +175,11 @@ Both used `haiku`, effort `low`, the same worktree
 prompt, `--settings ~/.claude/worker-floor/impl.json`, and
 `--tools Bash,Read,Edit,Write,Skill,ToolSearch,Agent,AskUserQuestion`.
 The baseline omitted only `--append-system-prompt-file` and
-`CLAUDE_CODE_DISABLE_CLAUDE_MDS`; both cleared `CLAUDE_CODE_EFFORT_LEVEL`.
-Separate `--session-id` values identified the two logs.
+`CLAUDE_CODE_DISABLE_CLAUDE_MDS`; both sent `unset CLAUDE_CODE_EFFORT_LEVEL`.
+Separate `--session-id` values identified the two logs. The targeted ambient
+variables were not set in the inspected environment; sending `unset` and its
+exit status do not demonstrate removal of a populated variable. This canary
+does not prove that environment-clearing behavior.
 
 | Claude launch | First-call input tokens |
 |---|---:|
@@ -194,4 +201,24 @@ The original with-profile evidence was copied from task `3c32d0d312284686`.
 The ledger now records `hc`, `herdr1`, or `agent` and the used plan file in
 `attempt --plan`. A default launch omits the plan. Legacy `herdr` (or a missing
 route) stays an unspecified terminal route; it supports `bind --pane` and
-`observe` without guessing whether the launch used Herdr 1 or Herdr 2.
+`observe` without guessing whether the launch used Herdr 1 or Herdr 2. Reuse
+inherits the original plan, while a different supplied plan is refused. New
+plan arguments must be existing absolute JSON files with the same route.
+
+### Tool-using Codex canary
+
+The initial nonce canary made no tool calls and did not verify permissions.
+The follow-up session `01a1bbf1-73fc-7693-bfb0-ba0a22cf9ca9` used the real
+recipe's generated config in a task-local Codex home (with the existing auth
+file linked, not copied). Its `turn_context` recorded `approval_policy: never`
+and `sandbox_policy.type: danger-full-access`, matching the user's policy.
+The worker executed a probe script that wrote a task-local file, committed in
+a throwaway repository and its linked worktree, called read-only `gh api user`,
+and ran `herdr --session default agent list`. All five probes succeeded; the
+controller re-read the output file and both commit IDs. The pane was closed.
+
+Task `4e44aceb101e4527` retains `evidence-2/canary-turn-context.json`,
+`evidence-2/canary-verification.json`, and one `tool-*.json` result per probe.
+The permission-mode change leaves normal generator output byte-identical in
+five fixtures (defaults, either override, both overrides, and nested profile
+keys), recorded in `evidence-2/generator-comparison.json` with before/after TOML.

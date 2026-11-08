@@ -117,7 +117,7 @@ class HerdrObserveTest(unittest.TestCase):
                                           "--cwd", str(self.root), "--scope", "fixture",
                                           "--acceptance", "pass")["task"]["id"]
                     plan = self.root / "launch-plan.json"
-                    plan.write_text("{}")
+                    plan.write_text(json.dumps({"route": route}))
                     self.start(kind=kind, route=route, plan=plan)
                     attempt = self.attempt()
                     self.assertEqual(attempt["route"], route)
@@ -136,6 +136,9 @@ class HerdrObserveTest(unittest.TestCase):
         task["attempts"][-1].pop("route")
         task["attempts"][-1].pop("plan")
         path.write_text(json.dumps(task))
+        for flag, value in [("--model", "invented"), ("--effort", "low")]:
+            error = self.mutate("bind", "--pane", "t2", flag, value, ok=False)
+            self.assertIn("bind cannot record", error["error"])
         self.mutate("bind", "--pane", "t2")
         self.assertEqual(self.observe(self.claude_log([self.turn()]))["observed"]["effort"], "medium")
 
