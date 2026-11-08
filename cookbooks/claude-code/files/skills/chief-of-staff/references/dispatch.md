@@ -390,14 +390,16 @@ deployed profile or Codex home is missing or differs from the rendered source,
 and it writes `<task-dir>/plan-<unique-launch-token>/launch-plan.json` otherwise.
 The directory identifies a preparation, not an attempt number that has yet to
 be reserved. Keep the returned path for retries; never overwrite that directory.
-Read that
-file and use the profile launch below **only when all of these hold**:
+Read that file and use the profile launch below **only when all of these hold**:
 
 - `launch_ready` is exactly `true`;
 - `harness`, `route`, `profile`, `model`, `effort` and `cwd` equal the selected values and task;
 - `argv[0]` equals `harness`.
 
-Otherwise (a refusal, `launch_ready: false`, or any mismatch) keep today's
+An existing preparation directory or a failed attempt reservation is a state
+reconciliation problem, not a fallback condition. Follow the retry procedure
+in Ledger operations and keep the saved plan. For an unavailable/stale deployed
+profile, `launch_ready: false`, or a mismatch in the checks above, keep today's
 launch exactly as described in "Launch example" and "Model and effort per
 attempt", including the worker-floor settings and the `--tools` allowlist for
 implementation workers, and do not call the worker profile-isolated. `launch_ready`
