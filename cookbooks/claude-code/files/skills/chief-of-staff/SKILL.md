@@ -80,7 +80,12 @@ with `bin/worker-profile prepare --route <hc|agent|herdr1>` for every attempt an
 it says `launch_ready: true`; otherwise launch as before (dispatch.md, "Worker
 profiles and launch plans"). Workers receive a self-contained brief and must **not**
 invoke Chief of Staff or create their own worker trees unless this task requires
-and authorizes it. Keep orchestration in the controller.
+and authorizes it. Keep orchestration in the controller. Every brief names the
+controller pane and the Herdr route (Herdr 1 `herdr` or Herdr 2 `hc`, chosen
+from where that pane lives) so the worker can type a one-line completion or
+question message into it, and tells the worker to close the panes it created
+once it no longer needs them (dispatch.md, "Worker brief"). The controller still
+closes the worker's own pane after acceptance.
 
 Send through `herdr agent prompt ... --wait --timeout 30000`. Observe a new
 working/blocked transition and read the resulting text before calling it
