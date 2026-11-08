@@ -108,6 +108,10 @@ unit 8 本、`generate_env_v2.sh`、`memory-keeper-health.sh`、`requirements*.t
 
 intake が作るミラー issue を Linear の Issues 同期が取り込み直し、影の issue を作った（sandbox のミラー #8 が SH1-11 になった）。factory のリポは Linear の GitHub 連携に残し、PR の紐付け（`Fixes SH1-N` で Linear の issue が Done になる、loop-facts:12）だけに使う。
 
+### 12. 切替は factory を待たず Claude の PR で進める（2026-11-08、Decision 5 の適用範囲を変更）
+
+ai-memory の切り出し（Linear SH1-13）は、切替に要る作業を factory ループを通さず Claude の PR で進め、handoff §9 の達成で完了とします。L2・L3・L5・L6 の構築と fleet 鍵の F2・F3 は SH1-114 へ分け、切り出しの完了条件から外します。pin の更新は bump-pin タスクではなく 1 行の PR で行い、merge が fleet への deploy である点と、compare リンクを PR 本文に載せる点は Decision 8 のまま維持します。
+
 ## セキュリティ上の前提（Decision 5〜10 の根拠）
 
 - **S1 既存の露出（setup では本 ADR の後も残る）**: fleet 各デバイスの GitHub user key（アカウント全体への push 権）は home-monitor が登録し（`ssh-devices.tf:117-120`）、秘密鍵は SSM `/ssh-keys/devices/*` にあって、fleet 共有の `pve-bootstrap-ssm` が読める（`pve-bootstrap-iam.tf:107-127`）。setup main には ruleset も branch protection も無い（2026-09-28 の読み取り probe: `gh api repos/shin1ohno/setup/rulesets` が 0 件、`branches/main/protection` が 404「Branch not protected」）。fleet のどの LXC を取られても setup main へ直接 push でき、それが fleet 全体への root での deploy になる。ai-memory を既定設定のまま作ると同じ状態を 2 つ目のリポにも作るので、ai-memory には作成時から ruleset を掛ける（S4）。setup main には ruleset を掛けない（Decision 10）ので、S1 の鍵による setup main への直接 push の経路は残る。L6 で App が開く setup の PR にも merge 前のレビューを機械的に強制するものは無く、所有者の手動 merge が唯一のレビューである（overlay の workflow には merge の手順を置かない）。self-heal-resolve の自律 merge（S3 (iii)）も残る。fleet 鍵の修正は別トラックで進める（setup `TODO.md` 先頭の項目、home-monitor の apply はユーザーの許可制）。F1 の adversarial review（`review-f1.md`）は deploy key を採らず、共有 principal の読み取りを公開鍵だけに縮め、GitHub の鍵を対話用の開発機 4 台分だけログイン鍵から切り離して作り直す案に決めた（F2 が home-monitor、F3 が setup の追従）。本 ADR の段取りはそれを待たない

@@ -19,16 +19,17 @@
 #      is unset the mcp import step is SKIPPED and reported as such.
 #   4. the keeper's own unit tests run against the INSTALLED copy.
 #
-# Usage: bin/check-memory-v2-manifest            # exit 1 on any failure
+# Usage: bin/check-memory-v2-manifest [BASE]     # exit 1 on any failure
+#        BASE defaults to cookbooks/lxc-es-memory/files
 #        MEMORY_MCP_PYTHON=.venv/bin/python bin/check-memory-v2-manifest
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BASE="$REPO/cookbooks/lxc-es-memory/files"
+BASE="$(cd "${1:-$REPO/cookbooks/lxc-es-memory/files}" && pwd)"
 fail=0
 T=$(mktemp -d "${TMPDIR:-/tmp}/memory-v2-artifact.XXXXXX"); trap 'rm -rf "$T"' EXIT
 
-# Normalize the same way the cookbook's compile-time loader does
-# (`.map(&:strip)` in cookbooks/lxc-es-memory/default.rb) — otherwise a
+# Normalize the same way the cookbook's placement does (`manifest` in
+# cookbooks/lxc-es-memory/default.rb) — otherwise a
 # MANIFEST line the cookbook accepts (" scoring.py ", trailing CR) can
 # mismatch the checker's own file-exists / shape checks (review D5).
 manifest_entries() { grep -vE '^\s*(#|$)' "$BASE/$1/MANIFEST" | sed 's/\r$//; s/^[[:space:]]*//; s/[[:space:]]*$//'; }
