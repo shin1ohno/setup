@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -67,11 +68,19 @@ puts JSON.generate(capture.configs)
         (home / ".codex").mkdir(parents=True)
         env = dict(os.environ, HOME=str(home))
         env.pop("CODEX_CONFIG_PREAMBLE", None)
-        for preamble in [None, 'approval_policy = "on-request"\nsandbox_mode = "read-only"\n']:
+        minimal_path = self.root / "only-awk"
+        minimal_path.mkdir()
+        (minimal_path / "awk").symlink_to(shutil.which("awk"))
+        bash = shutil.which("bash")
+        for preamble in [None, 'approval_policy = "on-request"\nsandbox_mode = "read-only"\n',
+                         "approval_policy = 'never' # root override\nsandbox_mode = 'workspace-write'\n"]:
             if preamble:
                 (home / ".codex/config-preamble.toml").write_text(preamble)
             expected = tomllib.loads(subprocess.check_output(
                 ["bash", str(generator), "--permission-policy"], env=env, text=True))
+            minimal = subprocess.check_output([bash, str(generator), "--permission-policy"],
+                                             env=dict(env, PATH=str(minimal_path)), text=True)
+            self.assertEqual(tomllib.loads(minimal), expected)
             self.assertEqual(set(expected), {"approval_policy", "sandbox_mode"})
             configs = json.loads(subprocess.check_output(
                 [ruby, str(probe), str(home), str(recipe)], env=env, text=True))

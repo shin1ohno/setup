@@ -54,20 +54,15 @@ emit_permission_defaults() {
 # Share the generated root policy with worker homes without copying providers,
 # credentials, MCP servers or project trust. The normal output is unchanged.
 if [ "${1:-}" = "--permission-policy" ]; then
-  {
-    emit_permission_defaults
-    if [ -f "${PREAMBLE_FILE}" ]; then
-      cat "${PREAMBLE_FILE}"
-    fi
-  } | python3 -c '
-import json, sys, tomllib
-config = tomllib.loads(sys.stdin.read())
-for key in ("approval_policy", "sandbox_mode"):
-    value = config[key]
-    if not isinstance(value, str):
-        raise ValueError(key + " must be a root string")
-    print(key + " = " + json.dumps(value))
-'
+  emit_permission_defaults
+  if [ -f "${PREAMBLE_FILE}" ]; then
+    # Match the same root assignments as preamble_has_key. Keep the TOML
+    # spelling and comments intact; no Python/yq dependency at recipe compile.
+    awk '
+      /^[[:space:]]*\[/ { exit }
+      /^[[:space:]]*(approval_policy|sandbox_mode)[[:space:]]*=/ { print }
+    ' "${PREAMBLE_FILE}"
+  fi
   exit 0
 fi
 
