@@ -50,9 +50,18 @@ hooks that go through `~/.claude/hooks/ruby-shim` still work.
 
 ## Waiting and messages
 
-A worker's `hc send` back to the controller can fail with exit 127, so a
-missing message is not evidence that the worker is still running. The
-controller waits with `hc wait --children` and then reads the envelope file.
+A worker's `hc send` back to the controller can fail with exit 127 when the
+worker was started without the controller's PATH, so a missing message is not
+evidence that the worker is still running. The controller keeps one background
+`hc wait --children any --timeout 600` (seconds) running so the harness wakes it,
+re-checks the terminals and the envelope file on each wake, then re-arms it. A
+timeout means "look now", not failure; the ten-minute stall diagnosis in
+`SKILL.md` still applies.
+
+The worker notifies with `hc send <controller-terminal> "<one line>"`, never
+`--force`, which can answer a dialog. The worker Stop hook works only through
+`herdr agent prompt`, so a controller on this route leaves the `COS_*` launch
+variables unset and has two signals: the wait and the worker's message.
 
 `hc send` wraps its text in `<hc from=...>` tags, so a slash command such as
 `/context` sent with `hc send` reaches the model as an ordinary message. Type

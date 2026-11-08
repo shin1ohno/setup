@@ -141,17 +141,89 @@ shell quoting; user topics are data, never shell commands.
 
 ```text
 herdr --session <verified-session> pane layout --pane <verified-caller-pane>
-herdr --session <verified-session> pane split --pane <verified-caller-pane> --direction right --cwd <task-cwd> --no-focus
-herdr --session <verified-session> agent start <reserved-agent-name> --kind codex --pane <returned-id>
-herdr --session <verified-session> agent prompt <reserved-agent-name> <brief-text> --wait --timeout 30000
+herdr --session <verified-session> pane split --pane <verified-caller-pane> --direction right --cwd <task-cwd> --no-focus \
+  [--env COS_WORKER_TASK_ID=<task-id> --env COS_WORKER_ATTEMPT=<attempt> \
+   --env COS_CONTROLLER_PANE=<verified-caller-pane> --env COS_CONTROLLER_SESSION=<verified-session>]
+# Claude. For Codex use the start step below instead of these two lines.
+herdr --session <verified-session> agent start <reserved-agent-name> --kind claude --pane <returned-id> -- <launch-prompt>
+herdr --session <verified-session> agent wait <reserved-agent-name> --until working --until blocked --timeout 30000
 herdr --session <verified-session> agent get <reserved-agent-name>
 herdr --session <verified-session> agent read <reserved-agent-name> --source recent-unwrapped --lines 40
-herdr --session <verified-session> agent wait <reserved-agent-name> --timeout 30000
+# Then run the wait loop below in the background so the harness wakes the controller when it ends.
+# A later prompt to the same worker, once it is settled.
+herdr --session <verified-session> agent prompt <reserved-agent-name> <text> --wait --until working --until blocked --timeout 30000
 ```
 
 This is today's launch, used whenever the attempt's launch plan is not ready
 (see "Worker profiles and launch plans"); a ready plan adds `--env` to the
 split and replaces the options after `--`.
+
+Give a new worker its first prompt as an argument after `--`: a one-line
+`<launch-prompt>` naming the brief file, before any variadic flag such as
+`--tools`. Do not type it with `agent prompt` right after `agent start`. In 4 of
+5 launches on 2026-11-09 the Enter was lost during startup: `agent prompt` exited
+1 with `agent_prompt_stalled` and the text stayed in the input box with the state
+`idle`. If that happens, confirm the text is in the box with `agent read`, send
+`agent send-keys <name> Enter` once, and do not send the prompt again.
+
+Both forms use `--until working --until blocked`. Without `--until`, `--wait`
+lasts until the turn ends and exits 1 on any normal turn longer than the timeout.
+
+The background wait runs in this loop, one per worker, with `s`, `worker` and
+`envelope` (`<task-dir>/envelope-<n>.json`) set first. It reads the envelope file
+directly, so a worker that writes it while settled cannot be missed, and a turn
+that ends while the worker's own background job runs costs no wake.
+
+```bash
+end=$((SECONDS+600)); why=timeout
+while [ $SECONDS -lt $end ]; do
+  [ -f "$envelope" ] && { why=envelope; break; }
+  herdr --session "$s" agent get "$worker" >/dev/null 2>&1 || { why=gone; break; }
+  herdr --session "$s" agent wait "$worker" --until blocked --timeout 15000 >/dev/null 2>&1 && { why=blocked; break; }
+done
+echo "reason=$why"
+```
+
+The last line decides the controller's next step:
+
+| Output | Meaning | Next step |
+| --- | --- | --- |
+| `reason=envelope` | The attempt's envelope exists | Run `receive`, then review |
+| `reason=blocked` | The worker is at a dialog | Read the dialog and report it; never answer it. Wait in the background with `--until working --until idle --until done`, then re-arm the loop |
+| `reason=gone` | `agent get` failed and no envelope exists | Treat as an abnormal exit: inspect the pane and logs, then repair or report. A failed socket call looks the same, so confirm with a second `agent get` |
+| `reason=timeout` | Ten minutes passed | Look now, not a failure. Re-check state and re-arm. Without observable progress, run the stall diagnosis in `SKILL.md` |
+
+Codex needs its own start step, because `agent start` with a first prompt can
+return `timeout` or `agent_name_not_found` while Codex keeps working. Set `s`,
+`worker`, `pane`, `model`, `effort` and `launch_prompt` first. The step accepts
+those errors only when the wait that follows observes `working` or `blocked`. If
+the name is lost, it restores it through the pane and checks again:
+
+```bash
+herdr --session "$s" agent start "$worker" --kind codex --pane "$pane" -- \
+  -m "$model" -c model_reasoning_effort="$effort" "$launch_prompt" || true
+delivered=1
+for _ in $(seq 1 30); do
+  if ! herdr --session "$s" agent get "$worker" >/dev/null 2>&1; then
+    herdr --session "$s" agent rename "$pane" "$worker" >/dev/null 2>&1 || { sleep 1; continue; }
+  fi
+  out=$(herdr --session "$s" agent wait "$worker" --until working --until blocked --timeout 30000 2>&1) \
+    && { echo "$out"; delivered=0; break; }
+  case "$out" in *agent_not_found*) sleep 1 ;; *) echo "$out" >&2; break ;; esac
+done
+[ "$delivered" = 0 ]
+```
+
+A non-zero exit is ambiguous delivery. Inspect the pane with `pane read` and do
+not launch again: the first Codex may still be running.
+
+Pass the four `COS_*` variables when the worker is Claude and the controller is
+a Herdr 1 pane; add `--env COS_STATE_DIR=<dir>` when the controller set it. They
+arm the Stop hook (`~/.claude/hooks/cos-worker-stop-notify.rb`), which sends
+`[task <id> attempt <n>] envelope-ready` to the controller once, at the first
+Stop after `<task-dir>/envelope-<n>.json` exists. Codex has no such hook, and a
+controller on the `hc` route leaves the variables unset.
+
 For explicit model selection, append native options **after** `--` (see
 "Model and effort per attempt" for each harness), and record the resulting
 effective model/effort with `observe` once the worker has answered at least
@@ -187,13 +259,21 @@ Authorized actions and constraints: <scope, permissions, no additional grants>
 Acceptance criteria: <observable, individually checkable criteria>
 Existing work / previous attempt: <artifact paths, failed criteria and evidence>
 Controller pane: <verified controller pane ID, socket and session from the caller helper>
-Herdr route for notifying the controller: <Herdr 1 (`herdr`) or Herdr 2 (`hc`), chosen from where the controller pane lives>
+Herdr route for notifying the controller: <Herdr 1 (`herdr`) or Herdr 2 (`hc`), chosen from where the controller pane lives. This names the CLI to use, not the ledger's `--route` value>
+Task directory: <absolute task directory>
 
 Notify the controller: when you finish (done, failed or blocked) and whenever
-you have a question only the controller or user can answer, type a one-line
-message into the controller pane through the Herdr route above, following the
-installed herdr / herdr-core skill (address the pane explicitly, send the text,
-confirm it was submitted). Format: `[task <id> attempt <n>] done|failed|blocked|question: <one sentence> (report: <absolute path>)`.
+you have a question only the controller or user can answer, send one line with
+exactly this command, without `--wait`:
+
+<Herdr 1: `herdr --session <controller-session> agent prompt <controller-pane> "<one line>"`>
+<Herdr 2: `hc send <controller-terminal> "<one line>"`>
+
+Never use `pane send-text`, `pane run`, `agent send-keys` or `hc send --force`
+for this: they can type into a dialog. If the send is refused because the
+controller is blocked (`agent_blocked` on Herdr 1), retry up to 5 times at 30 s
+intervals, then stop trying; the controller also watches you.
+Format: `[task <id> attempt <n>] done|failed|blocked|question: <one sentence> (report: <absolute path>)`.
 The one-line message only points to the report or question; the full content
 stays in the artifact files. Keep working on anything independent of the
 question; do not wait idle without sending it.
@@ -209,7 +289,8 @@ from assumptions; report concrete blockers rather than answering permission
 dialogs on behalf of the user. Preserve other agents' changes. Do not weaken
 the acceptance criteria. Do not send messages to third parties without explicit
 authorization. Write full results and actual check output to artifact files inside the supplied
-task directory or checkout. Return only the envelope below (at most 16 KiB).
+task directory or checkout. Write the envelope below to
+`<task directory>/envelope-<n>.json` (at most 16 KiB) and return only that.
 Envelope limits: at most 12 artifacts; at most 8 open questions, each at most
 600 UTF-8 bytes; summary at most 1200 UTF-8 bytes. Cite a directory or log file
 instead of listing more than 12 paths.
@@ -437,17 +518,28 @@ path depends on the cwd, as today. Codex writes rollouts under
 
   ```text
   herdr --session <s> pane split --pane <caller> --direction right --cwd <plan.cwd> --no-focus \
-    --env <KEY>=<VALUE> [--env ...]
+    --env <KEY>=<VALUE> [--env ...] [--env COS_...]
   herdr --session <s> pane run <returned-id> unset <env_unset names>
-  herdr --session <s> agent start <reserved-agent-name> --kind <plan.harness> --pane <returned-id> \
-    -- <plan.argv[1:]> [route additions without the prompt]
-  herdr --session <s> agent prompt <reserved-agent-name> <brief-text> --wait --timeout 30000
+  # Claude:
+  herdr --session <s> agent start <reserved-agent-name> --kind claude --pane <returned-id> \
+    -- <plan.argv[1:]> <launch-prompt> [route additions]
+  herdr --session <s> agent wait <reserved-agent-name> --until working --until blocked --timeout 30000
   ```
+
+  For Codex, run the Codex start step in "Launch example" with `<plan.argv[1:]>`
+  in place of its `-m` and `-c` options and the prompt still last. Do not send the
+  first prompt with `agent prompt`: "Launch example" explains why. Then start the
+  background wait loop from that section.
+
+  The four `COS_*` variables from "Launch example" apply to a profile launch
+  under the same condition: a Claude worker and a Herdr 1 controller.
 
 - **Herdr 2 (`hc`), Claude or Codex.** Wrap the plan argv in `/usr/bin/env`, one
   `-u <NAME>` per `env_unset` entry and one `<KEY>=<VALUE>` per `env_set` entry,
   plus the controller's PATH (see `hc-route.md`). `env` resolves `argv[0]`
-  through that PATH; confirm it finds `~/.local/bin/claude` or `codex` first.
+  through that PATH; confirm it finds `~/.local/bin/claude` or `codex` first. With
+  a Herdr 1 controller and a Claude worker, add the `COS_*` variables as
+  `<KEY>=<VALUE>` too.
 
   ```text
   hc run --bg --name <name> --cwd <plan.cwd> -- /usr/bin/env -u <NAME> [...] \
