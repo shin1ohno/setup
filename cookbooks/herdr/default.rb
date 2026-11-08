@@ -129,6 +129,32 @@ execute "link smart-splits.nvim herdr plugin" do
   not_if "grep -q 'smart-splits.nvim' '#{herdr_plugins_json}' 2>/dev/null"
 end
 
+# hide-sdk-panes: keeps `claude remote-control` panes out of the Agents view
+# (herdr 1 only; herdr 2 / hc has no plugin or view-filter API). The plugin tags
+# those panes with the token hide_sdk=1 and installs an agent.view.set filter at
+# startup and on pane.created / pane.agent_detected. Source:
+# https://github.com/shin1ohno/herdr-plugin-hide-sdk-panes
+hide_sdk_root = "#{node[:setup][:home]}/.local/share/herdr-plugins/hide-sdk-panes"
+
+directory "#{node[:setup][:home]}/.local/share/herdr-plugins" do
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+end
+
+git hide_sdk_root do
+  repository "https://github.com/shin1ohno/herdr-plugin-hide-sdk-panes.git"
+  user node[:setup][:user]
+  not_if "test -d '#{hide_sdk_root}'"
+end
+
+execute "link hide-sdk-panes herdr plugin" do
+  user node[:setup][:user]
+  command "'#{herdr_path}' plugin link '#{hide_sdk_root}'"
+  only_if "test -f '#{hide_sdk_root}/herdr-plugin.toml'"
+  not_if "grep -q 'hide-sdk-panes' '#{herdr_plugins_json}' 2>/dev/null"
+end
+
 # Same per-platform path cookbooks/zsh registers in /etc/shells.
 zsh_path = platform_value(
   darwin: "#{node[:homebrew][:prefix]}/bin/zsh",
