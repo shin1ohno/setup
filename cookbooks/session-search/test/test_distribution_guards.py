@@ -44,6 +44,9 @@ import os, signal, sys
 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 if sys.argv[1:] == ["attestation", "verify", "--help"]:
     mode = os.environ.get("HELP_MODE", "long")
+    if mode == "no-attestation":
+        print('unknown command "attestation" for "gh"', file=sys.stderr)
+        sys.exit(1)
     if mode != "missing":
         os.write(1, b"--source-digest\\n")
     # A matching first line followed by much more than a pipe buffer makes
@@ -84,6 +87,13 @@ if ss_artifact "$2" x86_64-unknown-linux-gnu "$4"; then exit 0; else exit 1; fi
         self.assertIn("upgrade gh", result.stderr)
         self.assertFalse((self.work / "verified").exists())
 
+    def test_missing_attestation_command_has_upgrade_hint(self):
+        result = self.artifact(HELP_MODE="no-attestation")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('unknown command "attestation"', result.stderr)
+        self.assertIn("upgrade gh: attestation --source-digest is required", result.stderr)
+        self.assertFalse((self.work / "verified").exists())
+
     def era(self, history, status, pipefail):
         self.command("git", '''#!/bin/sh
 case "$3" in
@@ -103,7 +113,7 @@ if ss_era "$2" "$3" "$4"; then exit 0; else exit 1; fi
 
     def test_history_baselines(self):
         for pipefail in (False, True):
-            for history, era in (("", "python"), (self.pin + "\n" + "2" * 40 + "\n", "rust")):
+            for history, era in (("", "python"), (self.pin + "\n" + "2" * 40 + "\n" + "3" * 40 + "\n", "rust")):
                 with self.subTest(pipefail=pipefail, era=era):
                     result = self.era(history, 0, pipefail)
                     self.assertEqual(result.returncode, 0, result.stderr)

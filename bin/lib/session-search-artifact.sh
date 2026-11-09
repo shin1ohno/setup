@@ -10,7 +10,7 @@ ss_artifact() { # pin target destination; ss_manifest has populated ss_sums
   if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$out"); else got=$(shasum -a 256 "$out"); fi
   [ "${got%% *}" = "$want" ] || { ss_fail 'artifact sha256 mismatch'; return 1; }
   # Read all help output before matching so grep cannot SIGPIPE its producer.
-  help=$(gh attestation verify --help) || { ss_fail 'gh attestation help failed'; return 1; }
+  help=$(gh attestation verify --help) || { ss_fail 'gh attestation help failed; upgrade gh: attestation --source-digest is required'; return 1; }
   grep -q -- '--source-digest' <<< "$help" || { ss_fail 'upgrade gh: attestation --source-digest is required'; return 1; }
   gh attestation verify "$out" --repo shin1ohno/session-search \
     --signer-workflow shin1ohno/session-search/.github/workflows/release.yml \
