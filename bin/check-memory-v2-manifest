@@ -169,11 +169,13 @@ else
     if ss_artifact "$ss_pin" "$ss_target" "$T/ccs"; then
       for suite in redact codex; do
         case "$suite" in redact) corpus=session_redact_r1.jsonl ;; codex) corpus=session_codex_v1.jsonl ;; esac
-        "$T/ccs" _conformance "$suite" < "$BASE/memory-mcp/conformance/$corpus" || fail=1
+        if ! "$T/ccs" _conformance "$suite" < "$BASE/memory-mcp/conformance/$corpus"; then
+          echo "FAIL  $suite: artifact conformance failed"; fail=1
+        fi
       done
       if "$T/ccs" _conformance redact --emit < "$BASE/memory-mcp/conformance/session_redact_r1.jsonl" > "$T/emit.jsonl"; then
         python3 -B -I "$REPO/bin/lib/session-search-conformance.py" --server "$BASE/memory-mcp" --emit "$T/emit.jsonl" || fail=1
-      else fail=1; fi
+      else echo 'FAIL  redact: artifact conformance emit failed'; fail=1; fi
       if "$T/ccs" _buildinfo > "$T/buildinfo.json"; then
         python3 -B -I - "$BASE/memory-mcp" "$T/buildinfo.json" "$ss_pin" "$ss_target" <<'PY' || fail=1
 import importlib.util, json, pathlib, sys
