@@ -32,6 +32,8 @@ on:
 jobs:
   test-macos:
     runs-on: macos-latest
+    permissions:
+      contents: read
     env:
       # mise/ubi install tools from GitHub releases via the GitHub API.
       # Unauthenticated requests hit the 60 req/hr limit and fail with 403
@@ -60,7 +62,14 @@ jobs:
     - name: session-search deploy-pinned.sh hermetic test (macOS system bash 3.2)
       run: cookbooks/session-search/test/test-deploy-pinned.sh
 
+    - name: session-search read-only attestation authentication (macOS)
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: bash cookbooks/session-search/test/test-attestation-auth.sh 2>&1 | tee /tmp/ccs-attestation.log
+
     - name: session-search binary deployment and rollback (macOS)
+      shell: bash
       run: |
         set -o pipefail
         gh --version
@@ -539,6 +548,8 @@ jobs:
 
   syntax-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
     - uses: actions/checkout@v4
 
@@ -655,6 +666,8 @@ jobs:
         python3 cookbooks/herdr/files/test-skill-policy.py
 
     - name: memory-v2 distribution units — MANIFEST complete + artifact installs and imports (ADR 0010)
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         # The cookbook deploys exactly files/{memory-mcp,memory-keeper}/MANIFEST.
         # This copies ONLY those files into an empty directory and imports every
@@ -669,7 +682,14 @@ jobs:
 
     # Manifest checks must precede suites that import source files and create
     # __pycache__; the production manifest gate intentionally rejects extras.
+    - name: session-search read-only attestation authentication (Linux)
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: bash cookbooks/session-search/test/test-attestation-auth.sh 2>&1 | tee /tmp/ccs-attestation.log
+
     - name: session-search binary deployment and rollback (Linux)
+      shell: bash
       run: |
         set -o pipefail
         gh --version
@@ -684,6 +704,8 @@ jobs:
         path: /tmp/ccs-*.log
 
     - name: pinned ai-memory — on main, distribution contract, equals setup's copies (ADR 0013)
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: MEMORY_MCP_PYTHON=/tmp/memory-mcp-venv/bin/python ./bin/check-ai-memory-pin
 
     - name: memory-mcp write-path regression suite
@@ -881,6 +903,8 @@ jobs:
         fi
 
     - name: pinned session-search — format and ancestry of main (ADR 0014)
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: cookbooks/session-search/test/check-pin.sh
 
     - name: session-search deploy-pinned.sh hermetic test

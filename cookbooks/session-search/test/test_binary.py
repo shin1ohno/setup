@@ -15,7 +15,7 @@ TARGET = "aarch64-apple-darwin" if os.uname().sysname == "Darwin" else "x86_64-u
 def binary(path, pin, target=TARGET):
     info = json.dumps(dict(version="0.2.0", commit=pin, target=target, redact_version="r1"), separators=(",", ":"))
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('#!/bin/sh\ncase "$1" in\n_buildinfo) echo \'' + info + "';;\n*) echo fixture-rust;;\nesac\n")
+    path.write_text('#!/bin/sh\n[ -z "${EXECUTION_MARKER:-}" ] || echo executed >> "$EXECUTION_MARKER"\ncase "$1" in\n_buildinfo) echo \'' + info + "'; exit ${BUILDINFO_EXIT:-0};;\n*) echo fixture-rust;;\nesac\n")
     path.chmod(0o755)
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -40,7 +40,7 @@ if [ -n "$out" ]; then cp "$FIXTURE_RELEASE/$suffix" "$out"; else cat "$FIXTURE_
 def run(args, env, expected=0, contains=None):
     p = subprocess.run([str(a) for a in args], env=env, capture_output=True, text=True)
     if p.returncode != expected or (contains and contains not in p.stdout + p.stderr):
-        raise AssertionError((args, p.returncode, p.stdout, p.stderr))
+        raise AssertionError(("expected exit %s containing %r; got %s" % (expected, contains, p.returncode), args, p.stdout, p.stderr))
     if expected:
         print((p.stdout + p.stderr).strip())
     return p
@@ -54,23 +54,47 @@ def main():
         env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"], FIXTURE_RELEASE=str(release))
         pins = [str(i) * 40 for i in (1, 2, 3)]
         sums = {p: binary(release / p / ("ccs-" + TARGET), p) for p in pins}
-        def invoke(mode, p=pins[0], sha=None, expected=0, contains=None, extra=None):
-            return run(["/bin/bash", SCRIPT, mode, p, sha or sums[p], TARGET, share], dict(env, **(extra or {})), expected, contains)
+        def invoke(mode, p=pins[0], sha=None, expected=0, contains=None, extra=None, destination=None):
+            result = run(["/bin/bash", SCRIPT, mode, p, sha or sums[p], TARGET, destination or share], dict(env, **(extra or {})), expected, contains)
+            leftovers = list(share.glob("bin/.ccs.*")) + list(share.glob(".binary-record.*"))
+            assert not leftovers, "staging cleanup failed: " + repr(leftovers)
+            return result
         invoke("check", expected=1)
         invoke("deploy"); invoke("check")
         print("PASS deploy + network-free check")
         before = (share / "DEPLOYED_BINARY").read_bytes()
-        invoke("deploy", pins[1], "0" * 64, 1, "sha256 mismatch")
+        executed = work / "executed"
+        invoke("deploy", pins[1], "0" * 64, 1, "sha256 mismatch", {"EXECUTION_MARKER": str(executed)})
+        assert not executed.exists(), "download executed before sha256 verification"
         assert (share / "DEPLOYED_BINARY").read_bytes() == before
         print("N11 PASS: incorrect sha256 rejected; marker unchanged")
         path = share / "bin" / ("ccs-" + pins[0])
         good = path.read_bytes(); path.write_bytes(good + b"x")
-        invoke("check", expected=1, contains="sha256 mismatch")
+        invoke("check", expected=1, contains="sha256 mismatch", extra={"EXECUTION_MARKER": str(executed)})
+        assert not executed.exists(), "installed binary executed before sha256 verification"
         print("N11 PASS: one-byte artifact change rejected by check")
         path.write_bytes(good)
         path.chmod(0o700); invoke("check", expected=1, contains="mode"); path.chmod(0o755)
         original = work / "original"; path.rename(original); path.symlink_to(original)
         invoke("check", expected=1, contains="regular"); path.unlink(); original.rename(path)
+        alias = work / "share-alias"; alias.symlink_to(share, target_is_directory=True)
+        invoke("check", expected=1, contains="unsafe share directory", destination=alias)
+        real_bin = work / "real-bin"; (share / "bin").rename(real_bin)
+        (share / "bin").symlink_to(real_bin, target_is_directory=True)
+        invoke("check", expected=1, contains="unsafe share directory")
+        (share / "bin").unlink(); real_bin.rename(share / "bin")
+        print("PASS both share and bin symlink defences")
+        invoke("check", expected=1, contains="execution failed", extra={"BUILDINFO_EXIT": "9"})
+        invoke("deploy", pins[1], expected=1, contains="execution failed", extra={"BUILDINFO_EXIT": "9"})
+        assert (share / "DEPLOYED_BINARY").read_bytes() == before
+        print("PASS buildinfo nonzero with valid JSON is rejected; staging removed")
+        wrong_target = "x86_64-unknown-linux-gnu" if TARGET != "x86_64-unknown-linux-gnu" else "aarch64-unknown-linux-gnu"
+        bad = release / pins[1] / ("ccs-" + TARGET)
+        bad_sha = binary(bad, pins[1], wrong_target)
+        invoke("deploy", pins[1], bad_sha, 1, "identity mismatch")
+        assert (share / "DEPLOYED_BINARY").read_bytes() == before
+        sums[pins[1]] = binary(bad, pins[1])
+        print("PASS matching commit with wrong target is rejected")
         invoke("deploy", pins[1], extra={"FAIL_DOWNLOAD": "1"}, contains="WARN")
         assert (share / "DEPLOYED_BINARY").read_bytes() == before
         print("PASS failed download preserves receiving state")
@@ -87,6 +111,14 @@ def main():
         invoke("deploy", pins[1], bad_sha, 1, "identity mismatch")
         invoke("check", pins[2])
         print("PASS wrong embedded commit rejected; current binary still verifies")
+        # Fail after mktemp for the record, independently of binary staging.
+        real_mv = shutil.which("mv")
+        (tools / "mv").write_text('#!/bin/sh\ncase "$2" in */.binary-record.*) exit 91;; esac\nexec "' + real_mv + '" "$@"\n')
+        (tools / "mv").chmod(0o755)
+        sums[pins[1]] = binary(bad, pins[1])
+        invoke("deploy", pins[1], expected=1, contains="cannot place record")
+        invoke("check", pins[2])
+        print("PASS failed record placement cleans staging and preserves marker")
         print("OK deploy-binary: " + os.uname().sysname)
 
 

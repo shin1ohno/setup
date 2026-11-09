@@ -1,4 +1,5 @@
 """RT1: actual archive tree, fake origin/release, real recipe and CI gates."""
+import argparse
 import hashlib
 import json
 import os
@@ -17,6 +18,9 @@ NATIVE = "aarch64-apple-darwin" if os.uname().sysname == "Darwin" else ("aarch64
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--case", choices=["all", "cache", "python-gate", "manifest-guards", "manifest-corpus-redact", "manifest-corpus-codex", "manifest-ruleset", "manifest-commit", "manifest-target", "manifest-emit"], default="all")
+    selected = parser.parse_args().case
     with tempfile.TemporaryDirectory(prefix="ccs-rollback-") as tmp:
         work = Path(tmp); origin = work / "origin"; origin.mkdir()
         home = work / "home"; home.mkdir(); (home / ".fixture-home").touch()
@@ -87,18 +91,24 @@ done
 [ "${BAD_PROVENANCE:-0}" = 0 ] || exit 93
 echo 'fixture provenance verified'
 '''); gh.chmod(0o755)
-        for pin in (x, y):
+        def make_release(pin, **overrides):
             sums[pin] = {}
             for target in TARGETS:
                 binary = release / pin / ("ccs-" + target); binary.parent.mkdir(exist_ok=True)
-                info = json.dumps(dict(version="0.2.0", commit=pin, target=target, redact_version="r1"), separators=(",", ":"))
+                fields = dict(version="0.2.0", commit=pin, target=target, redact_version="r1")
+                fields.update(overrides)
+                info = json.dumps(fields, separators=(",", ":"))
                 binary.write_text('#!/bin/sh\ncase "$1" in\n_buildinfo) echo \'' + info + '''';;
-_conformance) if [ "${3:-}" = --emit ]; then exec "$FIXTURE_PYTHON" "$FIXTURE_EMITTER"; fi ;;
+_conformance) if [ "${3:-}" = --emit ]; then
+  [ "${FIXTURE_EMPTY_EMIT:-0}" = 0 ] || exit 0
+  exec "$FIXTURE_PYTHON" "$FIXTURE_EMITTER"
+fi ;;
 *) echo fixture-rust ;;
 esac
 '''); binary.chmod(0o755)
                 sums[pin][target] = hashlib.sha256(binary.read_bytes()).hexdigest()
             (release / pin / "SHA256SUMS").write_text("".join("%s  ccs-%s\n" % (sums[pin][t], t) for t in TARGETS))
+        for pin in (x, y): make_release(pin)
         pinfile = recipe / "session-search.pin"; rustfile = recipe / "session-search.rust"
         env.update(SESSION_SEARCH_PIN_FILE=str(pinfile), SESSION_SEARCH_RUST_FILE=str(rustfile))
 
@@ -118,17 +128,80 @@ esac
             return call([ruby, HERE / "render-recipe.rb", recipe / "common.rb", home], code, contains, extra)
 
         launcher = home / ".local/bin/ccs"
-        def launch(want):
+        def launch(want, pin=None):
             output = call([launcher, "--version"])
             assert want in output, output
+            if pin:
+                assert "ccs-" + pin in launcher.read_text(), "launcher points at a different pin"
+                info = json.loads(call([launcher, "_buildinfo"]))
+                assert info["commit"] == pin and info["target"] == NATIVE, "launcher executes a different pin"
+
+        def manifest_guards(selection="guards"):
+            def verify(label, code=0, reason=None, extra=None):
+                print("BEGIN manifest guard", label, flush=True)
+                output = call(["/bin/bash", REPO / "bin/check-memory-v2-manifest"], code, reason, extra)
+                print("\n".join(line for line in output.splitlines() if "FAIL" in line or "PASS cross-check" in line), flush=True)
+                print("PASS manifest guard", label, flush=True)
+            if selection == "guards":
+                manifest(x); verify("baseline")
+            # Change only serialized corpus bytes at the pin, keeping valid JSON
+            # and the vector checksum; all other gates have valid inputs.
+            for suite in ("redact", "codex"):
+                if selection not in ("guards", "corpus-" + suite): continue
+                corpus = origin / "vendor/memory-mcp/conformance" / ("session_redact_r1.jsonl" if suite == "redact" else "session_codex_v1.jsonl")
+                original = corpus.read_bytes(); corpus.write_bytes(b" " + original)
+                git("add", "-A"); git("commit", "-qm", "fixture: different corpus bytes")
+                mismatch = git("rev-parse", "HEAD"); make_release(mismatch); manifest(mismatch)
+                verify("corpus OID " + suite, 1, "pinned corpus differs from server")
+                corpus.write_bytes(original); git("add", "-A"); git("commit", "-qm", "fixture: restore corpus")
+            for label, overrides, reason in [
+                ("ruleset", {"redact_version": "unsupported-fixture"}, "unsupported redact_version"),
+                ("commit", {"commit": "0" * 40}, "build identity mismatch"),
+                ("target", {"target": "unsupported-fixture"}, "build identity mismatch"),
+            ]:
+                if selection not in ("guards", label): continue
+                make_release(x, **overrides); manifest(x); verify(label, 1, reason)
+            make_release(x); manifest(x)
+            if selection in ("guards", "emit"):
+                verify("cross-check invocation", 1, "missing or extra emit row", {"FIXTURE_EMPTY_EMIT": "1"})
+            print("OK manifest guards 1, 5, 6 and build identity", flush=True)
+
+        def cache_case():
+            manifest(x, ["air"]); converge(); launch("fixture-rust", x)
+            manifest(y, ["air"]); converge(); launch("fixture-rust", y)
+            manifest(x, ["air"]); converge(extra={"FAIL_DOWNLOAD": "1"}); launch("fixture-rust", x)
+            print("PASS RT1 cache rollback launcher executes X", flush=True)
+
+        def python_gate_case():
+            manifest(x, ["air"]); converge(); launch("fixture-rust", x)
+            share = home / ".local/share/session-search"
+            marker = share / "DEPLOYED_BINARY"
+            before_marker = marker.read_bytes(); before_launcher = launcher.read_bytes()
+            # y has a valid available binary, but its Python tree cannot be fetched.
+            manifest(y, ["air"])
+            converge(extra={"SESSION_SEARCH_ORIGIN": str(work / "missing-origin")})
+            assert marker.read_bytes() == before_marker, "binary deployed despite failed Python gate"
+            assert not (share / "bin" / ("ccs-" + y)).exists(), "binary placement ran despite Python failure"
+            assert launcher.read_bytes() == before_launcher, "failed Python deployment changed launcher"
+            launch("fixture-rust", x)
+            print("PASS binary placement waits for Python deployment", flush=True)
+
+        if selected.startswith("manifest-"):
+            manifest_guards(selected[len("manifest-"):]); return
+        if selected == "cache":
+            cache_case(); return
+        if selected == "python-gate":
+            python_gate_case(); return
+        # Run the guard on a fresh share so y cannot hit a previously deployed cache.
+        python_gate_case()
 
         manifest(py); converge(); launch("ccs 0.2.0"); checks("Python")
-        manifest(x, ["air"]); converge(); launch("fixture-rust"); checks("Rust X")
+        manifest(x, ["air"]); converge(); launch("fixture-rust", x); checks("Rust X")
         manifest(x); converge(extra={"FAIL_DOWNLOAD": "1"}); launch("ccs 0.2.0"); checks("engine off")
         manifest(old); converge(); launch("ccs 0.2.0"); checks("old Python pin revert")
-        manifest(x, ["air"]); converge(); launch("fixture-rust")
-        manifest(y, ["air"]); converge(); launch("fixture-rust"); checks("Rust Y")
-        manifest(x, ["air"]); converge(extra={"FAIL_DOWNLOAD": "1"}); launch("fixture-rust"); checks("Rust X cache rollback")
+        manifest(x, ["air"]); converge(); launch("fixture-rust", x)
+        manifest(y, ["air"]); converge(); launch("fixture-rust", y); checks("Rust Y")
+        manifest(x, ["air"]); converge(extra={"FAIL_DOWNLOAD": "1"}); launch("fixture-rust", x); checks("Rust X cache rollback")
         before = launcher.read_bytes()
         manifest(old)
         # New fixture share's source remote is unavailable, forcing Python fetch WARN.
@@ -209,6 +282,7 @@ esac
         corpus.write_bytes(b"\n".join(corpus.read_bytes().splitlines()[:100]) + b"\n")
         call([python, "-B", "-I", base / "memory-mcp/test_session_redact_conformance.py"], 1, "vector count mismatch")
         print("N10 PASS truncated corpus rejected")
+        manifest_guards()
         print("OK RT1 rollback + manifest: " + os.uname().sysname)
 
 
