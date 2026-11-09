@@ -36,7 +36,8 @@ ss_era() {
   git -C "$co" merge-base --is-ancestor "$pin" refs/remotes/origin/main 2>/dev/null || { ss_fail "pin $pin is not an ancestor of main"; return 1; }
   ss_manifest "$manifest" || return 1
   [ -z "$ss_hosts" ] || [ "$ss_manifest_pin" = "$pin" ] || { ss_fail 'host manifest pin mismatch'; return 1; }
-  boundary=$(git -C "$co" log --reverse --full-history --diff-filter=A --format=%H refs/remotes/origin/main -- crates/ccs/Cargo.toml | sed -n '1p')
+  boundary=$(git -C "$co" log --reverse --full-history --diff-filter=A --format=%H refs/remotes/origin/main -- crates/ccs/Cargo.toml) || { ss_fail 'cannot read Rust boundary history'; return 1; }
+  boundary=${boundary%%$'\n'*}
   ss_pin_era=rust
   if [ -z "$ss_hosts" ]; then
     if [ -z "$boundary" ] || { [ "$pin" != "$boundary" ] && git -C "$co" merge-base --is-ancestor "$pin" "$boundary"; }; then ss_pin_era=python; fi

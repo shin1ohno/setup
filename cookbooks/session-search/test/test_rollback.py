@@ -19,7 +19,7 @@ NATIVE = "aarch64-apple-darwin" if os.uname().sysname == "Darwin" else ("aarch64
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--case", choices=["all", "cache", "python-gate", "manifest-guards", "manifest-corpus-redact", "manifest-corpus-codex", "manifest-ruleset", "manifest-commit", "manifest-target", "manifest-emit"], default="all")
+    parser.add_argument("--case", choices=["all", "cache", "python-gate", "manifest-guards", "manifest-corpus-redact", "manifest-corpus-codex", "manifest-ruleset", "manifest-commit", "manifest-target", "manifest-emit", "manifest-conformance-redact", "manifest-conformance-codex", "manifest-conformance-emit"], default="all")
     selected = parser.parse_args().case
     with tempfile.TemporaryDirectory(prefix="ccs-rollback-") as tmp:
         work = Path(tmp); origin = work / "origin"; origin.mkdir()
@@ -99,7 +99,14 @@ echo 'fixture provenance verified'
                 fields.update(overrides)
                 info = json.dumps(fields, separators=(",", ":"))
                 binary.write_text('#!/bin/sh\ncase "$1" in\n_buildinfo) echo \'' + info + '''';;
-_conformance) if [ "${3:-}" = --emit ]; then
+_conformance)
+mode=$2
+[ "${3:-}" != --emit ] || mode=emit
+if [ "${FIXTURE_FAIL_CONFORMANCE:-}" = "$mode" ]; then
+  echo "fixture conformance $mode rejected" >&2
+  exit 42
+fi
+if [ "${3:-}" = --emit ]; then
   [ "${FIXTURE_EMPTY_EMIT:-0}" = 0 ] || exit 0
   exec "$FIXTURE_PYTHON" "$FIXTURE_EMITTER"
 fi ;;
@@ -162,9 +169,14 @@ esac
                 if selection not in ("guards", label): continue
                 make_release(x, **overrides); manifest(x); verify(label, 1, reason)
             make_release(x); manifest(x)
+            for mode in ("redact", "codex", "emit"):
+                if selection not in ("guards", "conformance-" + mode): continue
+                reason = ("redact: artifact conformance emit failed" if mode == "emit"
+                          else mode + ": artifact conformance failed")
+                verify("conformance " + mode, 1, reason, {"FIXTURE_FAIL_CONFORMANCE": mode})
             if selection in ("guards", "emit"):
                 verify("cross-check invocation", 1, "missing or extra emit row", {"FIXTURE_EMPTY_EMIT": "1"})
-            print("OK manifest guards 1, 5, 6 and build identity", flush=True)
+            print("OK manifest guards 1, 4, 5, 6 and build identity", flush=True)
 
         def cache_case():
             manifest(x, ["air"]); converge(); launch("fixture-rust", x)
