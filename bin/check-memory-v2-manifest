@@ -148,7 +148,7 @@ fi
 # server trees predate them; a partial import must not silently skip a suite.
 if [[ -d "$BASE/memory-mcp/conformance" ]]; then
   for suite in redact codex; do
-    if PYTHONDONTWRITEBYTECODE=1 "${MEMORY_MCP_PYTHON:-python3}" -I "$BASE/memory-mcp/test_session_${suite}_conformance.py"; then
+    if "${MEMORY_MCP_PYTHON:-python3}" -B -I "$BASE/memory-mcp/test_session_${suite}_conformance.py"; then
       echo "PASS  session_${suite}: server conformance corpus"
     else
       echo "FAIL  session_${suite}: server conformance corpus"; fail=1
