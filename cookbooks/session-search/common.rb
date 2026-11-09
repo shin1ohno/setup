@@ -169,13 +169,25 @@ end
 # fzf starts `ccs _backend` on every keystroke, and a pyenv shim costs ~140 ms
 # per start against ~20 ms for the binary itself (measured on sh1-cloud). If the
 # recorded binary disappears (a pyenv version removed), the launcher falls back
-# to whatever `python3` is on PATH. Resolution is skipped when converging as
-# root for another user, where PATH is not that user's.
-python_real = ""
-unless run_command("id -u", error: false).stdout.strip == "0"
-  python_real = run_command(%q(python3 -c 'import sys; print(sys.executable)'), error: false).stdout.strip
-  python_real = "" unless python_real.start_with?("/")
-end
+# to whatever `python3` is on PATH. A root apply resolves as the target user,
+# with their pyenv and home directory, never root's PATH or version selection.
+python_probe =
+  if run_command("id -u", error: false).stdout.strip == "0"
+    <<~SH
+      sudo -H -u #{target_user} -- /bin/sh -c '
+        cd "$HOME" || exit 1
+        unset PYENV_VERSION PYENV_DIR
+        export PYENV_ROOT="$HOME/.pyenv"
+        export PATH="$PYENV_ROOT/shims:$PYENV_ROOT/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        python3 -I -c "import sys; print(sys.executable)"
+      '
+    SH
+  else
+    %q(python3 -I -c 'import sys; print(sys.executable)')
+  end
+python_result = run_command(python_probe, error: false)
+python_real = python_result.stdout.strip
+python_real = "" unless python_result.exit_status == 0 && python_real.start_with?("/")
 
 # -I: isolated mode (no PYTHONPATH, no user site, no cwd on sys.path), so a
 # planted module in the directory ccs runs from cannot shadow the package.
