@@ -1340,3 +1340,40 @@ load-bearing and would have read as a setting with no surviving reason.
 - **First step**: make the default mode reuse the section-preserving `drop_section` path that `--profile` mode
   already has (drop only `[pve-bootstrap-ssm]` / `[profile pve-bootstrap-ssm]`, append the new sections), and
   correct the `generate_env_v2.sh` comment to "ingest answers 503".
+
+## Chief-of-staff polling reduction after PR #1165 is unmeasured (Low)
+
+- **Failure class**: the polling change has no measured before/after result across comparable tasks. The baseline
+  is 155 API turns out of 696 (22%); the target is polling at 10% or less over five comparable tasks.
+- **Why deferred**: PR #1165 shipped the change, but its effect needs a consistent sample of later tasks and was
+  outside that implementation's scope.
+- **First step**: collect API-turn and polling-turn counts for five comparable tasks using the same counting rule,
+  then compare the combined polling share with the 155/696 baseline and 10% target.
+
+## Remote delegation routes remain unverified on real hardware (Low)
+
+- **Failure class**: remote Codex, the ready remote plan, and the `blocked`, `gone`, and transport branches have
+  not been verified end to end on their target hardware. `sh1-cloud` was not tested; it is a work host and is
+  unreachable from pro-dev.
+- **Why deferred**: the available test path did not reach `sh1-cloud`, and the other routes still need real-host
+  observations beyond simulated cases.
+- **First step**: run the remote Codex and ready-plan routes on reachable target hardware, then exercise and record
+  each `blocked`, `gone`, and transport branch; arrange an authorized probe from a path that can reach `sh1-cloud`.
+
+## hc test terminal t24 exited 1 without saved output (Low)
+
+- **Failure class**: during PR #1166, hc test terminal `t24` exited 1 and no stdout or stderr was saved, leaving
+  the cause unknown.
+- **Why deferred**: the terminal output was not preserved before cleanup, so the original failure cannot be
+  diagnosed from that run.
+- **First step**: reproduce the hc check in a fresh test terminal and save stdout, stderr, and exit status before
+  inspecting or cleaning up the terminal.
+
+## herdr agent start can lose the agent name (Low)
+
+- **Failure class**: `herdr agent start` can return `agent_name_not_found`; this was observed with both Claude and
+  Codex, while the documented start step recovers from the error. The cause is unidentified.
+- **Why deferred**: the recovery path makes starts complete, and identifying the underlying name loss was outside
+  the follow-up implementation scope.
+- **First step**: capture the Herdr state and start command output at the first `agent_name_not_found` on both
+  backends, then trace where the requested name disappears before the documented recovery step.
