@@ -60,6 +60,22 @@ jobs:
     - name: session-search deploy-pinned.sh hermetic test (macOS system bash 3.2)
       run: cookbooks/session-search/test/test-deploy-pinned.sh
 
+    - name: session-search binary deployment and rollback (macOS)
+      run: |
+        set -o pipefail
+        gh --version
+        gh attestation verify --help | grep -- --source-digest
+        cookbooks/session-search/test/test-deploy-binary.sh 2>&1 | tee /tmp/ccs-deploy-binary.log
+        cookbooks/session-search/test/test-rollback.sh 2>&1 | tee /tmp/ccs-rollback.log
+        cookbooks/session-search/test/check-pin.sh
+        bin/check-memory-v2-manifest
+
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ccs-foundation-macos
+        path: /tmp/ccs-*.log
+
     - name: Download mitamae binary
       run: |
         mkdir -p $HOME/tmp
@@ -853,6 +869,20 @@ jobs:
 
     - name: session-search deploy-pinned.sh hermetic test
       run: cookbooks/session-search/test/test-deploy-pinned.sh
+
+    - name: session-search binary deployment and rollback (Linux)
+      run: |
+        set -o pipefail
+        gh --version
+        gh attestation verify --help | grep -- --source-digest
+        cookbooks/session-search/test/test-deploy-binary.sh 2>&1 | tee /tmp/ccs-deploy-binary.log
+        cookbooks/session-search/test/test-rollback.sh 2>&1 | tee /tmp/ccs-rollback.log
+
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ccs-foundation-linux
+        path: /tmp/ccs-*.log
 
   error-simulation:
     runs-on: ubuntu-latest

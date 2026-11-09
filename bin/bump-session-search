@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Prepare a single reviewed commit for a ccs pin/engine transition (ADR 0015)."""
+import argparse
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+COOKBOOK = ROOT / "cookbooks/session-search"
+TARGETS = ("aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")
+
+
+def git(*args):
+    return subprocess.check_output(["git", "-C", str(ROOT), *args], text=True).strip()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("sha", nargs="?")
+    parser.add_argument("--hosts", help="comma-separated complete replacement host list")
+    parser.add_argument("--engine-off", metavar="HOST")
+    args = parser.parse_args()
+    if bool(args.sha) == bool(args.engine_off) or (args.engine_off and args.hosts is not None):
+        parser.error("give either SHA [--hosts a,b] or --engine-off HOST")
+    if args.sha and not re.fullmatch(r"[0-9a-f]{40}", args.sha):
+        parser.error("SHA must be 40 lowercase hex characters")
+    if git("status", "--porcelain"):
+        parser.error("worktree must be clean")
+    branch = git("branch", "--show-current")
+    if not branch:
+        parser.error("detached HEAD is not a review branch")
+    pinfile, rustfile = COOKBOOK / "session-search.pin", COOKBOOK / "session-search.rust"
+    old = pinfile.read_text().strip()
+    original = rustfile.read_text()
+    records = [line.split() for line in original.splitlines()]
+    hosts = [record[1] for record in records if len(record) == 2 and record[0] == "host"]
+    if args.engine_off:
+        if args.engine_off not in hosts:
+            parser.error("host is not enabled")
+        manifest = "\n".join(line for line in original.splitlines()
+                             if line.split() != ["host", args.engine_off]) + "\n"
+        assert all(line.split() != ["host", args.engine_off] for line in manifest.splitlines())
+        pin = old
+        title = "session-search: restore Python for " + args.engine_off
+    else:
+        pin = args.sha
+        if args.hosts is not None:
+            hosts = args.hosts.split(",") if args.hosts else []
+        if len(set(hosts)) != len(hosts) or any(not re.fullmatch(r"[A-Za-z0-9_-]+", h) for h in hosts):
+            parser.error("hosts must be unique labels")
+        with tempfile.TemporaryDirectory(prefix="ccs-bump-") as work:
+            work = Path(work)
+            sums = subprocess.check_output(["curl", "-q", "-fsSL", "--proto", "=https", "--proto-redir", "=https",
+                                           "--tlsv1.2", "--max-time", "120",
+                                           "https://github.com/shin1ohno/session-search/releases/download/ccs-" + pin + "/SHA256SUMS"], text=True)
+            parsed = {}
+            for line in sums.splitlines():
+                match = re.fullmatch(r"([0-9a-f]{64})  ccs-([a-z0-9_-]+)", line)
+                if not match or match[2] not in TARGETS or match[2] in parsed:
+                    parser.error("invalid or duplicate release checksum")
+                parsed[match[2]] = match[1]
+            if set(parsed) != set(TARGETS):
+                parser.error("release must have all three targets")
+            manifest = "pin " + pin + "\n" + "".join("host " + h + "\n" for h in hosts)
+            manifest += "".join("sha256 %s %s\n" % (parsed[t], t) for t in TARGETS)
+            (work / "session-search.pin").write_text(pin + "\n")
+            (work / "session-search.rust").write_text(manifest)
+            subprocess.run(["/bin/bash", str(COOKBOOK / "test/check-pin.sh"), str(work / "session-search.pin")], check=True)
+        title = "session-search: pin verified Rust artifacts at " + pin[:12]
+    if branch == "main":
+        git("fetch", "origin")
+        git("checkout", "-b", "chore/session-search-" + (args.engine_off or pin[:12]), "origin/main")
+        if pinfile.read_text().strip() != old or rustfile.read_text() != original:
+            parser.error("origin/main advanced; rerun from the new clean review branch")
+    # Both reviewed files enter one commit. Restore them on a failed commit.
+    try:
+        pinfile.write_text(pin + "\n")
+        rustfile.write_text(manifest)
+        git("add", str(pinfile), str(rustfile))
+        git("commit", "-m", title)
+    except BaseException:
+        git("reset", "--", str(pinfile), str(rustfile))
+        pinfile.write_text(old + "\n"); rustfile.write_text(original)
+        raise
+    print("Compare: https://github.com/shin1ohno/session-search/compare/" + old + "..." + pin)
+    print("Commit: " + git("rev-parse", "HEAD"))
+
+
+if __name__ == "__main__":
+    main()
