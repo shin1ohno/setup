@@ -42,7 +42,7 @@ for unit in memory-mcp memory-keeper; do
   #    data, templates, nested modules, symlinks — FAILS: the cookbook does
   #    not deploy it and this unit's shape does not allow it (review F3).
   while IFS= read -r f; do
-    case "$f" in MANIFEST|test_*.py) continue ;; esac
+    case "$f" in MANIFEST|test_*.py|conformance/session_redact_r*.jsonl|conformance/session_codex_v*.jsonl|conformance/gen_vectors.py) continue ;; esac
     grep -qxF "$f" "$dir/MANIFEST" || { echo "FAIL  $unit: $f exists but is not in MANIFEST (would not be deployed)"; fail=1; }
   done < <(cd "$dir" && find . -mindepth 1 \( -type f -o -type l \) | sed 's#^\./##' | sort)
   # 2. every listed file exists AND has a shape the cookbook can deploy: a
@@ -141,6 +141,17 @@ else
       echo "PASS  $f: $vendored at the pin is byte-identical to memory-mcp/$f"
     else
       echo "FAIL  $f: $vendored at the pin $ss_pin differs from memory-mcp/$f (update the vendored copy in session-search, then move the pin)"; fail=1
+    fi
+  done
+fi
+# S0 corpora are test artifacts, never MANIFEST runtime files. Older pinned
+# server trees predate them; a partial import must not silently skip a suite.
+if [[ -d "$BASE/memory-mcp/conformance" ]]; then
+  for suite in redact codex; do
+    if "${MEMORY_MCP_PYTHON:-python3}" -B -I "$BASE/memory-mcp/test_session_${suite}_conformance.py"; then
+      echo "PASS  session_${suite}: server conformance corpus"
+    else
+      echo "FAIL  session_${suite}: server conformance corpus"; fail=1
     fi
   done
 fi
