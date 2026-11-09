@@ -119,14 +119,17 @@ done
 #    with another and every mismatch becomes a 422 (or worse, a secret the client
 #    no longer masks). Equal OIDs are equal bytes. A copy that is missing or
 #    cannot be fetched is a failure: nothing here passes vacuously.
-ss_pin_file="$REPO/cookbooks/session-search/session-search.pin"
-ss_origin=https://github.com/shin1ohno/session-search.git
+source "$REPO/bin/lib/session-search-era.sh"
+source "$REPO/bin/lib/session-search-artifact.sh"
+ss_pin_file="${SESSION_SEARCH_PIN_FILE:-$REPO/cookbooks/session-search/session-search.pin}"
+ss_rust_file="${SESSION_SEARCH_RUST_FILE:-$(dirname "$ss_pin_file")/session-search.rust}"
+ss_origin=${SESSION_SEARCH_ORIGIN:-https://github.com/shin1ohno/session-search.git}
 ss_co="$T/session-search"
 ss_git() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 git "$@"; }
 ss_pin="$(cat "$ss_pin_file" 2>/dev/null || true)"
 if ! [[ "$ss_pin" =~ ^[0-9a-f]{40}$ ]]; then
   echo "FAIL  session-search.pin: $ss_pin_file is not one 40-hex SHA"; fail=1
-elif ! { ss_git init -q "$ss_co" && ss_git -C "$ss_co" fetch -q --depth 1 "$ss_origin" "$ss_pin"; }; then
+elif ! { ss_git init -q "$ss_co" && ss_git -C "$ss_co" fetch -q --no-tags "$ss_origin" +refs/heads/main:refs/remotes/origin/main; }; then
   echo "FAIL  session-search: pin $ss_pin cannot be fetched from $ss_origin"; fail=1
 else
   for f in session_redact.py session_codex.py; do
@@ -143,7 +146,51 @@ else
       echo "FAIL  $f: $vendored at the pin $ss_pin differs from memory-mcp/$f (update the vendored copy in session-search, then move the pin)"; fail=1
     fi
   done
+  if ! ss_era "$ss_co" "$ss_pin" "$ss_rust_file"; then
+    fail=1
+  elif [[ "$ss_pin_era" == python ]]; then
+    ss_python_tree "$ss_co" "$ss_pin" "$BASE/memory-mcp" || fail=1
+  else
+    # BASE remains the caller-selected authoritative server tree. The checker
+    # is the setup policy, independent of executable code in the pin's tree.
+    for suite in redact codex; do
+      case "$suite" in redact) corpus=session_redact_r1.jsonl ;; codex) corpus=session_codex_v1.jsonl ;; esac
+      expected=$(ss_git -C "$ss_co" rev-parse "$ss_pin:vendor/memory-mcp/conformance/$corpus" || true)
+      if [[ -z "$expected" || "$expected" != "$(ss_git hash-object --no-filters "$BASE/memory-mcp/conformance/$corpus")" ]]; then
+        echo "FAIL  $suite: pinned corpus differs from server"; fail=1
+      fi
+    done
+    case "$(uname -s)-$(uname -m)" in
+      Darwin-arm64) ss_target=aarch64-apple-darwin ;;
+      Linux-aarch64) ss_target=aarch64-unknown-linux-gnu ;;
+      Linux-x86_64) ss_target=x86_64-unknown-linux-gnu ;;
+      *) echo 'FAIL unsupported conformance runner'; exit 1 ;;
+    esac
+    if ss_artifact "$ss_pin" "$ss_target" "$T/ccs"; then
+      for suite in redact codex; do
+        case "$suite" in redact) corpus=session_redact_r1.jsonl ;; codex) corpus=session_codex_v1.jsonl ;; esac
+        "$T/ccs" _conformance "$suite" < "$BASE/memory-mcp/conformance/$corpus" || fail=1
+      done
+      if "$T/ccs" _conformance redact --emit < "$BASE/memory-mcp/conformance/session_redact_r1.jsonl" > "$T/emit.jsonl"; then
+        python3 -B -I "$REPO/bin/lib/session-search-conformance.py" --server "$BASE/memory-mcp" --emit "$T/emit.jsonl" || fail=1
+      else fail=1; fi
+      if "$T/ccs" _buildinfo > "$T/buildinfo.json"; then
+        python3 -B -I - "$BASE/memory-mcp" "$T/buildinfo.json" "$ss_pin" "$ss_target" <<'PY' || fail=1
+import importlib.util, json, pathlib, sys
+spec = importlib.util.spec_from_file_location("redactor", pathlib.Path(sys.argv[1]) / "session_redact.py")
+sr = importlib.util.module_from_spec(spec); spec.loader.exec_module(sr)
+info = json.loads(pathlib.Path(sys.argv[2]).read_text())
+assert info["commit"] == sys.argv[3] and info["target"] == sys.argv[4], "build identity mismatch"
+assert info["redact_version"] in sr.SUPPORTED_VERSIONS, "unsupported redact_version"
+print("PASS build identity and supported ruleset")
+PY
+      else fail=1; fi
+    else fail=1; fi
+  fi
 fi
+# A rejected distribution cannot pass; avoid re-running the full server
+# corpus after an earlier mandatory check has already failed.
+[[ $fail -eq 0 ]] || { echo 'FAIL: distribution checks failed above'; exit 1; }
 # S0 corpora are test artifacts, never MANIFEST runtime files. Older pinned
 # server trees predate them; a partial import must not silently skip a suite.
 if [[ -d "$BASE/memory-mcp/conformance" ]]; then
@@ -154,5 +201,7 @@ if [[ -d "$BASE/memory-mcp/conformance" ]]; then
       echo "FAIL  session_${suite}: server conformance corpus"; fail=1
     fi
   done
+else
+  echo 'FAIL conformance corpus is required from S1'; fail=1
 fi
 [[ $fail -eq 0 ]] && echo "OK: memory-v2 distribution units are complete and importable." || { echo "FAIL: see above"; exit 1; }

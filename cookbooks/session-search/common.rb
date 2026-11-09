@@ -89,6 +89,42 @@ deploy_check  = "/bin/bash #{deploy_script} check #{session_search_pin} #{share_
 # call sudo again, which could ask for a password.
 deployment_ok = %(if [ "$(id -u)" = 0 ]; then sudo -H -u #{target_user} -- #{deploy_check}; else #{deploy_check}; fi)
 
+# ADR 0015: S1 ships no host records. Only the committed manifest selects Rust.
+rust_pin = ""
+rust_hosts = []
+rust_sums = {}
+File.read(File.join(File.dirname(__FILE__), "session-search.rust")).each_line do |line|
+  fields = line.strip.split
+  next if fields.empty? || fields[0].start_with?("#")
+  case fields[0]
+  when "pin" then rust_pin = fields[1].to_s
+  when "host" then rust_hosts << fields[1].to_s
+  when "sha256" then rust_sums[fields[2].to_s] = fields[1].to_s
+  end
+end
+rust_os = platform_value(darwin: "apple-darwin", linux: "unknown-linux-gnu")
+rust_arch = case node[:hw][:machine]
+            when "arm64", "aarch64" then "aarch64"
+            when "x86_64", "amd64" then "x86_64"
+            else "unsupported"
+            end
+rust_target = "#{rust_arch}-#{rust_os}"
+rust_sha = rust_sums[rust_target].to_s
+host_id = label.to_s.empty? ? hostname : label
+rust_selected = rust_hosts.include?(host_id)
+engine = if rust_selected && rust_pin == session_search_pin && rust_sha =~ /\A[0-9a-f]{64}\z/
+           "rust"
+         else
+           "python"
+         end
+if rust_selected && engine == "python"
+  MItamae.logger.warn("session-search: Rust host #{host_id} has no matching pin/target hash; using Python")
+end
+binary_script = "#{share_dir}/deploy-binary.sh"
+binary_check = "/bin/bash #{binary_script} check #{session_search_pin} #{rust_sha} #{rust_target} #{share_dir}"
+binary_ok = %(if [ "$(id -u)" = 0 ]; then sudo -H -u #{target_user} -- #{binary_check}; else #{binary_check}; fi)
+redactor_gate = engine == "rust" ? "( #{deployment_ok} ) && ( #{binary_ok} )" : deployment_ok
+
 node.reverse_merge!(
   session_search: {
     skip: false,
@@ -96,7 +132,8 @@ node.reverse_merge!(
     home: target_home,
     group: target_group,
     launcher: launcher,
-    redactor_gate: deployment_ok,
+    engine: engine,
+    redactor_gate: redactor_gate,
   },
 )
 
@@ -130,6 +167,23 @@ execute "deploy ccs from the pinned session-search" do
   not_if deployment_ok
 end
 
+remote_file binary_script do
+  source "files/deploy-binary.sh"
+  owner target_user
+  group target_group
+  mode "755"
+end
+
+if engine == "rust"
+  execute "deploy ccs binary" do
+    command "/bin/bash #{binary_script} deploy #{session_search_pin} #{rust_sha} #{rust_target} #{share_dir}"
+    user target_user
+    # Keep the live launcher's binary during repeated failed Python fetches.
+    only_if deployment_ok
+    not_if binary_ok
+  end
+end
+
 # After the deploy step, so a first deploy that succeeded does not warn.
 local_ruby_block "session-search: warn when no verified deployment exists" do
   block do
@@ -138,7 +192,7 @@ local_ruby_block "session-search: warn when no verified deployment exists" do
       "the ccs client is not installed or updated (it ships only together with its masking library).",
     )
   end
-  not_if deployment_ok
+  not_if redactor_gate
 end
 
 ["#{target_home}/.config", "#{target_home}/.claude"].each do |d|
@@ -192,7 +246,11 @@ python_real = "" unless python_result.exit_status == 0 && python_real.start_with
 # -I: isolated mode (no PYTHONPATH, no user site, no cwd on sys.path), so a
 # planted module in the directory ccs runs from cannot shadow the package.
 file launcher do
-  content <<~SH
+  content engine == "rust" ? <<~RUST : <<~SH
+    #!/bin/sh
+    # ccs — Claude Code session search (managed by cookbooks/session-search)
+    exec "#{share_dir}/bin/ccs-#{session_search_pin}" "$@"
+  RUST
     #!/bin/sh
     # ccs — Claude Code session search (managed by cookbooks/session-search)
     CCS_LAUNCHER=#{launcher}
@@ -204,7 +262,30 @@ file launcher do
   owner target_user
   group target_group
   mode "755"
-  only_if deployment_ok
+  only_if redactor_gate
+end
+
+if engine == "rust"
+  completion_dir = "#{target_home}/.local/share/zsh/site-functions"
+  directory completion_dir do
+    owner target_user
+    group target_group
+    mode "755"
+    only_if redactor_gate
+  end
+  execute "generate ccs zsh completion" do
+    command <<~SH
+      set -e
+      tmp=$(mktemp #{completion_dir}/.ccs.XXXXXX)
+      trap 'rm -f "$tmp"' EXIT HUP INT TERM
+      #{launcher} completion zsh > "$tmp"
+      chmod 644 "$tmp"
+      mv -f "$tmp" #{completion_dir}/_ccs
+    SH
+    user target_user
+    only_if redactor_gate
+    not_if "#{launcher} completion zsh | cmp -s - #{completion_dir}/_ccs"
+  end
 end
 
 # --- personal config (pro-dev, mini, neo) -----------------------------------

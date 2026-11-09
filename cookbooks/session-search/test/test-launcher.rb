@@ -12,7 +12,7 @@ class LauncherRecipe
 
   def initialize(home, root, env)
     @home, @root, @env = home, root, env
-    @node = { profile: { label: "air", hostname: "fixture" },
+    @node = { profile: { label: "air", hostname: "fixture" }, hw: { machine: "x86_64" },
               setup: { user: "shin1ohno", home: home, group: "fixture" } }
     @node.define_singleton_method(:reverse_merge!) { |values| merge!(values) }
     @files = {}
@@ -28,6 +28,10 @@ class LauncherRecipe
       warn err unless err.empty?
       Result.new(out, status.exitstatus)
     end
+  end
+
+  def platform_value(darwin:, linux:)
+    RUBY_PLATFORM.include?("darwin") ? darwin : linux
   end
 
   def file(path, &block)
