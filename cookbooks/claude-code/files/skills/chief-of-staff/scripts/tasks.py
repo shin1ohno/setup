@@ -241,7 +241,8 @@ def read_log(path):
     finally:
         os.close(descriptor)
     records = []
-    for line in data.decode("utf-8").splitlines():
+    # JSONL records end at LF; Unicode separators can occur inside JSON strings.
+    for line in data.decode("utf-8").split("\n"):
         if line.strip():
             record = json.loads(line)
             if isinstance(record, dict):
