@@ -2,6 +2,10 @@
 
 **Status**: Accepted（2026-11-08、所有者の決定。Linear SH1-115）
 
+Rust の配布・pin 更新・vendor 適合の移行手順は [ADR 0015](0015-session-search-rust-binaries.md)
+が改定する。commit pin は維持し、Release は setup の sha256 で検証する取得経路になる。
+S1–S5 の Python 配置と同一性検査は引き続き本 ADR に従う。
+
 ## Context
 
 `ccs`（セッション検索のクライアント）の Python パッケージとテストは `cookbooks/session-search/` の中に同梱され、setup の CI が毎回そのスイートを回していました。パッケージは stdlib だけで動き、setup の helper に依存しません。

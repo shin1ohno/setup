@@ -22,6 +22,11 @@ die() {
 [ "$(grep -c '' "$PIN_FILE")" -eq 1 ] || die "$PIN_FILE must hold exactly one line"
 grep -Eqx '[0-9a-f]{40}' "$PIN_FILE" || die "$PIN_FILE is not a 40-hex SHA"
 pin=$(cat "$PIN_FILE")
+REPO="$(cd "$HERE/../../.." && pwd)"
+source "$REPO/bin/lib/session-search-era.sh"
+source "$REPO/bin/lib/session-search-artifact.sh"
+rust_file="${SESSION_SEARCH_RUST_FILE:-$(dirname "$PIN_FILE")/session-search.rust}"
+server="${SESSION_SEARCH_SERVER:-$REPO/cookbooks/lxc-es-memory/files/memory-mcp}"
 
 # Same isolation as deploy-pinned.sh: a url rewrite cannot change the transport.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
@@ -31,3 +36,11 @@ git -C "$T" fetch -q --no-tags "$ORIGIN" +refs/heads/main:refs/remotes/origin/ma
 git -C "$T" merge-base --is-ancestor "$pin" refs/remotes/origin/main 2>/dev/null ||
   die "pin $pin is not an ancestor of main of $ORIGIN"
 echo "PASS  pin $pin is on main of $ORIGIN"
+ss_era "$T" "$pin" "$rust_file" || exit 1
+if [ "$ss_pin_era" = python ]; then
+  ss_python_tree "$T" "$pin" "$server"
+else
+  for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin; do
+    ss_artifact "$pin" "$target" "$T/ccs-$target" || exit 1
+  done
+fi

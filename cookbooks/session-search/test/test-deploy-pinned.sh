@@ -397,7 +397,7 @@ rm -f "$HOME/.gitconfig" "$HOME/attributes"
 
 pin_case() { # <description> <want status: pass|fail> <expected text> <pin file body>
   printf '%b' "$4" >"$WORK/test.pin"
-  SESSION_SEARCH_ORIGIN="$ORIGIN" bash "$CHECK_PIN" "$WORK/test.pin" >"$OUT" 2>&1
+  SESSION_SEARCH_ORIGIN="$ORIGIN" SESSION_SEARCH_SERVER="$TREE/vendor/memory-mcp" bash "$CHECK_PIN" "$WORK/test.pin" >"$OUT" 2>&1
   local rc=$?
   if { [ "$2" = pass ] && [ "$rc" -eq 0 ]; } || { [ "$2" = fail ] && [ "$rc" -ne 0 ]; }; then
     if grep -q "$3" "$OUT"; then

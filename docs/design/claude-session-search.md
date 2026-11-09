@@ -172,7 +172,11 @@ Standard-mechanism check:
   - `resume_cwd` is the candidate (the first `cwd`, then each `relocatedCwd` in order) whose encoding equals the JSONL's parent directory name. Encoding: `re.sub(r'[^A-Za-z0-9-]', '-', cwd)`. If none matches, use the first `cwd` and set `resume_cwd_verified=false`.
 - **Relation to existing code**: new flat module `memory-mcp/sessions_parse.py`, imported only by C6. It reuses nothing from the knowledge chunking code. Modules are flat files rather than a `sessions/` package because `bin/check-memory-v2-manifest` accepts only `^[A-Za-z0-9_]+\.py$` and the personal MANIFEST loop (`lxc-es-memory/default.rb:217-226`) creates no subdirectories.
 
-### 6.2 C2 `sessions.redact` — masking library (client and server, Python stdlib)
+### 6.2 C2 `sessions.redact` — masking contract (Python reference; Rust client migration)
+
+The staged Rust client distribution is governed by [ADR 0015](../adr/0015-session-search-rust-binaries.md).
+S1 keeps every host on Python. Python deployment continues through S5; Rust
+release artifacts require the conformance and output cross-check gates.
 
 - **Responsibility**: replace secrets inside every JSON string value of every record. That includes `attachment`, `toolUseResult` and tool inputs, because the archive keeps whole records. The JSON structure is never altered. The walk is iterative (an explicit stack), so deeply nested input cannot raise `RecursionError`.
 - **Input**: a parsed record (dict), an HMAC key, and the ruleset version.
@@ -202,7 +206,7 @@ Standard-mechanism check:
 - **Fail-closed**: with no key or an unreadable key, nothing is shipped and the cursor does not move. The error shows in `ccs status`.
 - **Relation to existing code**: new; neither repository has any redaction today. The single source is `memory-mcp/session_redact.py`, inside `memory-mcp/` because the work overlay rsyncs only that directory (`gcp-es-memory/default.rb:368-371`). `shin1ohno/session-search` vendors a copy under `vendor/memory-mcp/`, the client cookbook deploys it inside the `ccs` package, and a check in `bin/check-memory-v2-manifest` asserts that the copy at the pin is byte-identical to the server file (ADR 0014).
 
-### 6.3 C3 `ccs ingest` — client shipper (every host, Python stdlib)
+### 6.3 C3 `ccs ingest` — client shipper (Python during S1; Rust migration per ADR 0015)
 
 - **Responsibility**: find new bytes in transcript files, mask them, and ship them. It is idempotent and resumable.
 - **Input**: `--file <path>` (from the hook), `--sweep` (from the timer), or `--backfill` (first run, no budget).
@@ -279,7 +283,7 @@ Standard-mechanism check:
   - new Hydra clients: one per personal host, `session-search-<host>` (§7.6);
   - identity-to-host and scope tables for both boundaries (§7.6).
 
-### 6.6 C7 `ccs` — picker CLI (every host, Python stdlib + fzf)
+### 6.6 C7 `ccs` — picker CLI (Python during S1; Rust migration per ADR 0015; fzf)
 
 - **Responsibility**: interactive search, preview, and resume. The flags are in §7.4.
 - **Mechanics**:

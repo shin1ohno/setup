@@ -5,7 +5,7 @@
 #   ~/Library/LaunchAgents/be.ohno.ccs-sweep.plist   runs `ccs ingest --sweep --quiet`
 #
 # ccs writes its own log (~/.claude/session-search.log); the agent's stderr
-# goes to the same file so an interpreter-level crash is not lost.
+# goes to the same file so a process-level crash is not lost.
 #
 # Verify after apply: `launchctl print gui/$(id -u)/be.ohno.ccs-sweep` shows
 # `run interval = 900 seconds`.
