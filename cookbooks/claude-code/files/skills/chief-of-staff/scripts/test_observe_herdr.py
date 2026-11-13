@@ -175,7 +175,7 @@ class HerdrObserveTest(unittest.TestCase):
                                           "--cwd", str(self.root), "--scope", "fixture",
                                           "--acceptance", "pass")["task"]["id"]
                     plan = self.root / "launch-plan.json"
-                    plan.write_text(json.dumps({"route": route}))
+                    plan.write_text(json.dumps({"route": route, "harness": kind, "launch_ready": True}))
                     self.start(kind=kind, route=route, plan=plan)
                     attempt = self.attempt()
                     self.assertEqual(attempt["route"], route)

@@ -1,4 +1,7 @@
 """Lifecycle selectors fail closed against a fake Herdr process and ledger."""
+import contextlib
+import io
+import fcntl
 import copy
 import json
 import os
@@ -328,5 +331,112 @@ else: sys.exit(17)
         r['attempts'][0]['helpers']=[dict(pane='w1:p3',terminal_id='term3',kind='claude',agent='helper')]
         p=self.panes+[dict(pane_id='w1:p3',terminal_id='term3',name='helper',agent='claude',agent_status='idle')]
         self.assertEqual({c['pane'] for c in self.select(r,p)}, {'w1:p2'})
+
+
+    def test_missing_live_terminal_cannot_be_adopted(self):
+        r=copy.deepcopy(self.record); r['attempts'][0].pop('terminal_id')
+        self.assertEqual(len(self.select(r)),1)
+        panes=copy.deepcopy(self.panes); panes[1].pop('terminal_id')
+        self.assertEqual(self.select(r,panes),[])
+        args=tasks.parser().parse_args(['closable','--owner',self.owner,
+                                     '--herdr-session','fixture','--adopt'])
+        self.assertEqual(tasks.run(args,self.root)['candidates'],[])
+        self.assertNotIn('terminal_id',tasks.read_task(self.root,r['id'])['attempts'][0])
+
+    def test_every_needs_user_entry_requires_fresh_settle(self):
+        def run(*args): return tasks.run(tasks.parser().parse_args(args),self.root)
+        for transition in ('needs-user','retry'):
+            with self.subTest(transition=transition):
+                r=copy.deepcopy(self.record); r.update(state='needs-user',max_attempts=1)
+                r['attempts'][0]['native_session']='11111111-1111-1111-1111-111111111111'
+                self.select(r)
+                run('settle',r['id'],'--owner',self.owner,'--note','complete','--evidence','checked')
+                self.assertEqual(len(self.select(tasks.read_task(self.root,r['id']))),1)
+                run('update',r['id'],'--owner',self.owner,'--state','running','--note','resume','--evidence','resumed')
+                run('update',r['id'],'--owner',self.owner,'--state',transition,'--note','pause','--evidence','paused')
+                current=tasks.read_task(self.root,r['id'])
+                self.assertEqual(current['state'],'needs-user')
+                self.assertFalse(current['worker_settled'])
+                self.assertEqual(self.select(current),[])
+                run('settle',r['id'],'--owner',self.owner,'--note','new completion','--evidence','rechecked')
+                self.assertEqual(len(self.select(tasks.read_task(self.root,r['id']))),1)
+
+    def test_new_attempt_discards_previous_settle(self):
+        def run(*args): return tasks.run(tasks.parser().parse_args(args),self.root)
+        t=run('new','--linear-waiver','Owner fixture waiver','--owner',self.owner,'--cwd',str(self.root),'--topic','fixture',
+              '--scope','test','--acceptance','works')['task']['id']
+        common=['--owner',self.owner,'--kind','codex','--model','model','--effort','low',
+                '--profile','common','--reason','test']
+        run('attempt',t,*common)
+        run('update',t,'--owner',self.owner,'--state','needs-user','--note','pause')
+        run('settle',t,'--owner',self.owner,'--session-id','11111111-1111-1111-1111-111111111111',
+            '--note','complete','--evidence','checked')
+        self.assertTrue(tasks.read_task(self.root,t)['worker_settled'])
+        current=run('attempt',t,*common)['task']
+        self.assertFalse(current.get('worker_settled'))
+        self.assertEqual(len(current['attempts']),2)
+
+    def test_helper_open_and_settle_require_correct_state_and_socket(self):
+        def run(command):
+            return tasks.run(tasks.parser().parse_args([command,self.record['id'],'--owner',self.owner,
+                *(['--herdr-session','fixture'] if command=='helper-open' else
+                  ['--session-id','11111111-1111-1111-1111-111111111111','--note','finished','--evidence','checked'])]),self.root)
+        r=copy.deepcopy(self.record); r.update(state='running',cwd=str(self.root)); self.select(r)
+        with self.assertRaisesRegex(ValueError,'settle requires'): run('settle')
+        (self.root/'socket').write_text('/different/socket')
+        with self.assertRaises(ValueError): run('helper-open')
+        self.assertNotIn('pane split',(self.root/'calls').read_text())
+        (self.root/'socket').write_text('/fixture/socket')
+        run('helper-open')
+        self.assertIn('pane split',(self.root/'calls').read_text())
+        for state in ('needs-user','accepted','cancelled','reviewing'):
+            r['state']=state; tasks.save_task(self.root,r)
+            before=(self.root/'calls').read_text()
+            with self.assertRaisesRegex(ValueError,'active attempt'): run('helper-open')
+            self.assertEqual(before,(self.root/'calls').read_text())
+
+    def test_plan_validation_at_reservation_and_launch(self):
+        def run(*args): return tasks.run(tasks.parser().parse_args(args),self.root)
+        t=run('new','--linear-waiver','Owner fixture waiver','--owner',self.owner,'--cwd',str(self.root),'--topic','fixture',
+              '--scope','test','--acceptance','works')['task']['id']
+        plan=self.root/'plan.json'
+        good=dict(route='herdr1',harness='codex',launch_ready=True,
+                  argv=['codex'],env_set={},env_unset=[])
+        common=['--owner',self.owner,'--kind','codex','--model','model','--effort','low',
+                '--profile','common','--route','herdr1','--reason','test','--plan',str(plan)]
+        for key,value in [('harness','claude'),('launch_ready',False)]:
+            bad=dict(good); bad[key]=value; plan.write_text(json.dumps(bad))
+            with self.assertRaisesRegex(ValueError,'ready plan'): run('attempt',t,*common)
+            self.assertEqual(tasks.read_task(self.root,t)['attempts'],[])
+        plan.write_text(json.dumps(good)); run('attempt',t,*common)
+        original=tasks.read_task(self.root,t)
+        self.assertIn('codex',run('launch-command',t,'--owner',self.owner,'--prompt','hello')['argv'])
+        # Persisted legacy/corrupt snapshots must still be checked at launch.
+        for key,value in [('harness','claude'),('launch_ready',False)]:
+            bad=copy.deepcopy(original); bad['attempts'][0]['launch_plan'][key]=value
+            tasks.save_task(self.root,bad)
+            with self.assertRaisesRegex(ValueError,'recorded ready profile plan'):
+                run('launch-command',t,'--owner',self.owner,'--prompt','hello')
+
+    def test_read_only_cli_never_creates_or_changes_lock(self):
+        self.select()
+        argv=['closable','--owner',self.owner,'--herdr-session','fixture']
+        lock=self.root/'.lock'
+        with patch.dict(os.environ,COS_STATE_DIR=str(self.root)):
+            with contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(tasks.main(argv),1)
+            self.assertFalse(lock.exists())
+            lock.touch(); lock.chmod(0o640)
+            before=lock.stat()
+            ledger=(self.root/self.record['id']/'task.json').read_bytes()
+            with patch.object(tasks.fcntl,'flock',wraps=fcntl.flock) as flock:
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(tasks.main(argv),0)
+                self.assertEqual(flock.call_args.args[1],fcntl.LOCK_SH)
+            self.assertEqual(len(json.loads(output.getvalue())['candidates']),1)
+            after=lock.stat()
+            self.assertEqual((before.st_mode,before.st_mtime_ns,before.st_ctime_ns),
+                             (after.st_mode,after.st_mtime_ns,after.st_ctime_ns))
+            self.assertEqual(ledger,(self.root/self.record['id']/'task.json').read_bytes())
 
 if __name__ == '__main__': unittest.main()
