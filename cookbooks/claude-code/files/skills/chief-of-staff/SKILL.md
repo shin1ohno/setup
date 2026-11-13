@@ -185,6 +185,8 @@ If a `needs-user` task's existing worker is still running after resumption,
 record `running` with current live evidence without consuming another attempt.
 The same owner may resume; another controller must
 not adopt tasks without an explicit handoff; the new owner re-arms the wait and tells the worker its new notification target. Saved pane IDs can become stale.
+Handing supervision to another controller, taking it back, and adopting it after a
+failure follow [references/supervision-handoff.md](references/supervision-handoff.md).
 
 This skill has no independent daemon. Monitoring runs while this controller
 session is executing or has background waits armed that will wake it. Do not
@@ -300,6 +302,14 @@ owner, task/attempt identities, decisions, evidence paths, blockers, and the nex
 probe. A fresh controller must verify live identities before resuming. Rotate
 only when a session-start mechanism is available and no task is abandoned;
 writing a handoff is not proof that a new session started.
+
+When a usage limit, the owner's absence or a failure stops this controller while
+workers run, follow [references/supervision-handoff.md](references/supervision-handoff.md):
+the owner chooses the stand-in and its authority through the question tool, the
+stand-in writes requests instead of asking the owner (and relays Linear
+operations when it has no connector), and `scripts/takeover.py` moves every
+unfinished task, plus unreported results when taking work back, to the verified
+new owner on either Herdr route.
 
 Until SH1-68 supplies owner-approved numeric thresholds, direct work is limited
 to a short answer using evidence already in context, with no repository change,
