@@ -10,7 +10,9 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import stat
+import subprocess
 import sys
 import tempfile
 import uuid
@@ -114,12 +116,29 @@ def parser():
     ls = sub.add_parser("list", help="List only this controller's tasks")
     ls.add_argument("--owner", required=True, type=nonempty)
     ls.add_argument("--all", action="store_true", help="Include terminal tasks")
+    sweep = sub.add_parser("closable", help="Read-only list of settled owned/orphan worker panes")
+    sweep.add_argument("--owner", required=True, type=nonempty)
+    sweep.add_argument("--herdr-session", required=True, type=nonempty)
+    sweep.add_argument("--adopt", action="store_true", help="Persist proven missing terminal identities")
     for name in ("show", "attempt", "bind", "update", "reported", "extend", "receive", "observe",
-                 "check", "handoff", "criteria"):
+                 "check", "handoff", "criteria", "helper", "helper-open", "settle", "launch-command"):
         cmd = sub.add_parser(name)
         cmd.add_argument("task_id")
         cmd.add_argument("--owner", type=nonempty)
-        if name in {"handoff", "criteria"}:
+        if name == "helper-open":
+            cmd.add_argument("--herdr-session", required=True, type=nonempty)
+        elif name == "settle":
+            cmd.add_argument("--session-id", type=nonempty)
+            cmd.add_argument("--evidence", action="append", required=True, type=nonempty)
+            cmd.add_argument("--note", required=True, type=nonempty)
+        elif name == "launch-command":
+            cmd.add_argument("--prompt", required=True, type=nonempty)
+        elif name == "helper":
+            cmd.add_argument("--pane", required=True, type=nonempty)
+            cmd.add_argument("--terminal-id", required=True, type=nonempty)
+            cmd.add_argument("--kind", choices=("claude", "codex", "shell"), required=True)
+            cmd.add_argument("--agent-name", type=nonempty)
+        elif name in {"handoff", "criteria"}:
             cmd.add_argument("--note", required=True, type=nonempty)
             if name == "handoff":
                 cmd.add_argument("--to", required=True, type=nonempty)
@@ -138,7 +157,11 @@ def parser():
                              help="Worker instruction profile; recorded on the attempt")
             cmd.add_argument("--reuse-agent", action="store_true",
                              help="Reuse the previous settled worker's identity")
+            cmd.add_argument("--launch-options", default=None,
+                             help="JSON argv array of extra native CLI options; inherited on reuse")
         elif name == "bind":
+            cmd.add_argument("--terminal-id", type=nonempty,
+                             help="Herdr terminal_id from the creation/live response")
             cmd.add_argument("--rebind", action="store_true")
             cmd.add_argument("--evidence", action="append", type=nonempty, default=[])
             identity = cmd.add_mutually_exclusive_group(required=True)
@@ -163,6 +186,7 @@ def parser():
             cmd.add_argument("--exit-status", required=True, type=int)
             cmd.add_argument("--note", required=True, type=nonempty)
         elif name == "update":
+            cmd.add_argument("--supervision-paused", action="store_true")
             cmd.add_argument("--waived-by-owner", type=nonempty,
                              help="Owner decision waiving failed envelope criteria only")
             cmd.add_argument("--state", choices=TRANSITIONS, required=True)
@@ -477,7 +501,126 @@ def read_envelope(path, task, root):
     return envelope, digest
 
 
+def same_worker(references):
+    """Collapse only an explicit same-task, same-worker reuse chain."""
+    if len(references) == 1:
+        return references[0]
+    first_task, first_attempt, first_record = references[0]
+    identities = set()
+    numbers = set()
+    for index, (task, attempt, record) in enumerate(references):
+        if (task["id"] != first_task["id"] or record is not attempt
+                or first_record is not first_attempt or attempt["number"] in numbers
+                or (index and not attempt.get("reuse"))):
+            return None
+        numbers.add(attempt["number"])
+        if any(attempt.get(key) != first_attempt.get(key)
+               for key in ("agent", "kind")):
+            return None
+        if attempt.get("route", "herdr") != first_attempt.get("route", "herdr"):
+            return None
+        if attempt.get("terminal_id"):
+            identities.add(attempt["terminal_id"])
+    if len(identities) > 1:
+        return None
+    return references[-1]
+
+
+def closable(args, root):
+    """Fail closed; no close operation is performed by this command."""
+    socket, separator, caller = args.owner.rpartition("#")
+    pane_pattern = r"w[^:#\s]+:p[^:#\s]+"
+    if not separator or not socket.startswith("/") or not re.fullmatch(pane_pattern, caller):
+        raise ValueError("closable requires a verified local Herdr socket#pane owner")
+    def herdr(*argv):
+        result = subprocess.run(["herdr", "--session", args.herdr_session, *argv],
+                                capture_output=True, text=True, timeout=10, check=True)
+        return result.stdout
+    status = herdr("status", "server")
+    if ("socket: " + socket) not in status.splitlines():
+        raise ValueError("Herdr session does not resolve to the owner's socket")
+    workspaces = json.loads(herdr("workspace", "list"))["result"]["workspaces"]
+    panes = {}
+    for workspace in workspaces:
+        for pane in json.loads(herdr("pane", "list", "--workspace", workspace["workspace_id"]))["result"]["panes"]:
+            if pane["pane_id"] in panes:
+                raise ValueError("ambiguous pane inventory")
+            panes[pane["pane_id"]] = pane
+    if caller not in panes:
+        raise ValueError("verified controller pane is absent")
+    tasks = [json.loads(p.read_text()) for p in sorted(root.glob("*/task.json"))]
+    controllers = {t.get("owner", "").rpartition("#")[2] for t in tasks
+                   if t.get("owner", "").rpartition("#")[0] == socket}
+    bindings = {}
+    for task in tasks:
+        if task.get("owner", "").rpartition("#")[0] != socket:
+            continue
+        for attempt in task.get("attempts", []):
+            for record in [attempt, *attempt.get("helpers", [])]:
+                if record.get("pane"):
+                    bindings.setdefault(record["pane"], []).append((task, attempt, record))
+    candidates = []
+    for pane_id, references in bindings.items():
+        reference = same_worker(references)
+        if reference is None:
+            continue
+        if pane_id in controllers:
+            continue
+        if pane_id == caller:
+            continue
+        task, attempt, record = reference
+        if record is not attempt and not record.get("creation_receipt"):
+            continue
+        owner = task["owner"]
+        if not re.fullmatch(pane_pattern, owner.rpartition("#")[2]):
+            continue
+        if owner != args.owner and owner.rpartition("#")[2] in panes:
+            continue
+        if task.get("state") not in {"reviewing", "needs-user", "accepted", "cancelled"}:
+            continue
+        if attempt.get("route", "herdr") not in {"herdr", "herdr1"}:
+            continue
+        if task["state"] == "reviewing" and not task.get("envelope_receipt"):
+            continue
+        if task["state"] == "needs-user" and (not task.get("worker_settled")
+                or not re.fullmatch(UUID, attempt.get("native_session") or attempt.get("observed_session") or "")):
+            continue
+        if task["state"] == "reviewing" and (not model_matches(attempt.get("requested_model", attempt.get("model")),
+                              attempt.get("observed_model"))
+                or not attempt.get("effort") or attempt.get("observed_effort") != attempt["effort"]):
+            continue
+        pane = panes.get(pane_id, {})
+        terminal_id = (next((r.get("terminal_id") for _, _, r in references
+                             if r.get("terminal_id")), None) or pane.get("terminal_id"))
+        if (not terminal_id or pane.get("terminal_id") != terminal_id
+                or pane.get("agent_status") not in {"idle", "done"}
+                or pane.get("agent") != record.get("kind")):
+            continue
+        agent = json.loads(herdr("agent", "get", pane_id))["result"]["agent"]
+        if (not record.get("agent") or agent.get("name") != record["agent"]
+                or agent.get("terminal_id") != terminal_id
+                or agent.get("agent") != record.get("kind")
+                or agent.get("agent_status") not in {"idle", "done"}):
+            continue
+        adoption = not record.get("terminal_id")
+        if adoption and args.adopt:
+            record["terminal_id"] = terminal_id
+            event(task, "Adopted live worker identity", [])
+            task["history"][-1]["adoption"] = {
+                "pane": pane_id, "terminal_id": terminal_id, "agent": agent["name"],
+                "attempt": attempt["number"], "by": args.owner, "socket": socket}
+            save_task(root, task)
+        candidates.append({"task_id": task["id"], "attempt": attempt["number"],
+                           "pane": pane_id, "terminal_id": terminal_id, "adoption": adoption,
+                           "owner": owner, "reason": "own" if owner == args.owner else "orphan"})
+    return {"candidates": candidates, "adoptions": [c for c in candidates if c["adoption"]],
+            "read_only": not args.adopt,
+            "note": "Recheck owner, terminal identity and idle/done immediately before closing."}
+
+
 def run(args, root):
+    if args.command == "closable":
+        return closable(args, root)
     if args.command == "new":
         cwd = Path(args.cwd).expanduser()
         if not cwd.is_absolute() or not cwd.is_dir():
@@ -508,6 +651,27 @@ def run(args, root):
         raise ValueError("mutation requires this task's verified controller owner")
     if args.command == "show":
         return {"task": task}
+    if args.command == "launch-command":
+        attempt = task["attempts"][-1]
+        plan = attempt.get("launch_plan")
+        if not plan or not plan.get("launch_ready") or plan.get("harness") != attempt["kind"]:
+            raise ValueError("launch-command requires a recorded ready profile plan")
+        argv = list(plan["argv"])
+        if attempt.get("reuse"):
+            session = attempt.get("resume_session")
+            if not session or not re.fullmatch(UUID, session):
+                raise ValueError("resume requires an observed session UUID")
+            argv[1:1] = ["--resume", session] if attempt["kind"] == "claude" else ["resume", session]
+        argv += [args.prompt, *attempt.get("launch_options", [])]
+        env = ["/usr/bin/env"]
+        for key in plan["env_unset"]:
+            env += ["-u", key]
+        env_set = dict(plan["env_set"])
+        if attempt.get("route") == "hc":
+            env_set["PATH"] = os.environ["PATH"]
+        env += [key + "=" + value for key, value in env_set.items()]
+        return {"argv": argv, "env_set": env_set, "env_unset": plan["env_unset"],
+                "command": shlex.join(env + argv), "cwd": task["cwd"]}
     if args.command in {"handoff", "criteria"}:
         if not args.owner:
             raise ValueError("mutation requires this task's verified controller owner")
@@ -532,6 +696,58 @@ def run(args, root):
             task["history"][-1]["criteria_change"] = {
                 "previous": previous, "acceptance": args.acceptance,
                 "attempt": len(task["attempts"])}
+    elif args.command == "settle":
+        if not args.owner or task["state"] not in {"needs-user", "cancelled"} or not task["attempts"]:
+            raise ValueError("settle requires an owned needs-user/cancelled attempt")
+        attempt = task["attempts"][-1]
+        if args.session_id:
+            if not re.fullmatch(UUID, args.session_id):
+                raise ValueError("native session must be a UUID")
+            attempt["native_session"] = args.session_id
+        session = attempt.get("native_session")
+        if (not session and model_matches(attempt.get("requested_model", attempt.get("model")),
+                                          attempt.get("observed_model"))
+                and attempt.get("observed_effort") == attempt.get("effort")):
+            session = attempt.get("observed_session")
+        if task["state"] == "needs-user" and not re.fullmatch(UUID, session or ""):
+            raise ValueError("settled needs-user worker requires a recorded native session UUID")
+        task["worker_settled"] = True
+        event(task, "Worker settled; no outstanding background work: " + args.note, args.evidence)
+    elif args.command == "helper-open":
+        if not args.owner or task["state"] not in {"starting", "running"} or not task["attempts"]:
+            raise ValueError("helper-open requires an owned active attempt")
+        attempt = task["attempts"][-1]
+        if attempt.get("route", "herdr") not in {"herdr", "herdr1"} or not attempt.get("pane"):
+            raise ValueError("helper-open requires a local Herdr worker pane")
+        prefix = ["herdr", "--session", args.herdr_session]
+        status = subprocess.check_output(prefix + ["status", "server"], text=True, timeout=10)
+        if "socket: " + task["owner"].rpartition("#")[0] not in status.splitlines():
+            raise ValueError("helper session must match the task owner socket")
+        created = json.loads(subprocess.check_output(prefix + [
+            "pane", "split", "--pane", attempt["pane"], "--direction", "right",
+            "--cwd", task["cwd"], "--no-focus"], text=True, timeout=10))
+        pane = created["result"]["pane"]
+        helper = {"pane": pane["pane_id"], "terminal_id": pane["terminal_id"],
+                  "kind": "shell", "agent": None, "creation_receipt": created}
+        attempt.setdefault("helpers", []).append(helper)
+        event(task, "Created helper " + helper["pane"])
+        result["helper"] = helper
+    elif args.command == "helper":
+        if not args.owner:
+            raise ValueError("helper registration requires the controller owner")
+        if not task.get("attempts") or task["state"] in TERMINAL:
+            raise ValueError("helper requires an unfinished attempt")
+        attempt = task["attempts"][-1]
+        if args.kind != "shell" and not args.agent_name:
+            raise ValueError("agent helpers require their live agent name")
+        if args.pane == task["owner"].rpartition("#")[2] or args.pane == attempt.get("pane"):
+            raise ValueError("helper cannot be the controller or worker")
+        helpers = attempt.setdefault("helpers", [])
+        helper = next((h for h in helpers if h["pane"] == args.pane), None)
+        if not helper or not helper.get("creation_receipt") or helper["terminal_id"] != args.terminal_id:
+            raise ValueError("helper must come from this attempt's helper-open creation receipt")
+        helper.update(kind=args.kind, agent=args.agent_name)
+        event(task, "Registered helper " + args.pane)
     elif args.command == "attempt":
         if task["state"] not in {"queued", "retry", "needs-user"}:
             raise ValueError("reconcile the existing attempt before reserving another")
@@ -550,10 +766,16 @@ def run(args, root):
                              f"(previous route: {previous.get('route', 'herdr') if previous else 'none'}; "
                              f"requested route: {args.route})")
         plan = args.plan
+        options = json.loads(args.launch_options) if args.launch_options is not None else []
+        if not isinstance(options, list) or not all(isinstance(item, str) for item in options):
+            raise ValueError("launch-options must be a JSON string array")
         if args.reuse_agent:
             if plan is not None and plan != previous.get("plan"):
                 raise ValueError("reuse cannot change the previous worker's launch plan")
             plan = previous.get("plan")
+            if args.launch_options is not None and options != previous.get("launch_options", []):
+                raise ValueError("reuse cannot change launch options")
+            options = previous.get("launch_options", [])
         if args.plan is not None:
             path = Path(plan)
             if not path.is_absolute() or not path.is_file():
@@ -561,6 +783,8 @@ def run(args, root):
             launch = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(launch, dict) or launch.get("route") != args.route:
                 raise ValueError("plan route must match the attempt route")
+            if launch.get("harness") != args.kind or not launch.get("launch_ready"):
+                raise ValueError("attempt requires a ready plan for the requested harness")
         attempt = {
             "number": len(task["attempts"]) + 1,
             "agent": "cos-" + task["id"] + "-" + str(len(task["attempts"]) + 1),
@@ -570,10 +794,23 @@ def run(args, root):
             "route": args.route, "plan": plan, "profile": args.profile, "session": None,
             "pane": None, "created_at": now(),
             "reuse": args.reuse_agent,
+            "launch_options": options,
         }
         if args.reuse_agent:
             attempt["agent"] = previous["agent"]
+            previous_profile = previous.get("profile") or (previous.get("launch_plan") or {}).get("profile")
+            if previous_profile is not None and previous_profile != args.profile:
+                raise ValueError("reuse cannot change the worker profile")
+            attempt["profile"] = previous_profile
+            attempt["resume_session"] = previous.get("native_session") or (previous.get("observed_session")
+                if model_matches(args.model, previous.get("observed_model"))
+                and previous.get("observed_effort") == args.effort else None)
+            attempt["launch_prompt"] = previous.get("launch_prompt")
+            attempt["launch_plan"] = previous.get("launch_plan")
+        elif args.plan is not None:
+            attempt["launch_plan"] = launch
         task.pop("envelope", None)
+        task.pop("worker_settled", None)
         task.pop("envelope_receipt", None)
         task.pop("envelope_sha256", None)
         task["attempts"].append(attempt)
@@ -631,6 +868,7 @@ def run(args, root):
                                and h["envelope_sha256"] not in invalidated)
         if args.pane:
             attempt["pane"] = args.pane
+            attempt["terminal_id"] = args.terminal_id
         if args.model:
             attempt["model"] = args.model
             attempt["observed_model"] = args.model
@@ -668,11 +906,14 @@ def run(args, root):
                                     datetime.fromisoformat(attempt["created_at"]),
                                     args.launch_prompt, remote_cwd=args.remote_cwd)
         pair, refusal = single_pair(pairs)
+        if attempt.get("resume_session") and attempt["resume_session"] != session:
+            refusal = "resumed worker must retain the recorded session identity"
         if any(h.get("previous_observation", {}).get("observed_session") == session
                for h in task["history"] if "rebind" in h):
             refusal = "session was invalidated by rebind; observe the replacement worker"
         attempt["observed_source"] = str(args.transcript)
         attempt["observed_session"] = session
+        attempt["launch_prompt"] = args.launch_prompt
         if refusal:
             # A refused log clears earlier values so `accepted` cannot rest on them.
             attempt["observed_model"] = attempt["observed_effort"] = None
@@ -726,6 +967,10 @@ def run(args, root):
               ": " + args.note, [path])
         result["check"] = record
     elif args.command == "update":
+        if args.supervision_paused and args.state != "needs-user":
+            raise ValueError("--supervision-paused applies only to needs-user")
+        if args.state == "needs-user":
+            task["worker_settled"] = False
         if args.waived_by_owner and (args.state != "accepted" or not args.owner):
             raise ValueError("--waived-by-owner requires accepted and --owner")
         if args.check and args.state != "accepted":
@@ -761,6 +1006,7 @@ def run(args, root):
         task["state"] = args.state
         if args.state == "retry" and len(task["attempts"]) >= task["max_attempts"]:
             task["state"] = "needs-user"
+            task["worker_settled"] = False
         if task["state"] in TERMINAL or task["state"] == "needs-user":
             task["report_pending"] = True
         event(task, args.note, args.evidence)
@@ -788,11 +1034,17 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         root = root_dir()
-        with locked(root):
-            result = run(args, root)
+        if args.command == "closable" and not args.adopt:
+            # Even chmod/open-for-write of .lock is forbidden for a read-only sweep.
+            with (root / ".lock").open("r") as lock:
+                fcntl.flock(lock, fcntl.LOCK_SH)
+                result = run(args, root)
+        else:
+            with locked(root):
+                result = run(args, root)
         print(json.dumps(result, ensure_ascii=False))
         return 0
-    except (ValueError, OSError, KeyError, TypeError) as error:
+    except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=False), file=sys.stderr)
         return 1
 
