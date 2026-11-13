@@ -704,7 +704,7 @@ def run(args, root):
         }
         if args.reuse_agent:
             attempt["agent"] = previous["agent"]
-            if previous.get("profile") != args.profile:
+            if previous.get("profile") is not None and previous["profile"] != args.profile:
                 raise ValueError("reuse cannot change the worker profile")
             attempt["resume_session"] = (previous.get("observed_session")
                 if model_matches(args.model, previous.get("observed_model"))

@@ -122,6 +122,10 @@ else: sys.exit(17)
                            ('--profile','common'),('--route','hc')]:
             changed=list(common); changed[changed.index(flag)+1]=value
             with self.assertRaises(ValueError): run('attempt',t,*changed,'--reuse-agent')
+        # Older records may predate the profile field; do not break their reuse.
+        legacy=tasks.read_task(self.root,t)
+        legacy['attempts'][0].pop('profile')
+        tasks.save_task(self.root,legacy)
         plan.write_text('{}')  # Resume must not read the mutable plan file.
         resumed=run('attempt',t,*common,'--reuse-agent')['attempt']
         self.assertEqual(resumed['launch_plan'],original)
