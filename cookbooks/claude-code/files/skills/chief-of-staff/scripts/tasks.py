@@ -680,9 +680,9 @@ def repository_key(cwd):
     default_port = {"ssh": 22, "https": 443, "http": 80}.get(scheme)
     if port == default_port:
         port = None
-    path = path.strip("/").removesuffix(".git")
+    path = path.strip("/")
     if host == "github.com" and scheme in {"ssh", "https", "http"} and port is None:
-        return "remote:github.com/" + path.lower()
+        return "remote:github.com/" + path.removesuffix(".git").lower()
     authority = (user + "@" if user else "") + host + (":" + str(port) if port else "")
     return "remote:" + scheme + "://" + authority + "/" + path_kind + "/" + path
 

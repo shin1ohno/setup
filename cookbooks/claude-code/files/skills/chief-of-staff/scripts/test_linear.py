@@ -255,6 +255,7 @@ class LinearTest(unittest.TestCase):
             return tasks.repository_key(repo)
         self.assertNotEqual(key('git@nas:repos/x.git'), key('ssh://git@nas/repos/x.git'))
         self.assertNotEqual(key('git@nas:repos/x.git'), key('other@nas:repos/x.git'))
+        self.assertNotEqual(key('git@nas:repos/x.git'), key('git@nas:repos/x'))
         self.assertEqual(key('git@nas:/repos/x.git'), key('ssh://git@nas:22/repos/x.git'))
         canonical = key('https://github.com/Org/Repo')
         for remote in ('https://github.com/Org/Repo.git', 'https://github.com:443/org/repo',
