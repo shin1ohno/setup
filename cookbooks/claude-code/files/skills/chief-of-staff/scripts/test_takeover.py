@@ -17,6 +17,22 @@ if os.environ.get("FAKE_CALLER_FAIL"):
     sys.exit("caller probe failed")
 print(os.environ["FAKE_CALLER"])
 """
+INJECTOR = """import os, pathlib, sys, time
+if sys.argv[1] == "handoff":
+    counter = pathlib.Path(os.environ["INJECT_COUNTER"])
+    count = int(counter.read_text()) + 1 if counter.exists() else 1
+    counter.write_text(str(count))
+    if count == int(os.environ["INJECT_AT"]):
+        mode = os.environ["INJECT_MODE"]
+        if mode == "refuse":
+            sys.exit('{"error": "injected refusal"}')
+        if mode == "sleep":
+            time.sleep(8)
+        if mode == "garbage":
+            print("not json")
+            sys.exit(0)
+os.execv(sys.executable, [sys.executable, os.environ["REAL_TASKS"], *sys.argv[1:]])
+"""
 
 
 class TakeoverTest(unittest.TestCase):
@@ -85,12 +101,14 @@ class TakeoverTest(unittest.TestCase):
         self.assertEqual(report["states"], {"running": 1, "needs-user": 1})
         self.assertEqual(self.owners(), {self.open: NEW, self.waiting: NEW,
                                          self.unreported: OLD, self.reported: OLD})
-        moved = json.loads((out / "moved.json").read_text())
+        moved = json.loads(Path(report["moved_file"]).read_text())
+        self.assertEqual(Path(report["moved_file"]).parent, out)
         running = next(item for item in moved if item["id"] == self.open)
         self.assertEqual((running["pane"], running["attempt"]), ("w9:p2", 1))
         self.assertEqual(running["envelope"], str(self.state.resolve() / self.open / "envelope-1.json"))
-        receipts = json.loads((out / "receipts.json").read_text())
+        receipts = json.loads(Path(report["receipts_file"]).read_text())
         self.assertEqual({item["id"] for item in receipts["moved"]}, {self.open, self.waiting})
+        self.assertEqual((receipts["failure"], receipts["not_moved"]), (None, []))
         history = self.ledger("show", self.open)["task"]["history"][-1]
         self.assertEqual(history["handoff"], {"from": OLD, "to": NEW})
         self.assertIn("decision.json", history["note"])
@@ -106,8 +124,9 @@ class TakeoverTest(unittest.TestCase):
         report, out = self.takeover("--dry-run")
         self.assertEqual((report["selected"], report["moved"]), (2, 0))
         self.assertEqual(self.owners(), before)
-        self.assertTrue((out / "moved-dry-run.json").exists())
-        self.assertFalse((out / "receipts.json").exists())
+        self.assertTrue(Path(report["moved_file"]).name.startswith("moved-dry-run-"))
+        self.assertIsNone(report["receipts_file"])
+        self.assertEqual(list(out.glob("receipts-*.json")), [])
 
     def test_old_owner_cannot_mutate_after_takeover(self):
         self.takeover()
@@ -133,9 +152,19 @@ class TakeoverTest(unittest.TestCase):
         self.assertEqual(self.owners(), before)
 
     def test_hc_owner_from_caller_context(self):
-        self.env["FAKE_CALLER"] = json.dumps({"verified": True, "owner": NEW})
-        report, _ = self.takeover("--dry-run")
-        self.assertEqual(report["selected"], 2)
+        hc_owner = "hc:default#t7"
+        # The hc helper answers with owner and terminal_id, without socket or pane_id.
+        self.env["FAKE_CALLER"] = json.dumps({"verified": True, "owner": hc_owner,
+                                              "terminal_id": "t7", "server": "default"})
+        result = self.run_takeover("--from", OLD, "--to", hc_owner, "--note", "Owner decision",
+                                   "--out", str(Path(self.tmp.name) / "hc"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["moved"], 2)
+        self.assertEqual(self.owners()[self.open], hc_owner)
+        self.assertEqual(self.owners()[self.waiting], hc_owner)
+        wrong = self.run_takeover("--from", hc_owner, "--to", "hc:default#t9", "--note", "Owner decision")
+        self.assertEqual(wrong.returncode, 1)
+        self.assertIn("is not --to", json.loads(wrong.stderr)["error"])
 
     def run_takeover(self, *args):
         return subprocess.run([sys.executable, str(SCRIPTS / "takeover.py"), *args],
@@ -149,6 +178,62 @@ class TakeoverTest(unittest.TestCase):
         dry = self.run_takeover(*same, "--dry-run")
         self.assertEqual(dry.returncode, 0, dry.stderr)
         self.assertEqual(json.loads(dry.stdout)["selected"], 2)
+
+    def injected(self, mode):
+        """Copy takeover.py beside a tasks.py wrapper that breaks the second handoff."""
+        directory = Path(self.tmp.name) / f"inject-{mode}"
+        directory.mkdir()
+        (directory / "takeover.py").write_text((SCRIPTS / "takeover.py").read_text())
+        (directory / "tasks.py").write_text(INJECTOR)
+        self.env.update(REAL_TASKS=str(SCRIPTS / "tasks.py"), INJECT_MODE=mode, INJECT_AT="2",
+                        INJECT_COUNTER=str(directory / "count"))
+        return directory / "takeover.py"
+
+    def check_partial(self, mode):
+        script = self.injected(mode)
+        out = Path(self.tmp.name) / f"out-{mode}"
+        args = ("--from", OLD, "--to", NEW, "--note", "Owner decision", "--out", str(out),
+                "--include-report-pending", "--timeout", "3")
+        failed = subprocess.run([sys.executable, str(script), *args], env=self.env, text=True,
+                                capture_output=True, timeout=60)
+        self.assertEqual(failed.returncode, 1, failed.stderr)
+        report = json.loads(json.loads(failed.stderr)["error"])
+        order = [item["id"] for item in json.loads(Path(report["moved_file"]).read_text())]
+        receipts = json.loads(Path(report["receipts_file"]).read_text())
+        self.assertEqual([item["id"] for item in receipts["moved"]], order[:1])
+        self.assertEqual(receipts["failure"]["id"], order[1])
+        self.assertEqual(receipts["not_moved"], order[1:])
+        owners = {task: self.ledger("show", task)["task"]["owner"] for task in order}
+        self.assertEqual(owners, {order[0]: NEW, order[1]: OLD, order[2]: OLD})
+        return out, receipts
+
+    def test_refusal_mid_run_keeps_receipts_and_stops(self):
+        self.check_partial("refuse")
+
+    def test_timeout_mid_run_keeps_receipts_and_stops(self):
+        _, receipts = self.check_partial("sleep")
+        self.assertIn("timed out", receipts["failure"]["error"])
+
+    def test_unreadable_answer_mid_run_keeps_receipts_and_stops(self):
+        _, receipts = self.check_partial("garbage")
+        self.assertIn("no JSON", receipts["failure"]["error"])
+
+    def test_rerun_after_failure_moves_the_rest_and_keeps_old_files(self):
+        out, first = self.check_partial("refuse")
+        before = {path.name: path.read_text() for path in out.glob("receipts-*.json")}
+        self.env["INJECT_AT"] = "0"
+        rerun = subprocess.run([sys.executable, str(SCRIPTS / "takeover.py"), "--from", OLD, "--to", NEW,
+                                "--note", "Owner decision", "--out", str(out),
+                                "--include-report-pending"],
+                               env=self.env, text=True, capture_output=True, timeout=60)
+        self.assertEqual(rerun.returncode, 0, rerun.stderr)
+        self.assertEqual(json.loads(rerun.stdout)["moved"], 2)
+        after = {path.name: path.read_text() for path in out.glob("receipts-*.json")}
+        self.assertEqual(len(after), 2)
+        for name, text in before.items():
+            self.assertEqual(after[name], text)
+        self.assertEqual(self.owners()[self.unreported], NEW)
+        self.assertIn(first["failure"]["id"], first["not_moved"])
 
     def test_blank_note_is_rejected(self):
         result = self.run_takeover("--from", OLD, "--to", NEW, "--note", "  ")

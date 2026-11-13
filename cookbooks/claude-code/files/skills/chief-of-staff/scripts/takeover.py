@@ -9,8 +9,10 @@ the ledger keeps both owners and the note in its history.
 The caller must resolve (through the Herdr skill's caller-context helper) to the
 --to owner; otherwise nothing moves. Terminal tasks stay with --from unless
 --include-report-pending asks for accepted or cancelled results that were never
-reported. A failure stops at that task; tasks already moved are no longer listed
-under --from, so running the same command again moves only the rest.
+reported. A refusal, timeout or unreadable answer stops at that task; the run's
+receipts file still records what moved, the failure and what did not move. Tasks
+already moved are no longer listed under --from, so running the same command
+again moves only the rest, and writes new files instead of replacing the old ones.
 """
 
 import argparse
@@ -36,22 +38,31 @@ def state_root():
         "COS_STATE_DIR", "~/.local/state/chief-of-staff")).expanduser().resolve()
 
 
-def run_json(argv):
-    result = subprocess.run(argv, capture_output=True, text=True,
-                            stdin=subprocess.DEVNULL, timeout=60)
+def run_json(argv, timeout):
+    """Run a helper and parse its JSON; every way it can fail becomes Refused."""
+    name = f"{Path(argv[1]).name} {argv[2]}"
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise Refused(f"{name} timed out after {timeout} s") from error
+    except OSError as error:
+        raise Refused(f"{name} could not start: {error}") from error
     if result.returncode:
-        raise Refused(f"{Path(argv[1]).name} {argv[2]} failed: "
-                      f"{(result.stderr or result.stdout).strip()[:400]}")
-    return json.loads(result.stdout)
+        raise Refused(f"{name} failed: {(result.stderr or result.stdout).strip()[:400]}")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise Refused(f"{name} printed no JSON: {result.stdout.strip()[:200]}") from error
 
 
-def ledger(*args):
-    return run_json([sys.executable, str(TASKS), *args])
+def ledger(timeout, *args):
+    return run_json([sys.executable, str(TASKS), *args], timeout)
 
 
-def caller_owner():
+def caller_owner(timeout):
     """Return the ledger owner key of the verified caller, or raise."""
-    found = run_json([sys.executable, str(CALLER), "resolve"])
+    found = run_json([sys.executable, str(CALLER), "resolve"], timeout)
     if not found.get("verified"):
         raise Refused("caller context is not verified")
     if found.get("owner"):
@@ -86,51 +97,68 @@ def parse(argv):
                         help="New ledger owner key; must be the verified caller")
     parser.add_argument("--note", required=True,
                         help="Why the work moves; cite the owner's decision file")
-    parser.add_argument("--out", help="Directory for moved.json and receipts.json")
+    parser.add_argument("--out", help="Directory for this run's moved and receipts files")
     parser.add_argument("--dry-run", action="store_true", help="List what would move; change nothing")
     parser.add_argument("--include-report-pending", action="store_true",
                         help="Also move terminal tasks whose result was never reported")
+    parser.add_argument("--timeout", type=float, default=60.0,
+                        help="Seconds allowed for each helper call (default 60)")
     args = parser.parse_args(argv)
     if not args.note.strip():
         parser.error("--note must not be blank")
+    if args.timeout <= 0:
+        parser.error("--timeout must be positive")
     return args
 
 
+def write_json(path, value):
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
 def takeover(args):
-    caller = caller_owner()
+    caller = caller_owner(args.timeout)
     if caller != args.target:
         raise Refused(f"caller {caller} is not --to {args.target}")
     if args.source == args.target and not args.dry_run:
         raise Refused("--from and --to are the same owner")
     root = state_root()
-    listed = ledger("list", "--owner", args.source)["tasks"]
+    listed = ledger(args.timeout, "list", "--owner", args.source)["tasks"]
     moving = [summary(root, task) for task in selected(listed, args.include_report_pending)]
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # Each run writes its own files, so a rerun after a failure keeps the earlier record.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     out = Path(args.out).expanduser() if args.out else root / f"takeover-{stamp}"
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
-    (out / ("moved-dry-run.json" if args.dry_run else "moved.json")).write_text(
-        json.dumps(moving, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    kind = "dry-run" if args.dry_run else "run"
+    moved_file = out / f"moved-{kind}-{stamp}.json"
+    receipts_file = None if args.dry_run else out / f"receipts-{stamp}.json"
+    write_json(moved_file, moving)
     receipts, failure = [], None
     if not args.dry_run:
-        for item in moving:
-            try:
-                result = ledger("handoff", item["id"], "--owner", args.source,
-                                "--to", args.target, "--note", args.note)
-            except Refused as error:
-                failure = {"id": item["id"], "error": str(error)}
-                break
-            receipts.append({"id": item["id"], "owner": result["task"]["owner"],
-                             "at": result["task"]["history"][-1]["at"]})
-        (out / "receipts.json").write_text(
-            json.dumps({"from": args.source, "to": args.target, "note": args.note,
-                        "moved": receipts, "failure": failure}, ensure_ascii=False, indent=1) + "\n",
-            encoding="utf-8")
+        try:
+            for item in moving:
+                try:
+                    result = ledger(args.timeout, "handoff", item["id"], "--owner", args.source,
+                                    "--to", args.target, "--note", args.note)
+                    receipts.append({"id": item["id"], "owner": result["task"]["owner"],
+                                     "at": result["task"]["history"][-1]["at"]})
+                except (Refused, KeyError, TypeError, IndexError) as error:
+                    # A timed-out handoff may still have landed; the ledger history is the truth.
+                    failure = {"id": item["id"], "error": str(error),
+                               "check": f"tasks.py show {item['id']} decides whether it moved"}
+                    break
+        finally:
+            done = {item["id"] for item in receipts}
+            write_json(receipts_file, {
+                "from": args.source, "to": args.target, "note": args.note, "moved": receipts,
+                "failure": failure,
+                "not_moved": [item["id"] for item in moving if item["id"] not in done]})
     states = {}
     for item in moving:
         states[item["state"]] = states.get(item["state"], 0) + 1
     report = {"dry_run": args.dry_run, "from": args.source, "to": args.target,
               "selected": len(moving), "moved": len(receipts), "states": states,
-              "failure": failure, "out": str(out)}
+              "failure": failure, "moved_file": str(moved_file),
+              "receipts_file": str(receipts_file) if receipts_file else None}
     if failure:
         raise Refused(json.dumps(report, ensure_ascii=False))
     return report

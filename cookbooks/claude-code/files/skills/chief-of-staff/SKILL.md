@@ -304,8 +304,10 @@ writing a handoff is not proof that a new session started.
 When a usage limit, the owner's absence or a failure stops this controller while
 workers run, follow [references/supervision-handoff.md](references/supervision-handoff.md):
 the owner chooses the stand-in and its authority through the question tool, the
-stand-in writes requests instead of asking the owner, and `scripts/takeover.py`
-moves every unfinished task to the verified new owner.
+stand-in writes requests instead of asking the owner (and relays Linear
+operations when it has no connector), and `scripts/takeover.py` moves every
+unfinished task, plus unreported results when taking work back, to the verified
+new owner on either Herdr route.
 
 Until SH1-68 supplies owner-approved numeric thresholds, direct work is limited
 to a short answer using evidence already in context, with no repository change,
