@@ -92,9 +92,32 @@ slash commands with `hc keys` instead.
 
 ## Cleanup
 
-For a terminal the controller started, run `hc kill <terminal>` and then
-`hc rm <terminal>` once its task is `accepted` or `cancelled`. Never kill or
-remove a terminal the controller did not start.
+After receiving the envelope and `observe`, when entering `needs-user`, and at
+`accepted` or `cancelled`, run `hc kill <terminal>` then `hc rm <terminal>` once
+the worker is settled. First re-read `hc get --json <terminal>` and verify its
+completion evidence and absence of outstanding background work as well as its
+recorded identity, state and ownership; never kill a working or ambiguous worker.
+An orphan's owner terminal must be absent on the same core/namespace, not merely
+idle. Never touch another live controller's terminals. Save each hc helper's
+creation response and terminal ID in the attempt's artifact directory and
+notify the controller for manual cleanup; `helper-open` and `helper` are for
+local Herdr 1 panes, not hc terminals. The Herdr 1 `closable` command does not inspect hc;
+apply these checks manually using hc's actual live fields.
+
+A later correction reserves `attempt --reuse-agent` with the same recorded
+harness/model/effort/profile/route and creates a new terminal. Resume the recorded
+session using `claude --resume <id>` or `codex resume <id>`, preserving the plan's
+environment and options (including Codex `--no-daemon`) and the controller's
+PATH. The `launch-command` recipe in dispatch.md returns this command for hc
+plans too. Bind the new terminal and observe the same session's new turns with
+the original launch prompt; do not treat stale prior turns as new evidence.
+
+`launch-command` prefixes `/usr/bin/env` and explicitly injects the calling
+controller's PATH for hc, for fresh launches and resumes alike. Generate the
+command in the controller, never inside the core's minimal-PATH terminal.
+A supervision-paused needs-user worker is not retired merely because hc shows
+an idle prompt: confirm it has no outstanding work and record `settle` with its
+native session UUID first, or resume monitoring the still-live worker directly.
 
 ## Never run
 
