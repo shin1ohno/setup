@@ -334,22 +334,51 @@ contract is an opt-in protocol, not a reason to alter an active legacy session.
 After `receive` and `observe`, on entry to `needs-user`, and at `accepted` or
 `cancelled`, close settled worker/helper panes. A working agent always stays
 open until it settles. Bind new Herdr 1 workers with `--terminal-id` from the
-creation response, as well as `--pane`. Register helpers immediately with:
+creation response, as well as `--pane`. Create helpers through the ledger so
+their identity comes from a creation response, not a worker's arbitrary pane
+claim. `helper-open` splits the recorded worker pane, stores the returned
+shell pane and terminal ID, and returns them. After starting an authorized agent
+in that new helper, update its kind/name with `helper`:
 
 ```bash
+python3 "$skill/scripts/tasks.py" helper-open "$task" --owner "$owner" --herdr-session "$s"
 python3 "$skill/scripts/tasks.py" helper "$task" --owner "$owner" \
   --pane "$helper_pane" --terminal-id "$helper_terminal" --kind "$helper_kind" --agent-name "$helper_name"
 python3 "$skill/scripts/tasks.py" closable --owner "$owner" --herdr-session "$s"
 ```
 
-`closable` is read-only. It inventories every workspace, checks the session's
-socket against the owner key, and selects only recorded idle/done agents with
-matching terminal IDs and observed model/effort in settled task states.
+`closable` is read-only by default, including its lock access. It inventories
+every workspace, checks the session's socket against the owner key, and selects
+only recorded idle/done agents with matching identities. For old records with
+no terminal ID, both pane-list and agent-get must agree on terminal, kind and
+idle/done, and agent-get must match the recorded agent name. The result's
+`adoptions` list previews those identities without writing; explicit
+`closable --adopt` persists them once with an adoption history entry.
+Reviewing requires envelope receipt and observed matching model/effort.
+Cancelled/accepted do not require fresh observation. needs-user requires an
+explicit settled record and a native session UUID, not model observation:
+
+```bash
+python3 "$skill/scripts/tasks.py" settle "$task" --owner "$owner" \
+  --session-id "$session_id" --note 'No unfinished work or background waits remain' \
+  --evidence "$completion_evidence"
+```
+
+Confirm the native UUID from the harness's log/session metadata; never guess it.
+`settle` records it separately from a refused model observation, so a worker
+that stopped before observe can still be resumed safely. A supervision pause
+uses `update --state needs-user --supervision-paused` and stays ineligible until
+settle. Idle alone does not prove that background work has finished. While the
+worker remains live, resume supervision with `update --state running`, without
+spending another attempt; after closure use a new resume attempt.
 It includes this owner's tasks and orphan tasks whose owning controller pane
 is absent on that socket. Another live controller, running task, unknown agent,
-duplicate binding, unrecorded pane, missing identity, hc or remote route is
-never selected. Legacy/route-less records remain readable, but missing proof
-means skip. A returned candidate is not a durable authorization: immediately
+ambiguous binding, unrecorded pane, unmatched identity, hc or remote route is
+never selected. An explicit same-task/same-agent reuse chain on the same pane
+is one binding, provided all known terminal IDs agree; different tasks or
+unrelated attempts stay ambiguous. Helper claims without a `helper-open`
+creation receipt never authorize closure. Legacy/route-less records remain
+readable. A returned candidate is not a durable authorization: immediately
 re-run the sweep and `pane get`, check the terminal ID and idle/done state, then
 the controller runs `herdr --session "$s" pane close "$pane"`. On uncertain
 state or changed ownership, skip. Do not close the controller itself.
@@ -369,12 +398,16 @@ herdr --session "$s" pane run "$pane" "$command"
 
 After the agent is ready, assign the attempt's recorded name with
 `herdr --session "$s" agent rename "$pane" "$worker"`. The sweep checks this
-occupant name as well as the terminal ID, so process replacement fails closed.
+occupant name as well as the terminal ID; either mismatch excludes the pane.
 Use this same recipe for the initial launch from a ready plan. It runs
 `claude --resume <session-id> <recorded-options> <prompt>` or
 `codex resume <session-id> <recorded-options> <prompt>` on a resumed attempt,
 preserving the plan's `env_unset`, `env_set`, argv, and additional launch
-options. Launch in the task's recorded cwd; no `eval` is needed. For an old
+options. On hc it also sets PATH to the calling controller's actual PATH,
+overriding the core's minimal default, for both initial launch and resume.
+If an old attempt lacks profile, inherit the snapshot's profile if known;
+otherwise record `profile: null` (unknown), never the newly requested label.
+Launch in the task's recorded cwd; no `eval` is needed. For an old
 attempt without a plan snapshot, inspect the original plan/options and use
 those native commands manually; never manufacture a missing session ID.
 
@@ -394,10 +427,12 @@ resume and observation, then `hc kill` followed by `hc rm` (hc-route.md).
 
 Write a real brief, replacing the fields below; include the user's words where
 wording matters. Do not send the controller's entire private conversation.
-Every worker brief must include: "Record every helper pane immediately using
+Every worker brief must include: "Create helper panes only through
+`tasks.py helper-open <task-id> --owner <controller-owner> --herdr-session <session>`.
+After starting an authorized agent in the returned pane, record it using
 `tasks.py helper <task-id> --owner <controller-owner> --pane <returned-pane>
 --terminal-id <returned-terminal-id> --kind <claude|codex> --agent-name <live-name>`.
-For raw shells use `--kind shell` without `--agent-name`; for hc record the
+Raw shells are already recorded by helper-open; for hc record the
 terminal identity and notify the controller for manual hc lifecycle checks.
 The sweep skips shells without evidence of a settled agent; the controller
 checks their actual process state before manual cleanup. Never leave
@@ -461,10 +496,13 @@ budget and the reason, and do not widen it until the controller answers.
 
 Close what you open: close every pane you created yourself for this task
 (helper shells, test or log panes) as soon as you no longer need it, after
-reading anything you still need from it. Immediately record every helper with
+reading anything you still need from it. Create Herdr helpers only with
+`tasks.py helper-open <task-id> --owner <controller-owner-key> --herdr-session <session>`;
+it saves the creation receipt. After launching an authorized agent, record it with
 `tasks.py helper <task-id> --owner <controller-owner-key> --pane <returned-pane>
 --terminal-id <returned-terminal-id> --kind <claude|codex|shell>`; agent helpers
-also require `--agent-name <live-name>`. Record hc terminal identities likewise
+also require `--agent-name <live-name>`. Never register an existing unrelated
+pane as a helper. Record hc terminal identities likewise
 and notify the controller for manual hc cleanup. Never leave unrecorded helpers.
 Close only settled panes you created, never
 the controller pane and never your own worker pane (the controller closes that

@@ -176,8 +176,14 @@ not adopt tasks without an explicit handoff; the new owner re-arms the wait and 
 This skill has no independent daemon. Monitoring runs while this controller
 session is executing or has background waits armed that will wake it. Do not
 finish the turn with running tasks unless a wait is armed for each of them. If
-execution must stop, record `needs-user` with
-the live worker identities and explain that supervision stopped. With no pending
+execution must stop, record `needs-user --supervision-paused` with
+the live worker identities and explain that supervision stopped. This does not
+retire the worker: even an idle display can be a wait for background work.
+Resume monitoring without consuming an attempt if the same worker is live.
+Before retiring a needs-user worker, independently confirm it has no unfinished
+background work and run `tasks.py settle` with that evidence and its native
+session UUID. Without this explicit settled record, the sweep skips it, even
+if its controller has disappeared. With no pending
 work, return normally and resume this mode on the user's next topic. Do not
 install cron, native scheduled jobs, or an always-on service implicitly.
 
@@ -236,8 +242,11 @@ terminal identity still matches, and its owner is this controller or a proven
 orphan (the owner pane is absent on the same socket). Never close a working
 agent, another live controller's pane, or an ambiguous/unrecorded pane.
 If the worker is still working, leave it and recheck on the next wake.
-Use the read-only `tasks.py closable` sweep in dispatch.md, including registered
-helper panes. Missing identity evidence means skip, not permission to guess.
+Use the read-only `tasks.py closable` sweep in dispatch.md, including helpers
+created through `helper-open`. It previews safe identity adoption for old
+records; only explicit `--adopt` persists it. An agent name or kind mismatch
+never authorizes adoption. needs-user also requires the explicit `settle`
+record and session UUID; cancelled does not require model observation.
 Session logs and artifacts remain. A later correction uses `--reuse-agent` and
 resumes the same conversation by session ID in a new pane, with the recorded
 plan environment/options. The same lifecycle applies to hc terminals (`hc kill`
