@@ -114,11 +114,18 @@ add_proc() {
 }
 guard() {
   CRC_PROC=$work/proc CRC_SYSTEMCTL=$stubs/systemctl CRC_KILL=$stubs/kill \
-    CRC_CODEX=$stubs/codex CRC_SENTINEL=$work/sentinel /bin/sh "$GUARD" "$@"
+    CRC_CODEX=$stubs/codex CRC_SENTINEL=$work/sentinel CRC_CODEX_PACKAGES=/home/u/.codex/packages/ \
+    /bin/sh "$GUARD" "$@"
 }
 BIN=/home/u/.codex/packages/app-server-daemon/current/bin/codex
 DAEMON=("$BIN" app-server --remote-control --listen unix:// --analytics-default-enabled --managed-daemon)
 UPDATER=("$BIN" app-server daemon pid-update-loop)
+# The same shapes from another CODEX_HOME and from a CLI binary outside any
+# packages/ tree: not this home's managed daemon, never touched.
+OTHER=/home/u/.agents/codex-homes/w1/packages/app-server-daemon/current/bin/codex
+OTHER_DAEMON=("$OTHER" app-server --remote-control --listen unix:// --analytics-default-enabled)
+OTHER_UPDATER=("$OTHER" app-server daemon pid-update-loop)
+CLI_DAEMON=(/home/u/.local/share/mise/installs/node/26/bin/codex app-server --listen unix://)
 restarted() { grep -qx "systemctl --user restart --no-block $UNIT" "$calls"; }
 
 # --- 1. guard script ---------------------------------------------------------
@@ -135,6 +142,9 @@ add_proc 107 session-1.scope pkill -f 'app-server daemon pid-update-loop'
 add_proc 108 session-1.scope /bin/zsh -c 'codex app-server --listen unix:// --remote-control'
 add_proc 109 session-1.scope watch -n5 'ps aux | grep -c "codex app-server --listen unix:// "'
 add_proc 110 session-1.scope /bin/sh -c codex app-server daemon pid-update-loop
+add_proc 111 session-1.scope "${OTHER_DAEMON[@]}"
+add_proc 112 session-1.scope "${OTHER_UPDATER[@]}"
+add_proc 113 session-1.scope "${CLI_DAEMON[@]}"
 guard evict 2>"$work/evict.err"
 rc=$?
 check "evict exits 0 after clearing outside processes" '[ "$rc" = 0 ]'
@@ -143,6 +153,7 @@ check "evict terminates the outside daemon and updater" 'grep -qx "kill -TERM 10
 check "evict leaves the daemon inside the unit alone" '! grep -q "kill .* 101$" "$calls" && [ -d "$work/proc/101" ]'
 check "evict ignores IDE servers, lifecycle commands and shells" '! grep -qE "kill .* (104|105|106)$" "$calls"'
 check "evict ignores processes whose arguments only mention the daemon" '! grep -qE "kill .* (107|108|109|110)$" "$calls"'
+check "evict leaves daemons of another Codex home alone" '! grep -qE "kill .* (111|112|113)$" "$calls" && [ -d "$work/proc/111" ] && [ -d "$work/proc/112" ]'
 
 new_proc
 add_proc 101 "$UNIT" "${DAEMON[@]}"
@@ -163,6 +174,13 @@ guard watch 2>/dev/null
 check "watch: healthy daemon inside the unit (and look-alike shells) -> no restart" '! restarted'
 
 new_proc
+add_proc 101 "$UNIT" "${DAEMON[@]}"
+add_proc 111 session-1.scope "${OTHER_DAEMON[@]}"
+add_proc 112 session-1.scope "${OTHER_UPDATER[@]}"
+guard watch 2>/dev/null
+check "watch: daemon and updater of another Codex home -> no restart, not stopped" '! restarted && ! grep -q "^kill" "$calls"'
+
+new_proc
 add_proc 102 session-1.scope "${DAEMON[@]}"
 guard watch 2>/dev/null
 check "watch: daemon outside the unit -> restart" 'restarted'
@@ -170,14 +188,16 @@ check "watch: daemon outside the unit -> restart" 'restarted'
 new_proc
 add_proc 101 "$UNIT" "${DAEMON[@]}"
 add_proc 103 session-1.scope "${UPDATER[@]}"
-guard watch 2>/dev/null
-check "watch: updater outside the unit -> restart" 'restarted'
+guard watch 2>"$work/watch.err"
+check "watch: updater outside the unit -> stopped, logged, no restart" \
+  'grep -qx "kill -TERM 103" "$calls" && grep -q "stopping a Codex daemon auto-updater" "$work/watch.err" && ! restarted'
 
 new_proc
 add_proc 101 "$UNIT" "${DAEMON[@]}"
 add_proc 107 "$UNIT" "${UPDATER[@]}"
 guard watch 2>/dev/null
-check "watch: updater inside the unit (auto-update is off) -> restart" 'restarted'
+check "watch: updater inside the unit (auto-update is off) -> stopped, no restart" \
+  'grep -qx "kill -TERM 107" "$calls" && [ -d "$work/proc/101" ] && ! restarted'
 
 new_proc
 guard watch 2>/dev/null
@@ -239,6 +259,11 @@ check "updater-off keeps every other key" \
   '/usr/bin/python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(d != {\"remoteControlEnabled\": True, \"featureOverrides\": {\"x\": True}, \"updater\": {\"updateIntervalMinutes\": 30, \"autoUpdateEnabled\": False}, \"shutdownGraceSeconds\": 10})" "$settings"'
 /bin/sh "$GUARD" updater-off --check "$settings"
 check "updater-off --check passes afterwards" '[ $? = 0 ]'
+/bin/sh "$GUARD" remote-control-off --check "$settings"
+check "remote-control-off --check fails while remote control is on" '[ $? != 0 ]'
+/bin/sh "$GUARD" remote-control-off "$settings"
+check "remote-control-off sets remoteControlEnabled false and keeps every other key" \
+  '/usr/bin/python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(d != {\"remoteControlEnabled\": False, \"featureOverrides\": {\"x\": True}, \"updater\": {\"updateIntervalMinutes\": 30, \"autoUpdateEnabled\": False}, \"shutdownGraceSeconds\": 10})" "$settings"'
 
 # --- 2. recipe ---------------------------------------------------------------
 
@@ -319,9 +344,14 @@ else
   # 2f. sentinel
   home=$work/h2
   units_dir=$home/.config/systemd/user
+  rc_settings=$home/.codex/app-server-daemon/settings.json
+  # What `codex remote-control start` leaves behind.
+  /usr/bin/python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["remoteControlEnabled"]=True; json.dump(d, open(p, "w"))' "$rc_settings"
   touch "$home/.config/codex-remote-control.disabled"
   render "$home"
   check "sentinel: both units are disabled and stopped" 'grep -qx "systemctl --user disable --now $TIMER $UNIT" "$calls"'
+  check "sentinel: remote control is switched off in the daemon settings, updater key kept" \
+    '/usr/bin/python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not (d.get(\"remoteControlEnabled\") is False and d.get(\"updater\") == {\"autoUpdateEnabled\": False}))" "$rc_settings"'
   check "sentinel: nothing is enabled or restarted" '! grep -qE "systemctl --user (enable|restart)" "$calls"'
   render "$home"
   check "sentinel, already off: nothing runs" '! grep -qE " (ran|changed)" "$work/render.out" && ! grep -q "disable" "$calls"'

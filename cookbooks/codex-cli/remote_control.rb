@@ -20,7 +20,8 @@
 #
 # The owner's off switch is ~/.config/codex-remote-control.disabled. While it
 # exists the units do not start, the watchdog does nothing, and this recipe runs
-# `systemctl --user disable --now` on both units instead of enabling them. This
+# `systemctl --user disable --now` on both units instead of enabling them and
+# writes "remoteControlEnabled": false into the daemon settings. This
 # deviates from cookbooks/session-search/linux.rb, whose only idempotency
 # marker is the enable symlink: here that alone would re-enable a unit the owner
 # turned off on the next apply, and `codex remote-control start` would switch
@@ -176,6 +177,19 @@ execute "disable codex-remote-control units (owner sentinel present)" do
   command deactivate
   user rc_user
   only_if "test -e #{sentinel} && { #{enabled_marker} || #{timer_marker} || #{user_systemctl} is-active --quiet codex-remote-control.service codex-remote-control-watch.timer; }"
+end
+
+# Sentinel present: also switch remote control off in the daemon settings.
+# `codex remote-control start` persisted it as true, and while the sentinel
+# exists the watchdog does nothing, so without this an interactive `codex`
+# that auto-starts the daemon later would bring remote control back from its
+# own shell environment. Removing the sentinel hands it back to the unit,
+# whose next start sets it true again.
+execute "switch Codex remote control off (owner sentinel present)" do
+  command "/bin/sh #{guard} remote-control-off #{settings_json}"
+  user rc_user
+  only_if "test -e #{sentinel}"
+  not_if "/bin/sh #{guard} remote-control-off --check #{settings_json}"
 end
 
 execute "reload codex-remote-control units" do

@@ -11,12 +11,16 @@
 #                      unit's cgroup, so the next start launches it inside
 #   run CMD...         exec CMD with session secrets removed from the environment
 #   stop-updater       stop every `app-server daemon pid-update-loop` process
-#   watch              timer body: restart the unit when the daemon is missing,
-#                      not answering, running outside the unit's cgroup, or
-#                      an auto-updater runs at all
+#   watch              timer body: stop any auto-updater; restart the unit when
+#                      the daemon is missing, not answering, or running
+#                      outside the unit's cgroup
 #   updater-off FILE   make FILE (the daemon settings.json) carry
 #                      "updater": {"autoUpdateEnabled": false}, keeping every
 #                      other key; `updater-off --check FILE` only tests it
+#   remote-control-off FILE
+#                      same for "remoteControlEnabled": false (the owner's
+#                      sentinel: a daemon an interactive `codex` auto-starts
+#                      later then comes up without remote control)
 #
 # Every external dependency is an environment knob so the logic can be tested
 # against a fake /proc (cookbooks/codex-cli/test/test-remote-control-guard.sh).
@@ -33,6 +37,10 @@ PYTHON=${CRC_PYTHON:-/usr/bin/python3}
 DNS_HOST=${CRC_DNS_HOST:-chatgpt.com}
 DNS_TIMEOUT=${CRC_DNS_TIMEOUT:-120}
 POLL=${CRC_POLL:-2}
+# Only this Codex home's managed daemon: the launcher starts it from the
+# package under $CODEX_HOME/packages/ (app-server-daemon/src/managed_install.rs,
+# managed_codex_bin), so a daemon of another CODEX_HOME is never touched.
+PACKAGES=${CRC_CODEX_PACKAGES:-$HOME/.codex/packages/}
 MY_UID=$(id -u)
 
 log() { printf 'codex-remote-control-guard: %s\n' "$*" >&2; }
@@ -48,21 +56,22 @@ in_unit_cgroup() {
 # the joined command line, so a shell, `pkill -f`, `grep` or `watch` whose
 # arguments merely mention these words is not a match. The shapes are the ones
 # the daemon launcher uses (codex-rs/app-server-daemon/src/backend/pid.rs,
-# command_args), with argv[0] the managed `codex` binary:
+# command_args), with argv[0] the managed `codex` binary of this home
+# ($PACKAGES…/codex):
 #   daemon:  codex app-server [--remote-control] --listen unix:// …
 #   updater: codex app-server daemon pid-update-loop …
 # A stdio `codex app-server` (IDE) or a lifecycle command
 # (`codex app-server daemon version|stop`) matches neither.
 classify() {
-  tr '\000' '\n' | awk '
-    NR == 1 { n = split($0, parts, "/"); bin = parts[n] }
+  tr '\000' '\n' | awk -v pkgs="$PACKAGES" '
+    NR == 1 { home = (index($0, pkgs) == 1); n = split($0, parts, "/"); bin = parts[n] }
     NR == 2 { a1 = $0 }
     NR == 3 { a2 = $0 }
     NR == 4 { a3 = $0 }
     NR > 2 && prev == "--listen" && $0 == "unix://" { listen = 1 }
     { prev = $0 }
     END {
-      if (bin != "codex" || a1 != "app-server") exit
+      if (!home || bin != "codex" || a1 != "app-server") exit
       if (a2 == "daemon" && a3 == "pid-update-loop") print "updater"
       else if (listen) print "daemon"
     }'
@@ -172,13 +181,18 @@ cmd_watch() {
     activating | deactivating | reloading) return 0 ;;
   esac
   found=$(scan)
-  reason=
-  if printf '%s\n' "$found" | grep -q ' out$'; then
-    reason="a Codex daemon process runs outside ${UNIT}"
-  elif printf '%s\n' "$found" | grep -q '^updater '; then
+  if printf '%s\n' "$found" | grep -q '^updater '; then
     # The auto-updater is switched off (owner decision); one running anyway
-    # was started before that setting and would relaunch the daemon.
-    reason="a Codex daemon auto-updater is running"
+    # would relaunch the daemon on its next update. Stop it rather than
+    # restarting the unit, which would cut phone turns every 5 minutes if
+    # something kept spawning it.
+    log "stopping a Codex daemon auto-updater: $(printf '%s\n' "$found" | awk '$1 == "updater" { printf "%s ", $2 }')"
+    cmd_stop_updater
+    found=$(scan)
+  fi
+  reason=
+  if printf '%s\n' "$found" | grep -q '^daemon .* out$'; then
+    reason="a Codex daemon process runs outside ${UNIT}"
   elif ! printf '%s\n' "$found" | grep -q '^daemon .* in$'; then
     reason="no Codex daemon runs inside ${UNIT} (state: ${state:-unknown})"
   elif ! timeout 30 "$CODEX" app-server daemon version >/dev/null 2>&1; then
@@ -190,17 +204,24 @@ cmd_watch() {
   "$SYSTEMCTL" --user restart --no-block "$UNIT"
 }
 
-cmd_updater_off() {
+# settings_off MODE [--check] FILE: MODE "updater" sets
+# "updater": {"autoUpdateEnabled": false}, MODE "remote-control" sets
+# "remoteControlEnabled": false. Every other key is kept (the daemon's own
+# save() merges keys the same way, app-server-daemon/src/settings.rs).
+settings_off() {
+  mode=$1
+  shift
   check=
   if [ "${1:-}" = "--check" ]; then
     check=1
     shift
   fi
-  [ $# -eq 1 ] || { log "updater-off: expected one settings path"; return 2; }
-  CRC_CHECK=$check "$PYTHON" - "$1" <<'PY'
+  [ $# -eq 1 ] || { log "${mode}-off: expected one settings path"; return 2; }
+  CRC_MODE=$mode CRC_CHECK=$check "$PYTHON" - "$1" <<'PY'
 import json, os, sys, tempfile
 
 path = sys.argv[1]
+mode = os.environ["CRC_MODE"]
 check = bool(os.environ.get("CRC_CHECK"))
 try:
     with open(path) as f:
@@ -209,20 +230,27 @@ except FileNotFoundError:
     data = {}
 if not isinstance(data, dict):
     sys.exit("settings file is not a JSON object: " + path)
-updater = data.get("updater")
-if not isinstance(updater, dict):
-    updater = {}
-if updater.get("autoUpdateEnabled") is False:
-    sys.exit(0)
+if mode == "updater":
+    updater = data.get("updater")
+    if not isinstance(updater, dict):
+        updater = {}
+    if updater.get("autoUpdateEnabled") is False:
+        sys.exit(0)
+    updater["autoUpdateEnabled"] = False
+    new = dict(data, updater=updater)
+elif mode == "remote-control":
+    if data.get("remoteControlEnabled") is False:
+        sys.exit(0)
+    new = dict(data, remoteControlEnabled=False)
+else:
+    sys.exit("unknown mode " + mode)
 if check:
     sys.exit(1)
-updater["autoUpdateEnabled"] = False
-data["updater"] = updater
 directory = os.path.dirname(path) or "."
 os.makedirs(directory, mode=0o700, exist_ok=True)
 fd, tmp = tempfile.mkstemp(dir=directory, prefix=".settings.", suffix=".tmp")
 with os.fdopen(fd, "w") as f:
-    json.dump(data, f, indent=2)
+    json.dump(new, f, indent=2)
     f.write("\n")
 os.chmod(tmp, 0o600)
 os.replace(tmp, path)
@@ -237,9 +265,10 @@ case "$sub" in
   run) cmd_run "$@" ;;
   stop-updater) cmd_stop_updater ;;
   watch) cmd_watch ;;
-  updater-off) cmd_updater_off "$@" ;;
+  updater-off) settings_off updater "$@" ;;
+  remote-control-off) settings_off remote-control "$@" ;;
   *)
-    log "usage: $0 wait-dns|evict|run CMD...|stop-updater|watch|updater-off [--check] FILE"
+    log "usage: $0 wait-dns|evict|run CMD...|stop-updater|watch|updater-off|remote-control-off [--check] FILE"
     exit 2
     ;;
 esac

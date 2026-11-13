@@ -11,7 +11,7 @@ ChatGPT の iOS アプリの Codex から、このホストの `~/.codex` のセ
 Codex 標準のデーモン管理は pid ファイル方式で、systemd のユニットを作りません。そのため、ホストを再起動すると誰もデーモンを起動し直しません。この recipe は、ブートのたびにデーモンを起こす systemd のユーザーユニットを置きます。
 
 - `codex-remote-control.service`: `codex remote-control start` を実行する oneshot ユニットです。デーモンはこのユニットの cgroup の中で動きます。
-- `codex-remote-control-watch.timer`: 5 分ごとに `guard.sh watch` を実行します。デーモンが動いていない、応答しない、ユニットの cgroup の外で動いている、または自動更新のプロセスが動いている場合に、ユニットを再起動します。
+- `codex-remote-control-watch.timer`: 5 分ごとに `guard.sh watch` を実行します。デーモンが動いていない、応答しない、またはユニットの cgroup の外で動いている場合に、ユニットを再起動します。自動更新のプロセスがあれば、再起動せずにそれを止めます。
 - `~/.codex/app-server-daemon/settings.json`: `"updater": {"autoUpdateEnabled": false}` を書きます。ほかのキーは残します。
 - `~/.local/share/codex-remote-control/guard.sh`: ユニットとタイマーが呼ぶ補助スクリプトです。
 
@@ -56,13 +56,13 @@ for p in $(pgrep -f 'app-server .*--listen unix://'); do cat /proc/$p/cgroup; do
 
 **最初に目印ファイルを置きます。** 置かずに止めると、5 分ごとの見張りと次の setup の apply が、もう一度起動します。
 
-1. 目印ファイルを置きます。ユニットは起動しなくなり、見張りは何もしなくなります。apply は、ユニットが有効か動いていれば、有効にする代わりに無効にして止めます。
+1. 目印ファイルを置きます。ユニットは起動しなくなり、見張りは何もしなくなります。apply は、ユニットが有効か動いていれば、有効にする代わりに無効にして止めます。また、`settings.json` の `remoteControlEnabled` を false にします（ほかのキーは残します）。
 
    ```
    touch ~/.config/codex-remote-control.disabled
    ```
 
-2. remote control の設定を切ります。これを省くと、手元の対話的な `codex` が、止まっているデーモンを remote control 付きで起動し直すことがあります（下の「手元の codex との関係」）。
+2. remote control の設定を切ります。次の apply も同じことをしますが、それまでの間に手元の対話的な `codex` が、止まっているデーモンを remote control 付きで起動し直すことがあります（下の「手元の codex との関係」）。すぐに切るために実行します。
 
    ```
    codex app-server daemon disable-remote-control
@@ -131,4 +131,15 @@ Codex 0.162.1 のソースで確認しました（0.167 / 0.169 のソースは�
 
 - 手元の対話的な `codex` は、機能 `daemon_auto_start`（既定で有効）があると共有のデーモンにつなぎます。デーモンが動いていればそれにつなぐので、そこで始めたセッションのコマンドはユニットの環境で動きます。
 - デーモンが動いていないと、`codex` は自分のシェルの環境とセッションの cgroup でデーモンを起動します。`settings.json` の `remoteControlEnabled` が true なら、remote control 付きになります。見張りがこれを見つけ、5 分以内にユニットの中で起動し直します。
-- `--no-daemon` を付けて起動した `codex` は、デーモンを使いません。
+- `--no-daemon` を付けて起動した `codex` は、デーモンを使いません。シェルの環境のまま動きます。
+- 見張りと `ExecStartPre` が扱うのは、この `~/.codex` のデーモン（`~/.codex/packages/` の下のバイナリで動くもの）だけです。別の `CODEX_HOME` のデーモンには触れません。
+- 見張りは、自動更新のプロセスを見つけるとそれを止めてログに残します。ユニットは再起動しません。
+
+#### 手元のセッションへの影響
+
+デーモンが動いている間は、手元の `codex`（`--no-daemon` なし）もデーモンにつなぎます。そのため、手元で始めたセッションのコマンドも、シェルではなくユニットの環境で動きます。
+
+- `GITHUB_TOKEN` はありません。`gh` は `~/.config/gh/hosts.yml` の認証で動きます。
+- 転送された SSH エージェントはありません。git は pro-dev 自身の鍵（`~/.ssh`）を使います。
+- `CLAUDE_CODE_*` と `HERDR_*` もありません。
+- シェルの環境が必要なときは、`codex --no-daemon` で起動します。
