@@ -27,12 +27,17 @@
 include_recipe "../cookbooks/functions/default"
 
 # pro-dev specifics. Pin tailscale identity to /tailscale/pro-dev-auth-key.
+# codex_cli.remote_control: keep Codex remote control (ChatGPT app access to
+# ~/.codex) running through systemd user units -- pro-dev only; see
+# cookbooks/codex-cli/README.md. Set here, before lxc-dev-workstation pulls in
+# roles/llm, because codex-cli reads it at compile time.
 node.reverse_merge!(
   lxc_dev: {
     hostname: "pro-dev",
     tailscale_tag: "tag:dev-host",
     tailscale_ssm_key: "/tailscale/pro-dev-auth-key",
   },
+  codex_cli: { remote_control: true },
 )
 
 include_cookbook "lxc-dev-workstation"

@@ -1,0 +1,45 @@
+[Unit]
+Description=Codex app-server daemon with remote control (ChatGPT app access to ~/.codex)
+Documentation=https://github.com/shin1ohno/setup/blob/main/cookbooks/codex-cli/README.md
+# The owner's off switch. While this file exists the unit does not start, the
+# watchdog timer does nothing, and the setup apply disables both units instead
+# of enabling them.
+ConditionPathExists=!%h/.config/codex-remote-control.disabled
+
+[Service]
+# `codex remote-control start` launches the daemon in the background and
+# returns. Its children stay in this unit's cgroup, so RemainAfterExit keeps
+# the unit active while they run and `stop` / `restart` reach them.
+Type=oneshot
+RemainAfterExit=yes
+# Accepted for Type=oneshot (systemd 257 rejects only always / on-success).
+# It retries a failed start; a crash after a successful start is the watchdog
+# timer's job (codex-remote-control-watch.timer).
+Restart=on-failure
+RestartSec=30
+# The login shell's PATH (setup's profile.d: bun, mise shims, go, cargo, pyenv,
+# gcloud, setup bin, rbenv, ~/.local/bin, ghcup), so commands a phone session
+# runs find the same tools as a terminal. No secrets live in the unit.
+Environment=PATH=%h/.bun/bin:%h/.local/share/mise/shims:%h/go/bin:%h/.cargo/bin:%h/.pyenv/shims:%h/.pyenv/bin:%h/.setup_shin1ohno/gcloud-cli/google-cloud-sdk/bin:%h/.setup_shin1ohno/bin:%h/.setup_shin1ohno/rbenv:%h/.rbenv/shims:%h/.local/bin:%h/.cabal/bin:%h/.ghcup/bin:/usr/local/bin:/usr/bin:/bin
+# The user manager exports the forwarded agent sockets; the daemon must not
+# inherit them. `guard run` below also strips *TOKEN* / *SECRET* /
+# CLAUDE_CODE_* / HERDR_* names in case someone imports a shell environment
+# into the manager.
+UnsetEnvironment=SSH_AUTH_SOCK GPG_AGENT_INFO
+# A user manager cannot wait for network-online.target. Wait for the relay to
+# resolve (bounded at 120 s); the leading "-" keeps a DNS failure from failing
+# the start, because the daemon reconnects on its own.
+ExecStartPre=-/bin/sh %h/.local/share/codex-remote-control/guard.sh wait-dns
+# A daemon (or its updater) started from a shell -- an interactive `codex`
+# auto-starts one while none runs -- carries that shell's environment. Stop
+# any outside this unit so the start below launches it here.
+ExecStartPre=/bin/sh %h/.local/share/codex-remote-control/guard.sh evict
+ExecStart=/bin/sh %h/.local/share/codex-remote-control/guard.sh run %h/.local/share/mise/shims/codex remote-control start
+ExecStop=-/bin/sh %h/.local/share/codex-remote-control/guard.sh run %h/.local/share/mise/shims/codex remote-control stop
+ExecStop=-/bin/sh %h/.local/share/codex-remote-control/guard.sh stop-updater
+# DNS wait 120 s + eviction (Codex's own stop grace is up to 60 s) + start.
+TimeoutStartSec=420
+TimeoutStopSec=150
+
+[Install]
+WantedBy=default.target
