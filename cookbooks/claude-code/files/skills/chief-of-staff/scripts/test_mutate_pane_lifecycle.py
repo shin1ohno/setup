@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Remove one lifecycle guard at a time; require its regression test to fail.
 
-Usage: python3 mutate_pane_lifecycle.py --output /absolute/private/evidence
+Usage: python3 test_mutate_pane_lifecycle.py --output /absolute/private/evidence
 Copies only tasks.py and its standalone test module into output-owned folders.
 Never operates on a real ledger or Herdr server.
 """
