@@ -98,8 +98,10 @@ the worker is settled. First re-read `hc get --json <terminal>` and verify its
 completion evidence and absence of outstanding background work as well as its
 recorded identity, state and ownership; never kill a working or ambiguous worker.
 An orphan's owner terminal must be absent on the same core/namespace, not merely
-idle. Never touch another live controller's terminals. Record helper terminals
-on the attempt as well. The Herdr 1 `closable` command does not inspect hc;
+idle. Never touch another live controller's terminals. Save each hc helper's
+creation response and terminal ID in the attempt's artifact directory and
+notify the controller for manual cleanup; `helper-open` and `helper` are for
+local Herdr 1 panes, not hc terminals. The Herdr 1 `closable` command does not inspect hc;
 apply these checks manually using hc's actual live fields.
 
 A later correction reserves `attempt --reuse-agent` with the same recorded

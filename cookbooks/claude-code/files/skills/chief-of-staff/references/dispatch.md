@@ -502,8 +502,9 @@ it saves the creation receipt. After launching an authorized agent, record it wi
 `tasks.py helper <task-id> --owner <controller-owner-key> --pane <returned-pane>
 --terminal-id <returned-terminal-id> --kind <claude|codex|shell>`; agent helpers
 also require `--agent-name <live-name>`. Never register an existing unrelated
-pane as a helper. Record hc terminal identities likewise
-and notify the controller for manual hc cleanup. Never leave unrecorded helpers.
+pane as a helper. For hc, save the creation response and terminal ID in a task
+artifact and notify the controller for manual cleanup; do not use the Herdr 1
+helper-open/helper commands for hc terminals. Never leave unrecorded helpers.
 Close only settled panes you created, never
 the controller pane and never your own worker pane (the controller closes that
 after envelope/observe, on needs-user, or at accepted/cancelled; a later
