@@ -363,7 +363,7 @@ else: sys.exit(17)
 
     def test_new_attempt_discards_previous_settle(self):
         def run(*args): return tasks.run(tasks.parser().parse_args(args),self.root)
-        t=run('new','--owner',self.owner,'--cwd',str(self.root),'--topic','fixture',
+        t=run('new','--linear-waiver','Owner fixture waiver','--owner',self.owner,'--cwd',str(self.root),'--topic','fixture',
               '--scope','test','--acceptance','works')['task']['id']
         common=['--owner',self.owner,'--kind','codex','--model','model','--effort','low',
                 '--profile','common','--reason','test']
@@ -397,7 +397,7 @@ else: sys.exit(17)
 
     def test_plan_validation_at_reservation_and_launch(self):
         def run(*args): return tasks.run(tasks.parser().parse_args(args),self.root)
-        t=run('new','--owner',self.owner,'--cwd',str(self.root),'--topic','fixture',
+        t=run('new','--linear-waiver','Owner fixture waiver','--owner',self.owner,'--cwd',str(self.root),'--topic','fixture',
               '--scope','test','--acceptance','works')['task']['id']
         plan=self.root/'plan.json'
         good=dict(route='herdr1',harness='codex',launch_ready=True,
