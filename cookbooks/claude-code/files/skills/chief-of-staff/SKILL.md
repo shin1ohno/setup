@@ -242,8 +242,10 @@ terminal identity still matches, and its owner is this controller or a proven
 orphan (the owner pane is absent on the same socket). Never close a working
 agent, another live controller's pane, or an ambiguous/unrecorded pane.
 If the worker is still working, leave it and recheck on the next wake.
-Use the read-only `tasks.py closable` sweep in dispatch.md, including helpers
-created through `helper-open`. It previews safe identity adoption for old
+Use the read-only `tasks.py closable` sweep in dispatch.md, including agent helpers
+created through `helper-open` and registered with `helper`. Shell helpers are
+excluded; the worker must verify and close its own shell helpers explicitly.
+The sweep previews safe identity adoption for old
 records; only explicit `--adopt` persists it. An agent name or kind mismatch
 never authorizes adoption. needs-user also requires the explicit `settle`
 record and session UUID; cancelled does not require model observation.
