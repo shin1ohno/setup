@@ -8,7 +8,7 @@
   end
 end
 
-%w(SKILL.md agents/openai.yaml references/dispatch.md references/hc-route.md references/linear.md scripts/tasks.py).each do |file_name|
+%w(SKILL.md agents/openai.yaml references/dispatch.md references/hc-route.md references/linear.md references/supervision-handoff.md scripts/takeover.py scripts/tasks.py).each do |file_name|
   remote_file "#{node[:setup][:home]}/.agents/skills/chief-of-staff/#{file_name}" do
     source "files/skills/chief-of-staff/#{file_name}"
     owner node[:setup][:user]
