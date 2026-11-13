@@ -38,9 +38,11 @@ All commands produce JSON. `COS_STATE_DIR` overrides the default
 uploaded. Store enough context to resume, but never copy secrets into briefs.
 
 ```text
+# First resolve the project and duplicate-check/create parent and child (linear.md).
 python3 <skill-dir>/scripts/tasks.py new --owner <socket#controller-pane> \
   --topic <topic> --cwd <absolute-dir> --scope <authorized-scope> \
-  --acceptance <criterion> [--acceptance <criterion> ...]
+  --acceptance <criterion> [--acceptance <criterion> ...] \
+  --linear-child <child-identifier> --linear-parent <parent-identifier>
 # Prepare the launch plan; see "Worker profiles and launch plans".
 python3 <setup-checkout>/bin/worker-profile prepare --harness codex --route <hc|herdr1> --profile <profile> ...
 # When using the validated plan, record its path on the reserved attempt.
@@ -105,6 +107,12 @@ write the full answer and test evidence as task-local or checkout artifacts,
 then return only the bounded envelope. `bind` records the returned pane before
 `agent start`; if an interrupted split has no recorded ID, inspect topology
 and refuse to guess or blindly create another pane.
+
+Follow [linear.md](linear.md) at each state change: Todo at creation, In Progress
+at reservation/start/retry, In Review on envelope/PR review, a question comment
+without changing state at needs-user, and a closing comment plus confirmed and
+recorded Done/Canceled before accepted/cancelled. Run `linear-audit` at each
+report/handoff; close the parent after all children and the owner report.
 
 Acceptance is three steps, never one shell command. (1) Run the independent
 check and save its output to a file. (2) Record it with `check`, which stores

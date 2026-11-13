@@ -154,6 +154,12 @@ Dir.mktmpdir("distribution-graph-") do |home|
   end
   raise "cloud missed agent definitions" unless cloud.rows.any? { |_, name, _| name.include?("/.claude/agents/") }
   raise "cloud missed shared skill" unless cloud.rows.any? { |_, name, _| name.include?("chief-of-staff/SKILL.md") }
+  [current, cloud].each do |graph|
+    raise "chief-of-staff Linear reference missing" unless graph.rows.any? { |kind, name, attributes|
+      kind == "remote_file" && name.end_with?("chief-of-staff/references/linear.md") &&
+        attributes["source"] == ["files/skills/chief-of-staff/references/linear.md"]
+    }
+  end
   puts "Local resource declarations match the pre-split fixture (including every hook) plus the #{profiles.rows.size} worker-profile resources."
   puts "Cloud declares only instruction, skill and agent distribution."
 end

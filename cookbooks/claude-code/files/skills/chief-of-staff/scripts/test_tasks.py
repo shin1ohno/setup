@@ -22,6 +22,8 @@ class TasksTest(unittest.TestCase):
                               "--acceptance", "Actual test passes", "--contract", "legacy")["task"]["id"]
 
     def call(self, *args, ok=True):
+        if args[0] == "new":
+            args += ("--linear-waiver", "Owner waived Linear for synthetic fixture")
         if args[0] == "new" and "--contract" not in args:
             args += ("--contract", "legacy")
         result = subprocess.run([sys.executable, str(SCRIPT), *args], env=self.env,

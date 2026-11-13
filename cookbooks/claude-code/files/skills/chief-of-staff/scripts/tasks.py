@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from urllib.parse import urlsplit
 
 
 TRANSITIONS = {
@@ -62,7 +63,7 @@ def task_path(root, task_id):
 
 
 def read_task(root, task_id):
-    return json.loads(task_path(root, task_id).read_text(encoding="utf-8"))
+    return normalize_linear(json.loads(task_path(root, task_id).read_text(encoding="utf-8")))
 
 
 def save_task(root, task):
@@ -113,6 +114,28 @@ def parser():
     new.add_argument("--max-attempts", type=positive, default=3)
     new.add_argument("--fresh-worker", action="store_true",
                      help="User requires a fresh agent and pane; prohibit worker reuse")
+    new.add_argument("--linear-child", type=nonempty)
+    new.add_argument("--linear-parent", type=nonempty)
+    new.add_argument("--linear-waiver", type=nonempty, help="Explicit owner waiver reason")
+    for name in ("project-get", "project-set"):
+        cmd = sub.add_parser(name, help="Offline repository/project mapping")
+        cmd.add_argument("--cwd", required=True, type=Path)
+        if name == "project-set":
+            for field in ("team", "project", "answered-by"):
+                cmd.add_argument("--" + field, required=True, type=nonempty)
+    audit = sub.add_parser("linear-audit", help="Read-only recorded-state reconciliation")
+    audit.add_argument("--owner", required=True, type=nonempty)
+    for name in ("linear-attach", "linear-state"):
+        cmd = sub.add_parser(name)
+        cmd.add_argument("task_id")
+        cmd.add_argument("--owner", required=True, type=nonempty)
+        cmd.add_argument("--note", required=True, type=nonempty)
+        if name == "linear-attach":
+            cmd.add_argument("--child", required=True, type=nonempty)
+            cmd.add_argument("--parent", required=True, type=nonempty)
+        else:
+            cmd.add_argument("--parent", action="store_true")
+            cmd.add_argument("--state", required=True, choices=LINEAR_STATES)
     ls = sub.add_parser("list", help="List only this controller's tasks")
     ls.add_argument("--owner", required=True, type=nonempty)
     ls.add_argument("--all", action="store_true", help="Include terminal tasks")
@@ -618,13 +641,172 @@ def closable(args, root):
             "note": "Recheck owner, terminal identity and idle/done immediately before closing."}
 
 
+LINEAR_STATES = ("Todo", "In Progress", "In Review", "Done", "Canceled")
+LINEAR_REQUIRED = {"queued": "Todo", "starting": "In Progress", "running": "In Progress",
+                   "retry": "In Progress", "reviewing": "In Review",
+                   "accepted": "Done", "cancelled": "Canceled"}
+
+
+def repository_key(cwd):
+    """Read local Git metadata only; never resolve URLs over the network."""
+    cwd = cwd.expanduser().resolve()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(cwd), *args], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    common = Path(git("rev-parse", "--git-common-dir"))
+    if not common.is_absolute():
+        common = cwd / common
+    remotes = git("remote").splitlines()
+    if not remotes:
+        return "local:" + str(common.resolve())
+    remote = git("remote", "get-url", "origin" if "origin" in remotes else sorted(remotes)[0])
+    user, port, scheme = "", None, "ssh"
+    if "://" not in remote and re.match(r"(?:[^/@:]+@)?[^/:]+:.+", remote):
+        host, path = remote.split(":", 1)
+        if "@" in host:
+            user, host = host.rsplit("@", 1)
+        host = host.lower()
+        path_kind = "absolute" if path.startswith("/") else "home"
+    elif "://" in remote:
+        url = urlsplit(remote)
+        if url.scheme == "file":
+            return "local:" + str(Path(url.path).resolve())
+        scheme, host, path, port = url.scheme, (url.hostname or "").lower(), url.path, url.port
+        user = url.username or "" if scheme == "ssh" else ""
+        path_kind = "absolute"
+    else:
+        base = common.resolve() if git("rev-parse", "--is-bare-repository") == "true" else Path(git("rev-parse", "--show-toplevel"))
+        return "local:" + str((base / remote).resolve())
+    default_port = {"ssh": 22, "https": 443, "http": 80}.get(scheme)
+    if port == default_port:
+        port = None
+    path = path.strip("/")
+    if host == "github.com" and scheme in {"ssh", "https", "http"} and port is None:
+        return "remote:github.com/" + path.removesuffix(".git").lower()
+    authority = (user + "@" if user else "") + host + (":" + str(port) if port else "")
+    return "remote:" + scheme + "://" + authority + "/" + path_kind + "/" + path
+
+
+def read_records(root, name):
+    path = root / name
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def save_records(root, name, records):
+    fd, temporary = tempfile.mkstemp(prefix=".linear-", dir=root)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(records, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, root / name)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def issue_identifier(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*-[1-9][0-9]*", value):
+        raise ValueError("Linear identifier must be a team key and positive issue number (SH1-173)")
+    return value.upper()
+
+
+def normalize_linear(task):
+    if task.get("linear"):
+        for key in ("child", "parent"):
+            task["linear"][key] = issue_identifier(task["linear"][key])
+    return task
+
+
+def ledger_tasks(root):
+    return [normalize_linear(json.loads(p.read_text())) for p in sorted(root.glob("*/task.json"))]
+
+
+def parent_records(root):
+    records = {}
+    for identifier, record in read_records(root, "linear-parents.json").items():
+        identifier = issue_identifier(identifier)
+        if identifier in records:
+            raise ValueError("duplicate normalized Linear parent records; reconcile before updating")
+        records[identifier] = record
+    return records
+
+
+def linear_closed(task):
+    return task["state"] in TERMINAL and task["linear"]["state"] == LINEAR_REQUIRED[task["state"]]
+
+
+def waiver_records(tasks, owner):
+    return [{"task_id": t["id"], "topic": t["topic"], "state": t["state"],
+             "reason": e["linear_waiver"]["reason"], "at": e["at"]}
+            for t in tasks if t["owner"] == owner
+            for e in t.get("history", []) if "linear_waiver" in e]
+
+
+def attach_linear(root, task, child, parent):
+    child, parent = issue_identifier(child), issue_identifier(parent)
+    if child == parent:
+        raise ValueError("Linear child must differ from parent")
+    if task.get("linear"):
+        raise ValueError("Linear identifiers are already attached")
+    for other in ledger_tasks(root):
+        link = other.get("linear", {})
+        if link.get("child") == child:
+            raise ValueError("Linear child already belongs to a task")
+        if link.get("child") == parent or link.get("parent") == child:
+            raise ValueError("Linear parent and child roles must not overlap")
+    task["linear"] = {"child": child, "parent": parent, "state": None, "history": []}
+
+
+def linear_audit(root, owner):
+    tasks = ledger_tasks(root)
+    tracked = [t for t in tasks if t.get("linear")]
+    owned = [t for t in tracked if t["owner"] == owner]
+    lag = []
+    for task in owned:
+        expected = LINEAR_REQUIRED.get(task["state"])
+        paused_invalid = task["state"] == "needs-user" and task["linear"]["state"] not in LINEAR_STATES[:3]
+        if paused_invalid or (expected and task["linear"]["state"] != expected):
+            lag.append({"task_id": task["id"], "child": task["linear"]["child"],
+                        "recorded": task["linear"]["state"], "required": expected or "open"})
+    parents = parent_records(root)
+    overdue = []
+    for parent in sorted({t["linear"]["parent"] for t in owned}):
+        children = [t for t in tracked if t["linear"]["parent"] == parent]
+        state = parents.get(parent, {}).get("state")
+        all_closed = all(linear_closed(t) for t in children)
+        parent_closed = state in {"Done", "Canceled"}
+        if all_closed != parent_closed:
+            overdue.append({"parent": parent, "recorded": state,
+                            "reason": "parent-open" if all_closed else "open-children",
+                            "children": [t["id"] for t in children]})
+    return {"tasks": lag, "parents": overdue, "waivers": waiver_records(tasks, owner)}
+
+
 def run(args, root):
+    if args.command in {"project-get", "project-set"}:
+        key = repository_key(args.cwd)
+        mappings = read_records(root, "linear-projects.json")
+        if args.command == "project-set":
+            previous = mappings.get(key, {})
+            record = {"team": args.team, "project": args.project,
+                      "answered_by": args.answered_by, "answered_at": now()}
+            record["history"] = previous.get("history", []) + [dict(record)]
+            mappings[key] = record
+            save_records(root, "linear-projects.json", mappings)
+        return {"repository": key, "mapping": mappings.get(key)}
+    if args.command == "linear-audit":
+        return linear_audit(root, args.owner)
     if args.command == "closable":
         return closable(args, root)
     if args.command == "new":
         cwd = Path(args.cwd).expanduser()
         if not cwd.is_absolute() or not cwd.is_dir():
             raise ValueError("cwd must be an existing absolute directory")
+        if not ((args.linear_child and args.linear_parent and not args.linear_waiver)
+                or (args.linear_waiver and not args.linear_child and not args.linear_parent)):
+            raise ValueError("new requires Linear child and parent or an explicit owner waiver")
         task_id = uuid.uuid4().hex[:16]
         task = {
             "id": task_id, "owner": args.owner, "topic": args.topic,
@@ -634,13 +816,17 @@ def run(args, root):
             "fresh_worker": args.fresh_worker, "contract": args.contract,
             "created_at": now(), "last_report": None, "report_pending": False,
         }
+        if args.linear_child:
+            attach_linear(root, task, args.linear_child, args.linear_parent)
         event(task, "Task created")
+        if args.linear_waiver:
+            task["history"][-1]["linear_waiver"] = {
+                "owner": args.owner, "reason": args.linear_waiver}
         save_task(root, task)
         return {"task": task, "directory": str(task_path(root, task_id).parent)}
     if args.command == "list":
-        tasks = [json.loads(path.read_text(encoding="utf-8"))
-                 for path in sorted(root.glob("*/task.json"))]
-        return {"tasks": [task for task in tasks if task["owner"] == args.owner
+        tasks = ledger_tasks(root)
+        return {"waivers": waiver_records(tasks, args.owner), "tasks": [task for task in tasks if task["owner"] == args.owner
                           and (args.all or task["state"] not in TERMINAL
                                or task.get("report_pending", True))]}
 
@@ -650,6 +836,31 @@ def run(args, root):
     if (args.owner and args.owner != task["owner"]) or (strict and args.command != "show" and not args.owner):
         raise ValueError("mutation requires this task's verified controller owner")
     if args.command == "show":
+        return {"task": task}
+    if args.command == "linear-attach":
+        attach_linear(root, task, args.child, args.parent)
+        event(task, "Linear attached: " + args.note)
+        save_task(root, task)
+        return {"task": task}
+    if args.command == "linear-state":
+        if not task.get("linear"):
+            raise ValueError("task has no Linear identifiers")
+        record = {"state": args.state, "at": now(), "owner": args.owner, "note": args.note}
+        if args.parent:
+            children = [t for t in ledger_tasks(root)
+                        if t.get("linear", {}).get("parent") == task["linear"]["parent"]]
+            if args.state in {"Done", "Canceled"} and not all(linear_closed(t) for t in children):
+                raise ValueError("Linear parent cannot close while a known child is open")
+            parents = parent_records(root)
+            parent = parents.setdefault(task["linear"]["parent"], {"history": []})
+            parent["state"] = args.state
+            parent["history"].append(record)
+            save_records(root, "linear-parents.json", parents)
+        else:
+            task["linear"]["state"] = args.state
+            task["linear"]["history"].append(record)
+        event(task, "Linear " + ("parent " if args.parent else "child ") + args.state + ": " + args.note)
+        save_task(root, task)
         return {"task": task}
     if args.command == "launch-command":
         attempt = task["attempts"][-1]
@@ -967,6 +1178,10 @@ def run(args, root):
               ": " + args.note, [path])
         result["check"] = record
     elif args.command == "update":
+        if task.get("linear") and args.state == "accepted" and task["linear"]["state"] != "Done":
+            raise ValueError("Linear Done must be recorded before accepted")
+        if task.get("linear") and args.state == "cancelled" and task["linear"]["state"] != "Canceled":
+            raise ValueError("Linear Canceled must be recorded before cancelled")
         if args.supervision_paused and args.state != "needs-user":
             raise ValueError("--supervision-paused applies only to needs-user")
         if args.state == "needs-user":
@@ -1034,7 +1249,9 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         root = root_dir()
-        if args.command == "closable" and not args.adopt:
+        if args.command in {"linear-audit", "project-get"} and not (root / ".lock").exists():
+            result = run(args, root)
+        elif args.command in {"linear-audit", "project-get"} or (args.command == "closable" and not args.adopt):
             # Even chmod/open-for-write of .lock is forbidden for a read-only sweep.
             with (root / ".lock").open("r") as lock:
                 fcntl.flock(lock, fcntl.LOCK_SH)
