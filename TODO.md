@@ -504,6 +504,46 @@ opens 8 issues, which close again on the next cycle.
   Usage" alert was current to the minute on 2026-09-22), so staleness can be
   detected without asking Kibana. Delete this entry in the resolving commit.
 
+## mcp.ohno.be opens a by-design TLS-expiry self-heal issue every 60 days (Low)
+
+The Kibana rule "Uptime TLS cert expiry (Phase 2 liveness)"
+(`xpack.uptime.alerts.tlsCertificate`, created by
+`cookbooks/lxc-kibana/files/setup-alerting.sh` with `params: {}`) takes its
+threshold from the space-wide Uptime setting `certExpirationThreshold: 30`
+(`GET /api/uptime/settings` on Kibana 9.4.2). certbot 2.6.0 on the EC2 TLS
+terminator (`nrt-subnet-router`) renews at its default `renew_before_expiry` of
+30 days. Both windows open at the same instant, so every 90-day certificate
+opens one self-heal issue that lives from the boundary until the next
+`certbot-renew.timer` run (00:00 / 12:00 UTC plus up to 60 min random delay)
+and one more hourly rule evaluation.
+
+- **Observed twice**: #988 (fired 2026-09-13 13:28Z, renewed 09-14 00:19Z,
+  ES key resolved 01:30Z) and #1192 (fired 2026-11-12 23:47Z, certbot
+  `all renewals succeeded` at 11-13 00:27:45Z; the 00:47Z rule run still
+  reported the old YE1 cert). Next boundary: 2027-01-11 23:29Z (notAfter
+  2027-02-10 23:29:11Z minus 30 days).
+- **Cost**: one issue per renewal, open for about two hours. For #1192 the
+  resolve loop started four runs; the first three ended at the runner's
+  1800 s timeout while waiting for the hourly rule to clear. Renewal itself
+  is healthy (ACME account present, `authenticator = webroot`, conf version
+  matches the host's certbot), so there is no outage risk behind the alert.
+- **Why the loop does not fix it**: both fixes need an owner decision.
+  (A) Lower the alert threshold, e.g. to 21 days. Nothing in the cookbook
+  manages `certExpirationThreshold` today and `setup-alerting.sh` is
+  create-only, so this needs a converge step (`PUT /api/uptime/settings`, which
+  applies to every TLS monitor) or a per-rule `params.certExpirationThreshold`
+  with an update path. Whether the legacy rule type honours the per-rule param
+  on 9.4.2 is unverified. A 21-day threshold still leaves 18 certbot attempts
+  between the renewal window opening and the alert.
+  (B) Renew earlier on the EC2 side (`renew_before_expiry = 35 days` in the
+  renewal conf written by home-monitor `scripts/tailscale-setup/02-tls.sh`).
+  This is home-monitor terraform territory, outside the self-heal envelope, and
+  covers only this certificate.
+- **First step**: choose A or B. For A, first confirm on live Kibana whether
+  the rule accepts `params.certExpirationThreshold`; if it does, set it there
+  (narrowest blast radius) and teach `setup-alerting.sh` to update an existing
+  rule's params. Delete this entry in the resolving commit.
+
 ## Elastic CA rotation is not detected by the cert skip_if guards (Medium)
 
 The content-aware `skip_if` migration (PR "content-aware skip_if") changed the
