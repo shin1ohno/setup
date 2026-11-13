@@ -40,7 +40,8 @@ environment is never a fallback. If neither proof verifies, dispatch is
 blocked. `prepare`/`verify` are Herdr 1 Codex visual proof, not an hc fallback.
 
 Before dispatch, the controller may inspect only skills, routing and capability,
-Herdr context/topology, and its ledger. Do not investigate the task repository,
+Herdr context/topology, its ledger, and Linear routing/tracking metadata
+([references/linear.md](references/linear.md)). Do not investigate the task repository,
 connected sources, or implement the task before a worker receives the brief.
 The worker probes missing facts. Controller review after delivery remains allowed.
 If the user requests a new agent or separate pane, create a fresh pane and start
@@ -56,6 +57,12 @@ judge quality, schedule itself, or send notifications.
 For the owner-approved Herdr 2 (`hc`) route, read [references/hc-route.md](references/hc-route.md) first.
 
 ## Intake and routing
+
+For new work, follow [references/linear.md](references/linear.md): resolve the
+repository's saved project mapping, asking the owner only when unmapped; check
+for duplicates, then open one parent per owner request and one child per ledger
+task at `new`, before reserving its attempt. Never use the `agent` label. Do not
+backfill earlier work. Only an explicit owner waiver permits untracked new work.
 
 For each new topic, extract the desired outcome, actual working directory,
 constraints/authorization, output destination, and observable acceptance criteria.
@@ -164,6 +171,11 @@ disable a guard, or switch providers to evade an approval rejection. If an
 authorized action is blocked by tool policy, prepare the reviewable result and
 report the exact approval needed. Do not call it a quality failure and retry it.
 
+At each ledger state change, synchronize and fetch the Linear issue, then record
+its logical state with `linear-state` per [references/linear.md](references/linear.md).
+On `needs-user`, keep its state and comment with the question. At every report
+and handoff run `linear-audit`; carry mappings and issue IDs through handoff.
+
 If the user interrupts to add a topic, preserve and reconcile pending tasks on
 the next turn. Across compaction/restart, inspect the ledger **and** Herdr live
 state before sending input. Inspect accepted/cancelled tasks with
@@ -228,7 +240,10 @@ The user may explicitly extend the budget. Do not loop indefinitely, conceal
 failures, or represent partial completion as a pass. Model/permission/cost limits
 do not become solvable just by repeatedly switching providers.
 
-Mark `accepted` only after review passes with recorded evidence. Run the
+Mark `accepted` only after review passes with recorded evidence. First comment
+and confirm the child Done in Linear and record it; cancellation similarly needs
+Canceled. Close the parent after all children close and the owner receives the
+result (Canceled on withdrawal). See [references/linear.md](references/linear.md). Run the
 independent check and save its output, record it with `tasks.py check`, read
 that output and the printed check ID, then run `update --state accepted --check
 <id>` in a later, separate call. Never put the check and the acceptance in one

@@ -27,6 +27,8 @@ class ObserveTest(unittest.TestCase):
         self.evidence.write_text("synthetic test evidence; no real worker")
 
     def call(self, *args, ok=True):
+        if args[0] == "new":
+            args += ("--linear-waiver", "Owner waived Linear for synthetic fixture")
         result = subprocess.run([sys.executable, str(SCRIPT), *args], env=self.env,
                                 text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0 if ok else 1, result.stderr)

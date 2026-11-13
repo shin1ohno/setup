@@ -103,7 +103,7 @@ else: sys.exit(17)
 
     def test_resume_snapshot_new_pane_and_identity_guards(self):
         def run(*args): return tasks.run(tasks.parser().parse_args(args), self.root)
-        t=run('new','--owner',self.owner,'--cwd',str(self.root),'--topic','resume',
+        t=run('new','--linear-waiver','Owner fixture waiver','--owner',self.owner,'--cwd',str(self.root),'--topic','resume',
               '--scope','test','--acceptance','works')['task']['id']
         plan=self.root/'plan.json'
         original=dict(route='herdr1',harness='codex',profile='dev',launch_ready=True,
@@ -254,7 +254,7 @@ else: sys.exit(17)
 
     def test_hc_path_resume_guards_and_unknown_profile(self):
         def run(*args): return tasks.run(tasks.parser().parse_args(args),self.root)
-        t=run('new','--owner',self.owner,'--cwd',str(self.root),'--topic','fixture',
+        t=run('new','--linear-waiver','Owner fixture waiver','--owner',self.owner,'--cwd',str(self.root),'--topic','fixture',
               '--scope','test','--acceptance','works')['task']['id']
         plan=self.root/'hc-plan.json'
         plan.write_text(json.dumps(dict(route='hc',harness='codex',profile='common',
