@@ -91,3 +91,8 @@ execute "generate and deploy codex config.toml" do
   CMD
   user node[:setup][:user]
 end
+
+# Remote control for the ChatGPT app (systemd user units). Does nothing unless
+# the entry recipe sets node[:codex_cli][:remote_control] (pve/lxc-pro-dev.rb
+# only); see remote_control.rb and README.md in this cookbook.
+include_recipe "remote_control"

@@ -1,0 +1,10 @@
+[Unit]
+Description=Restart codex-remote-control.service when its daemon is missing or runs outside it
+ConditionPathExists=!%h/.config/codex-remote-control.disabled
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+UnsetEnvironment=SSH_AUTH_SOCK GPG_AGENT_INFO
+ExecStart=/bin/sh %h/.local/share/codex-remote-control/guard.sh watch
+TimeoutStartSec=120

@@ -637,6 +637,15 @@ jobs:
         # fallback identification, malformed MAC, dry run, ambiguous pi.
         bash cookbooks/mac-block-tracker/test/run-scenarios.sh
 
+    - name: codex remote-control guard and recipe scenarios
+      run: |
+        # The guard script against a fake /proc (cgroup eviction, watchdog,
+        # owner sentinel, environment scrubbing, updater setting merge) and
+        # remote_control.rb rendered in a fixture HOME with a recording
+        # systemctl (no user bus -> WARN + exit 0, converged -> no change,
+        # sentinel -> disable, never enable).
+        bash cookbooks/codex-cli/test/test-remote-control.sh
+
     - name: hr shell function regression suite
       run: |
         # cookbooks/herdr/files/hr.sh is the `hr` session launcher deployed to
