@@ -1,0 +1,14 @@
+[Unit]
+Description=Check the Codex remote-control daemon every 5 minutes
+
+[Timer]
+# Same trigger set as ccs-sweep.timer: first check after boot, first check
+# after a `restart` of the timer, then 5 min after each check finishes
+# (Type=oneshot has no lasting active state for OnUnitActiveSec to count from).
+OnBootSec=5min
+OnActiveSec=5min
+OnUnitInactiveSec=5min
+Unit=codex-remote-control-watch.service
+
+[Install]
+WantedBy=timers.target
