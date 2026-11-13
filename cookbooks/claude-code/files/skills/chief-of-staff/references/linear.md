@@ -37,8 +37,12 @@ particular, the controller records the owner's `shin1ohno/setup` → `setup`
 choice after deployment, using actual team/project IDs.
 
 The key uses the local `origin` remote, or the first sorted remote if no origin
-exists. HTTPS and SSH forms normalize to host/repository without `.git`; GitHub
-case normalizes too. Two checkouts of that remote share a mapping. With no
+exists. GitHub HTTPS/SSH forms and their scheme-specific default ports normalize to
+host/repository without `.git`, case-insensitively. On other hosts, transport,
+SSH username and home-relative versus absolute paths remain distinct: for example
+`git@nas:repos/x.git` is not `ssh://git@nas/repos/x.git`. Non-default ports remain
+part of the key. A relative local-path remote resolves from the repository root,
+not the caller's subdirectory. Two checkouts of that remote share a mapping. With no
 remote, the resolved Git common directory provides a stable key across restarts,
 subdirectories and linked worktrees. Moving a remote-less repository changes
 that path key; reconcile its mapping explicitly. Local metadata inspection for
@@ -68,11 +72,19 @@ python3 "$ledger" linear-state <task-id> --owner <verified-controller-owner> \
   --parent --state 'In Progress' --note <confirmed-parent-update-reference>
 ```
 
-Use consistent workspace issue identifiers (for example `SH1-173`) throughout;
-do not alternate UUIDs and human identifiers. `new` requires both identifiers,
+Use workspace issue identifiers (for example `SH1-173`) throughout. The helper
+accepts a letter-led alphanumeric team key, a hyphen and a positive issue number,
+normalizes case to uppercase and rejects UUIDs, placeholders, whitespace and
+leading-zero numbers. It compares existing records case-insensitively and
+rejects a child being used as a parent or a parent being used as a child. `new` requires both identifiers,
 or `--linear-waiver <explicit-owner-reason>` instead of both. The waiver and
 controller identity are retained in history; it is not an automatic outage
-fallback. A previously created task can be explicitly attached using
+fallback. The ledger cannot prove the reason was written or approved by the owner:
+only the owner's answer through the question tool counts as a waiver. Both
+`list` and `linear-audit` expose a `waivers` list containing task ID, topic, state,
+reason and time, including completed/reported tasks and historical waivers on
+subsequently attached tasks. The controller names each new waiver, its reason
+and the owner's answer in its next report to the owner. A previously created task can be explicitly attached using
 `linear-attach <task-id> --owner <verified-controller-owner> --child <identifier>
 --parent <identifier> --note <reason>`; do not use this to backfill old work.
 Attached identifiers cannot be overwritten and a child cannot belong to two tasks.
@@ -118,7 +130,11 @@ a later call. Cancellation likewise requires a closing comment, confirmed
 Canceled, its record, then the cancelled update. The ledger refuses either
 terminal transition without the matching recorded child close.
 
-Keep the parent In Progress while any child remains open. After all children
+Keep the parent In Progress while any child remains open. The helper refuses
+parent Done or Canceled while any known child (including another controller's
+child) lacks both a terminal ledger state and its matching Linear close. A child
+Done while still reviewing does not count as closed. This gate does not prove
+that the owner has been told the result; the controller must verify that step. After all children
 are closed **and the owner has been told the result**, add its closing summary,
 set/fetch Done and record it with `linear-state ... --parent --state Done` using
 one associated task. If the owner withdraws the request, cancel/close the children,
@@ -131,11 +147,13 @@ success in the closing comment. Parent records and histories live in
 Run `python3 "$ledger" linear-audit --owner <verified-controller-owner>` at every
 report and handoff. It is read-only, makes no network calls and lists owned
 tracked tasks whose recorded logical state differs from the ledger's required
-state (unknown counts as lag). `needs-user` has no required state; inspect its
-question comment separately. It also lists parents with all known children
-terminal/closed but no recorded parent close, including siblings owned by other
-controllers when testing whether all are closed. Unknown parent state counts as
-open. An empty audit proves local records agree, not that Linear agrees: fetch
+state (unknown counts as lag). For `needs-user`, an unknown or closed Linear
+state is a mismatch; any recorded open state is retained. Inspect its question
+comment separately. Parents appear both when all known children are closed but
+the parent is open (`reason: parent-open`), and when the parent is recorded closed
+with an open child (`reason: open-children`). Siblings owned by other controllers
+participate in this check. Unknown parent state counts as open. Waivers are
+listed separately even when there is no state mismatch. An empty audit proves local records agree, not that Linear agrees: fetch
 issues with the connector before declaring reconciliation complete. After owner
 reporting and parent closure, rerun the audit. Do not close a parent before the
 owner report merely to clear that audit entry.

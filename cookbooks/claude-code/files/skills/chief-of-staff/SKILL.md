@@ -62,7 +62,8 @@ For new work, follow [references/linear.md](references/linear.md): resolve the
 repository's saved project mapping, asking the owner only when unmapped; check
 for duplicates, then open one parent per owner request and one child per ledger
 task at `new`, before reserving its attempt. Never use the `agent` label. Do not
-backfill earlier work. Only an explicit owner waiver permits untracked new work.
+backfill earlier work. Only the owner's question-tool answer permits a waiver for untracked new work;
+name each waiver and reason in the next owner report (`list`/`linear-audit` expose them).
 
 For each new topic, extract the desired outcome, actual working directory,
 constraints/authorization, output destination, and observable acceptance criteria.
