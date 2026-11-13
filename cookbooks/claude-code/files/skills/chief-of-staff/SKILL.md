@@ -101,7 +101,9 @@ controller pane and the Herdr CLI (Herdr 1 `herdr` or Herdr 2 `hc`, chosen
 from where that pane lives; this is not the ledger's `--route` value) so the worker can type a one-line completion or
 question message into it, and tells the worker to close the panes it created
 once it no longer needs them (dispatch.md, "Worker brief"). The controller still
-closes the worker's own pane after acceptance. Every brief also sets File
+closes the worker's own pane after envelope/observe, on needs-user, or at
+accepted/cancelled, once settled; corrections resume its session in a new pane.
+Every brief also sets File
 ownership, Test budget and Pre-approved extensions; the same section says when
 the controller may widen them.
 

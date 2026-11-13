@@ -461,9 +461,15 @@ budget and the reason, and do not widen it until the controller answers.
 
 Close what you open: close every pane you created yourself for this task
 (helper shells, test or log panes) as soon as you no longer need it, after
-reading anything you still need from it. Close only panes you created, never
+reading anything you still need from it. Immediately record every helper with
+`tasks.py helper <task-id> --owner <controller-owner-key> --pane <returned-pane>
+--terminal-id <returned-terminal-id> --kind <claude|codex|shell>`; agent helpers
+also require `--agent-name <live-name>`. Record hc terminal identities likewise
+and notify the controller for manual hc cleanup. Never leave unrecorded helpers.
+Close only settled panes you created, never
 the controller pane and never your own worker pane (the controller closes that
-after acceptance, because a correction may still need it).
+after envelope/observe, on needs-user, or at accepted/cancelled; a later
+correction resumes the same session in a new pane).
 
 Complete the authorized work and perform the relevant checks. Distinguish facts
 from assumptions; report concrete blockers rather than answering permission
@@ -1045,8 +1051,15 @@ python3 "$ledger" update "$task" --owner "$owner" --state accepted --check "$che
 
 ### Cleanup after acceptance
 
-Keep the worker pane and directory until acceptance, as for local workers. The
-following checks the ledger's actual accepted state, closes only the recorded
+Retain the remote artifact directory until acceptance; the settled-pane lifecycle
+above still applies. The local `closable` command deliberately skips remote
+panes: inspect ownership and live state on the selected machine instead.
+The following legacy teardown block is for a recorded workspace that still
+exists after pane cleanup. If closing its last pane already removed that
+workspace, prove absence with a successful complete remote workspace inventory
+and omit the workspace-close line; a failed socket request is not absence.
+Never run workspace close while any contained agent is working or unrecorded.
+The block checks the ledger's actual accepted state, closes only the recorded
 workspace, and only then removes the directory whose creation token matches.
 Any failure stops before subsequent actions. A close timeout needs reconciliation,
 not blind repetition. Compare pre-existing agents by pane/terminal/name (their
