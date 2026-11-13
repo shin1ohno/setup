@@ -165,7 +165,7 @@ class TasksTest(unittest.TestCase):
 
     def plan_file(self, name="plan.json", route="herdr1"):
         path = Path(self.tmp.name) / name
-        path.write_text(json.dumps({"route": route}))
+        path.write_text(json.dumps({"route": route, "harness": "codex", "launch_ready": True}))
         return str(path)
 
     def test_default_route_preserves_legacy_callers(self):

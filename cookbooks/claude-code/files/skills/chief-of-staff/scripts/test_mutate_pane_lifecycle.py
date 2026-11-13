@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Remove one lifecycle guard at a time; require its regression test to fail.
+"""Remove one lifecycle guard at a time; require the full CI suite to fail.
 
 Usage: python3 test_mutate_pane_lifecycle.py --output /absolute/private/evidence
-Copies only tasks.py and its standalone test module into output-owned folders.
+Copies the whole skill and runs the same unittest discovery as CI for every mutant.
+Set TMPDIR to a short writable directory for AF_UNIX tests.
 Never operates on a real ledger or Herdr server.
 """
 import argparse
@@ -11,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -46,6 +48,18 @@ GATES = [
     ('M24', 'closable', 'record is not attempt and not record.get("creation_receipt")', 'test_helper_cannot_claim_existing_pane_or_controller'),
     ('M25', 'run', 'not helper or not helper.get("creation_receipt") or helper["terminal_id"] != args.terminal_id', 'test_helper_cannot_claim_existing_pane_or_controller'),
     ('M26', 'run', 'attempt.get("route") == "hc"', 'test_hc_path_resume_guards_and_unknown_profile'),
+    ('X12-terminal-missing', 'closable', 'not terminal_id', 'full discovery'),
+    ('X15-needsuser-reset', 'run', 'args.state == "needs-user"', 'full discovery'),
+    ('X18-helperopen-socket', 'run', '"socket: " + task["owner"].rpartition("#")[0] not in status.splitlines()', 'full discovery'),
+    ('X19-helperopen-state', 'run', 'task["state"] not in {"starting", "running"}', 'full discovery'),
+    ('X22-settle-state', 'run', 'task["state"] not in {"needs-user", "cancelled"}', 'full discovery'),
+    ('X23-launch-harness', 'run', 'plan.get("harness") != attempt["kind"]', 'full discovery'),
+    ('X24-launch-ready', 'run', 'not plan.get("launch_ready")', 'full discovery'),
+    ('X16-attempt-pop-settled', 'run', 'task.pop("worker_settled", None)', 'full discovery'),
+    ('E03-read-only-lock', 'main', 'args.command == "closable" and not args.adopt', 'full discovery'),
+    ('N1-budget-reset', 'run', 'args.state == "retry" and len(task["attempts"]) >= task["max_attempts"]', 'full discovery'),
+    ('N3-plan-harness', 'run', 'launch.get("harness") != args.kind', 'full discovery'),
+    ('N3-plan-ready', 'run', 'not launch.get("launch_ready")', 'full discovery'),
 ]
 
 
@@ -55,6 +69,13 @@ def mutated(source, gate):
     target = ast.dump(ast.parse(expression, mode='eval').body, include_attributes=False)
     count = 0
     class Replace(ast.NodeTransformer):
+        def visit_Expr(self, node):
+            nonlocal count
+            if name == "X16-attempt-pop-settled" and ast.dump(node.value, include_attributes=False) == target:
+                count += 1
+                return ast.copy_location(ast.Pass(), node)
+            return self.generic_visit(node)
+
         def visit(self, node):
             nonlocal count
             if name == 'M17':
@@ -66,7 +87,7 @@ def mutated(source, gate):
                     node.value = ast.parse('json.loads(Path(previous["plan"]).read_text())', mode='eval').body
                     return node
                 return super().visit(node)
-            if ast.dump(node, include_attributes=False) == target:
+            if name != 'X16-attempt-pop-settled' and ast.dump(node, include_attributes=False) == target:
                 count += 1
                 replacement = ast.Constant(name == 'M12')
                 return ast.copy_location(replacement, node)
@@ -86,16 +107,15 @@ def main():
     args=cli.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     source=Path(__file__).with_name('tasks.py').read_text()
-    tests=Path(__file__).with_name('test_pane_lifecycle.py').read_text()
+    skill=Path(__file__).resolve().parents[1]
     def execute(name, code, test=None):
         directory=args.output/name
-        directory.mkdir()
-        (directory/'tasks.py').write_text(code)
-        (directory/'test_pane_lifecycle.py').write_text(tests)
-        temp=directory/'tmp';temp.mkdir()
-        env=dict(os.environ,TMPDIR=str(temp),PYTHONDONTWRITEBYTECODE='1',COS_STATE_DIR=str(directory/'unused-state'))
-        command=[sys.executable,'-m','unittest','-v','test_pane_lifecycle'+('.LifecycleTest.'+test if test else '')]
-        result=subprocess.run(command,cwd=directory,env=env,text=True,capture_output=True,timeout=120)
+        shutil.copytree(skill, directory/'chief-of-staff', ignore=shutil.ignore_patterns('__pycache__'))
+        scripts=directory/'chief-of-staff'/'scripts'
+        (scripts/'tasks.py').write_text(code)
+        env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',COS_STATE_DIR=str(directory/'unused-state'))
+        command=[sys.executable,'-m','unittest','discover','-s',str(scripts),'-p','test_*.py']
+        result=subprocess.run(command,cwd=directory,env=env,text=True,capture_output=True,timeout=1500)
         output=result.stdout+result.stderr
         (args.output/(name+'.txt')).write_text(output)
         return result.returncode, output
@@ -105,7 +125,7 @@ def main():
         code, output=execute(gate[0],mutated(source,gate),gate[3])
         killed=code!=0 and 'FAILED (' in output and not any(
             text in output for text in ('ImportError:', 'SyntaxError:', 'ModuleNotFoundError:', 'FileNotFoundError:'))
-        return dict(gate=gate[0],test=gate[3],killed=killed,exit_code=code)
+        return dict(gate=gate[0],suite='unittest discover -p test_*.py',killed=killed,exit_code=code)
     with ThreadPoolExecutor(max_workers=4) as pool:
         results=list(pool.map(check,GATES))
     (args.output/'summary.json').write_text(json.dumps(results,indent=2)+'\n')

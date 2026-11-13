@@ -994,6 +994,8 @@ def run(args, root):
             launch = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(launch, dict) or launch.get("route") != args.route:
                 raise ValueError("plan route must match the attempt route")
+            if launch.get("harness") != args.kind or not launch.get("launch_ready"):
+                raise ValueError("attempt requires a ready plan for the requested harness")
         attempt = {
             "number": len(task["attempts"]) + 1,
             "agent": "cos-" + task["id"] + "-" + str(len(task["attempts"]) + 1),
@@ -1219,6 +1221,7 @@ def run(args, root):
         task["state"] = args.state
         if args.state == "retry" and len(task["attempts"]) >= task["max_attempts"]:
             task["state"] = "needs-user"
+            task["worker_settled"] = False
         if task["state"] in TERMINAL or task["state"] == "needs-user":
             task["report_pending"] = True
         event(task, args.note, args.evidence)
