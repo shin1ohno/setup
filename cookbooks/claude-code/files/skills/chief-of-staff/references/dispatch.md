@@ -75,8 +75,10 @@ the file used for a fresh profile launch on the attempt (`show` exposes `route`
 and `plan`); omit it for a fresh default launch, which records `plan: null`.
 The path must be absolute, point to an existing JSON file, and name the same
 route as the attempt. This validation does not prove the plan was executed.
-Reused workers inherit their previous plan, including null; an explicitly
-supplied different plan is refused because reuse does not launch a new process.
+Attempts snapshot the plan JSON and `--launch-options '<JSON argv array>'`
+(additional native CLI options). Reused workers inherit these and the profile;
+a different plan, options, or profile is refused. The snapshot preserves the
+original environment/options even if the plan file later changes.
 
 Legacy `herdr` records, and records without a route, mean an unspecified
 terminal route: either `hc` or `herdr1`. They keep pane/terminal binding and
@@ -92,9 +94,10 @@ new pane returned by a fresh split, even if an old worker is idle.
 Unless the user requests a new agent or separate pane, for a correction to the same settled worker, pass `--reuse-agent` with the same
 kind/model/effort/route: this consumes an attempt but retains its live name and
 launch plan. Pass the recorded `--route`, omit `--plan`, and skip `prepare`.
-Re-bind its
-verified existing pane, skip `agent start`, and prompt that existing name only
-after confirming it is ready. Changing harness/model uses a fresh worker.
+Normally the old pane has already been closed: resume its observed session in a
+new pane using the recipe below. If it is still live, confirm it is the same
+settled worker before prompting it; never run the same session concurrently.
+Changing harness/model/effort uses a fresh worker.
 Keep the JSON output: it includes `agent` and `attempt`. Save the full worker
 brief to a private task-local file under the returned task directory using a
 file-write tool. It is the controller handoff record. For envelope-v1 tasks the worker must
@@ -326,10 +329,79 @@ envelope or delegate an artifact read. The installed Herdr skill's legacy
 file-output fallback remains the rule for old tasks; the new explicit artifact
 contract is an opt-in protocol, not a reason to alter an active legacy session.
 
+## Close and resume workers
+
+After `receive` and `observe`, on entry to `needs-user`, and at `accepted` or
+`cancelled`, close settled worker/helper panes. A working agent always stays
+open until it settles. Bind new Herdr 1 workers with `--terminal-id` from the
+creation response, as well as `--pane`. Register helpers immediately with:
+
+```bash
+python3 "$skill/scripts/tasks.py" helper "$task" --owner "$owner" \
+  --pane "$helper_pane" --terminal-id "$helper_terminal" --kind "$helper_kind" --agent-name "$helper_name"
+python3 "$skill/scripts/tasks.py" closable --owner "$owner" --herdr-session "$s"
+```
+
+`closable` is read-only. It inventories every workspace, checks the session's
+socket against the owner key, and selects only recorded idle/done agents with
+matching terminal IDs and observed model/effort in settled task states.
+It includes this owner's tasks and orphan tasks whose owning controller pane
+is absent on that socket. Another live controller, running task, unknown agent,
+duplicate binding, unrecorded pane, missing identity, hc or remote route is
+never selected. Legacy/route-less records remain readable, but missing proof
+means skip. A returned candidate is not a durable authorization: immediately
+re-run the sweep and `pane get`, check the terminal ID and idle/done state, then
+the controller runs `herdr --session "$s" pane close "$pane"`. On uncertain
+state or changed ownership, skip. Do not close the controller itself.
+
+For a later correction, reserve `attempt --reuse-agent` with the same
+kind/model/effort/profile/route; omit `--plan` and `--launch-options` to inherit
+their recorded snapshot. Create a new pane, bind it with its terminal ID, and
+use the recorded profile plan to launch. Set `skill`, `task`, `owner`, `s`,
+`pane`, and `prompt` (the new correction) first:
+
+```bash
+launch=$(python3 "$skill/scripts/tasks.py" launch-command "$task" \
+  --owner "$owner" --prompt "$prompt") || exit 1
+command=$(printf '%s' "$launch" | jq -r .command)
+herdr --session "$s" pane run "$pane" "$command"
+```
+
+After the agent is ready, assign the attempt's recorded name with
+`herdr --session "$s" agent rename "$pane" "$worker"`. The sweep checks this
+occupant name as well as the terminal ID, so process replacement fails closed.
+Use this same recipe for the initial launch from a ready plan. It runs
+`claude --resume <session-id> <recorded-options> <prompt>` or
+`codex resume <session-id> <recorded-options> <prompt>` on a resumed attempt,
+preserving the plan's `env_unset`, `env_set`, argv, and additional launch
+options. Launch in the task's recorded cwd; no `eval` is needed. For an old
+attempt without a plan snapshot, inspect the original plan/options and use
+those native commands manually; never manufacture a missing session ID.
+
+After at least one new answer, run `observe --transcript <session-log>
+--launch-prompt <original-first-launch-prompt>`. The original launch prompt is
+stored on the prior observation; it identifies the conversation, not the new
+correction. `observe` filters model/effort evidence by the new attempt's start
+time and rejects a different resumed session ID. Inspect the actual log path
+after resuming, rather than assuming a new filename. The Claude haiku/low and
+Codex gpt-6-luna/low canaries on 2026-11-13 both appended new turns to the same
+log file, retained the session UUID and recalled earlier conversation context.
+Save the new envelope,
+observe, receive, and close the settled pane again. hc uses the same session
+resume and observation, then `hc kill` followed by `hc rm` (hc-route.md).
+
 ## Worker brief
 
 Write a real brief, replacing the fields below; include the user's words where
 wording matters. Do not send the controller's entire private conversation.
+Every worker brief must include: "Record every helper pane immediately using
+`tasks.py helper <task-id> --owner <controller-owner> --pane <returned-pane>
+--terminal-id <returned-terminal-id> --kind <claude|codex> --agent-name <live-name>`.
+For raw shells use `--kind shell` without `--agent-name`; for hc record the
+terminal identity and notify the controller for manual hc lifecycle checks.
+The sweep skips shells without evidence of a settled agent; the controller
+checks their actual process state before manual cleanup. Never leave
+unrecorded helper panes."
 Every brief states the envelope limits and the spec-conflict rule in the
 template below. `receive` rejects an envelope over a limit, so a brief that
 omits them invites a rejected report (one brief left out the 12-artifact limit

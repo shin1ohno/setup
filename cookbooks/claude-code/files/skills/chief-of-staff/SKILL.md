@@ -227,10 +227,19 @@ that output and the printed check ID, then run `update --state accepted --check
 shell command; envelope-v1 `accepted` is refused without a passing recorded
 check for the current attempt. Report the
 outcome, artifact/link, the checks that justify it, and any material limitation.
-Close a worker pane you created once its task is `accepted` or `cancelled`.
-Keep it open in every other state, because a same-worker correction may still
-need it. Session logs and artifacts remain after the pane closes. Never close a
-pane you did not create.
+Close the worker pane after receiving its envelope and recording model/effort
+with `observe`, when moving to `needs-user`, and at `accepted` or `cancelled`.
+Always first verify that the recorded worker is settled (`idle`/`done`), its
+terminal identity still matches, and its owner is this controller or a proven
+orphan (the owner pane is absent on the same socket). Never close a working
+agent, another live controller's pane, or an ambiguous/unrecorded pane.
+If the worker is still working, leave it and recheck on the next wake.
+Use the read-only `tasks.py closable` sweep in dispatch.md, including registered
+helper panes. Missing identity evidence means skip, not permission to guess.
+Session logs and artifacts remain. A later correction uses `--reuse-agent` and
+resumes the same conversation by session ID in a new pane, with the recorded
+plan environment/options. The same lifecycle applies to hc terminals (`hc kill`
+then `hc rm`); see hc-route.md and dispatch.md for resume commands.
 Do not merge, deploy, post messages, or spend money beyond the
 authorization in the original task. Prior authorization remains valid.
 An authorized squash merge follows dispatch.md ("Merging").
