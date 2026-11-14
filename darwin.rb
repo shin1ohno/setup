@@ -31,6 +31,7 @@ include_cookbook "macism"
 include_cookbook "altserver"
 include_cookbook "zed"
 include_cookbook "dot-config-zed"
+include_cookbook "herdr-app" # desktop app only; herdr / herdr-core come from roles/core above
 include_cookbook "gpg-backup::darwin"
 include_cookbook "remind"
 include_cookbook "edge-agent::darwin"
