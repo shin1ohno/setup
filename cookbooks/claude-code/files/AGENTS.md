@@ -45,6 +45,7 @@ When responding in Japanese (default), follow these. They override English-rule 
 - Japanese output (style: "Japanese Output Discipline" above). English for git commits, source comments, spec docs. GitHub issue/PR description prose is Japanese too (headings like `## Summary` / `## Test plan` stay English); match repo convention if recent `gh issue/pr list` history is clearly English
 - **AWS/Terraform 作業は `~/.claude/docs/aws-iam.md` を先に読む**（terraform apply は main からのみ、SSM/KMS ゲートは実ホストで probe）
 - **Codebase investigation = local clone**: read another repo's code from a local clone in `~/ManagedProjects/` (`git clone --filter=blob:none`, sparse-checkout OK) with Read/Grep/`git grep`; remote code-search MCPs (Sourcegraph) silently truncate and are not the primary probe. Pass the local path to sub-agents and codex prompts too. Detail: see `~/.claude/docs/agents-md-detail.md#codebase-investigation-local-clone`.
+- **Memory**: at conversation start, recall the memory relevant to the request (skip trivial edits, typos, git operations); save durable conclusions. Verify a store write by fetching the id the write returned, not by searching again; a file memory returns no id, so the file is the record
 - **Every meaningful unit of work**: commit immediately
 
 ## Behavioral Principles
