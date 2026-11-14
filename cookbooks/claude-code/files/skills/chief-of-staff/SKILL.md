@@ -139,6 +139,16 @@ on a transition, and re-arm the wait. When the worker is settled, not blocked, a
 has no envelope, re-arm without treating it as completion. `reason=timeout` means
 "look now", not failure. The loop ends at once while the worker is `blocked`, so
 wait with `--until working --until idle --until done` before re-arming it.
+
+Arm the wait loop in the same turn that dispatches the worker. The same applies
+to every long job the controller starts itself (a gate run, a build): arm a
+`Monitor`, background wait or `ScheduleWakeup` in that turn. A turn that ends
+with an active task or job and no armed watcher is a violation, because a Codex
+worker has no Stop hook and a failed caller verification suppresses its Herdr
+notice, so nothing else wakes the controller. After compaction or a long gap,
+probe the live state first (`herdr agent list`, `ls <task-dir>`, the job's log)
+and update the ledger. Never write "working" or "waiting for the report" from
+memory; state only what the probe just returned, with its time.
 A harness that cannot wake the controller runs the same waits
 in the foreground, dividing the ten minutes among its workers. Monitor all workers
 fairly; one blocked task must not prevent observing the rest. A quiet terminal is
