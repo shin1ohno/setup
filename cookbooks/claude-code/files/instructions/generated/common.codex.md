@@ -1,6 +1,6 @@
 - **Every conversation start**: background memory search + read project `TODO.md`. Skip for trivial edits, typos, git ops
 - **Deferred work / RAG gap → TODO.md** (description, reason, concrete first step; delete in the resolving commit). No-repo / cross-project / personal → `remember(tags:["todo"])` + close condition (work-derived → memory-work, never personal ai-memory); echo a one-line receipt (destination + close condition). Routing: `~/.claude/docs/todo-management.md`
-- **Every conclusion**: save to memory; verify with `recall` on key terms. See `@~/.claude/docs/knowledge-persistence.md`
+- **Every conclusion**: save to memory; verify a store write with `get` on the id the write returned, never with `recall` (recall finds records; it only re-reads what this session just wrote). File memories return no id — the file itself is the record. See `@~/.claude/docs/knowledge-persistence.md`
 ## Behavioral Principles — Claude Code specifics
 
 - **Act / try / propose は harness 既定**（宣言でなく実行、代替比較は結果のみ、明確な問題には具体プラン）
@@ -16,6 +16,7 @@ Read by Claude Code (`@~/.agents/AGENTS.md` import in `~/.claude/CLAUDE.md`) and
 
 - Japanese output (style: "Japanese Output Discipline" above). English for git commits, source comments, spec docs. GitHub issue/PR description prose is Japanese too (headings like `## Summary` / `## Test plan` stay English); match repo convention if recent `gh issue/pr list` history is clearly English
 - **Codebase investigation = local clone**: read another repo's code from a local clone in `~/ManagedProjects/` (`git clone --filter=blob:none`, sparse-checkout OK) with Read/Grep/`git grep`; remote code-search MCPs (Sourcegraph) silently truncate and are not the primary probe. Pass the local path to sub-agents and codex prompts too. Detail: see `~/.claude/docs/agents-md-detail.md#codebase-investigation-local-clone`.
+- **Memory**: at conversation start, recall the memory relevant to the request (skip trivial edits, typos, git operations); save durable conclusions. Verify a store write by fetching the id the write returned, not by searching again; a file memory returns no id, so the file is the record
 ## Behavioral Principles
 
 - **Zero-hedge on observable problems**: observed error/timeout → investigate and report a fix plan. Banned: hedge ("might need"), suggest ("worth considering"), ask ("対応しますか？"), defer ("次回確認できます"). Replace with the action or its result
