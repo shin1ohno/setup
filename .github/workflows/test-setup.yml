@@ -740,6 +740,20 @@ jobs:
         # against the pre-fix backend 17 of the cases fail.
         python3 cookbooks/lxc-es-memory/files/memory-mcp/test_tag_preservation.py
 
+    - name: memory-mcp recall doc_id suite (hit doc_id, whole-document get)
+      run: |
+        # A recall hit carries the write-time doc_id beside the chunk id, and
+        # get(doc_id) returns the whole document instead of chunk 0. Dependency-free
+        # (httpx stubbed). Mirrors ai-memory's test_recall_ids.py (12 cases).
+        python3 cookbooks/lxc-es-memory/files/memory-mcp/test_recall_ids.py
+
+    - name: memory-mcp recall _meta suite (alwaysLoad on recall only, real mcp)
+      run: |
+        # The recall tool advertises _meta {"anthropic/alwaysLoad": true} so Claude
+        # Code does not defer its schema behind ToolSearch; no other tool does.
+        # Imports server.py, so it runs in the venv built by the MANIFEST step.
+        /tmp/memory-mcp-venv/bin/python cookbooks/lxc-es-memory/files/memory-mcp/test_recall_meta.py
+
     - name: memory-mcp client policy suite (CLIENT_POLICY decisions)
       run: |
         # identity.py CLIENT_POLICY decides which tools and datasets a
