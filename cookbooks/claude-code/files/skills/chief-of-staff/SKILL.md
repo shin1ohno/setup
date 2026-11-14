@@ -88,11 +88,15 @@ Start from the work-type table in dispatch.md, then validate host capabilities
 before launch. Every attempt's reason quotes its row in that table and says why
 whenever the row's default harness or profile is not used (dispatch.md, "Model
 and effort per attempt").
+Ambiguous implementation runs as a plan stage and a build stage, two tasks with
+their own Linear children and a controller check between them (dispatch.md,
+"Plan stage and build stage").
 Tune effort before switching model; escalate by failure type
 (wrong with full context: stronger model; skipped files or tests: more effort),
 one step at a time. Use cheaper workers only for independent fan-out or work
-beyond one context window. Use xhigh/max only for work over 30 minutes or with
-evaluation evidence, and group parallel workers by (model, effort).
+beyond one context window. Use xhigh/max only where the table names them (the
+plan stage, exacting work) or for work over 30 minutes or with evaluation
+evidence, and group parallel workers by (model, effort).
 
 ## Dispatch and monitor
 
