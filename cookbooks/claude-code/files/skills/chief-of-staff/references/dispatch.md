@@ -462,6 +462,11 @@ checks these conditions itself. Any other widening, and any change to the task's
 authorized scope or criteria, still needs the owner's answer through the
 question tool.
 
+When the brief carries past context (findings, decisions, known workarounds),
+mark it as already given and tell the worker to recall only for what the brief
+does not give, with search terms that are not already in the brief. SH1-230
+found that recalls in S23, S24 and S28 only repeated what the brief had said.
+
 ```text
 You are the execution worker for task <id>, attempt <n>.
 The Chief of Staff controller handles the user and final acceptance. Do not
@@ -481,6 +486,7 @@ Existing work / previous attempt: <artifact paths, failed criteria and evidence>
 Controller pane: <verified controller pane ID, socket and session from the caller helper>
 Herdr route for notifying the controller: <Herdr 1 (`herdr`) or Herdr 2 (`hc`), chosen from where the controller pane lives. This names the CLI to use, not the ledger's `--route` value>
 Task directory: <absolute task directory>
+Already given (past context in this brief): <findings, decisions, workarounds, or "none">. Recall only for what this brief does not give, using search terms not already in it.
 
 Notify the controller: when you finish (done, failed or blocked) and whenever
 you have a question only the controller or user can answer, send one line with
