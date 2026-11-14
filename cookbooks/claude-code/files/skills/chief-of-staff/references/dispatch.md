@@ -267,11 +267,16 @@ directly, so a worker that writes it while settled cannot be missed, and a turn
 that ends while the worker's own background job runs costs no wake.
 
 ```bash
-end=$((SECONDS+600)); why=timeout
+end=$((SECONDS+600)); why=timeout; idle=0
 while [ $SECONDS -lt $end ]; do
   [ -f "$envelope" ] && { why=envelope; break; }
-  herdr --session "$s" agent get "$worker" >/dev/null 2>&1 || { why=gone; break; }
+  st=$(herdr --session "$s" agent get "$worker" 2>/dev/null) || { why=gone; break; }
+  # Only a plain idle counts. A Claude agent shown as done while its own
+  # background job runs is not idle, and a working agent resets the count.
+  case "$st" in *'"agent_status":"idle"'*) idle=$((idle+1)) ;; *) idle=0 ;; esac
+  [ "$idle" -ge 3 ] && { why=idle; break; }
   herdr --session "$s" agent wait "$worker" --until blocked --timeout 15000 >/dev/null 2>&1 && { why=blocked; break; }
+  [ "$idle" -gt 0 ] && sleep 15
 done
 echo "reason=$why"
 ```
@@ -283,7 +288,18 @@ The last line decides the controller's next step:
 | `reason=envelope` | The attempt's envelope exists | Run `receive`, then review |
 | `reason=blocked` | The worker is at a dialog | Read the dialog and report it; never answer it. Wait in the background with `--until working --until idle --until done`, then re-arm the loop |
 | `reason=gone` | `agent get` failed and no envelope exists | Treat as an abnormal exit: inspect the pane and logs, then repair or report. A failed socket call looks the same, so confirm with a second `agent get` |
+| `reason=idle` | `agent get` showed `idle` on three checks about 30 seconds apart and no envelope exists: a silent stop | Read the pane tail (`agent read "$worker" --source recent-unwrapped --lines 40`) and classify it, see below |
 | `reason=timeout` | Ten minutes passed | Look now, not a failure. Re-check state and re-arm. Without observable progress, run the stall diagnosis in `SKILL.md` |
+
+A silent stop is a worker that ended its turn with no envelope and no dialog
+state. Herdr reports it as `idle`, even when a harness dialog is on screen.
+Classify the tail, then act:
+
+| Tail shows | Next step |
+| --- | --- |
+| An API error: an HTTP 4xx, or `403 Attention Required! \| Cloudflare` | Transient or not, a resume repeated it (2026-11-14, two Claude sessions) and a fresh session worked. Start a fresh worker with a new attempt, never a resume of this session. A second failure on the fresh worker goes to the owner |
+| A rate or usage limit dialog, such as `Approaching rate limits. Switch to ... for lower credit usage?` | It is the harness's own dialog. Report it to the owner with the exact text. The controller never answers it and never switches model or provider to evade it |
+| Anything else (a finished reply with no envelope, a crash text, an empty tail) | Ask the worker once with `agent prompt` to write its envelope, after confirming the text is not a dialog. No reply on the next check means a fresh attempt through the ledger |
 
 Both harnesses use this start step: `agent start` with a first prompt can
 return `timeout` or `agent_name_not_found` while the worker keeps working
@@ -302,8 +318,26 @@ case "$kind" in
 esac
 # Add the task's Claude settings/tools from "Model and effort per attempt".
 # With a ready plan, use its argv after the executable instead of agent_args.
+# After a `pane run <pane> 'unset ...'`, set unset_cmd to that text first. The
+# shell prompt (starship can take seconds) must follow it, or `agent start` fails
+# with `agent_pane_busy` (four times on 2026-11-14).
+if [ -n "${unset_cmd:-}" ]; then
+  for _ in $(seq 1 60); do
+    tail=$(herdr --session "$s" pane read "$pane" --source recent-unwrapped --lines 5 2>/dev/null \
+      | grep -v '^[[:space:]]*$' | tail -n 1)
+    case "$tail" in ''|*"$unset_cmd"*) sleep 1 ;; *) break ;; esac
+  done
+fi
 herdr --session "$s" agent start "$worker" --kind "$kind" --pane "$pane" -- \
-  "${agent_args[@]}" || true
+  "${agent_args[@]}" 2>"${TMPDIR:-/tmp}/start-$worker.err" || {
+  cat "${TMPDIR:-/tmp}/start-$worker.err" >&2
+  # One retry, only on agent_pane_busy: the prompt had not returned yet.
+  if grep -q agent_pane_busy "${TMPDIR:-/tmp}/start-$worker.err"; then
+    sleep 3
+    herdr --session "$s" agent start "$worker" --kind "$kind" --pane "$pane" -- \
+      "${agent_args[@]}" || true
+  fi
+}
 delivered=1
 for _ in $(seq 1 30); do
   if ! herdr --session "$s" agent get "$worker" >/dev/null 2>&1; then
@@ -869,7 +903,9 @@ path depends on the cwd, as today. Codex writes rollouts under
   per `env_set` entry. Herdr 1 has no unset option (`pane split --help` lists
   only `--env`), so before `agent start` clear `env_unset` in the new pane with
   `herdr pane run <returned-id> unset <NAME> ...`, after checking each name
-  against `^[A-Z_][A-Z0-9_]*$`, and wait for its shell prompt. `agent start
+  against `^[A-Z_][A-Z0-9_]*$`, and wait for its shell prompt (set `unset_cmd` to
+  the typed `unset ...` text and the start step waits for the prompt line below
+  it, then retries once on `agent_pane_busy`). `agent start
   --kind <harness>` runs the canonical executable, so pass `argv[1:]` after
   `--`:
 

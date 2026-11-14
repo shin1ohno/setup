@@ -186,10 +186,17 @@ disable a guard, or switch providers to evade an approval rejection. If an
 authorized action is blocked by tool policy, prepare the reviewable result and
 report the exact approval needed. Do not call it a quality failure and retry it.
 
+To continue a worker in a new pane, use `attempt --reuse-agent` and `launch-command`, never
+`bind --rebind`: a rebind records the old session as invalidated for the whole task, so no
+later attempt can be observed and the task can only end `cancelled`.
+
 At each ledger state change, synchronize and fetch the Linear issue, then record
 its logical state with `linear-state` per [references/linear.md](references/linear.md).
 On `needs-user`, keep its state and comment with the question. At every report
 and handoff run `linear-audit`; carry mappings and issue IDs through handoff.
+
+Before a session ends, run `tasks.py linear-audit` and hand over every open parent ticket or
+lagging task explicitly (a parent stayed open for a day during a connector outage).
 
 If the user interrupts to add a topic, preserve and reconcile pending tasks on
 the next turn. Across compaction/restart, inspect the ledger **and** Herdr live
