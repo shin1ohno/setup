@@ -4,7 +4,7 @@
 # Visual style is a tribute to https://github.com/romkatv/powerlevel10k
 #
 # Design goals:
-#   * One jq call, one git call — cheap enough for refreshInterval: 1
+#   * One jq call, one git call — see refreshInterval in default.rb (10 s)
 #   * Pure bash arithmetic (no bc), works on macOS bash 3.2 and Linux
 #   * Everything themeable via ~/.claude/coralline.conf (sourced bash)
 #
@@ -14,7 +14,7 @@ input=$(cat)
 
 # ── local patch (setup) ──────────────────────────────────────────────────────
 # `git status` refreshes and rewrites the index by default, taking .git/index.lock.
-# With refreshInterval:1 this statusline runs `git status` every second in the
+# With a short refreshInterval this statusline runs `git status` every second in the
 # session's cwd; a process killed mid-write orphans .git/index.lock and blocks the
 # user's next `git add/commit`. GIT_OPTIONAL_LOCKS=0 makes every git call here
 # read-only (no index write, no lock). Re-apply if re-vendoring from upstream.
@@ -326,7 +326,13 @@ seg_clock() {
   [ "$VL_CLOCK" = "off" ] && return 0
   local t ap=""
   if [ "$VL_CLOCK" = "24h" ]; then
-    t=$(date '+%H:%M'); [ "$VL_CLOCK_SECONDS" = "1" ] && t=$(date '+%H:%M:%S')
+    # local patch (setup): bash >= 4.2 formats the time with the printf builtin (no
+    # fork + exec of date); older bash (macOS 3.2) falls back to date, same output.
+    if [ "$VL_CLOCK_SECONDS" = "1" ]; then
+      printf -v t '%(%H:%M:%S)T' -1 2>/dev/null || t=$(date '+%H:%M:%S')
+    else
+      printf -v t '%(%H:%M)T' -1 2>/dev/null || t=$(date '+%H:%M')
+    fi
   else
     t=$(date '+%I:%M'); [ "$VL_CLOCK_SECONDS" = "1" ] && t=$(date '+%I:%M:%S')
     ap=" $(LC_ALL=C date '+%p' | tr '[:upper:]' '[:lower:]')"
