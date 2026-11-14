@@ -110,6 +110,26 @@ directory config_dir do
   mode "700"
 end
 
+# recall-at-start config: the SessionStart hook hooks/recall-at-start.rb injects
+# its "recall once before the first reply" paragraph only where this file
+# exists, so it lives with the other personal-host config. Placed on the same
+# hosts as the mirror (pro-dev, mini, neo), independent of the client secret
+# (the hook reads no credential). Work Macs are skipped above and stay silent.
+# Disable: set "enabled" to false or delete the file.
+recall_config_path = "#{target_home}/.claude/recall-at-start.json"
+recall_config = {
+  "enabled" => true,
+  "tool" => "mcp__claude_ai_memory__recall",
+}
+
+file recall_config_path do
+  content JSON.pretty_generate(recall_config) + "
+"
+  owner target_user
+  group target_group
+  mode "644"
+end
+
 # The secret is written by the generator under umask 077 and moved into place
 # with an explicit owner; it never appears in argv (printf is a shell builtin).
 # The placement is `sensitive`: without it mitamae prints the file diff at INFO,
