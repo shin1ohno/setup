@@ -887,6 +887,15 @@ jobs:
         bash cookbooks/claude-code/files/hooks/test-mcp-health-check.sh \
           cookbooks/claude-code/files/hooks/mcp-health-check.rb
 
+    - name: Recall-at-start hook regression suite
+      run: |
+        # hooks/recall-at-start.rb (SessionStart) injects the recall-once
+        # paragraph only when ~/.claude/recall-at-start.json is enabled; every
+        # missing / disabled / malformed config stays silent with exit 0. The
+        # suite also fails when the settings.json registration, the default.rb
+        # distribution or the memory-mirror config placement is removed.
+        bash cookbooks/claude-code/files/hooks/test-recall-at-start.sh           cookbooks/claude-code/files/hooks/recall-at-start.rb
+
     - name: Commit guard hooks regression suite
       run: |
         # hooks/block-co-authored-by.rb and hooks/pre-commit-test.rb find every

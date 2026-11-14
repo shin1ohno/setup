@@ -143,6 +143,10 @@
           },
           {
             "type": "command",
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/recall-at-start.rb"
+          },
+          {
+            "type": "command",
             "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/mirror-file-memory.rb --sweep --session-start",
             "timeout": 75
           }
