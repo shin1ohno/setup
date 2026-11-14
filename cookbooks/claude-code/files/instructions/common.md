@@ -11,7 +11,7 @@ See @~/.agents/AGENTS.md
 <!-- section id=claude-cr-general-deferred-work-todo file=CLAUDE.md order=0090 harness=neutral lazy=n -->
 - **Deferred work / RAG gap → TODO.md** (description, reason, concrete first step; delete in the resolving commit). No-repo / cross-project / personal → `remember(tags:["todo"])` + close condition (work-derived → memory-work, never personal ai-memory); echo a one-line receipt (destination + close condition). Routing: `~/.claude/docs/todo-management.md`
 <!-- section id=claude-cr-general-every-conclusion file=CLAUDE.md order=0110 harness=neutral lazy=n -->
-- **Every conclusion**: save to memory; verify with `recall` on key terms. See `@~/.claude/docs/knowledge-persistence.md`
+- **Every conclusion**: save to memory; verify a store write with `get` on the id the write returned, never with `recall` (recall finds records; it only re-reads what this session just wrote). File memories return no id — the file itself is the record. See `@~/.claude/docs/knowledge-persistence.md`
 <!-- section id=claude-cr-general-file-memory-mirror file=CLAUDE.md order=0120 harness=claude lazy=n -->
 - **ファイル記憶 → MCP ストアは自動ミラー**（`hooks/mirror-file-memory.rb`）。手で `ingest` し直さない。ミラーは `tool-output` なので `remember(type='fact')` の代わりにならない。失敗ログ `~/.claude/memory-mirror.log`
 <!-- section id=claude-bp-act-try-propose file=CLAUDE.md order=0170 harness=neutral lazy=n -->
@@ -69,6 +69,8 @@ Read by Claude Code (`@~/.agents/AGENTS.md` import in `~/.claude/CLAUDE.md`) and
 - Japanese output (style: "Japanese Output Discipline" above). English for git commits, source comments, spec docs. GitHub issue/PR description prose is Japanese too (headings like `## Summary` / `## Test plan` stay English); match repo convention if recent `gh issue/pr list` history is clearly English
 <!-- section id=agents-general-codebase-local-clone file=AGENTS.md order=0100 harness=neutral lazy=n -->
 - **Codebase investigation = local clone**: read another repo's code from a local clone in `~/ManagedProjects/` (`git clone --filter=blob:none`, sparse-checkout OK) with Read/Grep/`git grep`; remote code-search MCPs (Sourcegraph) silently truncate and are not the primary probe. Pass the local path to sub-agents and codex prompts too. Detail: see `~/.claude/docs/agents-md-detail.md#codebase-investigation-local-clone`.
+<!-- section id=agents-general-memory file=AGENTS.md order=0105 harness=neutral lazy=n -->
+- **Memory**: at conversation start, recall the memory relevant to the request (skip trivial edits, typos, git operations); save durable conclusions. Verify a store write by fetching the id the write returned, not by searching again; a file memory returns no id, so the file is the record
 <!-- section id=agents-bp-zero-hedge file=AGENTS.md order=0120 harness=neutral lazy=n -->
 ## Behavioral Principles
 
