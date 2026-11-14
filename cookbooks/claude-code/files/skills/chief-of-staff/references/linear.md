@@ -57,8 +57,9 @@ owner-request reference in the description; reuse the same parent for retries
 and later implementation, review and apply tasks of that request.
 
 Every delegated ledger task has exactly one child under that parent, in the
-mapped project. At `tasks.py new`, first check for a matching child by request
-reference, task purpose and existing ledger identifiers; create it only if absent.
+mapped project. A plan stage and its build stage (dispatch.md, "Plan stage and
+build stage") are two ledger tasks, so each has its own child. At `tasks.py new`,
+first check for a matching child by request reference, task purpose and existing ledger identifiers; create it only if absent.
 After an ambiguous connector response, search/fetch again before retrying. Create
 the child as Todo, then record its identifiers before reserving an attempt:
 

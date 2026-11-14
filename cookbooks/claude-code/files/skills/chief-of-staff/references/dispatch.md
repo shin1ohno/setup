@@ -606,15 +606,16 @@ earlier `check` call (see Ledger operations); file existence proves no quality.
 
 For envelope-v1 tasks `tasks.py attempt` requires an explicit `--model` and
 `--effort`; an inherited default is not a recorded choice. Start from this
-table, approved by the owner on 2026-11-04. It states preferences, not account
+table, approved by the owner on 2026-11-04 and revised for the Codex implementation rows on 2026-11-14. It states preferences, not account
 availability: validate the installed catalog on every host (`claude --help`,
 `codex debug models`) and never pin an obsolete Codex model.
 
 | Work type | Default harness | Claude | Codex |
 | --- | --- | --- | --- |
 | CoS itself | Claude | opus / high | none |
-| Implementation, well specified | Codex | sonnet / medium | gpt-6.1-sol / medium |
-| Implementation, ambiguous, multi-file or migration | Codex | opus / high (xhigh over 30 min) | gpt-6-astra / medium, xhigh for exacting work |
+| Implementation, well specified | Codex | sonnet / medium | gpt-6.1-sol / high |
+| Implementation, ambiguous, multi-file or migration | Codex | opus / high (xhigh over 30 min) | plan stage gpt-6.1-sol / xhigh, then build stage gpt-6.1-terra / medium; a fix after a failed check or review gpt-6.1-terra / high |
+| Implementation, exacting | Codex | opus / high (xhigh over 30 min) | gpt-6.1-sol / max |
 | Small edits, extraction | either | haiku / medium | gpt-6-luna / low, raise up to high |
 | Review, security | the harness the author did not use | opus / high | gpt-6.1-sol / high |
 | Research, many sources | Claude | readers haiku / medium; synthesis opus / high | none |
@@ -623,10 +624,72 @@ availability: validate the installed catalog on every host (`claude --help`,
 | Daily admin (mail, calendar) | Claude | haiku / medium | none |
 | Checkable output (tests, verifier) | either | the row's model at low; re-run failures at high | same |
 
+Classify an implementation task top-down; the first row that fits wins, so the
+same task gets the same row every time:
+
+1. **Exacting** if a defect that the task's own tests would not catch could
+   (a) cross a trust boundary (authentication, authorization, secrets, sandbox
+   or permission checks, handling of untrusted input), (b) corrupt state through
+   concurrency (races, ordering, locks, atomicity, cancellation), or (c) make a
+   gate, hook or script kill processes or delete or overwrite data that cannot be
+   restored. One yes is enough; exacting beats ambiguous.
+2. **Ambiguous, multi-file or migration** if it is not exacting and any of these
+   holds: the brief leaves a design decision open, the change touches more than
+   one module or more than about three files, or it moves data, schema or
+   configuration between shapes.
+3. **Well specified** otherwise: the brief names the files and the checks that
+   prove it, and no design decision is left.
+
+Record which test decided the row in the attempt's reason. When two readings are
+plausible, take the earlier row.
+
+`gpt-6-astra` is the default for no row. Use it only on the owner's request, like
+fable below; name that request in the `--reason`.
+
 The Claude column names the 5.5 models by alias. Use fable only after a
 capability-sensitive task failed on opus / high, or on the owner's request; its
 usage-credit consent prompt can stall an unattended pane for up to 5 minutes,
 and the controller never answers that prompt.
+
+### Plan stage and build stage
+
+The ambiguous row runs as two ledger tasks under the same owner request. Each
+has its own `tasks.py new` call and its own Linear child under the request's
+parent (see `linear.md`, "Parent and child creation"); the build task's
+description names the plan task's identifier.
+
+- **Plan stage** (`gpt-6.1-sol` / xhigh). The worker reads the code and writes a
+  plan file `plan.md` in its task directory. It makes no code edits. The plan
+  contains: the files to change; the steps in order; the tests to add, including
+  a test for each new gate that fails when a mutation removes the gate; a mapping
+  from every acceptance criterion to the steps and tests that satisfy it; and the
+  risks and open questions.
+- **Controller check.** Before the build task is created, the controller checks
+  the plan against the owner's criteria (every criterion mapped, every gate
+  tested, no step outside the approved scope) and records the check in the plan
+  task's `check` record and the plan child's closing comment. Open questions go
+  to the owner through the question tool. A plan that fails the check goes back
+  to a plan-stage worker as a correction; the build does not start.
+- **Build stage** (`gpt-6.1-terra` / medium). The brief carries the original
+  acceptance criteria and the absolute path of the accepted plan. When a step is
+  wrong or incomplete, the build worker stops and sends a `question:`
+  notification naming the step and what differs; it never departs from the plan
+  silently or fills a gap by guessing.
+- **Escalation.** A fix after a failed check or review runs at
+  `gpt-6.1-terra` / high on the same build worker. Return to the plan stage
+  (a new `gpt-6.1-sol` / xhigh task that revises the plan) when the build worker
+  reports a plan defect, or when a second fix at high fails for a reason the plan
+  did not foresee. Hand the task to `gpt-6.1-sol` / max when a failure shows the
+  work is exacting after all (it meets the exacting test above), or when the
+  revised plan's build also fails. The three-attempt limit in SKILL.md counts
+  the stages together.
+- **`--reason` for each stage.** Quote the one table row both times: the Work
+  type cell `Implementation, ambiguous, multi-file or migration` and the Default
+  harness cell `Codex`, then name the stage and its model, for example
+  `Implementation, ambiguous, multi-file or migration / Codex; plan stage
+  gpt-6.1-sol / xhigh` and `Implementation, ambiguous, multi-file or migration /
+  Codex; build stage gpt-6.1-terra / medium from plan <path>`. A fix at high or an
+  escalation to `gpt-6.1-sol` / max adds its trigger to the same quoted row.
 
 Compare cost per solved task when tuning. A bundled model catalog establishes
 support, not successful execution.
