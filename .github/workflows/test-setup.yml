@@ -757,6 +757,12 @@ jobs:
         # Imports server.py, so it runs in the venv built by the MANIFEST step.
         /tmp/memory-mcp-venv/bin/python cookbooks/lxc-es-memory/files/memory-mcp/test_recall_meta.py
 
+    - name: memory-mcp recall index suite (one hit per document)
+      run: |
+        # recall returns at most one hit per document (ai-memory PR #22).
+        # Dependency-free (httpx stubbed), like test_recall_ids.py.
+        python3 cookbooks/lxc-es-memory/files/memory-mcp/test_recall_index.py
+
     - name: memory-mcp client policy suite (CLIENT_POLICY decisions)
       run: |
         # identity.py CLIENT_POLICY decides which tools and datasets a
