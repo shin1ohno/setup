@@ -206,7 +206,10 @@ end
 merged["statusLine"] = {
   "type" => "command",
   "command" => "bash #{node[:setup][:home]}/.claude/coralline/statusline.sh",
-  "refreshInterval" => 1,
+  # 10 s: the script costs ~75 forks per run and every open session runs it on this
+  # interval (1 s once pushed pro-dev to load 110 with 21 sessions). Events still
+  # re-run it immediately; the interval only keeps the clock and duration moving.
+  "refreshInterval" => 10,
 }
 
 # sensitive: the content is the LIVE file re-merged, and the shallow merge above

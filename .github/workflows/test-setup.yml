@@ -59,6 +59,9 @@ jobs:
         test -x bin/setup
         test -x bin/cookbook
 
+    - name: claude-code coralline statusline cost test (refreshInterval + forks per run)
+      run: bash cookbooks/claude-code/test/test-statusline.sh
+
     - name: session-search deploy-pinned.sh hermetic test (macOS system bash 3.2)
       run: cookbooks/session-search/test/test-deploy-pinned.sh
 

@@ -229,7 +229,7 @@ end
 merged["statusLine"] = {
   "type" => "command",
   "command" => "bash #{node[:setup][:home]}/.claude/coralline/statusline.sh",
-  "refreshInterval" => 1,
+  "refreshInterval" => 10,
 }
 
 # sensitive: the content is the LIVE file re-merged, and the shallow merge above
