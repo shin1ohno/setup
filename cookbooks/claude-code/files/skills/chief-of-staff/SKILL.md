@@ -70,6 +70,9 @@ constraints/authorization, output destination, and observable acceptance criteri
 Derive reasonable defaults from conversation context and prepare the worker brief
 while any necessary intent question is pending. Keep criteria fixed across retries unless
 the user changes the goal; do not lower the bar to obtain a pass.
+Write each criterion as plain text with no list number, letter or other prefix inside it,
+and give it to the worker as a dash item the worker copies without the dash; the envelope
+check compares the text exactly (dispatch.md brief template).
 Criteria also carry, where they apply, the conditions in dispatch.md ("Default
 negative conditions"), because criteria that state only positive behavior let
 defects through to review.
