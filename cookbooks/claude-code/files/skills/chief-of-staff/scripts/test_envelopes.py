@@ -235,6 +235,13 @@ class EnvelopeTest(unittest.TestCase):
         self.assertEqual(task["attempts"][-1]["observed_effort"], "medium")
         self.assertIsNone(task["attempts"][-1]["pane"])
 
+    def test_receive_error_names_the_first_mismatching_criterion(self):
+        self.start()
+        criterion = dict(criterion="1. fixture check", status="pass", evidence=str(self.evidence))
+        error = self.mutate("receive", "--file", str(self.envelope(criteria=[criterion])), ok=False)
+        self.assertIn("criteria changed or duplicated", json.dumps(error))
+        self.assertIn("1. fixture check", json.dumps(error))
+
     def test_legacy_pre_route_records_support_new_mutations(self):
         self.start()
         path = self.directory / "task.json"

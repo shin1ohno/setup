@@ -226,6 +226,28 @@ gh pr merge <PR> --squash --subject "<English subject> (#<PR>)"
 Without `--subject`, `gh` uses the PR title, so a Japanese title produced a
 Japanese commit subject (commit 6110818).
 
+Before merging, a PR whose `gh pr view <PR> --json files` lists a path under
+`.github/workflows/` needs the `workflow` scope, and the exported `GITHUB_TOKEN`
+and the gh keyring token lack it, so the merge is refused. When `gh auth status`
+shows no `workflow` scope, do not attempt it: hand the merge to the owner (web UI).
+Check the files with
+`gh pr view <PR> --json files --jq '.files[].path' | grep -q '^\.github/workflows/'`.
+
+A merge command that fails or times out merged nothing. Worktree removal, branch
+deletion, cookbook apply and every deployed-at or accepted record come only after
+the PR reads `MERGED`, in the same script as the merge or a later one, never
+chained after the merge by `;` and never trusting the merge's exit status alone
+(2026-11-15: a refused merge was followed by cleanup, an apply of the old main and
+a deployed-at file for a change that was not live). Put this first in whatever
+runs after the merge:
+
+```text
+[ "$(gh pr view <PR> --json state --jq .state)" = MERGED ] || exit 1
+```
+
+If it exits 1, stop: report the failure and keep the worktree, branch and
+deployed-at record untouched.
+
 ## Launch example
 
 These are shapes, not commands to paste with placeholder IDs. Use actual JSON
@@ -515,7 +537,7 @@ Authorized actions and constraints: <scope, permissions, no additional grants>
 File ownership: <writable paths, and the connected files to check as well: tests that fixture or pin the file, runners that invoke it, shared generators of the same value>
 Test budget: <number of test workers or terminals, per harness>
 Pre-approved extensions: <widenings already allowed and the condition for each, or "none">
-Acceptance criteria: <observable, individually checkable criteria, including the default negative conditions that apply>
+Acceptance criteria: <one criterion per line, each line starting with "- ", observable and individually checkable, including the default negative conditions that apply. Add the line "Each line below is one criterion. In the envelope, copy each one exactly, without the leading dash." Never number or letter a criterion: the envelope's `criterion` must equal the ledger text exactly, so a copied "1. " is rejected>
 Existing work / previous attempt: <artifact paths, failed criteria and evidence>
 Controller pane: <verified controller pane ID, socket and session from the caller helper>
 Herdr route for notifying the controller: <Herdr 1 (`herdr`) or Herdr 2 (`hc`), chosen from where the controller pane lives. This names the CLI to use, not the ledger's `--route` value>
