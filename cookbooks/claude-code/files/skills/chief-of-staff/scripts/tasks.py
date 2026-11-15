@@ -515,7 +515,10 @@ def read_envelope(path, task, root):
             raise ValueError("invalid criterion status")
         artifact(item["evidence"])
     if sorted(names) != sorted(task["acceptance"]):
-        raise ValueError("criteria changed or duplicated")
+        wanted = list(task["acceptance"])
+        bad = next((n for n in names if n not in wanted or names.count(n) > wanted.count(n)), None)
+        hint = f"; first mismatch: {bad[:80]!r}" if bad is not None else ""
+        raise ValueError("criteria changed or duplicated" + hint)
     if envelope["status"] == "done" and any(c["status"] != "pass" for c in criteria):
         raise ValueError("done with a failed or unverified criterion is not complete")
     questions = envelope["open_questions"]
