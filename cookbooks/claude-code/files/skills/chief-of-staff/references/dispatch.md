@@ -69,6 +69,14 @@ python3 <skill-dir>/scripts/tasks.py list --owner <socket#controller-pane>
 python3 <skill-dir>/scripts/tasks.py show <task-id>
 ```
 
+Three ledger pitfalls (2026-11-16: about 15 wasted calls):
+
+- `observe --launch-prompt` takes the prompt text, not a path.
+- A criterion's status is only `pass`, `fail` or `unverified`; `blocked` is an
+  envelope status, so a blocked envelope marks the failing criterion `fail`.
+- To resume a live `needs-user` worker, run `update --state running --evidence`,
+  then `observe`, then `receive`; mark `needs-user` only after `receive`.
+
 Use the same route vocabulary in `prepare` and `attempt`: `hc` for Herdr 2,
 `herdr1` for Herdr 1, and `agent` for the Agent tool. Pass the route explicitly
 for every new dispatch; omission retains legacy `herdr` for old callers.
@@ -226,6 +234,12 @@ gh pr merge <PR> --squash --subject "<English subject> (#<PR>)"
 Without `--subject`, `gh` uses the PR title, so a Japanese title produced a
 Japanese commit subject (commit 6110818).
 
+Before merging, compare this PR's files (`gh pr view <PR> --json files --jq
+'.files[].path'`) with those of every open PR in its final gates. On overlap, merge
+the in-flight PR first when it is ready, or warn its worker before this merge, so it
+can rebase with the overlap in view (2026-11-16: PR 46 was merged without this check
+and PR 45, in its final gates, became DIRTY in 8 files and needed a 9th attempt).
+
 Before merging, a PR whose `gh pr view <PR> --json files` lists a path under
 `.github/workflows/` needs the `workflow` scope, and the exported `GITHUB_TOKEN`
 and the gh keyring token lack it, so the merge is refused. When `gh auth status`
@@ -247,6 +261,16 @@ runs after the merge:
 
 If it exits 1, stop: report the failure and keep the worktree, branch and
 deployed-at record untouched.
+
+## A CI job that blocks several PRs
+
+When one CI job fails on 2 or more PRs, do not rerun it PR by PR. Start one
+read-only diagnosis across its runs: the failure classes, each class's rate, and
+each class's log signature. Rerun a PR at most 2 times. The owner decides whether a
+classified known failure blocks merges; ask once, with the classes and rates
+(2026-11-16: simulator-smoke had passed 64 of 104 runs; one 30-minute diagnosis found
+5 classes, which showed that a known-class merge rule would unblock the PRs, but it
+started only at 06:55 although flakiness was already the top known cause).
 
 ## Launch example
 
@@ -308,7 +332,7 @@ The last line decides the controller's next step:
 | Output | Meaning | Next step |
 | --- | --- | --- |
 | `reason=envelope` | The attempt's envelope exists | Run `receive`, then review |
-| `reason=blocked` | The worker is at a dialog | Read the dialog and report it; never answer it. Wait in the background with `--until working --until idle --until done`, then re-arm the loop |
+| `reason=blocked` | The worker is at a dialog | Read the dialog and report it; never answer it. A Claude Code permission dialog has no timeout, so in the same turn tell the owner the pane and the exact command (2026-11-16: a bare `git push` dialog stood for 3+ hours). Wait in the background with `--until working --until idle --until done`, then re-arm the loop |
 | `reason=gone` | `agent get` failed and no envelope exists | Treat as an abnormal exit: inspect the pane and logs, then repair or report. A failed socket call looks the same, so confirm with a second `agent get` |
 | `reason=idle` | `agent get` showed `idle` on three checks about 30 seconds apart and no envelope exists: a silent stop | Read the pane tail (`agent read "$worker" --source recent-unwrapped --lines 40`) and classify it, see below |
 | `reason=timeout` | Ten minutes passed | Look now, not a failure. Re-check state and re-arm. Without observable progress, run the stall diagnosis in `SKILL.md` |
@@ -559,6 +583,9 @@ Format: `[task <id> attempt <n>] done|failed|blocked|question: <one sentence> (r
 The one-line message only points to the report or question; the full content
 stays in the artifact files. Keep working on anything independent of the
 question; do not wait idle without sending it.
+
+Push only with an explicit refspec (`git push origin <branch>`). A bare
+`git push` stops at a permission dialog that nobody answers.
 
 Stay within File ownership and Test budget, apart from what Pre-approved
 extensions allows. To widen either, send a `question:` line naming the file or
