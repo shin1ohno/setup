@@ -315,6 +315,15 @@ routine status messages. Herdr `notification show` is optional attention, not a
 delivery guarantee: inspect `shown`/`reason`. The conversation is the reporting
 channel; Slack/email/etc. require the user's explicit instruction.
 
+Before any question-tool call, which stops all supervision until it is answered,
+process every received envelope and give each live worker its next pre-approved
+step (a queued lease, the next CI step). Arm nothing that needs the controller
+within 2 hours, so that an answer taking 2 hours delays only owner decisions
+(2026-11-16: a question at 08:40 stalled supervision until 10:50, and an envelope
+that arrived at 08:58 waited 1 h 54 min; owner decision in
+`codex-controller-2026-11-12/question-handling-decision.json`: keep the question
+tool, prepared first). This does not replace the one background wait per worker.
+
 
 ## Context budget and milestone handoff
 
