@@ -16,6 +16,31 @@ execute "brew install eternal-terminal" do
   not_if { brew_formula?("et") }
 end
 
+# --- libsodium runtime dependency (issue #1178) ----------------------------
+#
+# etserver/etterminal link against #{prefix}/opt/libsodium/lib/libsodium.26.dylib
+# (the formula's `depends_on "libsodium"`). The guard above only checks the et
+# formula itself, so a host where libsodium disappeared out from under et stays
+# dead: etserver aborts in dyld (`launchctl print` shows OS_REASON_DYLD) and
+# et-watchdog's kickstart just repeats the same abort. On mini this surfaced at
+# the 2026-11-09 reboot — the long-running etserver had kept the old dylib
+# mapped. The likely removal path is a manual `brew autoremove` while the
+# MisterTea/et tap is untrusted: brew cannot load et's formula, cannot see its
+# dependency, and treats libsodium as an orphan.
+#
+# Guard on the opt link (present iff the formula is installed) rather than the
+# brew-cache predicate, which is a snapshot from the start of the run. If the
+# installed libsodium ever ships a different soname, et itself needs a rebuild
+# (`brew reinstall MisterTea/et/et`) — that is a separate failure, not this one.
+execute "brew install libsodium (et runtime dependency)" do
+  user node[:setup][:user]
+  command "brew install libsodium"
+  not_if "test -d #{node[:homebrew][:prefix]}/opt/libsodium/lib"
+  # etserver is not running while the library is missing; reload the daemon
+  # so recovery does not depend on the watchdog's next 60 s tick.
+  notifies :run, "execute[reload etserver daemon]", :delayed
+end
+
 # --- etterminal on the non-interactive ssh PATH (issue #741) ---------------
 #
 # The et CLIENT bootstraps a session by running `ssh <host> etterminal ...`.
