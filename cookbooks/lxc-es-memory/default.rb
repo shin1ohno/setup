@@ -75,6 +75,7 @@ raise "ai-memory.pin must be one 40-hex SHA" unless ai_memory_pin =~ /\A[0-9a-f]
 staged_user  = node[:setup][:user]
 staged_group = node[:setup][:group]
 ai_memory_placements = [
+  ["requirements.lock",           "#{base_dir}/requirements.lock",    "644", "root", "root"],
   ["requirements.txt",            "#{base_dir}/requirements.txt",     "644", "root", "root"],
   ["requirements-v2.txt",         "#{app_dir_v2}/requirements-v2.txt", "644", "root", "root"],
   ["auth-proxy/proxy.py",         "#{app_dir_v2}/proxy.py",           "644", "root", "root"],
@@ -164,18 +165,14 @@ execute "create es-memory venv" do
   not_if "test -x #{venv_dir}/bin/python"
 end
 
-# Self-healing pip install: runs when the venv lacks the installed deps
-# (uvicorn absent) OR requirements.txt changed since the last install (md5
-# sentinel). NOT `action :nothing` — a notification-only install silently
-# never runs on a re-apply where the venv dir exists but packages are missing
-# (e.g. a prior interrupted install), leaving the units in an activating loop.
-# The not_if guard makes it idempotent AND self-repairing.
+# The host has one shared venv. Exact pins and hashes must be installed once;
+# a second floor-based install would undo the lock and its rollback behavior.
 execute "pip install es-memory deps" do
-  command "#{venv_dir}/bin/pip install --upgrade pip && " \
-          "#{venv_dir}/bin/pip install -r #{base_dir}/requirements.txt && " \
-          "md5sum #{base_dir}/requirements.txt > #{venv_dir}/.reqs.md5"
-  not_if "test -x #{venv_dir}/bin/uvicorn && test -f #{venv_dir}/.reqs.md5 && " \
-         "md5sum -c --status #{venv_dir}/.reqs.md5"
+  command "#{venv_dir}/bin/pip install --require-hashes -r #{base_dir}/requirements.lock && " \
+          "#{venv_dir}/bin/pip check && " \
+          "sha256sum #{base_dir}/requirements.lock > #{venv_dir}/.reqs-lock.sha256"
+  not_if "test -x #{venv_dir}/bin/uvicorn && test -f #{venv_dir}/.reqs-lock.sha256 && " \
+         "sha256sum -c --status #{venv_dir}/.reqs-lock.sha256 && #{venv_dir}/bin/pip check >/dev/null 2>&1"
   notifies :run, "execute[restart memory-mcp-v2]"
   notifies :run, "execute[restart memory-v2-proxy]"
 end
@@ -259,19 +256,7 @@ directory app_dir_v2 do
   action :create
 end
 
-# v2 requirements installed into the SAME venv. A SEPARATE md5 sentinel
-# (.reqs-v2.md5) so a v2-only dependency bump reinstalls without touching the
-# base sentinel — the "pip install es-memory deps" execute above stays intact.
-# md5-only guard (no binary probe): the v2 wheels land in the shared venv
-# already populated by the base install above.
-execute "pip install memory v2 deps" do
-  command "#{venv_dir}/bin/pip install -r #{app_dir_v2}/requirements-v2.txt && " \
-          "md5sum #{app_dir_v2}/requirements-v2.txt > #{venv_dir}/.reqs-v2.md5"
-  not_if "test -f #{venv_dir}/.reqs-v2.md5 && " \
-         "md5sum -c --status #{venv_dir}/.reqs-v2.md5"
-  notifies :run, "execute[restart memory-mcp-v2]"
-  notifies :run, "execute[restart memory-v2-proxy]"
-end
+
 
 # Standalone v2 ES index templates + setup script (the server self-bootstraps
 # indices via ensure_indices on startup; kept for manual ops / migration).
