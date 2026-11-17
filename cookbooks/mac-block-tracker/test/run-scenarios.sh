@@ -166,13 +166,13 @@ EOF
 chmod +x "$BIN"/*
 
 # --- scenario plumbing --------------------------------------------------------
-router_config() { # mac-for-17/18 -> both running and saved
+router_config() { # mac-for-17/18 [action, default reject-log] -> both running and saved
   {
     echo "ethernet filter 1 reject-log bc:5c:17:05:59:3a *:*:*:*:*:* "
     echo "ethernet filter 15 reject-log $OLD *:*:*:*:*:* "
     echo "ethernet filter 16 reject-log *:*:*:*:*:* $OLD "
-    echo "ethernet filter 17 reject-log $1 *:*:*:*:*:* "
-    echo "ethernet filter 18 reject-log *:*:*:*:*:* $1 "
+    echo "ethernet filter 17 ${2:-reject-log} $1 *:*:*:*:*:* "
+    echo "ethernet filter 18 ${2:-reject-log} *:*:*:*:*:* $1 "
     echo "ethernet filter 100 pass-nolog *:*:*:*:*:* *:*:*:*:*:* "
   } >"$T/router-running"
   cp "$T/router-running" "$T/router-saved"
@@ -415,6 +415,68 @@ assert_contains "reports the planned move" "DRY_RUN: would move" "$T/out"
 assert_no_file "no ssh" "$T/ssh-calls.log"
 assert_no_file "no mail" "$T/sns.log"
 assert_eq "slot unchanged" "$OLD" "$(slot)"
+
+echo "== 20. A reject (no log) pair is followed and rewritten as reject"
+reset_fixture
+host 192.168.1.68 "$PI_ANN" Mac15,12 "$NEW"
+dhcp 192.168.1.68 "$NEW"
+printf '%s' "$NEW" >"$T/state/pending"
+router_config "$OLD" reject
+run
+assert_eq "exit 0" 0 "$rc"
+assert_eq "saved config has the new MAC with reject" "ethernet filter 17 reject $NEW *" "$(saved_17)"
+assert_eq "filter 18 is reject too" "ethernet filter 18 reject * $NEW" "$(grep '^ethernet filter 18 ' "$T/router-saved" | sed -e 's/[[:space:]]*$//' -e 's/\*:\*:\*:\*:\*:\*/*/g')"
+assert_absent "reject-log never typed" "reject-log" "$T/ssh-input.log"
+assert_eq "slot holds the new MAC" "$NEW" "$(slot)"
+
+echo "== 21. A reject-log pair keeps reject-log on rotation"
+reset_fixture
+host 192.168.1.68 "$PI_ANN" Mac15,12 "$NEW"
+dhcp 192.168.1.68 "$NEW"
+printf '%s' "$NEW" >"$T/state/pending"
+run
+assert_eq "exit 0" 0 "$rc"
+assert_eq "saved config keeps reject-log" "ethernet filter 17 reject-log $NEW *" "$(saved_17)"
+
+echo "== 22. Hourly restore of a drifted reject pair writes reject"
+reset_fixture
+host 192.168.1.68 "$PI_ANN" Mac15,12 "$OLD"
+router_config "2a:00:00:00:00:01" reject
+echo 0 >"$T/state/last-verify"
+run
+assert_eq "exit 0" 0 "$rc"
+assert_eq "saved config back on the slot as reject" "ethernet filter 17 reject $OLD *" "$(saved_17)"
+assert_absent "reject-log never typed" "reject-log" "$T/ssh-input.log"
+
+echo "== 23. Mixed actions on 17/18: refused, nothing typed"
+reset_fixture
+host 192.168.1.68 "$PI_ANN" Mac15,12 "$NEW"
+dhcp 192.168.1.68 "$NEW"
+printf '%s' "$NEW" >"$T/state/pending"
+sed -i 's/^ethernet filter 18 reject-log /ethernet filter 18 reject /' "$T/router-running" "$T/router-saved"
+run
+assert_eq "exit 1" 1 "$rc"
+assert_absent "no filter line typed" "ethernet filter 17" "$T/ssh-input.log"
+assert_eq "router untouched" "ethernet filter 17 reject-log $OLD *" "$(saved_17)"
+
+echo "== 24. Mixed actions found by the hourly check: refused, nothing typed"
+reset_fixture
+host 192.168.1.68 "$PI_ANN" Mac15,12 "$OLD"
+sed -i 's/^ethernet filter 17 reject-log /ethernet filter 17 reject /' "$T/router-running" "$T/router-saved"
+echo 0 >"$T/state/last-verify"
+run
+assert_eq "exit 1" 1 "$rc"
+assert_no_file "no ssh" "$T/ssh-calls.log"
+
+echo "== 25. Two different MACs on 17/18 (same action): refused"
+reset_fixture
+host 192.168.1.68 "$PI_ANN" Mac15,12 "$NEW"
+dhcp 192.168.1.68 "$NEW"
+printf '%s' "$NEW" >"$T/state/pending"
+sed -i 's/^ethernet filter 18 reject-log \*:\*:\*:\*:\*:\*  *[0-9a-f:]* /ethernet filter 18 reject-log *:*:*:*:*:* 2a:00:00:00:00:09 /' "$T/router-running" "$T/router-saved"
+run
+assert_eq "exit 1" 1 "$rc"
+assert_absent "no filter line typed" "ethernet filter 17" "$T/ssh-input.log"
 
 echo
 echo "passed=$pass failed=$fail"
