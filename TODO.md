@@ -23,6 +23,27 @@
   deliberate `aws` failure on CT 119 raises it. Delete this entry in that
   commit.
 
+## memory-v2-proxy takes about 90 s to restart, so every converge that changes it drops the memory endpoint for that long (Medium)
+
+- **Failure class**: after `systemctl restart memory-v2-proxy` the old process
+  stayed in `deactivating` for 91 s (2026-11-19, CT 119: restart requested
+  17:30:13, new process active 17:31:44) and the new one started only after the
+  stop timeout. `proxy.py` ends in `web.run_app(app, host=..., port=...)` with the
+  default `shutdown_timeout` of 60 s and serves long-lived `text/event-stream`
+  responses (`proxy.py:425`); the unit sets no `TimeoutStopSec`, so systemd waits
+  its default 90 s. Every change that restarts the proxy (an ai-memory pin bump,
+  a changed allow-list file) is a ~90 s outage of `/memory`. The open stream that
+  held the shutdown was not identified, so the cause is the likely one, not a
+  proven one.
+- **Why**: seen while rolling out the SSM allow-list. It predates that change
+  and is outside its scope; the proxy and its unit live in ai-memory
+  (`systemd/memory-v2-proxy.service` is agent-protected, so the owner approves).
+- **First step**: in ai-memory pass a short `shutdown_timeout` (for example 5 s)
+  to `web.run_app` and set `TimeoutStopSec=15` in the unit, then bump
+  `ai-memory.pin` and the mirrored unit here. Measure by restarting once on
+  CT 119 and subtracting `ActiveEnterTimestamp`s. Close it when a restart takes
+  under 20 s. Delete this entry in that commit.
+
 ## Commit hooks skip tests for commits behind unmodelled wrappers (Low)
 
 - **Failure class**: `cookbooks/claude-code/files/hooks/git-command.rb`
