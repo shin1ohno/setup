@@ -1,5 +1,28 @@
 # TODO
 
+## Memory proxy allow-list has no freshness signal; an old list can stay in force (Medium)
+
+- **Failure class**: `lxc-es-memory` regenerates
+  `/opt/es-memory/proxy-allowed-subs.env` from SSM
+  `/memory/proxy-allowed-subs` on each converge and keeps the previous file
+  when the parameter cannot be read or fails validation. If SSM, the
+  `pve-bootstrap-ssm` credentials or the parameter break, an address removed
+  from the parameter keeps access indefinitely, and the only trace is a
+  `WARN generate-proxy-allowed-subs` line in the runner log. Even when
+  everything works, a reduction reaches the proxy only at the next converge
+  (reconcile interval 3600 s + jitter up to 3600 s).
+- **Why**: the adversarial review of the SSM allow-list PR (2026-11-19)
+  required a bound on fail-static for an auth allow-list. The owner chose to
+  ship the mechanism first and split the metric into a follow-up PR to keep
+  the first one reviewable.
+- **First step**: add a node_exporter textfile metric on CT 119 in the
+  `memory-keeper-health` pattern (script under `files/` plus a timer, installed
+  with `systemd_unit`): file age in seconds, last sync ok (0/1), and the entry
+  count of the file and of `/proc/<MainPID>/environ`. Alert when the age
+  exceeds 24 h or the two counts differ. Close it when the alert exists and a
+  deliberate `aws` failure on CT 119 raises it. Delete this entry in that
+  commit.
+
 ## Commit hooks skip tests for commits behind unmodelled wrappers (Low)
 
 - **Failure class**: `cookbooks/claude-code/files/hooks/git-command.rb`
