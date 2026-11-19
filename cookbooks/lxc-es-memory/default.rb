@@ -373,14 +373,15 @@ end
 # ALLOWED_SUBS, checked on every request, and such a caller can read, write, forget
 # and revise anything in the store (claude.ai tokens carry no audience, so this list
 # is the only resource-level gate). The unit pinned from ai-memory lists the operator
-# and one more address inline. Further subjects come from a DEDICATED SSM parameter,
+# alone inline. Further subjects come from a DEDICATED SSM parameter,
 # /memory/proxy-allowed-subs — never the OAuth consent list, which admits people to
 # other gateway services too — through a root-only EnvironmentFile that a drop-in adds
 # to the unit. A file line overrides the unit's inline ALLOWED_SUBS:
 #   file present -> the list is the operator (the floor below) + the parameter; an
 #                   address removed from the parameter drops out at the next converge.
-#   no file      -> the unit's inline list applies (fetch failed, the value failed
-#                   validation, or the parameter does not exist yet): same as before.
+#   no file      -> the unit's inline list, the operator alone, applies (fetch failed,
+#                   the value failed validation, or the parameter does not exist yet):
+#                   every extra subject is locked out until the file is back.
 # The generator validates the value because it becomes an EnvironmentFile (a newline or
 # quote could override another proxy variable). The proxy reads the list at import, so a
 # changed file restarts it. A parameter edit takes effect at the next converge

@@ -19,7 +19,7 @@ Addy Osmani「無人ループは無人でミスするループ」への答えと
 ## 不変の安全境界（モードに関わらず常に守る）
 
 1. **対象は自分が author の open PR のみ**（`gh pr list --author @me --state open`）。他人の PR には一切触れない。
-2. **allowlist リポのみ**（既定: `work-org/work-repo`, `shin1ohno/setup`）。リスト外は対象外。
+2. **allowlist リポのみ**（既定: `shin1ohno/setup`。業務側のリポは呼び出し側の prompt で渡す）。リスト外は対象外。
 3. **merge しない**。`gh pr merge` は本 skill では決して実行しない。
 4. **main/master に push しない**。push 先は常に PR の既存ブランチのみ。
 5. **force-push しない**（`--force`/`-f` 禁止）。共有ブランチの履歴を壊さない。

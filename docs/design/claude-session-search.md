@@ -523,7 +523,7 @@ Scopes are `sessions:ingest`, `sessions:read` and `sessions:purge`. Hydra's `sco
 
 - **Personal**:
   - one Hydra machine client per host, `session-search-<host>` (`pro-dev`, `mini`, `neo`), each mapped to its own host label with ingest and read; each is added to the proxy's `ALLOWED_CLIENT_IDS`;
-  - the operator (`authorization_code`, sub limited to the personal operator account; `work@example.com`, which is also in `ALLOWED_SUBS`, gets no session scope) gets read and purge;
+  - the operator (`authorization_code`, sub limited to the personal operator account; a second account allowed through the host-local `ALLOWED_SUBS` drop-in gets no session scope) gets read and purge;
   - `memory-mirror` gets nothing.
 - **Work**:
   - the tailnet human identity (air, matched by StableID) maps to host `air` with all three scopes;

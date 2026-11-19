@@ -21,7 +21,7 @@ pr-ci-medic に委譲する。Addy Osmani の朝ルーチン実例の実装。**
 - **merge しない・自動デプロイしない**（pr-ci-medic の境界を継承）。
 - **出力はローカル**（dated Markdown ledger）。個人 home-lab の memory MCP / 個人 Notion に業務データを出さない。
   通知が要るなら work 公認チャネルのみ（未設定ならローカルファイル止まり）。
-- allowlist リポ（既定: `work-org/work-repo`, `shin1ohno/setup`）。
+- allowlist リポ（既定: `shin1ohno/setup`。業務側のリポは呼び出し側の prompt で渡す）。
 - propose（worktree 修正起案）は opt-in。既定は diagnose（収集＋委譲＋記録のみ）。
 
 ## 手順

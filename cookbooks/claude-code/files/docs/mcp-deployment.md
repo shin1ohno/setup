@@ -124,9 +124,11 @@ reads the list at start-up, so a changed file restarts it; an unchanged list doe
   reduced parameter cannot lock the operator out, and an address removed from the
   parameter drops out at the next converge.
 - **No file** (parameter not created yet, SSM unreachable, or the value rejected): the
-  unit's inline `ALLOWED_SUBS` applies. Until ai-memory's unit lists the operator
-  alone, that inline list still has the second address, so **deleting the file
-  re-admits it** — it is not a revocation.
+  unit's inline `ALLOWED_SUBS` applies, which is the operator alone. Every extra
+  subject is **locked out until the file is back**. Deleting the file on CT 119 is
+  therefore an emergency revocation of all extra subjects, and the next converge
+  restores it. To revoke them for good, set the parameter to the operator's address
+  alone first (SSM does not accept an empty value, and an empty list is rejected).
 - A value that is not a plain email list (a newline, quote, space, or an element
   without `@`) is **rejected**: the previous file stays and the converge log shows
   `WARN generate-proxy-allowed-subs`. Check that line when a new address does not

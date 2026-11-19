@@ -46,6 +46,10 @@ Roles: `core` (CLI tools), `programming` (languages), `llm` (MCP servers, Claude
 
 - Hook scripts in `cookbooks/claude-code/files/hooks/` must be written in Ruby
 
+## Work-side placeholders
+
+`work-org`, `work-repo` and `work-overlay` in this repo stand for the owner's employer GitHub org, its private repo and its private cookbook overlay. The real names and values live only in host-local files outside git: `~/.claude/rules/work-overlay.local.md` (legend, auto-loaded), `~/.claude/loop-repos.local.json` (loop repos, read by `warn-loop-repo-shared-tree.rb`) and, on CT 119, the `memory-v2-proxy.service.d/allowed-subs.conf` drop-in (extra `ALLOWED_SUBS`). Never write the real names into this repo, its commits, PRs or issues.
+
 ## Important Notes
 
 - Test cookbook changes with `--dry-run` first. `.claude/hooks/guard-mitamae-dry-run.rb` blocks **`sudo mitamae`** without `--dry-run`; bare `./bin/mitamae local <recipe>.rb` is allowed (cookbooks elevate per resource via `execute "sudo ..."`, prompting each time) — add `--dry-run` whenever the apply must NOT actually run. `remind-cookbook-dry-run.rb` reminds after cookbook edits.

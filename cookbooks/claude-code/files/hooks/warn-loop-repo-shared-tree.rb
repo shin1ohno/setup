@@ -60,15 +60,22 @@ begin
   exit 0 if targets.empty?
 
   # Load the loop-repo registry: {"repos": [<path>, ...]} or a bare [<path>, ...].
-  # Absent / unparseable -> silent (fail-safe). LOOP_REPOS_FILE is a test seam.
+  # A host-local sibling (<registry>.local.json beside it, unmanaged) is unioned
+  # in, so a loop repo that must not be named in this public file can still be
+  # registered. A file that is absent / unparseable is skipped (fail-safe).
+  # LOOP_REPOS_FILE is a test seam.
   registry_path = ENV["LOOP_REPOS_FILE"] || File.join(Dir.home, ".claude", "loop-repos.json")
-  exit 0 unless File.exist?(registry_path)
+  roots = [registry_path, registry_path.sub(/\.json\z/, ".local.json")].uniq.flat_map do |path|
+    next [] unless File.exist?(path)
 
-  registry = JSON.parse(File.read(registry_path))
-  repos = registry.is_a?(Hash) ? registry["repos"] : registry
-  exit 0 unless repos.is_a?(Array)
+    registry = JSON.parse(File.read(path))
+    repos = registry.is_a?(Hash) ? registry["repos"] : registry
+    repos.is_a?(Array) ? repos.map { |p| File.expand_path(p.to_s) } : []
+  rescue StandardError
+    []
+  end
+  exit 0 if roots.empty?
 
-  roots = repos.map { |p| File.expand_path(p.to_s) }
   loop_root = targets.filter_map { |t| roots.find { |root| t == root || t.start_with?("#{root}/") } }.first
   exit 0 if loop_root.nil?
 
