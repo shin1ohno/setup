@@ -368,6 +368,108 @@ execute "generate memory-v2 proxy shared secret" do
   notifies :run, "execute[restart memory-v2-proxy]"
 end
 
+# Proxy allow-list from SSM --------------------------------------------------
+# memory-v2-proxy admits a human (authorization_code) token only when its sub is in
+# ALLOWED_SUBS, checked on every request, and such a caller can read, write, forget
+# and revise anything in the store (claude.ai tokens carry no audience, so this list
+# is the only resource-level gate). The unit pinned from ai-memory lists the operator
+# and one more address inline. Further subjects come from a DEDICATED SSM parameter,
+# /memory/proxy-allowed-subs — never the OAuth consent list, which admits people to
+# other gateway services too — through a root-only EnvironmentFile that a drop-in adds
+# to the unit. A file line overrides the unit's inline ALLOWED_SUBS:
+#   file present -> the list is the operator (the floor below) + the parameter; an
+#                   address removed from the parameter drops out at the next converge.
+#   no file      -> the unit's inline list applies (fetch failed, the value failed
+#                   validation, or the parameter does not exist yet): same as before.
+# The generator validates the value because it becomes an EnvironmentFile (a newline or
+# quote could override another proxy variable). The proxy reads the list at import, so a
+# changed file restarts it. A parameter edit takes effect at the next converge
+# (reconcile interval 3600 s + jitter up to 3600 s).
+proxy_operator_sub         = "shin1ohno@gmail.com"
+proxy_allowed_subs_script  = "#{units_staging}/generate-proxy-allowed-subs.sh"
+proxy_allowed_subs_tmp     = "#{generated_dir}/proxy-allowed-subs.env"
+proxy_allowed_subs_env     = "#{base_dir}/proxy-allowed-subs.env"
+proxy_allowed_subs_dropdir = "/etc/systemd/system/memory-v2-proxy.service.d"
+
+# ONE execute, notified by both resources below. Mitamae runs delayed notifications in
+# the order resources change and drops a repeated one, so two separate "daemon-reload"
+# and "restart" executes could restart the proxy BEFORE it has seen the drop-in.
+execute "reload systemd and restart memory-v2-proxy" do
+  command "sudo systemctl daemon-reload && sudo systemctl restart memory-v2-proxy.service"
+  action :nothing
+  only_if "systemctl cat memory-v2-proxy.service >/dev/null 2>&1"
+end
+
+remote_file proxy_allowed_subs_script do
+  source "files/generate-proxy-allowed-subs.sh"
+  owner node[:setup][:user]
+  group node[:setup][:group]
+  mode "755"
+end
+
+# A temp file left by an earlier run must not be placed when this run's generator
+# rejects the value, so clear it first.
+file proxy_allowed_subs_tmp do
+  action :delete
+end
+
+# The check reads the real parameter with the generator's profile and prints only its
+# name, never the decrypted value. Without the parameter (not created yet) the gate
+# fails and the block is skipped, so the unit's inline list stays in force.
+require_external_auth(
+  tool_name: "AWS CLI (profile=#{aws_profile}, region=#{aws_region}) for /memory/proxy-allowed-subs (memory proxy allow-list, optional)",
+  check_command: "aws ssm get-parameter --name /memory/proxy-allowed-subs --with-decryption " \
+                 "--query Parameter.Name --output text " \
+                 "--profile #{aws_profile} --region #{aws_region} " \
+                 "> /dev/null 2>&1",
+  instructions: "Create the parameter as the admin profile (docs/mcp-deployment.md \"The memory proxy " \
+                "allow-list\"), or press s to continue without it; the unit's inline ALLOWED_SUBS then applies.",
+) do
+  execute "generate memory-v2 proxy allowed-subs env" do
+    command "AWS_PROFILE=#{aws_profile} AWS_REGION=#{aws_region} " \
+            "bash #{proxy_allowed_subs_script} #{proxy_allowed_subs_tmp} #{proxy_operator_sub}"
+    user node[:setup][:user]
+  end
+end
+
+# remote_file compares content, so an unchanged list neither rewrites the file nor
+# restarts the proxy. The temp file is validated again here (exactly one line of
+# ALLOWED_SUBS=<emails>) so a file that did not come from the generator is never placed.
+# sensitive: the file carries the allowed addresses, and mitamae would otherwise print
+# the diff into the runner log (check 15).
+remote_file proxy_allowed_subs_env do
+  source proxy_allowed_subs_tmp
+  owner "root"
+  group "root"
+  mode "600"
+  sensitive true
+  notifies :run, "execute[reload systemd and restart memory-v2-proxy]"
+  only_if "test -f #{proxy_allowed_subs_tmp} && bash #{proxy_allowed_subs_script} --check #{proxy_allowed_subs_tmp}"
+end
+
+file proxy_allowed_subs_tmp do
+  action :delete
+  only_if "test -f #{proxy_allowed_subs_tmp}"
+end
+
+directory proxy_allowed_subs_dropdir do
+  owner "root"
+  group "root"
+  mode "755"
+  action :create
+end
+
+# The drop-in only names the file. EnvironmentFile= entries accumulate across unit and
+# drop-in (proxy-secret.env stays), so it must never contain an empty EnvironmentFile=,
+# which would reset the list. The leading "-" makes the file optional.
+file "#{proxy_allowed_subs_dropdir}/allowed-subs.conf" do
+  content "[Service]\nEnvironmentFile=-#{proxy_allowed_subs_env}\n"
+  owner "root"
+  group "root"
+  mode "644"
+  notifies :run, "execute[reload systemd and restart memory-v2-proxy]"
+end
+
 # v2 systemd units (units_staging is declared above).
 %w[memory-mcp-v2 memory-v2-proxy].each do |svc|
   staged = "#{units_staging}/#{svc}.service"

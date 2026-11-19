@@ -640,6 +640,15 @@ jobs:
         # fallback identification, malformed MAC, dry run, ambiguous pi.
         bash cookbooks/mac-block-tracker/test/run-scenarios.sh
 
+    - name: memory proxy allow-list generator scenarios (SSM to EnvironmentFile)
+      run: |
+        # Runs the PRODUCTION generator unmodified with an aws stand-in: the
+        # union with the unit's own list (the operator is never locked out),
+        # newline / quote / charset injection rejected with the previous file
+        # kept, aws failure, limits, idempotence, plus a positive control (a
+        # mutant without the validation must write the injected line).
+        bash cookbooks/lxc-es-memory/test/test-generate-proxy-allowed-subs.sh
+
     - name: codex remote-control guard and recipe scenarios
       run: |
         # The guard script against a fake /proc (cgroup eviction, watchdog,

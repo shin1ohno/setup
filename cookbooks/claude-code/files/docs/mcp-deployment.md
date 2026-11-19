@@ -95,6 +95,57 @@ ssh root@pve 'pct exec 110 -- bash -c "rm /root/deploy/consent/.env && cd /root/
 regenerate it — the `remote_file` notify restarts the consent container
 when the content changes.) Only the SSM put itself requires a `!` block.
 
+## The memory proxy allow-list is a separate parameter
+
+**Adding an address to `/hydra/allowed-emails` does NOT admit it to the memory
+store.** The memory proxy (`memory-v2-proxy`, CT 119) has its own list, because a
+human (authorization_code) caller can read, write, forget and revise anything in the
+store, and claude.ai tokens carry no audience: that list is the only resource-level
+gate. It lives in `/memory/proxy-allowed-subs` (SecureString, comma-separated emails,
+the extra subjects only). `pve-bootstrap-ssm` already reads `/memory/*`, so no IAM
+change is needed. Create or change it as the admin profile, like the consent list:
+
+```
+! AWS_PROFILE=sh1admn aws ssm put-parameter \
+    --name /memory/proxy-allowed-subs \
+    --value "<extra1>,<extra2>" \
+    --type SecureString --overwrite \
+    --region ap-northeast-1 --query Version --output text
+```
+
+`lxc-es-memory` regenerates `/opt/es-memory/proxy-allowed-subs.env` from it on every
+converge (`files/generate-proxy-allowed-subs.sh`, tested by
+`test/test-generate-proxy-allowed-subs.sh`); a drop-in
+(`memory-v2-proxy.service.d/allowed-subs.conf`) hands the file to the proxy as an
+`EnvironmentFile`, which overrides the unit's own inline `ALLOWED_SUBS`. The proxy
+reads the list at start-up, so a changed file restarts it; an unchanged list does not.
+
+- **File present:** the list is the operator **plus** the parameter. A wrong or
+  reduced parameter cannot lock the operator out, and an address removed from the
+  parameter drops out at the next converge.
+- **No file** (parameter not created yet, SSM unreachable, or the value rejected): the
+  unit's inline `ALLOWED_SUBS` applies. Until ai-memory's unit lists the operator
+  alone, that inline list still has the second address, so **deleting the file
+  re-admits it** — it is not a revocation.
+- A value that is not a plain email list (a newline, quote, space, or an element
+  without `@`) is **rejected**: the previous file stays and the converge log shows
+  `WARN generate-proxy-allowed-subs`. Check that line when a new address does not
+  get through. A value valid for the consent app (for example with a space after a
+  comma) is rejected here.
+- **Reflection delay:** the next converge, up to about 2 hours (reconcile interval
+  3600 s + jitter up to 3600 s). To revoke an address now, edit the parameter and then
+  converge CT 119 by hand:
+
+  ```
+  ssh root@pve 'pct exec 119 -- bash -c "cd /root/setup && ./bin/mitamae local pve/lxc-es-memory.rb"'
+  ```
+
+- **Stale list:** if SSM or the profile's credentials break, the previous list stays in
+  force and only the runner log says so (a freshness metric is tracked in TODO.md).
+- **Check without printing addresses:** on CT 119, count the entries in the running
+  process, `tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value memory-v2-proxy)/environ | grep '^ALLOWED_SUBS=' | tr ',' '\n' | wc -l`,
+  and compare with the file.
+
 ## Token audience must be unverified (for now)
 
 Hydra issues access tokens **without** an `aud` claim unless the client
