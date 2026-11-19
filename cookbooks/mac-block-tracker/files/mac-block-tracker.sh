@@ -14,7 +14,8 @@
 #   3. compare it with the SSM slot that home-monitor builds filters 17/18 from
 #   4. when it differs on two consecutive runs: in one admin session, confirm
 #      the ip/MAC pair in the router's DHCP table, confirm 17/18 currently are
-#      a reject pair for a single MAC, rewrite them, read them back and save;
+#      a reject or reject-log pair for a single MAC, rewrite them with the
+#      action they already have, read them back and save;
 #      then confirm the saved config over SFTP, store the MAC in the slot and
 #      mail home-monitoring-alerts
 #   5. when it is unchanged, once an hour read the saved config over SFTP and
@@ -257,19 +258,26 @@ filter_line() {
     | grep -E "^ethernet filter $2 " | head -n 1 || true
 }
 
-# 17/18 must currently be "reject-log M *" / "reject-log * M" for one MAC M:
-# anything else means the numbers were reused and must not be overwritten.
-reject_pair_mac() { # text -> M, or nothing
-  local s d ms md
+# 17/18 must currently be "A M *" / "A * M" for one MAC M and one action A,
+# where A is reject or reject-log (home-monitor may switch the block between
+# the two): anything else (mixed actions, two MACs, another action) means the
+# numbers were reused and must not be overwritten.
+# Prints "A M" or nothing.
+reject_pair() { # text -> "action mac", or nothing
+  local s d as ad ms md
+  local mac='(([0-9a-f]{2}:){5}[0-9a-f]{2})'
   s=$(filter_line "$1" "$FILTER_SRC")
   d=$(filter_line "$1" "$FILTER_DST")
-  [[ "$s" =~ ^ethernet\ filter\ $FILTER_SRC\ reject-log\ (([0-9a-f]{2}:){5}[0-9a-f]{2})\ \*$ ]] || return 0
-  ms=${BASH_REMATCH[1]}
-  [[ "$d" =~ ^ethernet\ filter\ $FILTER_DST\ reject-log\ \*\ (([0-9a-f]{2}:){5}[0-9a-f]{2})$ ]] || return 0
-  md=${BASH_REMATCH[1]}
-  [[ "$ms" == "$md" ]] && printf '%s' "$ms"
+  [[ "$s" =~ ^ethernet\ filter\ $FILTER_SRC\ (reject|reject-log)\ $mac\ \*$ ]] || return 0
+  as=${BASH_REMATCH[1]}
+  ms=${BASH_REMATCH[2]}
+  [[ "$d" =~ ^ethernet\ filter\ $FILTER_DST\ (reject|reject-log)\ \*\ $mac$ ]] || return 0
+  ad=${BASH_REMATCH[1]}
+  md=${BASH_REMATCH[2]}
+  [[ "$ms" == "$md" && "$as" == "$ad" ]] && printf '%s %s' "$as" "$ms"
   return 0
 }
+reject_pair_mac() { local p; p=$(reject_pair "$1"); printf '%s' "${p#* }"; }
 
 saved_config() { # -> contents of the saved config over SFTP
   local opts
@@ -284,9 +292,7 @@ WF_ERR=""
 # Rewrite 17/18 to $1. $2 (optional) is the IP the MAC was seen at; when set,
 # the router's DHCP table must show that pair. Sets WF_ERR on failure.
 write_filters() {
-  local mac=$1 ip=${2:-} pw src dst current saved
-  src="ethernet filter $FILTER_SRC reject-log $mac *"
-  dst="ethernet filter $FILTER_DST reject-log * $mac"
+  local mac=$1 ip=${2:-} pw src dst current action saved
   ensure_rtx_access || { WF_ERR="SSM からルーターの接続情報を取れませんでした"; return 1; }
   pw=$(ssm_get_secret "$RTX_ADMIN_PARAM") || { WF_ERR="SSM から管理者パスワードを取れませんでした"; return 1; }
   rtx_open || { pw=""; WF_ERR="ルーターに SSH できませんでした（ホスト鍵の不一致を含む）"; rtx_close; return 1; }
@@ -311,11 +317,15 @@ write_filters() {
 
   rtx_cmd 'show config | grep "ethernet filter"' "$ADMIN_PROMPT" \
     || { WF_ERR="現在のフィルタを読めませんでした"; rtx_leave_admin; rtx_close; return 1; }
-  current=$(reject_pair_mac "$(rtx_body)")
+  current=$(reject_pair "$(rtx_body)")
   if [[ -z "$current" ]]; then
-    WF_ERR="フィルタ $FILTER_SRC/$FILTER_DST が 1 つの MAC の reject 対になっていないため書き換えません: $(filter_line "$(rtx_body)" "$FILTER_SRC") / $(filter_line "$(rtx_body)" "$FILTER_DST")"
+    WF_ERR="フィルタ $FILTER_SRC/$FILTER_DST が 1 つの MAC の reject / reject-log 対になっていないため書き換えません: $(filter_line "$(rtx_body)" "$FILTER_SRC") / $(filter_line "$(rtx_body)" "$FILTER_DST")"
     rtx_leave_admin; rtx_close; return 1
   fi
+  # keep the action the router already has (home-monitor decides it)
+  action=${current%% *}
+  src="ethernet filter $FILTER_SRC $action $mac *"
+  dst="ethernet filter $FILTER_DST $action * $mac"
 
   local line
   for line in "$src" "$dst"; do
@@ -429,7 +439,7 @@ if [[ "$mac" == "$slot" ]]; then
     log "unchanged: $ip has $slot; router filters $FILTER_SRC/$FILTER_DST agree"
     exit 0
   fi
-  [[ -n "$on_router" ]] || fail "ルーターのフィルタ $FILTER_SRC/$FILTER_DST が reject 対になっていません（home-monitor の apply 前か、番号が別用途）"
+  [[ -n "$on_router" ]] || fail "ルーターのフィルタ $FILTER_SRC/$FILTER_DST が reject / reject-log 対になっていません（home-monitor の apply 前か、番号が別用途）"
   log "drift: router filters hold $on_router but the slot holds $slot — putting the slot back"
   write_filters "$slot" || fail "ずれの修正に失敗しました: $WF_ERR"
   now >"$STATE_DIR/last-verify"
