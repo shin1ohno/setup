@@ -1176,6 +1176,11 @@ is keyed on an address the AP does not own.
   fleet, (b) native model behaviour now, or (c) detail whose body can move to
   `~/.claude/docs/infrastructure-detail.md`, which already exists and already
   receives pointers from that file.
+- Status 2026-11-22: partly done. #1100 (bb621992, 2026-10-25) moved detail
+  out of `.claude/rules/infrastructure.md` and `shell.md` into the on-demand
+  docs (setup project always-loaded 38KB → 18KB), which covers sieve (c).
+  Sieves (a) stale and (b) native were not run: its snapshot check kept every
+  `##` / `###` heading, so no section was removed.
 
 ## The 90 file memories have never been cross-checked against the rules files (Low)
 
