@@ -1,0 +1,17 @@
+{
+  "number": 42,
+  "url": "https://github.example.invalid/acme/eval-repo/pull/42",
+  "state": "OPEN",
+  "mergeStateStatus": "CLEAN",
+  "reviewDecision": "",
+  "headRefName": "ci/pin-checkout",
+  "baseRefName": "main",
+  "files": [
+    {"path": ".github/workflows/ci.yml", "additions": 2, "deletions": 2}
+  ],
+  "statusCheckRollup": [
+    {"__typename": "CheckRun", "name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"}
+  ]
+}

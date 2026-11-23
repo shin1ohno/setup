@@ -39,18 +39,54 @@ Guidelines:
 - Skip dimensions that are obviously irrelevant (e.g., no UI/UX for a CLI tool)
 - Dig into the hard parts the user might not have considered
 - Stop when all dimensions are covered or the user says "that's enough"
+- **Save as you go.** Create `SPEC.md` with the skeleton below after the first answers, and update it after every batch of answers. Never hold more than one batch of unapplied answers: a long interview must survive compaction or a dropped session, and the file is the only durable copy.
+- Write each decision with its reason inline. An open design question stays as `TODO:` until the user answers it.
 
-### Phase 3: Write Spec
+### Phase 3: Complete the Spec
 
-Write `SPEC.md` in the project root containing:
+`SPEC.md` (project root, or the path the user names) uses these sections, omitting any with nothing true to say:
 
-1. **Summary** — One paragraph describing the feature
-2. **Requirements** — Numbered list with priority (Must / Should / Could)
-3. **Non-requirements** — Explicitly out of scope
-4. **Technical approach** — High-level implementation plan
-5. **Edge cases** — Known edge cases and how to handle them
-6. **Acceptance criteria** — Testable conditions for "done"
+1. **Summary** — one or two paragraphs.
+2. **Motivation** — the problem, who has it, and the use cases. The most important section; it can be long.
+3. **Explanation** — how a consumer uses the change once built: commands, API, config, with pseudo-code. Written like a reference and getting-started guide.
+4. **Requirements** — numbered, with priority (Must / Should / Could), each testable.
+5. **Drawbacks** — why not do this.
+6. **Considered Alternatives** — the alternatives discussed and why each lost. Record every design decision made during the interview here.
+7. **Security and Privacy Considerations** — trust boundaries, credentials, data exposure.
+8. **Mission Scope** — `### Out of scope` and `### Expected Outcomes` (acceptance criteria: testable conditions for done).
+9. **Implementation Plan** — internal data models and code changes invisible to consumers; edge cases and how each is handled.
+10. **Current Status** — always last (format below).
+
+Before calling the interview complete: every `TODO:` is either decided (decision and rationale inlined) or rewritten as an implementation item in the plan, and `grep -n -i -E 'TBD|TODO|maybe|possibly|to be decided' SPEC.md` returns nothing that is still open.
+
+**Current Status format.** During the interview:
+
+```
+## Current Status
+
+Interview in progress.
+
+Covered:
+- Data model: field types decided, indexes decided
+
+Remaining (~6 questions):
+- Operations: rollback, monitoring
+```
+
+After the interview, and kept current by whoever implements it:
+
+```
+## Current Status
+
+Implementation in progress. Implementers update this section as they work.
+
+### Checklist
+- [ ] <one item per deliverable>
+
+### Updates
+- YYYY-MM-DD: <what landed, with PR/commit>
+```
 
 ### Phase 4: Review
 
-Present the spec to the user. Ask if anything needs to be added or changed before implementation.
+Present the spec to the user (path + section list). Ask if anything needs to be added or changed before implementation. After implementation, `/feature-parity` in spec mode checks the code against this file.

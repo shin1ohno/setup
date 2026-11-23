@@ -9,6 +9,8 @@ bin/*.zip
 .claude/plans/
 .mcp.json
 cookbooks/claude-code/cowork-migration/zips-ready/*.zip
+# Local `claude plugin eval` output for the chief-of-staff skill
+cookbooks/claude-code/files/skills/chief-of-staff/evals/results/
 
 # Python bytecode from py_compile / local runs of cookbook-shipped scripts
 __pycache__/

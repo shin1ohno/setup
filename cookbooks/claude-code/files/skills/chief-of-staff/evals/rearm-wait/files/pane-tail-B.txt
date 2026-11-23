@@ -1,0 +1,9 @@
+• Ran make test
+  └ 61 passed, 1 failed in 4.02s
+    FAILED tests/metrics/test_registry.py::test_retries_total_labels
+
+• Edited src/metrics/registry.py (+6 -2)
+
+• Running make test
+
+◦ Working (11m 40s • esc to interrupt)

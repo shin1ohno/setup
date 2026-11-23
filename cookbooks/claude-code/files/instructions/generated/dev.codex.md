@@ -40,6 +40,9 @@
 | fractal node trees + plasma-wiki — config home, cost caps, `--scope`, wiki lint, waves | `~/.claude/docs/fractal-nodes.md` |
 | GPG subkey distribution to headless hosts via a secret store | `~/.claude/docs/gpg-key-distribution.md` |
 | Codex shared-skill probes — description truncation, `[skills] max_context_tokens` | `~/.claude/docs/codex-skills-probe.md` |
+| Source comments, error boundaries, retry backoff (any language) | `~/.claude/docs/coding.md` |
+| GitHub Actions — SHA pinning, permissions, credentials, zizmor/actionlint, Dependabot | `~/.claude/docs/github-actions.md` |
+| Writing or reviewing a README | `~/.claude/docs/readme.md` |
 # Adversarial Plan Review
 
 Load when a plan involves any security-sensitive component. Launch an adversarial review sub-agent BEFORE implementation — required, not optional.
@@ -55,6 +58,8 @@ Load when a plan involves any security-sensitive component. Launch an adversaria
 - Transport-rewrite rules whose scope decides WHICH credential is used — git `insteadOf` / `pushInsteadOf`, ssh_config `Match`/`Host` blocks, proxy `no_proxy`. A rewrite that is correct today can silently reroute traffic onto the wrong identity as the host's credential set changes later, so review the scope against every credential the host may acquire, not just the ones it has
 - Provisioning a credential onto a host that did not previously have one — adding a key can ACTIVATE dormant conditional logic elsewhere in the config
 - An unattended runner combining `--permission-mode bypassPermissions` with a `--disallowedTools`/`--allowedTools` clamp — the clamp's runtime effectiveness is a claim to VERIFY, not a property of the flag list. Review must enumerate equivalent capabilities left reachable (a CLI on PATH duplicating a denied MCP server, subagent inheritance, alternate tool names) and require the Live Tool-Clamp Gate (detail doc) before ship
+- A CI/workflow change rolled out to 3+ repos (action pins, token permissions, checkout credentials, publish steps): one wrong assumption breaks every repo's CI or release at once, and tag-triggered jobs never run on the PR
+- A security property stated as a decision input — a plan line or a question option claiming a trust boundary shrinks, a privilege narrows or an input stops being trusted. Run the review before asking the owner, or label the claim unverified in the option; never re-ask after the review disproves it
 
 Detail (prompt template / Live Token Round-Trip Gate / origins): see `~/.claude/docs/adversarial-review-detail.md`.
 # Code Behavior Debugging Protocol
@@ -75,7 +80,7 @@ Detail: see `~/.claude/docs/debugging-detail.md#noisy-non-failure-pattern`.
 
 NOT evidence: clean compile/run, `Ok(())`, your own code's "success" line, a previous good run, passing tests, green CI whose exercising step is gated on `workflow_dispatch` inputs (grep its `if:`; if gated, dispatch it and read that step's conclusion and stdout). ARE evidence: receiving-end state (file, DB record, zone status, queue length), tests on the changed path with real inputs, receiving-system logs, a status query showing the expected state.
 
-A new check (jq filter, lint, verify script) is not evidence until you have read its input's header or one real sample and seen a negative control fail for the intended reason, not an environment error.
+A new check (jq filter, lint, verify script) is not evidence until you have read its input's header or one real sample and seen a negative control fail for the intended reason, not an environment error. A CI-status poll counts a check as finished only on `status == "COMPLETED"`: gh reports a queued check's `conclusion` as `""`, not null, so `.conclusion // .status` calls it done — run the filter once against a queued check before backgrounding it.
 
 Detail: see `~/.claude/docs/debugging-detail.md#do-not-report-success-without-state-evidence`.
 
@@ -124,7 +129,7 @@ Before caching/throttling a script suspected from source of driving cost or load
 Detail: see `~/.claude/docs/debugging-detail.md#confirm-suspected-driver-deployed`.
 # Git Commit Format
 
-Start the summary with a `{component}: ` prefix; explain the "why", not just the "what".
+Start the summary with a `{component}: ` prefix; explain the "why", not just the "what". Keep the subject within 72 characters including the prefix and move the rest to the body; a PR title obeys the same limit because a squash merge makes it the subject. Shortening techniques: `~/.claude/docs/git-commit-detail.md#commit-subject-length`.
 
 Always-loaded summary. Examples and origins: `~/.claude/docs/git-commit-detail.md` (on demand — Read it when a section pointer matches).
 

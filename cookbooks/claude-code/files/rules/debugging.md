@@ -16,7 +16,7 @@ Detail: see `~/.claude/docs/debugging-detail.md#noisy-non-failure-pattern`.
 
 NOT evidence: clean compile/run, `Ok(())`, your own code's "success" line, a previous good run, passing tests, green CI whose exercising step is gated on `workflow_dispatch` inputs (grep its `if:`; if gated, dispatch it and read that step's conclusion and stdout). ARE evidence: receiving-end state (file, DB record, zone status, queue length), tests on the changed path with real inputs, receiving-system logs, a status query showing the expected state.
 
-A new check (jq filter, lint, verify script) is not evidence until you have read its input's header or one real sample and seen a negative control fail for the intended reason, not an environment error.
+A new check (jq filter, lint, verify script) is not evidence until you have read its input's header or one real sample and seen a negative control fail for the intended reason, not an environment error. A CI-status poll counts a check as finished only on `status == "COMPLETED"`: gh reports a queued check's `conclusion` as `""`, not null, so `.conclusion // .status` calls it done — run the filter once against a queued check before backgrounding it.
 
 Detail: see `~/.claude/docs/debugging-detail.md#do-not-report-success-without-state-evidence`.
 
