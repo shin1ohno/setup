@@ -54,6 +54,9 @@
 | fractal node trees + plasma-wiki — config home, cost caps, `--scope`, wiki lint, waves | `~/.claude/docs/fractal-nodes.md` |
 | GPG subkey distribution to headless hosts via a secret store | `~/.claude/docs/gpg-key-distribution.md` |
 | Codex shared-skill probes — description truncation, `[skills] max_context_tokens` | `~/.claude/docs/codex-skills-probe.md` |
+| Source comments, error boundaries, retry backoff (any language) | `~/.claude/docs/coding.md` |
+| GitHub Actions — SHA pinning, permissions, credentials, zizmor/actionlint, Dependabot | `~/.claude/docs/github-actions.md` |
+| Writing or reviewing a README | `~/.claude/docs/readme.md` |
 # Adversarial Plan Review
 
 Load when a plan involves any security-sensitive component. Launch an adversarial review sub-agent BEFORE implementation — required, not optional.
@@ -176,7 +179,7 @@ If two `Edit` calls target the same file in a single parallel batch, they may ra
 Different-file Edits can safely run in parallel in a single message.
 # Git Commit Format
 
-Start the summary with a `{component}: ` prefix; explain the "why", not just the "what".
+Start the summary with a `{component}: ` prefix; explain the "why", not just the "what". Keep the subject within 72 characters including the prefix and move the rest to the body; a PR title obeys the same limit because a squash merge makes it the subject. Shortening techniques: `~/.claude/docs/git-commit-detail.md#commit-subject-length`.
 
 Always-loaded summary. Examples and origins: `~/.claude/docs/git-commit-detail.md` (on demand — Read it when a section pointer matches).
 

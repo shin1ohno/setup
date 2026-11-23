@@ -1,6 +1,6 @@
 ---
 name: setup-release-plz
-description: Scaffold release-plz CI + config for a Rust repo on GitHub. Adds the CI workflow, release-plz.toml, enables Actions PR permissions, and guides the CARGO_REGISTRY_TOKEN setup. Use when onboarding a new Rust repo to auto-release via release-plz, or when fixing a repo whose release-plz is failing on a known misconfiguration.
+description: Scaffold release-plz CI + config for a Rust repo on GitHub. Adds the CI workflow, release-plz.toml, enables Actions PR permissions, and sets up crates.io trusted publishing (a one-off token only for a never-published crate). Use when onboarding a new Rust repo to auto-release via release-plz, or when fixing a repo whose release-plz is failing on a known misconfiguration.
 user-invocable: true
 ---
 
@@ -17,7 +17,7 @@ Scaffold release-plz CI + config for a Rust repo that should auto-publish to cra
 ## Prerequisites (check before scaffolding)
 
 1. Target repo has at least one publishable crate (`publish = true` in Cargo.toml, or absence of `publish = false`)
-2. User has a crates.io API token ready, OR is willing to issue one. Scope needed: `publish-update` minimum, `publish-new` if the workspace has any never-published crate
+2. The user can open each crate's crates.io settings to add a trusted publisher. A never-published crate additionally needs a one-off `publish-new` token for its first publish
 
 ## Workflow
 
@@ -43,9 +43,11 @@ Create or update these files. Use the existing files in `~/ManagedProjects/nuimo
 **`.github/workflows/release-plz.yml`** (minimum fields):
 - Trigger: `push: branches: [main]` + `workflow_dispatch`
 - Two jobs: `release-plz-release` (runs first), `release-plz-pr` (`needs: release-plz-release`)
-- Both use `MarcoIeni/release-plz-action@v0.5.128` (pin to a concrete tag, NEVER `@v0`)
-- Both set `CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}` and `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}`
-- Top-level `permissions: contents: write, pull-requests: write`
+- Both use `release-plz/action` pinned by full commit SHA with the tag as a comment (`release-plz/action@<sha> # v0.5.148`; resolve with `gh api repos/release-plz/action/commits/<tag> --jq .sha`). Never `@v0`
+- Top-level `permissions: {}`; `release-plz-release` gets `contents: write` + `id-token: write` and `environment: crates-io`; `release-plz-pr` gets `contents: write` + `pull-requests: write`
+- Crates that already exist on crates.io publish through **trusted publishing**: no `CARGO_REGISTRY_TOKEN` in the workflow and no `rust-lang/crates-io-auth-action` — release-plz exchanges the OIDC token itself (`docs/release-plz.md#trusted-publishing`). Both jobs set `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in `env:`
+- No cache restore (`Swatinem/rust-cache`) in either job; `actions/checkout` with `fetch-depth: 0`
+- `timeout-minutes` on both jobs
 - Install any system deps the crate needs (Linux BLE via `libdbus-1-dev pkg-config`, TLS via `libssl-dev`, etc.) in both jobs
 
 **`release-plz.toml`** (workspace + per-package):
@@ -72,19 +74,17 @@ For every path dep across the workspace: add `version = "X.Y"` fallback.
 
 ```
 gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow \
-  -f default_workflow_permissions=write \
+  -f default_workflow_permissions=read \
   -F can_approve_pull_request_reviews=true
 ```
 
-### Step 4: Register `CARGO_REGISTRY_TOKEN` secret
+The default token stays read-only; the jobs get write access through their own `permissions:` blocks.
 
-Ask the user (use a question tool if one is available, otherwise write numbered options in the body; Claude Code: AskUserQuestion / Codex: request_user_input) to collect the token value (user supplies it, paste into chat), then:
+### Step 4: Set up crates.io publishing
 
-```
-gh secret set CARGO_REGISTRY_TOKEN --repo <owner>/<repo> --body '<token>'
-```
+**Existing crates — trusted publishing.** For every published crate, the user adds a trusted publisher on crates.io (crate → Settings → Trusted Publishing: owner `<owner>`, repo `<repo>`, workflow `release-plz.yml`, environment `crates-io`). Create the `crates-io` environment on the repo (`gh api -X PUT repos/<owner>/<repo>/environments/crates-io`). No secret is needed. Once every crate is covered, delete any old `CARGO_REGISTRY_TOKEN` secret and ask the user to revoke the token on crates.io.
 
-If this is a workspace with a never-published crate, surface the `publish-new` scope requirement from `docs/rust.md` and ask the user whether to handle the first publish via a one-off token path.
+**Never-published crates.** Trusted publishing cannot create a crate. Ask the user (use a question tool if one is available, otherwise write numbered options in the body; Claude Code: AskUserQuestion / Codex: request_user_input) how to do the first publish: a one-off `publish-new` token used locally (`cargo publish -p <crate> --token …`, then revoke — `docs/release-plz.md#crates-io-token-scopes`), after which the trusted publisher is configured and release-plz takes over.
 
 ### Step 5: Verify
 
@@ -113,4 +113,5 @@ If the repo is part of an ecosystem tracked in memory (when a memory MCP is avai
 - Skipping Step 3 (workflow permissions) — release-plz-pr job fails silently with 403 until fixed
 - Omitting `needs: release-plz-release` — race condition on first push with version bump (documented in `docs/release-plz.md`)
 - Adding a new publishable crate to an existing setup without updating the token's allow-list — 403 on first publish
-- Using `MarcoIeni/release-plz-action@v0` — tag does not exist; must be a concrete `@v0.5.X`
+- Using `release-plz/action@v0` (or any tag reference) — `@v0` does not exist, and a movable tag is a supply-chain hole; pin the commit SHA
+- Keeping `CARGO_REGISTRY_TOKEN` in the workflow after trusted publishing is configured — the stored token keeps the long-lived credential alive for no benefit

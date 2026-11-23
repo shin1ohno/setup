@@ -3,6 +3,21 @@
 On-demand detail for `~/.claude/rules/git-commit.md`. Read a section when the summary points here.
 
 
+## commit-subject-length
+
+## Commit Subject Length — 72 characters, overflow to the body
+
+The subject, prefix included, fits in 72 characters so `git log --oneline` and the GitHub list do not truncate it. The why that does not fit moves to the body, whose job is the background a reader cannot get from the diff. Techniques (adapted from sorah/config `commit-style`):
+
+- Drop `add` when the subject already names the new thing: `claude-code: coding docs` rather than `claude-code: add coding docs`. Keep `add` when supplementing existing code (tests, logging).
+- Name the primary deliverable and mention secondary artifacts in the body: `edge-agent: jitter reconnect backoff`, not `… backoff and tests and docs`.
+- `&` over `and`.
+- Drop qualifiers the prefix already supplies: `lxc-kibana: rtx dashboard`, not `lxc-kibana: rtx dashboard for kibana`.
+- Prefer a specific verb: `avoid` for preventive changes, `extract` over `refactor`, `introduce` for a new concept, `roll <dep> <version>` for dependency bumps.
+- A PR title follows the same limit: a squash merge turns it into the subject.
+
+Check before committing: `git log -1 --format=%s | awk '{ print length }'`.
+
 ## deferred-stubs
 
 ## Deferred Stubs in PR Description

@@ -11,6 +11,9 @@ Load when a plan involves any security-sensitive component. On-demand detail for
 > 4. Configuration mismatches between layers (nginx ↔ docker-compose ↔ application)
 > 5. JWT claim validation added or tightened: decode a REAL token from the actual live issuer and confirm every required claim is present with the expected value. Mark a blocker if no live-token sample was obtained — synthetic tokens cannot confirm this.
 > 6. Tool-restriction clamps on unattended runners (`--disallowedTools`/`--allowedTools` under `bypassPermissions`): does the declared list actually block the CAPABILITY at runtime, including equivalent paths — a CLI reachable via Bash that duplicates a denied MCP server, subagent/workflow inheritance of the deny, alternate tool names? Mark a blocker unless verified by a live probe (Live Tool-Clamp Gate below).
+> 7. OAuth 2.0 / OIDC classes: redirect URI partial matching or open redirect, authorization-code replay, missing or bypassable PKCE, refresh-token rotation and reuse detection, scope not checked per resource, ID-token gaps (signature, expiry, issuer, audience, nonce, `at_hash` / `c_hash`), issuer confusion across providers, tokens leaking via logs or Referer.
+> 8. Timing and races: every secret comparison (tokens, HMAC digests, API keys) is constant-time (`hmac.compare_digest`, `subtle::ConstantTimeEq`, `crypto.timingSafeEqual`); no observable timing difference between unknown user and wrong credential; check-then-use (TOCTOU) on files, quotas, one-time codes.
+> 9. Flaws in the spec itself, not only deviations from it: if the plan's own design permits the attack, say so.
 > Number each concern and assign severity (blocker / risk / non-issue).
 
 Distinct from the post-implementation `code-reviewer` plugin — this catches **design-level** problems while redesign costs minutes, not sessions.
