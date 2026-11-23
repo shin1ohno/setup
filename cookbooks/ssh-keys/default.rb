@@ -167,6 +167,19 @@ MANAGED_END = "# END ssh-keys-managed"
 # SSM prefix (e.g. pro and pro-dev are twins) — dedup by [key_type,
 # key_data] so authorized_keys never carries two visually-different
 # lines that resolve to the same key.
+#
+# Every SSM public value lands verbatim in EVERY host's authorized_keys, so
+# only a value that is exactly one public key line is accepted: an allowed
+# key type, one base64 blob, and an optional comment free of control
+# characters (so no second line). Anything else is skipped with a warning
+# naming the SSM path (never the value — it could be a pasted private key):
+# the "placeholder — …" value a new ios-client slot holds until its key is
+# uploaded, a line with authorized_keys options (command=, from=, …) whose
+# first token is not a key type, a multi-line value, a private key.
+# Accepted lines are used unchanged. Test:
+# cookbooks/ssh-keys/test/test-public-key-validation.rb.
+PUBLIC_KEY_LINE = %r{\A(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) +[A-Za-z0-9+/]+={0,3}( +[^\x00-\x1f\x7f]*)?\z}
+
 managed_keys = []
 managed_key_data = [] # [key_type, key_data] pairs for dedup
 seen_keys = {} # "<key_type> <key_data>" => index in managed_keys
@@ -178,6 +191,11 @@ devices.each do |k, dev|
   next unless pub
 
   pub_line = pub.strip
+  unless pub_line =~ PUBLIC_KEY_LINE
+    MItamae.logger.warn("ssh-keys: #{ssm_prefix}/public is not a single public key line " \
+                        "(placeholder, options, several lines or a private key); not added to authorized_keys")
+    next
+  end
   # Append device key as comment if not already present
   parts = pub_line.split(/\s+/)
   pub_line = "#{pub_line} #{k}" if parts.length < 3
