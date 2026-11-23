@@ -63,3 +63,15 @@ builds in a temporary directory and copies into each case). Name cases as
 arguments to rebuild only those (`build-fixtures.sh pane-spoof`); without
 arguments it rebuilds every case and every task ID changes. Review the diff of
 `*/files/state/` before committing, then update the task IDs as above.
+
+## Environment notes
+
+- On Linux the runs need Claude Code's sandbox backend (`bubblewrap` and `socat`);
+  without it every case is refused before it starts and the scores mean nothing.
+  The `bwrap-userns` cookbook installs both.
+- The sandbox replaces `HOME`, so a pyenv `python3` shim cannot start there; the
+  prompts tell the model to fall back to `/usr/bin/python3`.
+- First full run (2026-11-23, `--runs 1`, before the grader fixes for re-arming):
+  with the skill 3 of 5 cases passed and every case scored higher than without it
+  (Δ +0.25 to +0.50). The two misses were graders that rejected a correct
+  "Would run ... in the background" line in the final message.
