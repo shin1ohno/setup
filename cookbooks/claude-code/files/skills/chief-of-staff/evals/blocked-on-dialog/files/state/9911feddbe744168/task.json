@@ -1,0 +1,101 @@
+{
+  "id": "9911feddbe744168",
+  "owner": "herdr:evalsock#w1:p1",
+  "topic": "Fix the retry backoff in the sync client and open a PR",
+  "cwd": "/tmp/eval-repo",
+  "scope": "Edit src/sync/ and tests/sync/ in /tmp/eval-repo on branch fix/x and run make test. Owner authorized at dispatch: push fix/x with git push -u origin fix/x and open a PR against main. No merge.",
+  "acceptance": [
+    "make test exits 0 on branch fix/x",
+    "Branch fix/x is pushed to origin and a PR from fix/x to main is open",
+    "No file outside src/sync/ and tests/sync/ is changed"
+  ],
+  "state": "running",
+  "max_attempts": 3,
+  "attempts": [
+    {
+      "number": 1,
+      "agent": "cos-9911feddbe744168-1",
+      "kind": "claude",
+      "model": "sonnet",
+      "reason": "Implementation, well specified / Codex; Claude sonnet / medium because the repository's test runner needs the Claude dev profile",
+      "requested_model": "sonnet",
+      "effort": "medium",
+      "observed_model": null,
+      "observed_effort": null,
+      "route": "herdr1",
+      "plan": null,
+      "profile": "dev",
+      "session": null,
+      "pane": "w1:p2",
+      "created_at": "2026-11-23T09:52:59+00:00",
+      "reuse": false,
+      "launch_options": [],
+      "terminal_id": "term2"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-23T09:52:59+00:00",
+      "state": "queued",
+      "note": "Task created",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:52:59+00:00",
+      "state": "queued",
+      "note": "Linear child Todo: Child created",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:52:59+00:00",
+      "state": "starting",
+      "note": "Implementation, well specified / Codex; Claude sonnet / medium because the repository's test runner needs the Claude dev profile",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:00+00:00",
+      "state": "starting",
+      "note": "Linear child In Progress: Attempt 1 reserved",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:00+00:00",
+      "state": "starting",
+      "note": "Bound worker w1:p2",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:00+00:00",
+      "state": "running",
+      "note": "Worker started its first turn",
+      "evidence": [
+        "herdr agent wait --until working --until blocked returned working"
+      ]
+    }
+  ],
+  "fresh_worker": false,
+  "contract": "envelope-v1",
+  "created_at": "2026-11-23T09:52:59+00:00",
+  "last_report": null,
+  "report_pending": false,
+  "linear": {
+    "child": "EVAL-2",
+    "parent": "EVAL-1",
+    "state": "In Progress",
+    "history": [
+      {
+        "state": "Todo",
+        "at": "2026-11-23T09:52:59+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Child created"
+      },
+      {
+        "state": "In Progress",
+        "at": "2026-11-23T09:53:00+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Attempt 1 reserved"
+      }
+    ]
+  },
+  "updated_at": "2026-11-23T09:53:00+00:00"
+}

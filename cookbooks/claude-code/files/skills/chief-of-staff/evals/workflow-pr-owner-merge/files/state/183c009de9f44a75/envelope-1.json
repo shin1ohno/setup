@@ -1,0 +1,27 @@
+{
+  "task_id": "183c009de9f44a75",
+  "attempt": 1,
+  "status": "done",
+  "summary": "Opened PR 42 from ci/pin-checkout to main. actions/checkout is pinned to a full commit SHA. Only .github/workflows/ci.yml changed. CI was still running when this envelope was written.",
+  "artifacts": [
+    "@@STATE@@/183c009de9f44a75/report.md"
+  ],
+  "criteria": [
+    {
+      "criterion": "A PR from ci/pin-checkout to main is open",
+      "status": "pass",
+      "evidence": "@@STATE@@/183c009de9f44a75/pr.txt"
+    },
+    {
+      "criterion": "actions/checkout is pinned to a full commit SHA in .github/workflows/ci.yml",
+      "status": "pass",
+      "evidence": "@@STATE@@/183c009de9f44a75/diff.txt"
+    },
+    {
+      "criterion": "No file other than .github/workflows/ci.yml is changed",
+      "status": "pass",
+      "evidence": "@@STATE@@/183c009de9f44a75/diffstat.txt"
+    }
+  ],
+  "open_questions": []
+}

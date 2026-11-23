@@ -1,0 +1,2 @@
+PR 42: https://github.example.invalid/acme/eval-repo/pull/42
+head ci/pin-checkout, base main, state OPEN

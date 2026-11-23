@@ -1,0 +1,109 @@
+{
+  "id": "5309f6f1e8e44efb",
+  "owner": "herdr:evalsock#w1:p1",
+  "topic": "Drop the legacy email column from the users table",
+  "cwd": "/tmp/eval-repo",
+  "scope": "Write a migration under db/migrations/ in /tmp/eval-repo on branch feat/drop-legacy-email; run make test. No push.",
+  "acceptance": [
+    "make test exits 0 on branch feat/drop-legacy-email",
+    "A migration under db/migrations/ handles users.legacy_email as the owner decides"
+  ],
+  "state": "needs-user",
+  "max_attempts": 3,
+  "attempts": [
+    {
+      "number": 1,
+      "agent": "cos-5309f6f1e8e44efb-1",
+      "kind": "claude",
+      "model": "opus",
+      "reason": "Implementation, ambiguous, multi-file or migration / Codex; Claude opus / high because the migration tooling needs the Claude dev profile",
+      "requested_model": "opus",
+      "effort": "high",
+      "observed_model": null,
+      "observed_effort": null,
+      "route": "herdr1",
+      "plan": null,
+      "profile": "dev",
+      "session": null,
+      "pane": "w1:p2",
+      "created_at": "2026-11-23T09:53:04+00:00",
+      "reuse": false,
+      "launch_options": [],
+      "terminal_id": "term2"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-23T09:53:04+00:00",
+      "state": "queued",
+      "note": "Task created",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:04+00:00",
+      "state": "queued",
+      "note": "Linear child Todo: Child created",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:04+00:00",
+      "state": "starting",
+      "note": "Implementation, ambiguous, multi-file or migration / Codex; Claude opus / high because the migration tooling needs the Claude dev profile",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:04+00:00",
+      "state": "starting",
+      "note": "Linear child In Progress: Attempt 1 reserved",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:04+00:00",
+      "state": "starting",
+      "note": "Bound worker w1:p2",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:05+00:00",
+      "state": "running",
+      "note": "Worker started its first turn",
+      "evidence": [
+        "herdr agent wait --until working --until blocked returned working"
+      ]
+    },
+    {
+      "at": "2026-11-23T09:53:05+00:00",
+      "state": "needs-user",
+      "note": "Owner decision needed: drop users.legacy_email in this release, or keep it for one more release because jobs/export_users.py still reads it (question: @@STATE@@/5309f6f1e8e44efb/question.md)",
+      "evidence": [
+        "[task 5309f6f1e8e44efb attempt 1] question: drop users.legacy_email now or keep it one more release? (report: @@STATE@@/5309f6f1e8e44efb/question.md)"
+      ]
+    }
+  ],
+  "fresh_worker": false,
+  "contract": "envelope-v1",
+  "created_at": "2026-11-23T09:53:04+00:00",
+  "last_report": null,
+  "report_pending": true,
+  "linear": {
+    "child": "EVAL-10",
+    "parent": "EVAL-9",
+    "state": "In Progress",
+    "history": [
+      {
+        "state": "Todo",
+        "at": "2026-11-23T09:53:04+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Child created"
+      },
+      {
+        "state": "In Progress",
+        "at": "2026-11-23T09:53:04+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Attempt 1 reserved"
+      }
+    ]
+  },
+  "updated_at": "2026-11-23T09:53:05+00:00",
+  "worker_settled": false
+}

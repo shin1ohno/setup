@@ -1,0 +1,22 @@
+{
+  "task_id": "841b114c257a4b11",
+  "attempt": 1,
+  "status": "done",
+  "summary": "The flaky test now advances a fake clock instead of sleeping 50 ms; make test passed three times in a row. Only tests/sync/test_client.py changed. Ready for the pre-approved push and draft PR.",
+  "artifacts": [
+    "@@STATE@@/841b114c257a4b11/report.md"
+  ],
+  "criteria": [
+    {
+      "criterion": "make test exits 0 three times in a row on branch fix/flaky-retry",
+      "status": "pass",
+      "evidence": "@@STATE@@/841b114c257a4b11/test-runs.txt"
+    },
+    {
+      "criterion": "No file outside tests/sync/ is changed",
+      "status": "pass",
+      "evidence": "@@STATE@@/841b114c257a4b11/diffstat.txt"
+    }
+  ],
+  "open_questions": []
+}

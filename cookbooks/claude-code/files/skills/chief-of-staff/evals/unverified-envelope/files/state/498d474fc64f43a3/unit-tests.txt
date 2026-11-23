@@ -1,0 +1,4 @@
+$ make test
+pytest tests/unit tests/sync
+42 passed in 3.12s
+exit status 0

@@ -1,0 +1,5 @@
+$ git diff main -- docs/sync.md
+@@ -40,3 +40,6 @@ ## Retries
+-Failed requests are retried after 0.5 s.
++The first retry waits 0.5 s. Each later retry doubles the wait, up to 8 s,
++with up to 10% random jitter.

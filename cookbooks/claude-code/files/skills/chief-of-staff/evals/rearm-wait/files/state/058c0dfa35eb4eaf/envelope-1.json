@@ -1,0 +1,22 @@
+{
+  "task_id": "058c0dfa35eb4eaf",
+  "attempt": 1,
+  "status": "done",
+  "summary": "docs/sync.md now describes the backoff: 0.5 s first wait, doubling to at most 8 s, with up to 10% jitter. Only docs/sync.md changed.",
+  "artifacts": [
+    "@@STATE@@/058c0dfa35eb4eaf/report.md"
+  ],
+  "criteria": [
+    {
+      "criterion": "docs/sync.md describes the new backoff schedule (0.5 s doubling to at most 8 s)",
+      "status": "pass",
+      "evidence": "@@STATE@@/058c0dfa35eb4eaf/docs-diff.txt"
+    },
+    {
+      "criterion": "No file outside docs/ is changed",
+      "status": "pass",
+      "evidence": "@@STATE@@/058c0dfa35eb4eaf/diffstat.txt"
+    }
+  ],
+  "open_questions": []
+}
