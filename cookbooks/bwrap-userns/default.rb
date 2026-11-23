@@ -40,6 +40,13 @@ install_package "bubblewrap" do
   arch   "bubblewrap"
 end
 
+# Claude Code's Linux sandbox needs socat beside bwrap; without both,
+# `claude plugin eval` refuses every case that grants a shell tool.
+install_package "socat" do
+  ubuntu "socat"
+  arch   "socat"
+end
+
 profile_src = File.expand_path("../files/bwrap-userns", __FILE__)
 profile_dst = "/etc/apparmor.d/bwrap-userns"
 restrict_sysctl = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
