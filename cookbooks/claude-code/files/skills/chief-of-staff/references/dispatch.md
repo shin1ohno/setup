@@ -330,15 +330,16 @@ The background wait runs in this loop, one per worker, with `s`, `worker` and
 directly, so a worker that writes it while settled cannot be missed, and a turn
 that ends while the worker's own background job runs costs no wake. It also ends
 when the task's inbox (`<task-dir>/inbox/`, beside the envelope) holds a regular
-`*.json` file, which it checks with `test` alone, without calling `herdr`.
+file with a valid message name, found with `find` (no shell glob, so an empty
+inbox cannot abort the loop under zsh, and a junk name cannot wake it), without
+calling `herdr`.
 
 ```bash
 end=$((SECONDS+600)); why=timeout; idle=0
 while [ $SECONDS -lt $end ]; do
   [ -f "$envelope" ] && { why=envelope; break; }
-  for m in "${envelope%/*}"/inbox/*.json; do
-    [ -f "$m" ] && [ ! -L "$m" ] && { why=inbox; break 2; }
-  done
+  find "${envelope%/*}/inbox" -maxdepth 1 -type f -name '*.json' 2>/dev/null | sed 's#.*/##' \
+    | grep -Eq '^[1-9][0-9]{0,2}-[0-9]+-[0-9a-f]{8,}\.json$' && { why=inbox; break; }
   st=$(herdr --session "$s" agent get "$worker" 2>/dev/null) || { why=gone; break; }
   # Only a plain idle counts. A Claude agent shown as done while its own
   # background job runs is not idle, and a working agent resets the count.

@@ -150,6 +150,44 @@ new_ws; echo "$IDLE" > "$WS/status"
 run "$D/mut2.sh"
 [ "$OUT" != "reason=idle" ]; check "without the idle count the idle case fails" $? "out=$OUT"
 
+# Inbox: a validly named message ends the wait as inbox without calling herdr;
+# junk names, a symlink and a FIFO do not wake it.
+GOOD=1-1732345678901234567-0123456789abcdef.json
+new_ws; mkdir "$WS/inbox"; echo '{}' > "$WS/inbox/$GOOD"
+run "$D/short.sh"
+expect "a valid inbox message ends the wait" inbox 3
+new_ws; mkdir "$WS/inbox"
+( sleep 0.5; echo '{}' > "$WS/inbox/$GOOD" ) &
+run "$D/short.sh"
+wait
+expect "a message posted during the wait ends it" inbox 6
+new_ws; mkdir "$WS/inbox"; echo '{}' > "$WS/inbox/notes.json"; printf '{}' > "$WS/inbox/1-2-x	y.json"
+ln -s /etc/hostname "$WS/inbox/2-3-0123456789abcdef.json"; mkfifo "$WS/inbox/3-4-0123456789abcdef.json"
+run "$D/short.sh"
+expect "junk names, a symlink and a FIFO do not wake the loop" timeout 6
+new_ws; mkdir "$WS/inbox"; echo '{}' > "$WS/inbox/$GOOD"; echo '{}' > "$WS/envelope-1.json"
+run "$D/short.sh"
+expect "the envelope wins over the inbox" envelope 3
+
+# The controller's background shell is zsh on these hosts: an empty or missing
+# inbox must not abort the loop there (a bare glob would, with "no matches").
+if command -v zsh >/dev/null 2>&1; then
+  for variant in missing empty; do
+    new_ws; [ "$variant" = empty ] && mkdir "$WS/inbox"
+    started=$SECONDS
+    OUT=$(WS=$WS s=test-session worker=w1 envelope="$WS/envelope-1.json" PATH="$D/bin:$PATH" \
+      timeout 20 zsh -f "$D/short.sh" 2>&1)
+    ELAPSED=$((SECONDS-started))
+    expect "zsh: a $variant inbox runs to the limit" timeout 6
+  done
+  new_ws; mkdir "$WS/inbox"; echo '{}' > "$WS/inbox/$GOOD"
+  OUT=$(WS=$WS s=test-session worker=w1 envelope="$WS/envelope-1.json" PATH="$D/bin:$PATH" \
+    timeout 20 zsh -f "$D/short.sh" 2>&1)
+  [ "$OUT" = "reason=inbox" ]; check "zsh: a valid inbox message ends the wait" $? "out=$OUT"
+else
+  echo "SKIP zsh cases (zsh not installed)"
+fi
+
 # --- the Codex start step -----------------------------------------------------
 
 awk '
