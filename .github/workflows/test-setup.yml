@@ -659,16 +659,23 @@ jobs:
         bash cookbooks/codex-cli/test/test-remote-control.sh
 
     - name: ssh-keys authorized_keys accepts only single public key lines
+      env:
+        # The runner image ships ssh-keygen; without it the OpenSSH-decided
+        # cases would only SKIP, so make their absence a failure here.
+        REQUIRE_SSH_KEYGEN: "1"
       run: |
         # Evaluates the PRODUCTION ssh-keys recipe through a stub DSL with an
-        # in-memory SSM registry: placeholder, options (command=/from=),
-        # multi-line, private-key, control-character (incl. U+0085), over-long
-        # and not-a-real-key values (short base64, bad padding, type mismatch,
-        # truncated blob) are skipped with a warning naming the SSM path; valid
-        # keys (rsa, ecdsa, sk, no comment, tab-separated, twin keys with merged
-        # comments) come out unchanged, and both authorized_keys files are
-        # sensitive. Positive controls: mutants without the check or without
-        # sensitive must fail.
+        # in-memory SSM registry, running the real ssh-keygen the recipe calls:
+        # placeholder, options (command=/from=/restrict), multi-line,
+        # private-key and control-character (incl. U+0085) values and anything
+        # ssh-keygen -l does not read as a key (off-curve ECDSA, short base64,
+        # bad padding, a key after a leading word) are skipped with a warning
+        # naming the SSM path; valid keys (rsa, rsa-sha2-* labels, ecdsa, sk,
+        # no comment, tab-separated, 8 KiB lines, twin keys with merged
+        # comments) come out unchanged; without ssh-keygen the Ruby checks
+        # still apply and other lines are kept with one warning; both
+        # authorized_keys files are sensitive. Positive controls: four mutants
+        # must fail.
         ruby cookbooks/ssh-keys/test/test-public-key-validation.rb
 
     - name: hr shell function regression suite

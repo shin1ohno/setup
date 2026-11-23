@@ -169,159 +169,66 @@ MANAGED_END = "# END ssh-keys-managed"
 # lines that resolve to the same key.
 #
 # Every SSM public value lands in EVERY host's authorized_keys, so only a
-# value that is exactly one real public key line is accepted. The RAW value
-# is checked before any normalization (fetch_ssm_raw drops only the newline
-# the aws CLI adds); public_key_line returns [line, nil] or [nil, reason]:
+# value that is exactly one public key line is accepted. OpenSSH itself
+# decides whether the line is a public key (ssh_keygen_accepts below); Ruby
+# checks only what OpenSSH would not reject for authorized_keys use, on the
+# RAW value (fetch_ssm_raw drops only the newline the aws CLI adds):
 #   - one line: an optional single trailing LF or CRLF is the only line
-#     break allowed; any other C0 control byte (CR, NUL, ESC, a second line,
-#     a leading or trailing blank line), DEL, a C1 control (U+0080-U+009F,
-#     e.g. U+0085) or U+2028/U+2029 rejects the value. TAB and space are
-#     field separators, as in OpenSSH (sshkey.c sshkey_read: strcspn " \t").
-#   - at most PUBLIC_KEY_MAX_BYTES bytes (see below).
-#   - first field is an allowed key type, so authorized_keys options
-#     (command=, from=, restrict) and the "placeholder — …" text of an
-#     unfilled ios-client slot are rejected.
-#   - the blob is strict base64 (OpenSSH b64_pton: length a multiple of 4,
-#     '=' only as final padding, zero slop bits) and decodes to a complete
-#     key of the declared type with nothing left over (sshkey.c
-#     sshkey_from_blob_internal + the per-type deserialize_public):
-#     ed25519 a 32-byte key; ecdsa its curve name and an uncompressed point
-#     of the curve's size; rsa two positive mpints, modulus 1024-16384 bits;
-#     sk-* the same plus an application string. EC points are not checked
-#     to be on the curve (that needs libcrypto).
-# Accepted lines are used exactly as before this check (stripped of
-# surrounding blanks), so valid keys keep their bytes. A rejected value is
-# skipped with a warning naming the SSM path and the reason — never the
-# value, which could be a pasted private key.
-# Test: cookbooks/ssh-keys/test/test-public-key-validation.rb.
+#     break allowed. Any other C0 control byte (CR, NUL, ESC, a second
+#     line, a leading or trailing blank line), DEL, a C1 control
+#     (U+0080-U+009F, e.g. U+0085) or U+2028/U+2029 rejects the value. TAB
+#     and space separate fields, as in OpenSSH (sshkey_read: " \t").
+#   - not the "placeholder — …" text of an unfilled ios-client slot, not PEM
+#     armour ("-----BEGIN …", a pasted private key).
+#   - no leading authorized_keys options: the first field must not carry
+#     `=`, `"` or `,` or be a bare option keyword of sshd(8) AUTHORIZED_KEYS
+#     FILE FORMAT. `ssh-keygen -l` skips a leading field it cannot read as a
+#     key (ssh-keygen.c do_fingerprint: "accept a public key prefixed with a
+#     hostname or options"), so the line is also probed WITHOUT its first
+#     field: if that still reads as a key, the key did not start at the
+#     first field and the value is rejected.
+# There is no length cap and no key-type allow list: rsa-sha2-256/512 labels,
+# tab-separated fields and long comments are kept whenever OpenSSH reads
+# them (sshd reads authorized_keys with getline, auth2-pubkeyfile.c; an SSM
+# value is at most 8 KB). Accepted lines are used exactly as before this
+# check (stripped of surrounding blanks), so valid keys keep their bytes. A
+# rejected value is skipped with a warning naming the SSM path and the
+# reason, never the value (it could be a pasted private key).
 #
-# PUBLIC_KEY_MAX_BYTES: current OpenSSH reads authorized_keys with
-# getline(3) and has no line limit (auth2-pubkeyfile.c
-# auth_check_authkeys_file); 7.3p1 read lines into a fixed
-# SSH_MAX_PUBKEY_BYTES = 16384 buffer (ssh.h, misc.c read_keyfile_line)
-# and discarded longer lines. The largest key OpenSSH parses is RSA-16384
-# (SSHBUF_MAX_BIGNUM = 2048 bytes, sshbuf.h), about 2.8 KB as a line, so
-# 4096 bytes fits every allowed key with a comment and stays far below
-# 16384.
-PUBLIC_KEY_MAX_BYTES = 4096
-PUBLIC_KEY_TYPES = {
-  "ssh-ed25519" => :ed25519,
-  "sk-ssh-ed25519@openssh.com" => :sk_ed25519,
-  "ssh-rsa" => :rsa,
-  "ecdsa-sha2-nistp256" => :ecdsa,
-  "ecdsa-sha2-nistp384" => :ecdsa,
-  "ecdsa-sha2-nistp521" => :ecdsa,
-  "sk-ecdsa-sha2-nistp256@openssh.com" => :sk_ecdsa,
-}.freeze
-# Coordinate size in bytes per curve (uncompressed point = 1 + 2 * size).
-PUBLIC_KEY_EC_SIZES = { "nistp256" => 32, "nistp384" => 48, "nistp521" => 66 }.freeze
-BASE64_VALUES = {}
-"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".bytes.each do |b|
-  BASE64_VALUES[b] = BASE64_VALUES.size
-end
+# Without ssh-keygen on PATH the Ruby checks still run, every line that
+# passes them is kept as before this check, and one warning says the key
+# material was not verified: dropping keys there could lock the host out,
+# and raising would stop the whole converge.
+# Test: cookbooks/ssh-keys/test/test-public-key-validation.rb.
+AUTHORIZED_KEYS_BARE_OPTIONS = %w[
+  agent-forwarding cert-authority no-agent-forwarding no-port-forwarding no-pty
+  no-user-rc no-x11-forwarding port-forwarding pty no-touch-required
+  verify-required restrict user-rc x11-forwarding
+].freeze
 
-# Strict base64 → Array of byte values, or nil (OpenSSH b64_pton rules).
-decode_base64 = ->(text) {
-  bytes = text.bytes
-  return nil if bytes.empty? || bytes.length % 4 != 0
+# The candidate line goes to ssh-keygen through a file in a private mktemp
+# directory (mode 0700), passed as an argv element — no shell, no
+# interpolation. run_command with an Array spawns it directly (mitamae
+# backend.rb run_command_with_log_output); mitamae cannot feed stdin.
+ssh_keygen_found = run_command("command -v ssh-keygen >/dev/null 2>&1", error: false).exit_status == 0
+ssh_keygen_dir = nil
+# true / false = OpenSSH's answer; nil = could not ask (no private temp dir).
+ssh_keygen_accepts = ->(line) {
+  unless ssh_keygen_dir
+    made = run_command(["mktemp", "-d"], error: false)
+    return nil unless made.exit_status == 0 && !made.stdout.strip.empty?
 
-  pad = 0
-  pad += 1 if bytes[-1] == 61 # "="
-  pad += 1 if pad == 1 && bytes[-2] == 61
-  out = []
-  i = 0
-  while i < bytes.length
-    v = [0, 0, 0, 0]
-    j = 0
-    while j < 4
-      b = bytes[i + j]
-      if b == 61
-        return nil if i + 4 < bytes.length || j < 4 - pad # "=" only as final padding
-      else
-        return nil unless BASE64_VALUES.key?(b)
-
-        v[j] = BASE64_VALUES[b]
-      end
-      j += 1
-    end
-    n = (v[0] << 18) | (v[1] << 12) | (v[2] << 6) | v[3]
-    last = i + 4 == bytes.length
-    out << ((n >> 16) & 255)
-    out << ((n >> 8) & 255) unless last && pad == 2
-    out << (n & 255) unless last && pad >= 1
-    i += 4
+    ssh_keygen_dir = made.stdout.strip
   end
-  # Bits after the last full byte must be zero (b64_pton rejects them).
-  return nil if pad == 1 && (v[2] & 3) != 0
-  return nil if pad == 2 && (v[1] & 15) != 0
-
-  out
+  candidate = "#{ssh_keygen_dir}/candidate.pub"
+  File.open(candidate, "w") { |f| f.write("#{line}\n") }
+  result = run_command(["ssh-keygen", "-l", "-f", candidate], error: false)
+  run_command(["rm", "-f", candidate], error: false)
+  result.exit_status == 0
 }
 
-# Reads one SSH wire string at pos: [Array of bytes, next pos] or nil.
-read_wire_string = ->(blob, pos) {
-  return nil if pos + 4 > blob.length
-
-  len = (blob[pos] << 24) | (blob[pos + 1] << 16) | (blob[pos + 2] << 8) | blob[pos + 3]
-  return nil if pos + 4 + len > blob.length
-
-  [blob[pos + 4, len], pos + 4 + len]
-}
-
-# Positive mpint (sshbuf_get_bignum2_bytes_direct) → its bit count, or nil.
-mpint_bits = ->(bytes) {
-  return nil if !bytes.empty? && bytes[0] >= 128 # negative
-  return nil if bytes.length > 2049 || (bytes.length == 2049 && bytes[0] != 0)
-
-  i = 0
-  i += 1 while i < bytes.length && bytes[i] == 0
-  return 0 if i == bytes.length
-
-  top = bytes[i]
-  bits = 0
-  while top > 0
-    bits += 1
-    top >>= 1
-  end
-  ((bytes.length - i - 1) * 8) + bits
-}
-
-# Returns nil when blob is a complete public key of key_type, else a reason.
-public_key_blob_error = ->(key_type, blob) {
-  kind = PUBLIC_KEY_TYPES[key_type]
-  name, pos = read_wire_string.call(blob, 0)
-  return "blob does not start with a key type string" unless name
-  return "blob is a different key type than the line says" unless name == key_type.bytes
-
-  case kind
-  when :ed25519, :sk_ed25519
-    pk, pos = read_wire_string.call(blob, pos)
-    return "ed25519 key is not 32 bytes" unless pk && pk.length == 32
-  when :ecdsa, :sk_ecdsa
-    curve_name = key_type.sub("sk-", "").sub("@openssh.com", "").sub("ecdsa-sha2-", "")
-    curve, pos = read_wire_string.call(blob, pos)
-    return "ecdsa curve name does not match the key type" unless curve && curve == curve_name.bytes
-
-    point, pos = read_wire_string.call(blob, pos)
-    size = PUBLIC_KEY_EC_SIZES[curve_name]
-    return "ecdsa point is not an uncompressed #{curve_name} point" unless point && point.length == 1 + (2 * size) && point[0] == 4
-  when :rsa
-    e, pos = read_wire_string.call(blob, pos)
-    return "rsa exponent is missing or negative" unless e && mpint_bits.call(e)
-
-    n, pos = read_wire_string.call(blob, pos)
-    bits = n && mpint_bits.call(n)
-    return "rsa modulus is missing, negative or outside 1024-16384 bits" unless bits && bits >= 1024 && bits <= 16384
-  end
-  if kind == :sk_ed25519 || kind == :sk_ecdsa
-    app, pos = read_wire_string.call(blob, pos)
-    return "security key application string is missing" unless app && !app.include?(0)
-  end
-  return "blob has trailing data after the key" unless pos == blob.length
-
-  nil
-}
-
+# Returns [line, nil] when the raw SSM value is one public key line, else
+# [nil, reason].
 public_key_line = ->(raw) {
   value = if raw.end_with?("\r\n")
             raw[0, raw.length - 2]
@@ -331,7 +238,6 @@ public_key_line = ->(raw) {
             raw
           end
   return [nil, "value is empty"] if value.empty?
-  return [nil, "value is longer than #{PUBLIC_KEY_MAX_BYTES} bytes"] if value.bytesize > PUBLIC_KEY_MAX_BYTES
 
   bytes = value.bytes
   i = 0
@@ -350,15 +256,27 @@ public_key_line = ->(raw) {
   end
 
   line = value.strip
-  fields = line.split(/[ \t]+/, 3)
-  return [nil, "first field is not an allowed key type (options, placeholder or other text)"] unless PUBLIC_KEY_TYPES.key?(fields[0])
-  return [nil, "no key blob after the key type"] unless fields[1]
+  fields = line.split(/[ \t]+/, 2)
+  first = fields[0].to_s
+  return [nil, "value is blank"] if first.empty?
+  return [nil, "value is a placeholder"] if first.downcase == "placeholder"
+  return [nil, "value is PEM armour (a private key?)"] if first.start_with?("-----")
+  if first.include?("=") || first.include?("\"") || first.include?(",") ||
+     AUTHORIZED_KEYS_BARE_OPTIONS.include?(first.downcase)
+    return [nil, "value starts with authorized_keys options"]
+  end
+  return [nil, "value has no key after the key type"] unless fields[1]
 
-  blob = decode_base64.call(fields[1])
-  return [nil, "key blob is not strict base64"] unless blob
-
-  error = public_key_blob_error.call(fields[0], blob)
-  return [nil, error] if error
+  if ssh_keygen_found
+    whole = ssh_keygen_accepts.call(line)
+    if whole.nil?
+      MItamae.logger.warn("ssh-keys: mktemp -d failed; key material of SSM public values is not verified")
+      ssh_keygen_found = false
+    else
+      return [nil, "ssh-keygen does not read it as a public key"] unless whole
+      return [nil, "the key does not start at the first field (options or hostname)"] if ssh_keygen_accepts.call(fields[1])
+    end
+  end
 
   [line, nil]
 }
@@ -383,6 +301,11 @@ fetch_ssm_raw = ->(path) {
     out.end_with?("\n") ? out[0, out.length - 1] : out
   end
 }
+
+unless ssh_keygen_found
+  MItamae.logger.warn("ssh-keys: ssh-keygen not found; SSM public values are checked for one line, " \
+                      "options and placeholders only, and the key material is not verified")
+end
 
 managed_keys = []
 managed_key_data = [] # [key_type, key_data] pairs for dedup
@@ -420,6 +343,8 @@ devices.each do |k, dev|
   managed_keys << pub_line
   managed_key_data << parts[0..1] # [key_type, base64_data]
 end
+
+run_command(["rmdir", ssh_keygen_dir], error: false) if ssh_keygen_dir
 
 if managed_keys.any?
   authorized_keys_path = "#{ssh_dir}/authorized_keys"
