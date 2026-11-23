@@ -81,3 +81,10 @@ mcp_servers:
     desktop: mcp-remote
     # claude.ai account connector ("claude.ai roon") — see header.
     account_connector: true
+
+  # AWS documentation, API reference and regional availability. Public and
+  # unauthenticated; queries leave the host, so keep work data out of them.
+  aws-knowledge:
+    type: http
+    transport: http
+    url: "https://knowledge-mcp.global.api.aws"

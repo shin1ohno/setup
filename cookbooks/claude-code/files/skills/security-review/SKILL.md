@@ -45,7 +45,18 @@ Delegate to a code-review sub-agent if sub-agents are available (otherwise perfo
 - The full diff output (excluding binary files)
 - The diff stat summary
 - A security-focused review directive: "Focus on OWASP Top 10 vulnerabilities (injection, XSS, SSRF, auth/session flaws, crypto misuse, path traversal, unsafe deserialization, etc.) plus secret leakage, unsafe exec/eval, and untrusted input flowing to privileged sinks. Rate each finding by severity (Critical/High/Medium/Low/Info)."
-- Instructions to focus on changed lines but read surrounding context as needed
+- The domain checklist below, for every item that the diff touches
+- Any spec, plan or ADR the change implements (path), with: "Vulnerabilities can come from deviating from the spec and from flaws in the spec itself; report both."
+- Instructions to read every touched file in full and follow the call chain, not only the changed lines, and to list the areas examined that appeared secure
+
+Domain checklist (include in the prompt):
+
+- **OAuth 2.0**: redirect URI exact match (no prefix/partial match, no open redirect), authorization code single use, PKCE required and verified (`S256`), refresh token rotation with reuse detection, scope checked per resource, tokens kept out of logs, URLs and Referer.
+- **OIDC / JWT**: signature verified against the issuer's JWKS, `exp`/`nbf`, `iss` and `aud` exact match, `nonce` bound to the session, `at_hash`/`c_hash` when the flow returns them, no issuer confusion across multiple providers, `alg` pinned (no `none`, no HS/RS confusion).
+- **Sessions and cookies**: fixation, idle and absolute expiry, `Secure` / `HttpOnly` / `SameSite`.
+- **Timing**: every comparison of a secret (token, HMAC digest, API key, password hash) is constant-time — Python `hmac.compare_digest`, Rust `subtle::ConstantTimeEq`, Node `crypto.timingSafeEqual`, Ruby `ActiveSupport::SecurityUtils.secure_compare`; no observable difference between an unknown user and a wrong credential (lookup short-circuits before verification).
+- **Races**: check-then-use (TOCTOU) on files, symlinks, quotas, one-time codes and token issuance; missing locking on shared state.
+- **CI workflows** (`.github/workflows/`): third-party actions pinned by SHA, `permissions:` minimal, `${{ }}` from events/inputs not interpolated into `run:`, secrets not exposed to `pull_request_target` / fork PRs (`~/.claude/docs/github-actions.md`).
 
 The Claude Code `code-reviewer` agent already supports confidence scoring (0-100) per finding; use its output format directly (without it, attach a 0-100 confidence score to each finding yourself).
 

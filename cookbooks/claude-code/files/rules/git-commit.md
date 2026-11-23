@@ -1,6 +1,6 @@
 # Git Commit Format
 
-Start the summary with a `{component}: ` prefix; explain the "why", not just the "what".
+Start the summary with a `{component}: ` prefix; explain the "why", not just the "what". Keep the subject within 72 characters including the prefix and move the rest to the body; a PR title obeys the same limit because a squash merge makes it the subject. Shortening techniques: `~/.claude/docs/git-commit-detail.md#commit-subject-length`.
 
 Always-loaded summary. Examples and origins: `~/.claude/docs/git-commit-detail.md` (on demand — Read it when a section pointer matches).
 

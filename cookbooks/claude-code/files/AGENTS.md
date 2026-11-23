@@ -94,7 +94,7 @@ Applies to any prose output — formal docs AND chat replies.
 - **Reader / BLUF / length は harness 既定** — 結論先行・読者に合わせた長さ
 - **Chat ≠ full Pyramid**: 1-2 levels is fine (constraint is "topic sentence per paragraph").
 - **Reference, don't reproduce**: cite "see `Japanese Output Discipline`" or "see `~/.claude/rules/debugging.md`" instead of pasting protocol text inline.
-- **No change-narration in the deliverable**: a report / document / proposal / spec contains only reader-facing content — never how it was authored, ordered or revised. Editing rationale and reordering / version-diff notes belong in the chat reply, crit / PR comment, or commit message. Detail: see `~/.claude/docs/agents-md-detail.md#no-change-narration`.
+- **No change-narration in the deliverable**: a report / document / proposal / spec contains only reader-facing content — never how it was authored, ordered or revised. Editing rationale and reordering / version-diff notes belong in the chat reply, crit / PR comment, or commit message. Detail: see `~/.claude/docs/agents-md-detail.md#no-change-narration`. Source comments too: one line, for a stranger reading the file — see `~/.claude/docs/coding.md#source-comments`.
 - **Domain-heavy documents**: bulk terminology edits follow `~/.claude/docs/domain-writing.md`.
 - **Japanese prose**: clarity over politeness; canon is `Japanese Output Discipline` above (do not restate).
 
@@ -125,3 +125,6 @@ Applies to any prose output — formal docs AND chat replies.
 | fractal node trees + plasma-wiki — config home, cost caps, `--scope`, wiki lint, waves | `~/.claude/docs/fractal-nodes.md` |
 | GPG subkey distribution to headless hosts via a secret store | `~/.claude/docs/gpg-key-distribution.md` |
 | Codex shared-skill probes — description truncation, `[skills] max_context_tokens` | `~/.claude/docs/codex-skills-probe.md` |
+| Source comments, error boundaries, retry backoff (any language) | `~/.claude/docs/coding.md` |
+| GitHub Actions — SHA pinning, permissions, credentials, zizmor/actionlint, Dependabot | `~/.claude/docs/github-actions.md` |
+| Writing or reviewing a README | `~/.claude/docs/readme.md` |
