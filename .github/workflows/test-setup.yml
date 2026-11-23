@@ -662,10 +662,13 @@ jobs:
       run: |
         # Evaluates the PRODUCTION ssh-keys recipe through a stub DSL with an
         # in-memory SSM registry: placeholder, options (command=/from=),
-        # multi-line, private-key and control-character values are skipped with
-        # a warning naming the SSM path; valid keys (rsa, no comment, twin keys
-        # with merged comments) come out unchanged. Positive control: a mutant
-        # without the check must fail.
+        # multi-line, private-key, control-character (incl. U+0085), over-long
+        # and not-a-real-key values (short base64, bad padding, type mismatch,
+        # truncated blob) are skipped with a warning naming the SSM path; valid
+        # keys (rsa, ecdsa, sk, no comment, tab-separated, twin keys with merged
+        # comments) come out unchanged, and both authorized_keys files are
+        # sensitive. Positive controls: mutants without the check or without
+        # sensitive must fail.
         ruby cookbooks/ssh-keys/test/test-public-key-validation.rb
 
     - name: hr shell function regression suite
