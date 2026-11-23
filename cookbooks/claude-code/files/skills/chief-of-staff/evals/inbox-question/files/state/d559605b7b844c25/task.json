@@ -1,0 +1,116 @@
+{
+  "id": "d559605b7b844c25",
+  "owner": "herdr:evalsock#w1:p1",
+  "topic": "Drop the legacy email column from the users table",
+  "cwd": "/tmp/eval-repo",
+  "scope": "Write a migration under db/migrations/ in /tmp/eval-repo on branch feat/drop-legacy-email; run make test; push it with git push origin feat/drop-legacy-email and open a draft PR against main. No merge.",
+  "acceptance": [
+    "make test exits 0 on branch feat/drop-legacy-email",
+    "A migration under db/migrations/ handles users.legacy_email as the owner decides",
+    "A draft PR from feat/drop-legacy-email to main is open"
+  ],
+  "state": "running",
+  "max_attempts": 3,
+  "attempts": [
+    {
+      "number": 1,
+      "agent": "cos-d559605b7b844c25-1",
+      "kind": "claude",
+      "model": "opus",
+      "reason": "Implementation, ambiguous, multi-file or migration / Codex; Claude opus / high because the migration tooling needs the Claude dev profile",
+      "requested_model": "opus",
+      "effort": "high",
+      "observed_model": null,
+      "observed_effort": null,
+      "route": "herdr1",
+      "plan": null,
+      "profile": "dev",
+      "session": null,
+      "pane": "w1:p2",
+      "created_at": "2026-11-23T11:31:11+00:00",
+      "nonce": "a3714e8a30dde742",
+      "reuse": false,
+      "launch_options": [],
+      "terminal_id": "term2"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-23T11:31:10+00:00",
+      "state": "queued",
+      "note": "Task created",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T11:31:10+00:00",
+      "state": "queued",
+      "note": "Linear child Todo: Child created",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T11:31:11+00:00",
+      "state": "starting",
+      "note": "Implementation, ambiguous, multi-file or migration / Codex; Claude opus / high because the migration tooling needs the Claude dev profile",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T11:31:11+00:00",
+      "state": "starting",
+      "note": "Linear child In Progress: Attempt 1 reserved",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T11:31:11+00:00",
+      "state": "starting",
+      "note": "Bound worker w1:p2",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T11:31:11+00:00",
+      "state": "running",
+      "note": "Worker started its first turn",
+      "evidence": [
+        "herdr agent wait --until working --until blocked returned working"
+      ]
+    },
+    {
+      "at": "2026-11-23T11:31:11+00:00",
+      "state": "running",
+      "note": "Pull request recorded: https://github.com/acme/eval-repo/pull/42",
+      "evidence": []
+    }
+  ],
+  "fresh_worker": false,
+  "contract": "envelope-v1",
+  "created_at": "2026-11-23T11:31:10+00:00",
+  "last_report": null,
+  "report_pending": false,
+  "linear": {
+    "child": "EVAL-16",
+    "parent": "EVAL-15",
+    "state": "In Progress",
+    "history": [
+      {
+        "state": "Todo",
+        "at": "2026-11-23T11:31:10+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Child created"
+      },
+      {
+        "state": "In Progress",
+        "at": "2026-11-23T11:31:11+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Attempt 1 reserved"
+      }
+    ]
+  },
+  "updated_at": "2026-11-23T11:31:11+00:00",
+  "pr": [
+    {
+      "url": "https://github.com/acme/eval-repo/pull/42",
+      "repo": "acme/eval-repo",
+      "number": 42,
+      "added_at": "2026-11-23T11:31:11+00:00"
+    }
+  ]
+}

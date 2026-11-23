@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Post one structured report from a Chief of Staff worker to its task inbox.
+
+A worker (Claude Code or Codex) runs `inbox.py post` with the task directory,
+task ID, attempt and attempt nonce from its brief. The message lands as one
+JSON file in <task-dir>/inbox/; the controller reads it with `tasks.py inbox`,
+which validates every field again. This helper never reads or writes task.json.
+
+The inbox gives cooperating workers a structured, attributable channel. It is
+not an authentication boundary: a worker runs as the same OS user as the
+controller and can write any file in the state directory.
+"""
+
+import argparse
+from datetime import datetime, timezone
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import stat
+import sys
+import time
+import unicodedata
+
+
+KINDS = ("done", "failed", "blocked", "question", "wait", "step", "note")
+KEYS = frozenset({"task_id", "attempt", "nonce", "kind", "text", "on", "step", "at"})
+TEXT_LIMIT = 1200
+ON_LIMIT = 80
+AT_LIMIT = 40
+FILE_LIMIT = 8192
+NONCE = re.compile(r"[0-9a-f]{16}")
+STEP = re.compile(r"[0-9]{1,3}/[0-9]{1,3}")
+# <attempt>-<time_ns>-<random hex>.json; the reader accepts nothing else.
+NAME = re.compile(r"[1-9][0-9]{0,2}-[0-9]+-[0-9a-f]{8,}\.json")
+
+# CSI / OSC / two-byte escape sequences, removed before the lone controls.
+ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-_]")
+# C0 (newline and tab are folded to a space first), DEL and C1 controls.
+CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+# Bidi embeddings, overrides and isolates, marks, and zero-width characters.
+INVISIBLE = re.compile("[­؜᠎​-‏‪-‮⁠-⁩﻿]")
+
+
+def clean(value, limit=None):
+    """Fold a worker string into one safe display line.
+
+    Removes ANSI escapes, C0/C1 controls (newlines become spaces), bidi
+    controls and zero-width characters, replaces backticks so the text cannot
+    close a Markdown code fence, normalizes to NFC, and cuts at `limit` UTF-8
+    bytes on a character boundary.
+    """
+    value = ANSI.sub("", value)
+    value = re.sub(r"[\r\n\t\v\f  \x85]", " ", value)
+    value = CONTROLS.sub("", value)
+    value = INVISIBLE.sub("", value)
+    value = value.replace("`", "'")
+    value = unicodedata.normalize("NFC", value).strip()
+    if limit is not None:
+        value = value.encode("utf-8")[:limit].decode("utf-8", "ignore")
+    return value
+
+
+def task_id_pattern():
+    """The ledger's own task ID pattern, loaded from tasks.py beside this file."""
+    path = Path(__file__).resolve().with_name("tasks.py")
+    spec = importlib.util.spec_from_file_location("cos_tasks_for_inbox", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.TASK_ID
+
+
+class Refused(Exception):
+    pass
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Refused(message)
+
+
+def parser():
+    cli = Parser(description=__doc__.splitlines()[0])
+    sub = cli.add_subparsers(dest="command", required=True, parser_class=Parser)
+    post = sub.add_parser("post", help="Write one message into <task-dir>/inbox/")
+    post.add_argument("--task-dir", required=True, help="Absolute task directory from the brief")
+    post.add_argument("--task-id", required=True)
+    post.add_argument("--attempt", required=True)
+    post.add_argument("--nonce", required=True, help="Attempt nonce from the brief")
+    post.add_argument("--kind", required=True, choices=KINDS)
+    post.add_argument("--text", required=True)
+    post.add_argument("--on", help="Who or what a `wait` is waiting on")
+    post.add_argument("--step", help="Progress as i/n for a `step`")
+    return cli
+
+
+def message(args):
+    if not task_id_pattern().fullmatch(args.task_id):
+        raise Refused("invalid task ID")
+    if not re.fullmatch(r"[1-9][0-9]{0,2}", args.attempt):
+        raise Refused("attempt must be an integer from 1 to 999")
+    if not NONCE.fullmatch(args.nonce):
+        raise Refused("nonce must be the 16 hex characters from the brief")
+    text = clean(args.text)
+    if not text:
+        raise Refused("text is empty after cleaning")
+    if len(text.encode("utf-8")) > TEXT_LIMIT:
+        raise Refused(f"text exceeds {TEXT_LIMIT} UTF-8 bytes after cleaning; shorten it "
+                      "and put the detail in a report file")
+    on = None
+    if args.on is not None:
+        on = clean(args.on)
+        if not on or len(on.encode("utf-8")) > ON_LIMIT:
+            raise Refused(f"--on must be 1 to {ON_LIMIT} UTF-8 bytes after cleaning")
+    if args.kind == "wait" and on is None:
+        raise Refused("a wait message needs --on WHO")
+    if args.step is not None and not STEP.fullmatch(args.step):
+        raise Refused("--step must look like i/n (up to three digits each)")
+    if args.kind == "step" and args.step is None:
+        raise Refused("a step message needs --step i/n")
+    return {
+        "task_id": args.task_id, "attempt": int(args.attempt), "nonce": args.nonce,
+        "kind": args.kind, "text": text, "on": on, "step": args.step,
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def open_task_dir(task_dir, task_id):
+    """Open the task directory without following a final symlink."""
+    path = Path(task_dir)
+    if not path.is_absolute():
+        raise Refused("--task-dir must be an absolute path")
+    if path.name != task_id:
+        raise Refused("--task-dir does not belong to --task-id")
+    try:
+        directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as error:
+        raise Refused(f"--task-dir is not a directory: {error.strerror}") from None
+    try:
+        # The ledger record must exist; it is only checked, never opened.
+        info = os.stat("task.json", dir_fd=directory, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode):
+            raise Refused("--task-dir has no ledger task.json")
+    except FileNotFoundError:
+        os.close(directory)
+        raise Refused("--task-dir has no ledger task.json") from None
+    except BaseException:
+        os.close(directory)
+        raise
+    return directory
+
+
+def post(args):
+    body = message(args)
+    data = (json.dumps(body, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    if len(data) > FILE_LIMIT:
+        raise Refused(f"message exceeds {FILE_LIMIT} bytes")
+    directory = open_task_dir(args.task_dir, args.task_id)
+    try:
+        try:
+            os.mkdir("inbox", mode=0o700, dir_fd=directory)
+        except FileExistsError:
+            pass
+        try:
+            inbox = os.open("inbox", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                            dir_fd=directory)
+        except OSError as error:
+            raise Refused(f"inbox is not a directory: {error.strerror}") from None
+    finally:
+        os.close(directory)
+    try:
+        temporary = ".post-" + secrets.token_hex(8) + ".tmp"
+        handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW |
+                         os.O_CLOEXEC, 0o600, dir_fd=inbox)
+        try:
+            os.write(handle, data)
+            os.fsync(handle)
+        finally:
+            os.close(handle)
+        try:
+            for _ in range(16):
+                name = f"{body['attempt']}-{time.time_ns()}-{secrets.token_hex(8)}.json"
+                try:
+                    # link() refuses an existing name, so no message is overwritten.
+                    os.link(temporary, name, src_dir_fd=inbox, dst_dir_fd=inbox)
+                    break
+                except FileExistsError:
+                    continue
+            else:
+                raise Refused("could not choose a unique message name")
+        finally:
+            os.unlink(temporary, dir_fd=inbox)
+    finally:
+        os.close(inbox)
+    return {"posted": name, "inbox": str(Path(args.task_dir) / "inbox")}
+
+
+def main(argv=None):
+    try:
+        args = parser().parse_args(argv)
+        result = post(args)
+    except Refused as error:
+        print("inbox.py: refused: " + " ".join(str(error).split()), file=sys.stderr)
+        return 1
+    except OSError as error:
+        print("inbox.py: refused: " + " ".join(str(error).split()), file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
