@@ -77,17 +77,21 @@ A worker's `hc send` back to the controller can fail with exit 127 when the
 worker was started without the controller's PATH, so a missing message is not
 evidence that the worker is still running. The controller keeps one background
 `hc wait --children any --timeout 600` (seconds) running so the harness wakes it,
-re-checks the terminals and the envelope file on each wake, then re-arms it. A
+re-checks the terminals, the envelope file and the task inbox (`tasks.py inbox`)
+on each wake, then re-arms it. A
 timeout means "look now", not failure; the ten-minute stall diagnosis in
 `SKILL.md` still applies.
 
-The worker notifies with `hc send <controller-terminal> "<one line>"`, never
-`--force`, which can answer a dialog. The worker Stop hook's envelope-ready
-message works only through `herdr agent prompt`, so a controller on this route
+The worker posts its report to the task inbox and then rings the doorbell with
+`hc send <controller-terminal> "[task <id> attempt <n>] inbox"` (dispatch.md,
+"Worker inbox and doorbell"), never `--force`, which can answer a dialog. The
+worker Stop hook's envelope-ready message works only through `herdr agent
+prompt`, so a controller on this route
 never passes the `COS_CONTROLLER_*` pair. A Claude worker still gets
 `COS_WORKER_TASK_ID`, `COS_WORKER_ATTEMPT` and `COS_STATE_DIR` (dispatch.md),
 which arm the state hook and the digest. The controller then has the wait, the
-worker's message, and the worker's `state-<n>.json` / `digest-<n>.json`.
+worker's inbox and doorbell, and the worker's `state-<n>.json` /
+`digest-<n>.json`.
 
 `hc send` wraps its text in `<hc from=...>` tags, so a slash command such as
 `/context` sent with `hc send` reaches the model as an ordinary message. Type
