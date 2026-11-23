@@ -4,7 +4,7 @@
 
 - **ユーザーに渡す `!` ブロックは zsh 書式で書く**（ログインシェルは zsh 5.9）。bash 専用書式は静かに壊れる（`read -rs -p` は変数が空のまま後続が走る。zsh は `read -rs "V?x: "`）。Detail: see `~/.claude/docs/claude-md-detail.md#zsh-user-blocks`.
 <!-- section id=claude-cr-general-bash-tool-zsh file=CLAUDE.md order=0040 harness=claude lazy=n -->
-- **Bash ツール自体も zsh（Linux ホストでも同じ）**: ループ・配列・glob・複数行は最初から `/bin/bash -c '…'` か `bash -s <<'EOF'` で書く。`for f in $VAR` は分割されず、glob 不一致は全体を中断し、`echo ===` の `=` 展開と `mapfile` は失敗する。zsh 由来のエラーを 1 回見たらコマンド全体を bash に切り替える。Detail: see `~/.claude/docs/shell-detail.md#zsh-login-shell-traps`.
+- **Bash ツール自体も zsh（Linux ホストでも同じ）**: ループ・配列・glob・複数行は最初から `/bin/bash -c '…'` か `bash -s <<'EOF'` で書く。`for f in $VAR` も `set -- $x` も分割されず、glob 不一致は全体を中断し、`echo ===` の `=` 展開と `mapfile` は失敗する。zsh 由来のエラーを 1 回見たらコマンド全体を bash に切り替える。Detail: see `~/.claude/docs/shell-detail.md#zsh-login-shell-traps`.
 <!-- section id=claude-cr-general-plan-mode file=CLAUDE.md order=0050 harness=claude lazy=n -->
 - **Non-trivial → plan mode**: 2+ files, 2+ repos, deploy steps, new agent/hook/skill. Exception: hardware/protocol debugging with unknown root cause → iterate hypotheses until the cause is found, then plan mode
 <!-- section id=claude-cr-general-misclassified-trivial file=CLAUDE.md order=0060 harness=claude lazy=n -->
@@ -90,6 +90,8 @@ Load when a plan involves any security-sensitive component. Launch an adversaria
 - Transport-rewrite rules whose scope decides WHICH credential is used — git `insteadOf` / `pushInsteadOf`, ssh_config `Match`/`Host` blocks, proxy `no_proxy`. A rewrite that is correct today can silently reroute traffic onto the wrong identity as the host's credential set changes later, so review the scope against every credential the host may acquire, not just the ones it has
 - Provisioning a credential onto a host that did not previously have one — adding a key can ACTIVATE dormant conditional logic elsewhere in the config
 - An unattended runner combining `--permission-mode bypassPermissions` with a `--disallowedTools`/`--allowedTools` clamp — the clamp's runtime effectiveness is a claim to VERIFY, not a property of the flag list. Review must enumerate equivalent capabilities left reachable (a CLI on PATH duplicating a denied MCP server, subagent inheritance, alternate tool names) and require the Live Tool-Clamp Gate (detail doc) before ship
+- A CI/workflow change rolled out to 3+ repos (action pins, token permissions, checkout credentials, publish steps): one wrong assumption breaks every repo's CI or release at once, and tag-triggered jobs never run on the PR
+- A security property stated as a decision input — a plan line or a question option claiming a trust boundary shrinks, a privilege narrows or an input stops being trusted. Run the review before asking the owner, or label the claim unverified in the option; never re-ask after the review disproves it
 
 Detail (prompt template / Live Token Round-Trip Gate / origins): see `~/.claude/docs/adversarial-review-detail.md`.
 <!-- section id=debugging-summary file=rules/debugging.md order=0010 harness=neutral lazy=n -->
@@ -114,7 +116,7 @@ Detail: see `~/.claude/docs/debugging-detail.md#noisy-non-failure-pattern`.
 
 NOT evidence: clean compile/run, `Ok(())`, your own code's "success" line, a previous good run, passing tests, green CI whose exercising step is gated on `workflow_dispatch` inputs (grep its `if:`; if gated, dispatch it and read that step's conclusion and stdout). ARE evidence: receiving-end state (file, DB record, zone status, queue length), tests on the changed path with real inputs, receiving-system logs, a status query showing the expected state.
 
-A new check (jq filter, lint, verify script) is not evidence until you have read its input's header or one real sample and seen a negative control fail for the intended reason, not an environment error.
+A new check (jq filter, lint, verify script) is not evidence until you have read its input's header or one real sample and seen a negative control fail for the intended reason, not an environment error. A CI-status poll counts a check as finished only on `status == "COMPLETED"`: gh reports a queued check's `conclusion` as `""`, not null, so `.conclusion // .status` calls it done — run the filter once against a queued check before backgrounding it.
 
 Detail: see `~/.claude/docs/debugging-detail.md#do-not-report-success-without-state-evidence`.
 
