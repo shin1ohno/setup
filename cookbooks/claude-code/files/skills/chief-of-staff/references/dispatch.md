@@ -1399,3 +1399,38 @@ timeout --kill-after=2s 15s ssh -n "$host" "test ! -L '$remote_dir' && test -f '
 herdr --machine "$machine" agent list > "$local_dir/agents-after-$attempt.json"
 herdr --machine "$machine" pane list > "$local_dir/panes-after-$attempt.json"
 ```
+
+### Local state pruning
+
+Workers clone and build inside the task directory, and nothing else removes those
+checkouts: 704 tasks reached 108G by 2026-11-23. `scripts/prune.py` reclaims what
+a terminal task no longer needs. It removes a git checkout only when it holds no
+uncommitted change, untracked file, stash, or commit missing from its remotes,
+and no other repository under the state root borrows its objects through
+`objects/info/alternates` (a `git clone --shared` of it). It also removes
+directories carrying a signed `CACHEDIR.TAG`, with everything below them (Cargo
+`target/`, the registry and git caches of a task-local Cargo home, uv), and
+`node_modules`. A directory is never removed because its name contains "cache":
+some hold evidence.
+
+```text
+python3 <skill-dir>/scripts/prune.py <task-id> --apply   # after closing the pane at accepted/cancelled
+python3 <skill-dir>/scripts/prune.py --terminal --apply  # once at controller start, in the background
+```
+
+Without `--apply` it only reports. A checkout with unsaved work stays for seven
+days after the task first became terminal (`--unsaved-after-days`). After that
+its tracked diff, untracked file list and a bundle of unpushed refs and the stash
+are written to `<task>/pruned/<path>/`, checked (`git apply --check -R`,
+`git bundle verify`), and only then is the checkout removed; untracked and
+ignored file contents are not kept. A failed save keeps the checkout. Linked
+worktrees go through `git worktree remove`; when git refuses one (locked or
+changed), it, every checkout of the same repository and every checkout around
+them stay. A checkout whose refs, tracked changes or untracked files changed
+since inspection stays. It never removes the task or attempt directory itself,
+a repository with a worktree outside the task, a cache holding objects another
+repository borrows, anything with a filesystem mounted below it, or a checkout
+git cannot read; those stay listed under `kept`. Each run that changes a task
+writes `<task>/pruned-<UTC>.json`, so a cited path that no longer exists can be
+traced. It skips any task a running process has as its working directory, and a
+second run while one holds `.prune.lock` reports `busy` and does nothing.

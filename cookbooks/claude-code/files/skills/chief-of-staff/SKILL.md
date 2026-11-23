@@ -54,6 +54,9 @@ Use [references/dispatch.md](references/dispatch.md) for routing, launch mechani
 and the worker brief. Use [scripts/tasks.py](scripts/tasks.py) for durable task
 state (Python 3 standard library; no provider SDK). The helper does not dispatch,
 judge quality, schedule itself, or send notifications.
+Once at controller start, run [scripts/prune.py](scripts/prune.py) `--terminal --apply`
+in the background. It reclaims clones and caches of terminal tasks that an earlier
+controller left behind.
 For the owner-approved Herdr 2 (`hc`) route, read [references/hc-route.md](references/hc-route.md) first.
 
 ## Intake and routing
@@ -313,7 +316,10 @@ The sweep previews safe identity adoption for old
 records; only explicit `--adopt` persists it. An agent name or kind mismatch
 never authorizes adoption. needs-user also requires the explicit `settle`
 record and session UUID; cancelled does not require model observation.
-Session logs and artifacts remain. A later correction uses `--reuse-agent` and
+Session logs and artifacts remain. After closing the pane at `accepted` or `cancelled`,
+run `scripts/prune.py <task-id> --apply`: it removes only rebuildable checkouts and
+caches and keeps the records and any unsaved work (dispatch.md, "Local state
+pruning"). A later correction uses `--reuse-agent` and
 resumes the same conversation by session ID in a new pane, with the recorded
 plan environment/options. The same lifecycle applies to hc terminals (`hc kill`
 then `hc rm`); see hc-route.md and dispatch.md for resume commands.
