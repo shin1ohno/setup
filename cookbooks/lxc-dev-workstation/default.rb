@@ -98,6 +98,10 @@ include_role "network"
 include_cookbook "tailscale::linux"
 include_cookbook "ssh-keys"
 
+# Sandbox dependencies (bubblewrap, socat) for the Claude Code and Codex
+# agents this workstation runs; linux.rb includes it on bare metal.
+include_cookbook "bwrap-userns"
+
 local_ruby_block "log lxc-dev-workstation tailscale up hint" do
   block do
     state = `tailscale status --json 2>/dev/null`
