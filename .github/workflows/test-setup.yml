@@ -961,6 +961,15 @@ jobs:
         bash cookbooks/claude-code/files/hooks/test-commit-hooks.sh \
           cookbooks/claude-code/files/hooks
 
+    - name: Format-on-edit hook regression suite
+      run: |
+        # hooks/format-on-edit.rb (PostToolUse Edit|Write) runs rustfmt /
+        # terraform fmt, empties whitespace-only lines and adds the final
+        # newline, then reports what it changed. Fixing and leave-alone cases
+        # are paired; formatter cases SKIP when the tool is absent on the runner.
+        bash cookbooks/claude-code/files/hooks/test-format-on-edit.sh \
+          cookbooks/claude-code/files/hooks/format-on-edit.rb
+
     - name: Validate JSON files
       run: |
         # Check if any JSON files exist and validate them
