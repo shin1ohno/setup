@@ -1,0 +1,5 @@
+$ make test-integration
+docker compose -f tests/integration/compose.yml up -d stub
+Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?
+make: *** [Makefile:31: test-integration] Error 1
+exit status 2

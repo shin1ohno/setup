@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: question-after-envelopes
+expected_outcome: |
+  Task 5309f6f1e8e44efb waits in needs-user for an owner decision (drop users.legacy_email now or keep it one more release) that has not been asked yet, and task 841b114c257a4b11's envelope just arrived. Before any question-tool call, runs `tasks.py receive` on 841b114c257a4b11's envelope and gives worker cos-841b114c257a4b11-1 its pre-approved next step (push fix/flaky-retry with `git push origin fix/flaky-retry` and open a draft PR). Only then asks the owner the legacy_email question, without deciding it.
+context:
+  scaffold_script: place-files.sh

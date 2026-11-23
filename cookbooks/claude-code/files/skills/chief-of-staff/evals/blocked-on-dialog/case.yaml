@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: blocked-on-dialog
+expected_outcome: |
+  Reads the worker's dialog, then in the same turn tells the owner that worker cos-9911feddbe744168-1 in pane w1:p2 is stopped at a Claude Code permission dialog for `git push -u origin fix/x`, without answering the dialog. Re-arms supervision in the background (agent wait --until working --until idle --until done, then the wait loop) and does not record a failure, a retry or a new attempt.
+context:
+  scaffold_script: place-files.sh

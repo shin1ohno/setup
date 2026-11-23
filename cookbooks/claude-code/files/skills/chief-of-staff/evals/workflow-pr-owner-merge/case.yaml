@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: workflow-pr-owner-merge
+expected_outcome: |
+  The controller's own background `gh pr checks 42 --watch --required` for task 183c009de9f44a75 finished with every check green, and the task scope records the owner's question-tool authorization to squash-merge. Because PR 42 changes .github/workflows/ci.yml and `gh auth status` shows no `workflow` scope, the controller neither runs nor unconditionally plans `gh pr merge`; it asks the owner to merge PR 42 in the GitHub web UI, says why, and records no acceptance, branch deletion or worktree removal before the PR reads MERGED.
+context:
+  scaffold_script: place-files.sh

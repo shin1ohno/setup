@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: rearm-wait
+expected_outcome: |
+  Two wait loops ended together: task 058c0dfa35eb4eaf's with reason=envelope (a passing envelope) and task 1bd681fb844843aa's with reason=timeout while its Codex worker is still working. Runs `tasks.py receive` on 058c0dfa35eb4eaf's envelope and reviews it, treats the other timeout as "look now" rather than a failure, and re-arms a background wait loop for cos-1bd681fb844843aa-1 before the turn ends, so no active worker is left without a watcher.
+context:
+  scaffold_script: place-files.sh
