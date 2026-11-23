@@ -542,12 +542,14 @@ if File.file?(cc_default)
   # and match each file against every `source "files/skills/..."` in the recipe.
   #
   # Exempt: test-only trees that deliberately stay repo-side. Keep in sync with
-  # the "intentionally excluded" comments in claude-code/default.rb.
+  # the "intentionally excluded" comments in claude-code/skills.rb and
+  # claude-code/chief-of-staff-skill.rb.
   skills_exempt = [
     %r{\Awriting/references/fixtures/}, # Japanese AI-slop corpus, test data
     %r{(\A|/)test_[^/]+\.rb\z},         # unit tests live beside their source
     %r{(\A|/)test_[^/]+\.py\z},         # same, for the python3 helper (todo_queue.py)
     %r{(\A|/)__pycache__/},             # bytecode a local unittest run leaves behind
+    %r{\Achief-of-staff/evals/},        # `claude plugin eval` suite + fixtures, run by hand
   ]
   skills_root = "cookbooks/claude-code/files/skills"
   if File.directory?(skills_root)

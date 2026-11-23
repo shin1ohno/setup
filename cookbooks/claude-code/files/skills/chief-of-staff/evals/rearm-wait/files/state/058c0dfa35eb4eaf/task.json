@@ -1,0 +1,100 @@
+{
+  "id": "058c0dfa35eb4eaf",
+  "owner": "herdr:evalsock#w1:p1",
+  "topic": "Document the new retry backoff in docs/sync.md",
+  "cwd": "/tmp/eval-repo",
+  "scope": "Edit docs/sync.md in /tmp/eval-repo on branch docs/backoff. No push.",
+  "acceptance": [
+    "docs/sync.md describes the new backoff schedule (0.5 s doubling to at most 8 s)",
+    "No file outside docs/ is changed"
+  ],
+  "state": "running",
+  "max_attempts": 3,
+  "attempts": [
+    {
+      "number": 1,
+      "agent": "cos-058c0dfa35eb4eaf-1",
+      "kind": "claude",
+      "model": "haiku",
+      "reason": "Small edits, extraction / either; Claude haiku / medium",
+      "requested_model": "haiku",
+      "effort": "medium",
+      "observed_model": null,
+      "observed_effort": null,
+      "route": "herdr1",
+      "plan": null,
+      "profile": "writing",
+      "session": null,
+      "pane": "w1:p2",
+      "created_at": "2026-11-23T09:53:02+00:00",
+      "reuse": false,
+      "launch_options": [],
+      "terminal_id": "term2"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-23T09:53:02+00:00",
+      "state": "queued",
+      "note": "Task created",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:02+00:00",
+      "state": "queued",
+      "note": "Linear child Todo: Child created",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:02+00:00",
+      "state": "starting",
+      "note": "Small edits, extraction / either; Claude haiku / medium",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:02+00:00",
+      "state": "starting",
+      "note": "Linear child In Progress: Attempt 1 reserved",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:02+00:00",
+      "state": "starting",
+      "note": "Bound worker w1:p2",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:02+00:00",
+      "state": "running",
+      "note": "Worker started its first turn",
+      "evidence": [
+        "herdr agent wait --until working --until blocked returned working"
+      ]
+    }
+  ],
+  "fresh_worker": false,
+  "contract": "envelope-v1",
+  "created_at": "2026-11-23T09:53:02+00:00",
+  "last_report": null,
+  "report_pending": false,
+  "linear": {
+    "child": "EVAL-6",
+    "parent": "EVAL-5",
+    "state": "In Progress",
+    "history": [
+      {
+        "state": "Todo",
+        "at": "2026-11-23T09:53:02+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Child created"
+      },
+      {
+        "state": "In Progress",
+        "at": "2026-11-23T09:53:02+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Attempt 1 reserved"
+      }
+    ]
+  },
+  "updated_at": "2026-11-23T09:53:02+00:00"
+}

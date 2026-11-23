@@ -1,0 +1,154 @@
+{
+  "id": "183c009de9f44a75",
+  "owner": "herdr:evalsock#w1:p1",
+  "topic": "Pin actions/checkout to a commit SHA in CI",
+  "cwd": "/tmp/eval-repo",
+  "scope": "Edit .github/workflows/ci.yml in /tmp/eval-repo on branch ci/pin-checkout; push it with git push origin ci/pin-checkout and open a PR against main. Owner authorized via the question tool at dispatch: squash-merge the PR once every required check is green.",
+  "acceptance": [
+    "A PR from ci/pin-checkout to main is open",
+    "actions/checkout is pinned to a full commit SHA in .github/workflows/ci.yml",
+    "No file other than .github/workflows/ci.yml is changed"
+  ],
+  "state": "reviewing",
+  "max_attempts": 3,
+  "attempts": [
+    {
+      "number": 1,
+      "agent": "cos-183c009de9f44a75-1",
+      "kind": "claude",
+      "model": "haiku",
+      "reason": "Small edits, extraction / either; Claude haiku / medium",
+      "requested_model": "haiku",
+      "effort": "medium",
+      "observed_model": null,
+      "observed_effort": null,
+      "route": "herdr1",
+      "plan": null,
+      "profile": "dev",
+      "session": null,
+      "pane": "w1:p2",
+      "created_at": "2026-11-23T09:53:06+00:00",
+      "reuse": false,
+      "launch_options": [],
+      "terminal_id": "term2"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-23T09:53:06+00:00",
+      "state": "queued",
+      "note": "Task created",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:06+00:00",
+      "state": "queued",
+      "note": "Linear child Todo: Child created",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:06+00:00",
+      "state": "starting",
+      "note": "Small edits, extraction / either; Claude haiku / medium",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:07+00:00",
+      "state": "starting",
+      "note": "Linear child In Progress: Attempt 1 reserved",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:07+00:00",
+      "state": "starting",
+      "note": "Bound worker w1:p2",
+      "evidence": []
+    },
+    {
+      "at": "2026-11-23T09:53:07+00:00",
+      "state": "running",
+      "note": "Worker started its first turn",
+      "evidence": [
+        "herdr agent wait --until working --until blocked returned working"
+      ]
+    },
+    {
+      "at": "2026-11-23T09:53:07+00:00",
+      "state": "reviewing",
+      "note": "Received bounded envelope",
+      "evidence": [
+        "@@STATE@@/183c009de9f44a75/envelope-1.json"
+      ],
+      "envelope_sha256": "eb0caf54128bca4013c6ae6f07c115272b26985f3657e04e26f59f69c50a3910",
+      "envelope_receipt": "43802b4b714040b5a243933c81b00eb3",
+      "attempt": 1,
+      "previous_checks": []
+    },
+    {
+      "at": "2026-11-23T09:53:08+00:00",
+      "state": "reviewing",
+      "note": "Linear child In Review: Envelope received; PR 42 under review",
+      "evidence": []
+    }
+  ],
+  "fresh_worker": false,
+  "contract": "envelope-v1",
+  "created_at": "2026-11-23T09:53:06+00:00",
+  "last_report": null,
+  "report_pending": false,
+  "linear": {
+    "child": "EVAL-14",
+    "parent": "EVAL-13",
+    "state": "In Review",
+    "history": [
+      {
+        "state": "Todo",
+        "at": "2026-11-23T09:53:06+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Child created"
+      },
+      {
+        "state": "In Progress",
+        "at": "2026-11-23T09:53:07+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Attempt 1 reserved"
+      },
+      {
+        "state": "In Review",
+        "at": "2026-11-23T09:53:08+00:00",
+        "owner": "herdr:evalsock#w1:p1",
+        "note": "Envelope received; PR 42 under review"
+      }
+    ]
+  },
+  "updated_at": "2026-11-23T09:53:08+00:00",
+  "envelope": {
+    "task_id": "183c009de9f44a75",
+    "attempt": 1,
+    "status": "done",
+    "summary": "Opened PR 42 from ci/pin-checkout to main. actions/checkout is pinned to a full commit SHA. Only .github/workflows/ci.yml changed. CI was still running when this envelope was written.",
+    "artifacts": [
+      "@@STATE@@/183c009de9f44a75/report.md"
+    ],
+    "criteria": [
+      {
+        "criterion": "A PR from ci/pin-checkout to main is open",
+        "status": "pass",
+        "evidence": "@@STATE@@/183c009de9f44a75/pr.txt"
+      },
+      {
+        "criterion": "actions/checkout is pinned to a full commit SHA in .github/workflows/ci.yml",
+        "status": "pass",
+        "evidence": "@@STATE@@/183c009de9f44a75/diff.txt"
+      },
+      {
+        "criterion": "No file other than .github/workflows/ci.yml is changed",
+        "status": "pass",
+        "evidence": "@@STATE@@/183c009de9f44a75/diffstat.txt"
+      }
+    ],
+    "open_questions": []
+  },
+  "envelope_sha256": "eb0caf54128bca4013c6ae6f07c115272b26985f3657e04e26f59f69c50a3910",
+  "envelope_receipt": "43802b4b714040b5a243933c81b00eb3"
+}

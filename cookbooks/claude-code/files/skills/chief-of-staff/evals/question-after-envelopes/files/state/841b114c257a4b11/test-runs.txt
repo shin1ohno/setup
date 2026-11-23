@@ -1,0 +1,5 @@
+$ for i in 1 2 3; do make test; done
+57 passed in 3.40s
+57 passed in 3.38s
+57 passed in 3.41s
+exit status 0 (all three runs)
