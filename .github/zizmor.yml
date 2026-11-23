@@ -1,0 +1,9 @@
+rules:
+  dangerous-triggers:
+    ignore:
+      # claude.yml listens on issue_comment so `@claude` works on issues and
+      # PRs. The job checks out the default branch, not PR code, and
+      # anthropics/claude-code-action refuses any actor without write access
+      # (src/github/validation/permissions.ts; allowed_non_write_users and
+      # allowed_bots stay unset), so a stranger's comment runs nothing.
+      - claude.yml

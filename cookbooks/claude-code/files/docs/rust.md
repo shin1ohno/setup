@@ -35,6 +35,20 @@ crates.io API tokens have per-action scopes. For release-plz / manual publishing
 
 Detail (403 trap + practical workflow + transitive-closure allow-list checklist + origin): see `~/.claude/docs/release-plz.md#crates-io-token-scopes`.
 
+## tls-roots
+## TLS Root Store — trust the OS, not a compiled-in set
+
+A root set compiled into the binary (`webpki-roots`, `webpki-root-certs`) changes only on rebuild, so distrust of a compromised CA reaches the OS but not the binary.
+
+- reqwest 0.12: `rustls-tls-native-roots`, never `rustls-tls` (webpki-roots only). Enabling both trusts both sets.
+- reqwest 0.13: the `rustls` feature (rustls-platform-verifier); do not enable its `webpki-roots` / `rustls-native-certs` leftovers.
+- Other crates: prefer `rustls-platform-verifier`, then `rustls-native-certs`, over `with_webpki_roots()` constructors. Dependencies with TLS defaults (`oauth2`, `openidconnect`) enable `reqwest/rustls-tls` — set `default-features = false`.
+- **iOS / Android are the exception for native-certs**: `rustls-native-certs` treats iOS as generic unix and probes OpenSSL file paths that do not exist there, so the store comes back empty (`rustls-native-certs` `src/lib.rs` cfg branches). On mobile use `rustls-platform-verifier` (reqwest 0.13 `rustls`, or 0.12 `use_preconfigured_tls` with a platform-verifier `ClientConfig`); keep `rustls-tls` until that migration is verified on a device.
+- The runtime image must ship a CA bundle: `debian:*-slim` needs `ca-certificates`; `scratch` / distroless-static need one copied in.
+- Verify: `cargo tree -e features -i webpki-roots` (and `-i webpki-root-certs`) shows no path from the crates you changed.
+- A client built with `danger_accept_invalid_certs(true)` (e.g. a LAN appliance with a self-signed cert) is unaffected by the root store; that is a separate trust decision.
+- A deliberate compiled-in set with an operator override (e.g. `SSL_CERT_FILE` replacing the WebPki roots) is a design choice — leave it and say so where the client is built.
+
 ## Pre-`/bump-version` Sanity Check
 
 （`/bump-version` は roon-rs 等の project skill — global には存在しない。）

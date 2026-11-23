@@ -29,9 +29,14 @@ on:
         - 'macos-only'
         - 'linux-only'
 
+permissions: {}
+
 jobs:
   test-macos:
     runs-on: macos-latest
+    # >= the longest manual level: language-runtimes 45 + all-cookbooks 120,
+    # or sudo-full-install 180, plus the untimed steps around them.
+    timeout-minutes: 360
     permissions:
       contents: read
     env:
@@ -44,10 +49,12 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
     if: ${{ github.event.inputs.platform != 'linux-only' }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        persist-credentials: false
 
     - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
+      uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
       with:
         ruby-version: '4.0'
 
@@ -82,7 +89,7 @@ jobs:
         cookbooks/session-search/test/check-pin.sh
         bin/check-memory-v2-manifest
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       if: always()
       with:
         name: ccs-foundation-macos
@@ -90,7 +97,7 @@ jobs:
 
     - name: Download mitamae binary
       run: |
-        mkdir -p $HOME/tmp
+        mkdir -p "$HOME/tmp"
         ./bin/setup
 
     - name: Verify mitamae installation
@@ -323,12 +330,14 @@ jobs:
         ls -la ~/.setup_shin1ohno/ 2>/dev/null || echo "❌ Setup directory not found"
 
         echo -e "\nProfile scripts:"
+        # shellcheck disable=SC2012 # listing is printed for the log, never parsed
         ls -la ~/.setup_shin1ohno/profile.d/ 2>/dev/null | head -10 || echo "❌ Profile directory not found"
 
     - name: Verify setup structure
       run: |
         echo "Checking project structure..."
         ls -la roles/
+        # shellcheck disable=SC2012 # listing is printed for the log, never parsed
         ls -la cookbooks/ | head -10
         echo "Main entry points exist:"
         test -f darwin.rb && echo "✓ darwin.rb found"
@@ -336,12 +345,18 @@ jobs:
 
   test-linux:
     runs-on: ubuntu-latest
+    # Same manual levels as test-macos: 45 + 120, or 180, plus untimed steps.
+    timeout-minutes: 360
+    permissions:
+      contents: read
     if: ${{ github.event.inputs.platform != 'macos-only' }}
     container:
       image: ubuntu:22.04
       options: --user root
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        persist-credentials: false
 
     - name: Install dependencies
       run: |
@@ -535,6 +550,7 @@ jobs:
         ls -la /home/runner/.setup_shin1ohno/ 2>/dev/null || echo "❌ Setup directory not found"
 
         echo -e "\nProfile scripts:"
+        # shellcheck disable=SC2012 # listing is printed for the log, never parsed
         ls -la /home/runner/.setup_shin1ohno/profile.d/ 2>/dev/null | head -10 || echo "❌ Profile directory not found"
 
         echo -e "\nSystem services:"
@@ -544,6 +560,7 @@ jobs:
       run: |
         echo "Checking project structure..."
         ls -la roles/
+        # shellcheck disable=SC2012 # listing is printed for the log, never parsed
         ls -la cookbooks/ | head -10
         echo "Main entry points exist:"
         test -f darwin.rb && echo "✓ darwin.rb found"
@@ -551,13 +568,16 @@ jobs:
 
   syntax-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     permissions:
       contents: read
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        persist-credentials: false
 
     - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
+      uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
       with:
         ruby-version: '4.0'
 
@@ -737,7 +757,7 @@ jobs:
         cookbooks/session-search/test/test-deploy-binary.sh 2>&1 | tee /tmp/ccs-deploy-binary.log
         MEMORY_MCP_PYTHON=/tmp/memory-mcp-venv/bin/python cookbooks/session-search/test/test-rollback.sh 2>&1 | tee /tmp/ccs-rollback.log
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       if: always()
       with:
         name: ccs-foundation-linux
@@ -1002,17 +1022,22 @@ jobs:
 
   error-simulation:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        persist-credentials: false
 
     - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
+      uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
       with:
         ruby-version: '4.0'
 
     - name: Download mitamae binary
       run: |
-        mkdir -p $HOME/tmp
+        mkdir -p "$HOME/tmp"
         ./bin/setup
 
     - name: Test basic mitamae functionality
@@ -1039,15 +1064,22 @@ jobs:
   # Permission: ssm:GetParameter on /host-registry/devices ONLY
   # Setup: GitHub Actions secret AWS_OIDC_ROLE_ARN (home-monitor terraform output)
   ssm-validation:
+    # Dependabot PRs receive no repository secrets, so AWS_OIDC_ROLE_ARN is
+    # empty there and the job could only fail. Push, manual and owner PR runs
+    # are unaffected (github.event.pull_request is null outside PRs).
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       id-token: write
       contents: read
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        persist-credentials: false
 
     - name: Configure AWS credentials via OIDC
-      uses: aws-actions/configure-aws-credentials@v4
+      uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
       with:
         role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
         aws-region: ap-northeast-1

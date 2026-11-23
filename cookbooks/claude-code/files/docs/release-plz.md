@@ -2,7 +2,19 @@
 
 release-plz failures are almost always one of a small, recurring set of misconfigurations. When a `release-plz` workflow run fails, or before setting up release-plz on a new repo, scan this list **before reactive debugging**. Each item took real session time to diagnose; fixing upfront is 1-2 minutes, diagnosing from a red CI is 10-30.
 
+## trusted-publishing
+## Trusted publishing (preferred for crates that already exist)
+
+release-plz implements crates.io trusted publishing itself (release-plz `website/docs/github/quickstart.md`, CHANGELOG #2396): it exchanges the job's OIDC token for a short-lived crates.io token when it needs one. No stored token, so the scope / allow-list / re-issue items below stop applying to those crates.
+
+- Configure a trusted publisher on crates.io for **every** published crate (crate settings → Trusted Publishing: owner, repo, workflow file name, environment).
+- In the workflow: give the job that runs `release-plz release` `permissions: id-token: write` (plus `contents: write`), put it in a `crates-io` environment, and **remove `CARGO_REGISTRY_TOKEN` from the workflow entirely**. Do not add `rust-lang/crates-io-auth-action` — release-plz does the same exchange.
+- A crate that has never been published cannot use trusted publishing (crates.io limitation): first-publish it manually (see First-publish gotcha), configure its trusted publisher, then let release-plz take over.
+- Delete the `CARGO_REGISTRY_TOKEN` secret and revoke the crates.io token once every crate in the repo publishes through OIDC.
+
 ## Secret presence
+
+Applies while a repo still publishes with a stored token.
 
 - **`CARGO_REGISTRY_TOKEN` is set on the repo** (`gh secret list --repo <owner>/<repo>` shows it). The workflow reads `${{ secrets.CARGO_REGISTRY_TOKEN }}` — missing secret → `cargo publish` fails with 403 "unauthorized"
 - **Token scope matches the action**:
@@ -13,20 +25,21 @@ release-plz failures are almost always one of a small, recurring set of misconfi
 
 ## Workflow metadata
 
-- **Action version tag exists**: `MarcoIeni/release-plz-action@v0` has never existed. Use a concrete tag like `@v0.5.128`. A non-resolving tag fails the run with `Unable to resolve action ..., unable to find version v0`
-- **Repo-level workflow permissions allow PR creation**:
+- **Action reference is pinned**: the action lives at `release-plz/action` (`MarcoIeni/release-plz-action` redirects there). Pin the full commit SHA with the tag as a comment (`release-plz/action@<sha> # v0.5.148`, see `~/.claude/docs/github-actions.md`). A bare `@v0` has never existed and fails with `Unable to resolve action ..., unable to find version v0`
+- **Permissions are granted per job**: `permissions: {}` at the top; the release job gets `contents: write` (+ `id-token: write` with trusted publishing), the release-pr job gets `contents: write` + `pull-requests: write`. Job-level `permissions` work while the repo default stays `read`
+- **The repo allows Actions to create pull requests**:
   ```
   gh api repos/<owner>/<repo>/actions/permissions/workflow
-  # default_workflow_permissions must be "write"
   # can_approve_pull_request_reviews must be true
   ```
-  Default is `read` / `false`. Fix:
+  Default is `false`. Fix (keeps the default token read-only):
   ```
   gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow \
-    -f default_workflow_permissions=write \
+    -f default_workflow_permissions=read \
     -F can_approve_pull_request_reviews=true
   ```
   Without this, `release-pr` fails with `403 Forbidden` when creating the release PR
+- **Release jobs do not restore caches** (`Swatinem/rust-cache`, `actions/cache`): a poisoned cache from a PR build would flow into the published crate. Keep caches in test jobs only
 
 ## Job serialization
 
@@ -55,11 +68,11 @@ When adding a new publishable crate to a workspace with existing release-plz CI:
 ## Pre-flight checklist (copy into PR description)
 
 ```
-- [ ] CARGO_REGISTRY_TOKEN set on repo
-- [ ] Token scope covers this action (publish-new for first publish, publish-update for bumps)
-- [ ] Token allow-list includes the crate names in this workspace
-- [ ] release-plz-action@v* tag resolves (not @v0 / @v1)
-- [ ] Repo workflow permissions: write + can_approve_pull_request_reviews
+- [ ] Trusted publisher configured on crates.io for every published crate (or, with a stored token: CARGO_REGISTRY_TOKEN set, scope covers the action, allow-list covers the workspace)
+- [ ] release-plz/action pinned by SHA with the tag in a comment
+- [ ] permissions: {} at the top; release job contents:write (+ id-token:write), release-pr job contents:write + pull-requests:write
+- [ ] Repo setting can_approve_pull_request_reviews = true (default token stays read)
+- [ ] No cache restore in release jobs
 - [ ] release-pr job has `needs: release-plz-release`
 - [ ] All path deps have version fallback
 - [ ] No cross-repo path deps

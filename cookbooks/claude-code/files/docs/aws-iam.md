@@ -2,6 +2,8 @@ Load when the task touches AWS/IAM/SSM/KMS/Terraform or fleet credential gates
 
 # AWS IAM / SSM / Terraform Operational Rules
 
+For AWS service behavior, API parameters, IAM action names and regional availability, query the `aws-knowledge` MCP server (AWS documentation, registered from `cookbooks/mcp/files/servers.yml`) before web search. It is a public AWS endpoint: put no account IDs, ARNs, resource names or work data in the query.
+
 <a id="stale-state-lock"></a>
 
 ## Stale Terraform State Lock Recovery
