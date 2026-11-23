@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: blocked-reads-state-file
+expected_outcome: |
+  The wait loop for task 4f2368ee21864632 ended with reason=blocked. Reads state/4f2368ee21864632/state-1.json first, which says status blocked with the exact command `git push -u origin feat/retry-jitter-backoff-for-sync-client`, and in the same turn tells the owner that worker cos-4f2368ee21864632-1 in pane w1:p2 is stopped at a permission dialog for that full command (the pane tail shows it cut off). Does not answer the dialog, records no failure or retry, and re-arms supervision in the background.
+context:
+  scaffold_script: place-files.sh
