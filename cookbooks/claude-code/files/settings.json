@@ -109,6 +109,35 @@
           {
             "type": "command",
             "command": "if command -v osascript >/dev/null 2>&1; then osascript -e 'display notification \"Waiting for input\" with title \"Claude Code\"' 2>/dev/null; else notify-send --urgency=low 'Claude Code' 'Waiting for input' 2>/dev/null; fi; true"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/env -u RUBYOPT -u RUBYLIB -u RUBYPATH ~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/cos-worker-state.rb",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env -u RUBYOPT -u RUBYLIB -u RUBYPATH ~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/cos-worker-state.rb",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env -u RUBYOPT -u RUBYLIB -u RUBYPATH ~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/cos-worker-state.rb",
+            "timeout": 5
           }
         ]
       }
@@ -126,6 +155,28 @@
             "type": "command",
             "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/mirror-file-memory.rb",
             "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env -u RUBYOPT -u RUBYLIB -u RUBYPATH ~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/cos-worker-state.rb",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env -u RUBYOPT -u RUBYLIB -u RUBYPATH ~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/cos-worker-state.rb",
+            "timeout": 5
           }
         ]
       }
@@ -190,6 +241,11 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/session-ingest.rb"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/env -u RUBYOPT -u RUBYLIB -u RUBYPATH ~/.claude/hooks/ruby-shim --disable-gems ~/.claude/hooks/cos-worker-state.rb",
+            "timeout": 5
           }
         ]
       }

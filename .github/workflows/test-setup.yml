@@ -918,13 +918,24 @@ jobs:
       run: |
         # hooks/cos-worker-stop-notify.rb types into the controller pane, so the
         # suite pins it down with a fake herdr: inert without its variables,
-        # silent until the envelope exists, then one fixed-format message. It
+        # silent until the envelope exists, then one fixed-format message. Before
+        # the envelope, a stub claude checks the detached haiku digest (argv,
+        # untrusted-material prompt, cleaning, five-minute limit, refusals). It
         # also runs the settings.json command under hostile PATH and RUBY* values.
         bash cookbooks/claude-code/files/hooks/test-cos-worker-stop-notify.sh \
           cookbooks/claude-code/files/hooks/cos-worker-stop-notify.rb
         # The controller's wait loop, extracted from the document it follows.
         bash cookbooks/claude-code/files/hooks/test-cos-worker-wait-loop.sh \
           cookbooks/claude-code/files/skills/chief-of-staff/references/dispatch.md
+
+    - name: Chief of Staff worker state hook regression suite
+      run: |
+        # hooks/cos-worker-state.rb records a worker's dialog, error, end and
+        # milestones for the controller: inert without its variables or task
+        # directory, worker text cleaned and cut, symlinks refused, the event log
+        # capped, and the settings.json / default.rb wiring checked.
+        bash cookbooks/claude-code/files/hooks/test-cos-worker-state.sh \
+          cookbooks/claude-code/files/hooks/cos-worker-state.rb
 
     - name: File-memory mirror hook regression suite
       run: |
