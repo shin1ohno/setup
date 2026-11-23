@@ -27,7 +27,8 @@
 # attempt (digest-started-<n> mtime), a detached process runs a tool-less,
 # settings-less `claude -p --model haiku` over the last 3000 characters of the
 # turn's last assistant message and writes {did, now, decide} to
-# <task-dir>/digest-<n>.json atomically. `--setting-sources ""` loads no user
+# <task-dir>/digest-<n>.json atomically. `--safe-mode` drops CLAUDE.md, skills,
+# plugins, hooks and MCP servers, and `--setting-sources ""` loads no user
 # settings, so no user hook (session-ingest included) runs in that session. The
 # material is worker output: the prompt says so (as sorah-config agent_board's
 # Summarizer does), every field is cleaned like cos-worker-state.rb's strings,
@@ -215,7 +216,7 @@ def run_claude(task_dir, prompt)
   out_path, output = scratch_file(task_dir, "digest-out")
   input.write(prompt)
   input.rewind
-  argv = [claude_bin, "-p", "--model", "haiku", "--tools", "", "--setting-sources", "", "--strict-mcp-config",
+  argv = [claude_bin, "-p", "--safe-mode", "--model", "haiku", "--tools", "", "--setting-sources", "", "--strict-mcp-config",
           "--no-session-persistence", "--output-format", "json", "--json-schema", JSON.generate(DIGEST_SCHEMA)]
   pid = Process.spawn(DIGEST_ENV_UNSET.to_h { |k| [k, nil] }, *argv,
                       in: input, out: output, err: File::NULL, chdir: task_dir, pgroup: true)

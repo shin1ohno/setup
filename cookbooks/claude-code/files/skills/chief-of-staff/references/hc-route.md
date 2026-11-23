@@ -82,9 +82,12 @@ timeout means "look now", not failure; the ten-minute stall diagnosis in
 `SKILL.md` still applies.
 
 The worker notifies with `hc send <controller-terminal> "<one line>"`, never
-`--force`, which can answer a dialog. The worker Stop hook works only through
-`herdr agent prompt`, so a controller on this route leaves the `COS_*` launch
-variables unset and has two signals: the wait and the worker's message.
+`--force`, which can answer a dialog. The worker Stop hook's envelope-ready
+message works only through `herdr agent prompt`, so a controller on this route
+never passes the `COS_CONTROLLER_*` pair. A Claude worker still gets
+`COS_WORKER_TASK_ID`, `COS_WORKER_ATTEMPT` and `COS_STATE_DIR` (dispatch.md),
+which arm the state hook and the digest. The controller then has the wait, the
+worker's message, and the worker's `state-<n>.json` / `digest-<n>.json`.
 
 `hc send` wraps its text in `<hc from=...>` tags, so a slash command such as
 `/context` sent with `hc send` reaches the model as an ordinary message. Type

@@ -360,9 +360,9 @@ check "the digest is written" $rc "marker=$(cat "$DMARK" 2>&1) digest=$(cat "$DI
 got=$("$RUBY" -rjson -e 'd = JSON.parse(File.read(ARGV[0])); print [d["did"], d["now"], d["decide"], d["attempt"]].inspect' "$DIGEST" 2>&1)
 [ "$got" = '["ran the suite and fixed it", "writes the envelope", "", 2]' ]; rc=$?
 check "digest fields come from the structured output, cleaned" $rc "got=$got"
-want=$(printf 'arg=%s\n' -p --model haiku --tools '' --setting-sources '' --strict-mcp-config --no-session-persistence --output-format json --json-schema)
-[ "$(head -n 12 "$LOG.claude.argv")" = "$want" ] && [ "$(wc -l < "$LOG.claude.argv" | tr -d ' ')" = 13 ]; rc=$?
-check "claude runs tool-less, settings-less, MCP-less and unpersisted" $rc "$(cat "$LOG.claude.argv")"
+want=$(printf 'arg=%s\n' -p --safe-mode --model haiku --tools '' --setting-sources '' --strict-mcp-config --no-session-persistence --output-format json --json-schema)
+[ "$(head -n 13 "$LOG.claude.argv")" = "$want" ] && [ "$(wc -l < "$LOG.claude.argv" | tr -d ' ')" = 14 ]; rc=$?
+check "claude runs in safe mode (no CLAUDE.md), tool-less, settings-less, MCP-less and unpersisted" $rc "$(cat "$LOG.claude.argv")"
 "$RUBY" -rjson -e 's = JSON.parse(File.readlines(ARGV[0]).last.sub("arg=", ""))
   exit(s["required"] == %w[did now decide] && s["properties"].values.all? { |p| p["maxLength"] == 110 } ? 0 : 1)' "$LOG.claude.argv"
 check "the schema asks for did/now/decide of at most 110 characters" $? "$(tail -n 1 "$LOG.claude.argv")"
