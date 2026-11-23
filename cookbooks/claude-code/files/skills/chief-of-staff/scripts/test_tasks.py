@@ -244,6 +244,96 @@ class TasksTest(unittest.TestCase):
         self.assertEqual(result["attempt"]["profile"], "writing")
         self.assertEqual(self.call("show", strict)["task"]["attempts"][-1]["profile"], "writing")
 
+    def test_each_attempt_gets_its_own_nonce(self):
+        first = self.attempt()
+        self.assertRegex(first["nonce"], r"^[0-9a-f]{16}$")
+        shown = self.call("show", self.task)["task"]["attempts"][-1]
+        self.assertEqual(shown["nonce"], first["nonce"])
+        self.update("needs-user", evidence=False)
+        second = self.call("attempt", self.task, "--profile", "dev", "--kind", "codex",
+                           "--model", "default", "--reason", "Retry", "--reuse-agent")["attempt"]
+        self.assertRegex(second["nonce"], r"^[0-9a-f]{16}$")
+        self.assertNotEqual(second["nonce"], first["nonce"])
+        attempts = self.call("show", self.task)["task"]["attempts"]
+        self.assertEqual([a["nonce"] for a in attempts], [first["nonce"], second["nonce"]])
+
+    def test_pr_records_valid_github_pull_request_urls(self):
+        owner = "/socket#w1:p1"
+        url = "https://github.com/shin1ohno/setup/pull/1234"
+        result = self.call("pr", self.task, "--owner", owner, "--url", url)
+        self.assertTrue(result["added"])
+        self.assertEqual(result["task"]["pr"], [{"url": url, "repo": "shin1ohno/setup", "number": 1234,
+                                                 "added_at": result["task"]["pr"][0]["added_at"]}])
+        self.assertEqual(result["task"]["history"][-1]["note"], "Pull request recorded: " + url)
+        again = self.call("pr", self.task, "--owner", owner, "--url", url)
+        self.assertFalse(again["added"])
+        self.assertEqual(len(again["task"]["pr"]), 1)
+        for bad in ("http://github.com/o/r/pull/1", "https://github.example.com/o/r/pull/1",
+                    "https://github.com/o/r/issues/1", "https://github.com/o/r/pull/0",
+                    "https://github.com/o/r/pull/1?x=1", "https://github.com/o/r/pull/1#c",
+                    "https://github.com/o/r/pull/1/files", "https://github.com/o/../pull/1",
+                    "https://github.com/-o/r/pull/1", "https://user@github.com/o/r/pull/1",
+                    "https://github.com/o/r/pull/1\n", "github.com/o/r/pull/1"):
+            self.call("pr", self.task, "--owner", owner, "--url", bad, ok=False)
+        self.call("pr", self.task, "--owner", "/socket#w9:p9", "--url",
+                  "https://github.com/o/r/pull/2", ok=False)
+        self.assertEqual([p["url"] for p in self.call("show", self.task)["task"]["pr"]], [url])
+
+    def test_pr_keeps_the_envelope_schema(self):
+        self.call("pr", self.task, "--owner", "/socket#w1:p1", "--url",
+                  "https://github.com/o/r/pull/9")
+        task = self.call("show", self.task)["task"]
+        self.assertNotIn("envelope", task)
+        self.assertEqual(task["pr"][0]["number"], 9)
+
+    def test_prs_lists_unfinished_tasks_of_this_owner(self):
+        owner = "/socket#w1:p1"
+        other = self.call("new", "--owner", "/socket#w9:p9", "--topic", "Other", "--cwd", self.tmp.name,
+                          "--scope", "Local", "--acceptance", "Pass")["task"]["id"]
+        done = self.call("new", "--owner", owner, "--topic", "Done", "--cwd", self.tmp.name,
+                         "--scope", "Local", "--acceptance", "Pass")["task"]["id"]
+        self.call("pr", self.task, "--owner", owner, "--url", "https://github.com/o/r/pull/1")
+        self.call("pr", self.task, "--owner", owner, "--url", "https://github.com/o/s/pull/2")
+        self.call("pr", other, "--owner", "/socket#w9:p9", "--url", "https://github.com/o/r/pull/3")
+        self.call("pr", done, "--owner", owner, "--url", "https://github.com/o/r/pull/4")
+        self.call("update", done, "--owner", owner, "--state", "cancelled", "--note", "Withdrawn")
+        listed = self.call("prs", "--owner", owner)["prs"]
+        self.assertEqual([(p["task_id"], p["repo"], p["number"]) for p in listed],
+                         [(self.task, "o/r", 1), (self.task, "o/s", 2)])
+        self.assertEqual({p["state"] for p in listed}, {"queued"})
+        self.assertEqual(self.call("prs", "--owner", "/socket#w5:p5")["prs"], [])
+        before = (Path(self.tmp.name) / "state" / self.task / "task.json").stat().st_mtime_ns
+        self.call("prs", "--owner", owner)
+        self.assertEqual((Path(self.tmp.name) / "state" / self.task / "task.json").stat().st_mtime_ns,
+                         before)
+
+    def test_journal_appends_one_cleaned_line_per_call(self):
+        owner = "/socket#w1:p1"
+        first = self.call("journal", "--owner", owner, "--text", "Reported task a1b2 to the owner")
+        path = Path(first["journal"])
+        self.assertEqual(path.parent, Path(self.tmp.name).resolve() / "state" / "journal")
+        self.assertRegex(path.name, r"^\d{4}-\d{2}-\d{2}\.md$")
+        self.assertEqual(oct(path.parent.stat().st_mode & 0o777), "0o700")
+        self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
+        self.call("journal", "--owner", owner, "--text", "Owner chose\noption 2 \x1b[1m`now`‮")
+        lines = path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertRegex(lines[0], r"^- \d{2}:\d{2} Reported task a1b2 to the owner$")
+        self.assertRegex(lines[1], r"^- \d{2}:\d{2} Owner chose option 2 'now'$")
+        self.assertEqual(first["line"], lines[0])
+        self.call("journal", "--owner", owner, "--text", "x" * 301, ok=False)
+        self.call("journal", "--owner", owner, "--text", "​\x07", ok=False)
+        self.call("journal", "--owner", owner, "--text", "y" * 300)
+        self.assertEqual(len(path.read_text(encoding="utf-8").splitlines()), 3)
+
+    def test_journal_refuses_a_symlinked_directory(self):
+        state = Path(self.tmp.name) / "state"
+        elsewhere = Path(self.tmp.name) / "elsewhere"
+        elsewhere.mkdir()
+        (state / "journal").symlink_to(elsewhere)
+        self.call("journal", "--owner", "/socket#w1:p1", "--text", "Should not land", ok=False)
+        self.assertEqual(list(elsewhere.iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()
