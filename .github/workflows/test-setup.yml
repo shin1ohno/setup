@@ -658,6 +658,25 @@ jobs:
         # sentinel -> disable, never enable).
         bash cookbooks/codex-cli/test/test-remote-control.sh
 
+    - name: ssh-keys authorized_keys skips only three non-key shapes
+      env:
+        # The test compares the recipe with the pre-guard recipe at a pinned
+        # main commit; it fetches that commit into this shallow checkout, and
+        # not finding it must fail here instead of skipping.
+        REQUIRE_BASE_RECIPE: "1"
+      run: |
+        # Evaluates the PRODUCTION ssh-keys recipe and the pre-guard main recipe
+        # through a stub DSL with an in-memory SSM registry, on the earlier
+        # fixtures and every case of the three PR #1231 review rounds: only a
+        # value starting with "placeholder", a value with more than one line
+        # (one trailing LF/CRLF allowed) or one whose first field is not
+        # ssh-*/ecdsa-*/sk-* is skipped, with exactly one warning naming the
+        # SSM path; every other value is written byte-for-byte as main writes
+        # it, with the same commands run; both authorized_keys files are
+        # sensitive. Positive controls: six mutants (guard removed, each check
+        # removed, sensitive removed, value unstripped) must fail.
+        ruby cookbooks/ssh-keys/test/test-public-key-validation.rb
+
     - name: hr shell function regression suite
       run: |
         # cookbooks/herdr/files/hr.sh is the `hr` session launcher deployed to

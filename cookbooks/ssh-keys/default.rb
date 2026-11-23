@@ -167,6 +167,63 @@ MANAGED_END = "# END ssh-keys-managed"
 # SSM prefix (e.g. pro and pro-dev are twins) — dedup by [key_type,
 # key_data] so authorized_keys never carries two visually-different
 # lines that resolve to the same key.
+#
+# Every SSM public value lands in EVERY host's authorized_keys. Three shapes
+# that are obviously not one public key line are skipped, with one warning
+# naming the SSM path (never the value, which could be a pasted private key):
+#   - the value starts with "placeholder" (an unfilled ios-client slot),
+#   - the value has more than one line (a single trailing LF or CRLF is
+#     allowed; a lone CR is not a line break, sshd reads lines up to LF),
+#   - the first whitespace-separated field is not a key-type word
+#     (ssh-*, ecdsa-*, sk-*): authorized_keys options, a hostname, PEM armour.
+# Nothing else is checked, on purpose: every other value is written exactly
+# as before this guard (stripped, device name added when there is no
+# comment, twin comments merged). Fuller validation (key structure,
+# ssh-keygen, control characters, length) dropped keys that were written
+# before, in three review rounds of PR #1231, so it is left to sshd, which
+# ignores a line it cannot read.
+# Test: cookbooks/ssh-keys/test/test-public-key-validation.rb.
+
+# Like fetch_ssm, but keeps the value as stored: the aws CLI's text output is
+# the value plus one newline, and only that newline is removed. The guard
+# needs the raw value; the line written is still its strip, as before.
+fetch_ssm_raw = ->(path) {
+  result = run_command(
+    "aws ssm get-parameter" \
+    " --name '#{path}'" \
+    " --with-decryption" \
+    " --query 'Parameter.Value'" \
+    " --output text" \
+    " --region '#{aws_region}'",
+    error: false
+  )
+  if result.exit_status != 0
+    MItamae.logger.warn("ssh-keys: failed to fetch #{path}")
+    nil
+  else
+    out = result.stdout
+    out.end_with?("\n") ? out[0, out.length - 1] : out
+  end
+}
+
+# Returns why the raw SSM public value is skipped, or nil to write it.
+public_value_skip_reason = ->(raw) {
+  value = if raw.end_with?("\r\n")
+            raw[0, raw.length - 2]
+          elsif raw.end_with?("\n")
+            raw[0, raw.length - 1]
+          else
+            raw
+          end
+  return "is a placeholder" if value.start_with?("placeholder")
+  return "has more than one line" if value.include?("\n")
+
+  key_type = value.strip.split(/\s+/)[0].to_s
+  return "does not start with a key type (ssh-*, ecdsa-*, sk-*)" unless key_type =~ /\A(ssh|ecdsa|sk)-/
+
+  nil
+}
+
 managed_keys = []
 managed_key_data = [] # [key_type, key_data] pairs for dedup
 seen_keys = {} # "<key_type> <key_data>" => index in managed_keys
@@ -174,10 +231,16 @@ devices.each do |k, dev|
   ssm_prefix = dev.dig("ssh", "ssm_prefix")
   next unless ssm_prefix # skip entries lacking SSH data
 
-  pub = fetch_ssm.call("#{ssm_prefix}/public")
-  next unless pub
+  raw_pub = fetch_ssm_raw.call("#{ssm_prefix}/public")
+  next unless raw_pub
 
-  pub_line = pub.strip
+  skip_reason = public_value_skip_reason.call(raw_pub)
+  if skip_reason
+    MItamae.logger.warn("ssh-keys: #{ssm_prefix}/public #{skip_reason}; not added to authorized_keys")
+    next
+  end
+
+  pub_line = raw_pub.strip
   # Append device key as comment if not already present
   parts = pub_line.split(/\s+/)
   pub_line = "#{pub_line} #{k}" if parts.length < 3
@@ -265,6 +328,9 @@ if managed_keys.any?
       group group
       mode "0600"
       content new_content
+      # The old content (possibly a value a previous run should not have
+      # distributed) would otherwise be printed in mitamae's file diff.
+      sensitive true
     end
 
     execute "deploy authorized_keys to pmxcfs (#{resolved_path})" do
@@ -277,6 +343,9 @@ if managed_keys.any?
       group group
       mode "0600"
       content new_content
+      # The old content (possibly a value a previous run should not have
+      # distributed) would otherwise be printed in mitamae's file diff.
+      sensitive true
     end
   end
 end
