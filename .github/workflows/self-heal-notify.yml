@@ -24,13 +24,15 @@ on:
   issues:
     types: [labeled]
 
-permissions:
-  issues: write
+permissions: {}
 
 jobs:
   notify:
     if: github.event.label.name == 'self-heal-needs-human'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
     steps:
       - name: Assign and mention the owner
         env:
