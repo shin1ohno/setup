@@ -119,11 +119,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/check-trailing-newline.rb"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/check-whitespace-lines.rb"
+            "command": "~/.claude/hooks/ruby-shim ~/.claude/hooks/format-on-edit.rb",
+            "timeout": 30
           },
           {
             "type": "command",
