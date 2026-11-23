@@ -46,7 +46,8 @@ Create or update these files. Use the existing files in `~/ManagedProjects/nuimo
 - Both use `release-plz/action` pinned by full commit SHA with the tag as a comment (`release-plz/action@<sha> # v0.5.148`; resolve with `gh api repos/release-plz/action/commits/<tag> --jq .sha`). Never `@v0`
 - Top-level `permissions: {}`; `release-plz-release` gets `contents: write` + `id-token: write` and `environment: crates-io`; `release-plz-pr` gets `contents: write` + `pull-requests: write`
 - Crates that already exist on crates.io publish through **trusted publishing**: no `CARGO_REGISTRY_TOKEN` in the workflow and no `rust-lang/crates-io-auth-action` — release-plz exchanges the OIDC token itself (`docs/release-plz.md#trusted-publishing`). Both jobs set `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in `env:`
-- No cache restore (`Swatinem/rust-cache`) in either job; `actions/checkout` with `fetch-depth: 0`
+- No cache restore (`Swatinem/rust-cache`) in either job; `actions/checkout` with `fetch-depth: 0` and `persist-credentials: false` (release-plz pushes branches and tags through the GitHub API, so the checkout credential is not needed)
+- `dtolnay/rust-toolchain` pinned by SHA (`# v1`) with `with: { toolchain: stable }` — the `@stable` ref is a branch, and the pinned action requires the input
 - `timeout-minutes` on both jobs
 - Install any system deps the crate needs (Linux BLE via `libdbus-1-dev pkg-config`, TLS via `libssl-dev`, etc.) in both jobs
 
