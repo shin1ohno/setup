@@ -10,7 +10,7 @@ include_platform_cookbook "mcp"
 
 # LLM specific tools
 include_cookbook "claude-code"
-include_cookbook "gemini-cli"
+include_cookbook "antigravity-cli"  # agy; MCP render reads servers.yml (mcp above)
 include_cookbook "codex-cli"  # Uses node[:mcp_servers] from mcp cookbook
 include_cookbook "crit"       # crit review-tool binary (ubi); CC plugin via claude-code
 include_cookbook "fractal"    # plasma.ai fractal + wiki CLIs (mise pipx); CC plugin via claude-code

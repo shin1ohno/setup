@@ -678,6 +678,17 @@ jobs:
         # sentinel -> disable, never enable).
         bash cookbooks/codex-cli/test/test-remote-control.sh
 
+    - name: antigravity-cli MCP config generator scenarios
+      run: |
+        # The PRODUCTION generator against fixture servers.yml files: each
+        # transport maps onto one agy accepts (SSE becomes an mcp-remote
+        # bridge), servers agy added survive, servers servers.yml dropped are
+        # removed, an unpinned ssm: aborts (no auth gate), re-runs are
+        # byte-identical. Positive controls: a mutant without the platform skip
+        # must write a pinned server; one ignoring the previous managed names
+        # must keep a removed server.
+        bash cookbooks/antigravity-cli/test/test-generate-mcp-config.sh
+
     - name: mcp AWS identity reaches the steps that run as the setup user
       run: |
         # darwin.rb rendered through a stub DSL with a sudo stand-in that
