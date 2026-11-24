@@ -51,6 +51,7 @@ bundle_exec = "#{app_bundle}/Contents/MacOS/edge-agent"
 bundle_launcher = "#{app_bundle}/Contents/MacOS/edge-agent-launcher"
 bundle_info = "#{app_bundle}/Contents/Info.plist"
 launchd_plist = "#{home}/Library/LaunchAgents/com.shin1ohno.edge-agent.plist"
+launchd_label = "com.shin1ohno.edge-agent"
 
 directory "#{home}/Applications" do
   owner user
@@ -127,26 +128,6 @@ file bundle_launcher do
   LAUNCHER
 end
 
-# Sync binary + ad-hoc sign + reload launchd whenever the mise-resolved binary
-# is newer than the bundled copy (or the copy is missing). `mise where` returns
-# the active install dir at converge time, so this picks up any version bump
-# `mise install ...@latest` produced earlier in the run. `-nt` is true when the
-# right-hand side is *not newer*, so `not_if` fires when the bundle is up to
-# date. The unload tolerates "not currently loaded" (first run before
-# interactive bootstrap) via `2>/dev/null || true`; load is only reached if cp
-# + codesign succeeded so a failing codesign leaves the old binary + launchd
-# state intact.
-execute "sync EdgeAgent.app binary, codesign, and reload launchd" do
-  command "src=\"$(#{mise_bin} where cargo:edge-agent)/bin/edge-agent\" && " \
-          "cp -f \"$src\" #{bundle_exec} && " \
-          "codesign --force --deep --sign - #{app_bundle} && " \
-          "{ launchctl unload #{launchd_plist} 2>/dev/null || true; } && " \
-          "launchctl load #{launchd_plist}"
-  user user
-  only_if "test -x \"$(#{mise_bin} where cargo:edge-agent 2>/dev/null)/bin/edge-agent\""
-  not_if  "test -x #{bundle_exec} && ! [ \"$(#{mise_bin} where cargo:edge-agent 2>/dev/null)/bin/edge-agent\" -nt #{bundle_exec} ]"
-end
-
 directory "#{home}/Library/LaunchAgents" do
   owner user
   group node[:setup][:group]
@@ -193,6 +174,29 @@ file launchd_plist do
     </dict>
     </plist>
   PLIST
+end
+
+# Sync binary + ad-hoc sign + (re)load launchd when the mise-resolved binary is
+# newer than the bundled copy (or the copy is missing), or when the LaunchAgent
+# is not loaded. `mise where` returns the active install dir at converge time,
+# so this picks up any version bump `mise install ...@latest` produced earlier
+# in the run. `-nt` is true when the right-hand side is *not newer*, so the
+# bundle check holds when the bundle is up to date; `launchctl print` exits
+# non-zero when the service is not loaded and has no side effect. The unload
+# tolerates "not currently loaded" via `2>/dev/null || true`; load is only
+# reached if cp + codesign succeeded so a failing codesign leaves the old
+# binary + launchd state intact. Declared AFTER the launchd_plist file so the
+# plist exists before launchctl load on a first converge.
+execute "sync EdgeAgent.app binary, codesign, and reload launchd" do
+  command "src=\"$(#{mise_bin} where cargo:edge-agent)/bin/edge-agent\" && " \
+          "cp -f \"$src\" #{bundle_exec} && " \
+          "codesign --force --deep --sign - #{app_bundle} && " \
+          "{ launchctl unload #{launchd_plist} 2>/dev/null || true; } && " \
+          "launchctl load #{launchd_plist}"
+  user user
+  only_if "test -x \"$(#{mise_bin} where cargo:edge-agent 2>/dev/null)/bin/edge-agent\""
+  not_if  "test -x #{bundle_exec} && ! [ \"$(#{mise_bin} where cargo:edge-agent 2>/dev/null)/bin/edge-agent\" -nt #{bundle_exec} ] && " \
+          "launchctl print gui/$(id -u)/#{launchd_label} >/dev/null 2>&1"
 end
 
 # First run requires interactive approval of Local Network + Bluetooth dialogs:
