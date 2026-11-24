@@ -25,6 +25,26 @@
 
 darwin = node[:platform] == "darwin"
 
+# --- baseline system PATH (darwin) -----------------------------------------
+# macOS keeps sysctl, systemsetup, networksetup, scutil and diskutil in
+# /usr/sbin and /sbin. A mitamae launched from a shell whose PATH lacks them
+# (a stripped non-login shell, a wrapper that rebuilds PATH) aborts right here
+# with `/bin/sh: sysctl: command not found`, and every LATER `only_if` /
+# `not_if` that shells out to one of those tools (cookbooks/mosh/darwin.rb
+# `systemsetup -getremotelogin`) silently evaluates false instead of failing.
+# Append (never prepend) so Homebrew and user-local dirs keep their precedence,
+# and do it before the first run_command below. darwin-only: the Linux fleet
+# (auto-mitamae-runner) is left exactly as it behaves today.
+if darwin
+  system_dirs = %w[/usr/bin /bin /usr/sbin /sbin]
+  path_dirs = ENV.fetch("PATH", "").split(File::PATH_SEPARATOR)
+  missing_dirs = system_dirs.reject { |dir| path_dirs.include?(dir) }
+  unless missing_dirs.empty?
+    MItamae.logger.warn("PATH lacks #{missing_dirs.join(', ')}; appending for this run. (original: '#{ENV['PATH']}')")
+    ENV["PATH"] = (path_dirs + missing_dirs).join(File::PATH_SEPARATOR)
+  end
+end
+
 # --- setup paths / user / group -------------------------------------------
 # darwin: group "staff" / system_group "wheel"; linux & LXC: `id -gn` / "root".
 node.reverse_merge!(

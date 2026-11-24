@@ -18,6 +18,11 @@ node.reverse_merge!(
     # and dies with `invalid probe specifier system/...` → `make [probes.h]
     # Error 1`. Disabling dtrace probes (unused here) sidesteps it without
     # touching the global Homebrew env. See cookbooks/homebrew/environment.rb.
+    #
+    # --with-openssl-dir points at the versioned keg (opt/openssl@3), never the
+    # `opt/openssl` alias: that alias now resolves to openssl@4, which Ruby
+    # 4.0.5's openssl gem cannot compile against (ASN1_BIT_STRING is opaque).
+    # cookbooks/openssl3 guarantees the keg exists.
     ruby_configure_opts: platform_value(
       darwin: %W[
         --with-gcc=clang CXX=clang++
@@ -28,7 +33,7 @@ node.reverse_merge!(
         --with-gdbm-dir=#{node[:homebrew][:prefix]}/opt/gdbm
         --with-libyaml-dir=#{node[:homebrew][:prefix]}/opt/libyaml
         --with-libffi-dir=#{node[:homebrew][:prefix]}/opt/libffi
-        --with-openssl-dir=#{node[:homebrew][:prefix]}/opt/openssl
+        --with-openssl-dir=#{node[:homebrew][:prefix]}/opt/openssl@3
         --with-readline-dir=#{node[:homebrew][:prefix]}/opt/readline --disable-libedit
         --without-gmp
         --enable-shared
@@ -149,7 +154,12 @@ define :rbenv, version: nil, headof: nil, bundler: nil, env: nil do
     # fixed /tmp/rbenv-install-<version>.log created by whoever runs first is
     # owned by them and the other user cannot truncate it → "Permission denied".
     # Suffixing the user name gives each its own file and removes the collision.
-    command "sudo -u #{rbenv_user} -E #{env} #{node[:setup][:root]}/rbenv/rbenv install #{version} > /tmp/rbenv-install-#{version}-#{rbenv_user}.log 2>&1"
+    #
+    # On failure the last 60 log lines go to stderr: the build output is
+    # redirected into the log, so without this the apply only reports
+    # "failed (exit status: 1)" and the cause stays on disk.
+    install_log = "/tmp/rbenv-install-#{version}-#{rbenv_user}.log"
+    command "sudo -u #{rbenv_user} -E #{env} #{node[:setup][:root]}/rbenv/rbenv install #{version} > #{install_log} 2>&1 || { tail -n 60 #{install_log} >&2; exit 1; }"
     not_if "test -d #{node[:rbenv][:root]}/versions/#{version}"
   end
 
