@@ -28,7 +28,6 @@ include_cookbook "dot-tmux"
 include_cookbook "herdr"
 include_cookbook "herdr-core"
 include_cookbook "fonts" if node[:platform] == "darwin" # user font dir is macOS-only
-include_cookbook "dot-config-alacritty"
 include_cookbook "dot-config-ghostty" if node[:platform] == "darwin"
 include_cookbook "dot-config-starship" # aws symbol width fix; cross-platform
 include_cookbook "fastfetch"

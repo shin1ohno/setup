@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 %w(
-  alacritty                 balenaetcher
+  balenaetcher
   backblaze                 charles
   chatgpt                   claude
   docker-desktop            figma
