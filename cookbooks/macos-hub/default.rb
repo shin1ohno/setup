@@ -24,9 +24,9 @@
 #   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.shin1ohno.macos-hub.plist
 # The bundle-ID-keyed grant survives future binary replacements via this cookbook.
 #
-# macos-hub converges only on Air. Identity is resolved once by
-# cookbooks/host-profile (node[:profile][:label]); edge_id == the label.
-# Hosts other than Air are skipped — same pattern as edge-agent.
+# macos-hub converges only on the work Macs (air, work-pro). Identity is
+# resolved once by cookbooks/host-profile (node[:profile][:label]); edge_id ==
+# the label. Other hosts are skipped — same pattern as edge-agent.
 
 # MQTT broker host for all Macs. Pro.home.local is the Linux server on
 # the LAN that runs mosquitto + weave-server + edge-agent.
@@ -35,10 +35,10 @@ MQTT_PORT = 1883
 
 edge_id = node[:profile][:label]
 
-unless edge_id == "air"
+unless %w[air work-pro].include?(edge_id)
   MItamae.logger.warn(
-    "macos-hub: host '#{node[:profile][:hostname]}' is not Air " \
-    "(node[:profile][:label]=#{edge_id.inspect}) — macos-hub only converges on Air.",
+    "macos-hub: host '#{node[:profile][:hostname]}' is not a work Mac " \
+    "(node[:profile][:label]=#{edge_id.inspect}) — macos-hub only converges on air / work-pro.",
   )
   return
 end
