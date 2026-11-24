@@ -12,7 +12,8 @@ node.reverse_merge!(
   rbenv: {
     root: "#{node[:setup][:home]}/.rbenv",
     global_version: "4.0",
-    global_gems: %w(bundler itamae ed25519 bcrypt_pbkdf)
+    # ruby-lsp is the server the Claude Code ruby-lsp plugin (roles/llm) runs from PATH.
+    global_gems: %w(bundler itamae ed25519 bcrypt_pbkdf ruby-lsp)
   },
   go: {
     versions: %w(1.22.3 1.21.8)
