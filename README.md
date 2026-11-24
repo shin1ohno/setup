@@ -58,6 +58,8 @@ The new device's public key must already be registered to https://github.com/shi
   ```
   Run in another terminal, then return and press Enter to resume.
 
+  The `mcp` cookbook's gate and its SSM-fetching steps (Claude Desktop config generator, Claude Code register) all run as the setup user through `cookbooks/mcp/files/as_user_aws_env.sh`, which passes `AWS_PROFILE`, `AWS_REGION`, `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` on to `sudo -H -u` explicitly (mitamae's own `sudo` wrap would drop them). A named profile therefore works for the whole `mcp` run, and the gate may ask for your sudo password once, before the AWS prompt. Credentials exported only as `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` are deliberately not forwarded (the secret would land in a command line and in mitamae's log): the gate fails at this pause point, so use a profile (`aws configure --profile <name>` or `aws sso login --profile <name>`, then `export AWS_PROFILE=<name>`).
+
 - **sudo password** (e.g. `pm2 startup launchd`, `mac-apps fdautil`, `zsh chsh`)
   - Just type your password when prompted.
 
