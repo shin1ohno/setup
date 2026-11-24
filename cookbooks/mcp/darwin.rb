@@ -36,6 +36,15 @@ generator_script = File.join(File.dirname(__FILE__), "files", "generate_config.s
 temp_path = "#{generated_dir}/claude_desktop_config.json"
 output_path = "#{claude_desktop_config_dir}/claude_desktop_config.json"
 
+# The gate and every SSM-fetching step run through this wrapper as the SAME user.
+# mitamae wraps an `execute` that sets `user` in `sudo -H -u <user> -- /bin/sh -c`,
+# and sudo's env_reset drops AWS_PROFILE / AWS_REGION / AWS_CONFIG_FILE /
+# AWS_SHARED_CREDENTIALS_FILE — the gate (run in mitamae's own environment)
+# passed for an operator using a named profile while the generator then failed
+# with "Unable to locate credentials". The wrapper forwards those four
+# explicitly; the steps below therefore carry no `user` of their own.
+as_setup_user = "bash #{File.join(File.dirname(__FILE__), "files", "as_user_aws_env.sh").shellescape} #{node[:setup][:user].shellescape}"
+
 # Both darwin renders resolve /mcp/* SSM parameters (the Desktop config and
 # the darwin-side register both fetch the obsidian key), so one gate covers
 # them. Block here until AWS auth is in place — interactive pause + re-check
@@ -47,13 +56,18 @@ require_external_auth(
   # Probe the ACTUAL SSM path the generators read (/mcp/obsidian-api-key) so the
   # gate fails when this identity lacks SSM access. `aws sts get-caller-identity`
   # was a false gate — it passes for any valid identity regardless of SSM scope.
-  check_command: "aws ssm get-parameter --name /mcp/obsidian-api-key --with-decryption --query Parameter.Value --output text --region ${AWS_REGION:-ap-northeast-1} >/dev/null 2>&1",
-  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
+  # Run as the generators' user through the same wrapper, so a pass here means
+  # the generators see the same identity. `--query Parameter.Name` (not .Value):
+  # the TTY path re-runs this check with the output captured, and a decrypted
+  # value must never reach mitamae's log; --with-decryption still exercises
+  # kms:Decrypt. Keep AWS_PROFILE= and --profile out of this string:
+  # `_pinned_profile` reads them as a pin and would disable profile auto-discovery.
+  check_command: "#{as_setup_user} aws ssm get-parameter --name /mcp/obsidian-api-key --with-decryption --query Parameter.Name --output text --region ${AWS_REGION:-ap-northeast-1} >/dev/null 2>&1",
+  instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry. Credentials exported only as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not passed on to the steps that run as #{node[:setup][:user]} — use a profile.",
 ) do
   # Generate config to temporary location in setup root
   execute "generate claude_desktop_config.json" do
-    command "bash #{generator_script} #{yaml_path} #{temp_path}"
-    user node[:setup][:user]
+    command "#{as_setup_user} bash #{generator_script.shellescape} #{yaml_path.shellescape} #{temp_path.shellescape}"
   end
 
   include_recipe "register"
