@@ -241,10 +241,12 @@ module RecipeHelper
     # select it and proceed with NO prompt. ENV mutation is in-process only
     # (like prepend_path) and is inherited by the block's execute resources at
     # converge — EXCEPT one that sets `user`: mitamae wraps those in
-    # `sudo -H -u <user>`, whose env_reset drops AWS_PROFILE, so a generator
-    # inside a bare gate must not set `user` (cookbooks/memory-mirror,
-    # cookbooks/mcp). Checks that pass an explicit --profile ignore
-    # AWS_PROFILE, so this is a harmless no-op for them.
+    # `sudo -H -u <user>`, whose env_reset drops AWS_PROFILE and the other AWS_*
+    # variables. A step inside a bare gate therefore either sets no `user`
+    # (cookbooks/memory-mirror, cookbooks/session-search) or forwards the
+    # identity explicitly (cookbooks/mcp/files/as_user_aws_env.sh). Checks that
+    # pass an explicit --profile ignore AWS_PROFILE, so this is a harmless
+    # no-op for them.
     if aws
       found = _auto_select_aws_profile(check_command)
       if found
