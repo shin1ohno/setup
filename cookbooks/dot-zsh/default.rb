@@ -4,6 +4,22 @@
 include_platform_cookbook "starship"
 include_cookbook "sheldon"
 
+# The /usr/sbin and /sbin entries of /etc/paths, which /etc/zprofile's
+# path_helper would add. Terminal.app starts the shell through login(1), which
+# hands it PATH=/usr/bin:/bin, and `unsetopt GLOBAL_RCS` (cookbooks/zsh) skips
+# /etc/zprofile, so without this every interactive shell lacks sysctl,
+# systemsetup, networksetup and diskutil, and a mitamae started from it aborts
+# in cookbooks/host-profile. Appended (never prepended) and guarded, so
+# Homebrew and user-local dirs keep their precedence and re-sourcing is a
+# no-op. darwin-only: Linux shells already get these from their login PATH.
+sbin_path = platform_value(
+  darwin: <<~SH,
+    case ":$PATH:" in *:/usr/sbin:*) ;; *) PATH="$PATH:/usr/sbin" ;; esac
+    case ":$PATH:" in *:/sbin:*) ;; *) PATH="$PATH:/sbin" ;; esac
+  SH
+  linux: "",
+)
+
 add_profile "dot-zsh" do
   priority 10
   bash_content <<"EOM"
@@ -15,7 +31,7 @@ HISTSIZE=2000
 SAVEHIST=1000
 setopt COMBINING_CHARS
 
-export PATH=#{node[:setup][:root]}/bin:#{node[:setup][:home]}/.local/bin:$PATH
+#{sbin_path}export PATH=#{node[:setup][:root]}/bin:#{node[:setup][:home]}/.local/bin:$PATH
 export ARCHPREFERENCE=arm64
 alias bri="envchain bricolage bundle exec bricolage"
 
