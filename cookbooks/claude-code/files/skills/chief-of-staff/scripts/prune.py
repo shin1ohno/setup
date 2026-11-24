@@ -75,26 +75,62 @@ def live_cwds():
 
 
 def borrowed_object_dirs(root):
-    """Object directories some repository under root reads through objects/info/alternates."""
+    """Object directories other repositories under root depend on, with the reason.
+
+    Two ways to depend on another repository's objects: objects/info/alternates
+    (a `git clone --shared`), and a partial clone whose promisor remote is a local
+    path, which fetches missing blobs from it on demand.
+    """
     for _ in range(2):  # a directory removed mid-walk fails find once
-        proc = subprocess.run(["find", str(root), "-path", "*/objects/info/alternates",
-                               "-type", "f"], capture_output=True, text=True)
+        proc = subprocess.run(["find", str(root), "-type", "f", "(",
+                               "-path", "*/objects/info/alternates", "-o",
+                               "-path", "*.git/config", ")"], capture_output=True, text=True)
         if proc.returncode == 0:
             break
     else:
         return None
-    borrowed = set()
+    borrowed = {}
     for name in proc.stdout.splitlines():
-        objects = Path(name).parent.parent
+        path = Path(name)
         try:
-            lines = Path(name).read_text(errors="replace").splitlines()
+            text = path.read_text(errors="replace")
         except FileNotFoundError:
             continue
-        for line in lines:
-            line = line.strip()
-            if line and not line.startswith("#"):
-                borrowed.add((objects / line).resolve())
+        if path.name == "alternates":
+            for line in text.splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    borrowed[(path.parent.parent / line).resolve()] = "alternates-source"
+        elif "promisor" in text.lower() or "partialclone" in text.lower():
+            for source in local_promisors(path):
+                for objects in (source / ".git" / "objects", source / "objects"):
+                    borrowed.setdefault(objects.resolve(), "promisor-source")
     return borrowed
+
+
+def local_promisors(config):
+    """Local-path promisor remotes named in one repository's config file."""
+    listing = git(config.parent, "config", "-f", str(config), "--get-regexp",
+                  r"^(remote\..*\.(promisor|url)|extensions\.partialclone)$")
+    remotes, urls = set(), {}
+    for line in (listing or "").splitlines():
+        key, _, value = line.partition(" ")
+        if key == "extensions.partialclone":
+            remotes.add(value)
+        elif key.endswith(".promisor") and value.lower() in ("true", "yes", "on", "1"):
+            remotes.add(key[len("remote."):-len(".promisor")])
+        elif key.endswith(".url"):
+            urls[key[len("remote."):-len(".url")]] = value
+    # git resolves a relative local URL from the work tree, or the git dir of a bare repository.
+    base = config.parent.parent if config.parent.name == ".git" else config.parent
+    for remote in remotes:
+        url = urls.get(remote, "")
+        if url.startswith("file://"):
+            url = url[len("file://"):]
+        elif "://" in url or re.match(r"^[^/]+:", url):
+            continue  # network remote: the objects live elsewhere
+        if url:
+            yield (base / url).resolve()
 
 
 def terminal_at(task):
@@ -189,8 +225,9 @@ def inspect(repo, task_dir, borrowed):
     if info["common"] is None:
         info["blocker"] = "git-error"
         return info
-    if (Path(info["common"]) / "objects").resolve() in borrowed:
-        info["blocker"] = "alternates-source"
+    lender = borrowed.get((Path(info["common"]) / "objects").resolve())
+    if lender:
+        info["blocker"] = lender
         return info
     status = git(repo, "status", "--porcelain", "--untracked-files=normal")
     if status is None:
@@ -483,7 +520,8 @@ def main():
     cwds = live_cwds()
     borrowed = borrowed_object_dirs(root)
     if cwds is None or borrowed is None:
-        what = "process working directories" if cwds is None else "alternates under the state root"
+        what = ("process working directories" if cwds is None
+                else "object sharing under the state root")
         print(json.dumps({"status": "error", "detail": f"cannot read {what}"}))
         return 1
     if args.terminal:
