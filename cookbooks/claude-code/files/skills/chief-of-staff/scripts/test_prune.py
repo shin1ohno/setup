@@ -237,6 +237,25 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(second["deleted"], 1)
         self.assertFalse(source.exists() or borrower.exists())
 
+    def test_local_promisor_source_stays_while_a_partial_clone_needs_it(self):
+        task_dir = self.task("a" * 16)
+        source = self.clone(task_dir, "checkout")
+        (source / "a.txt").write_text("second version\n")
+        git(source, "commit", "-qam", "second")
+        git(source, "push", "-q", "origin", "HEAD:main")
+        git(source, "config", "uploadpack.allowFilter", "true")
+        partial = self.root / ("d" * 16) / "attempt-1" / "partial"
+        self.task("d" * 16)
+        git(self.tmp, "clone", "-q", "--filter=blob:none", f"file://{source}", str(partial))
+        (partial / "probe.rs").write_text("untracked\n")
+        missing = git(partial, "rev-list", "--objects", "--missing=print", "--all")
+        self.assertIn("?", [line[:1] for line in missing.splitlines()], "fixture is not partial")
+        out = self.run_prune("--terminal", "--apply")
+        self.assertEqual(out["kept"], {"promisor-source": 1, "unsaved-recent": 1})
+        self.assertTrue(source.exists())
+        # The first version's blob was never fetched; reading it needs the source.
+        self.assertEqual(git(partial, "show", "HEAD~1:a.txt"), "one\n")
+
     def test_submodule_stash_keeps_the_parent(self):
         task_dir = self.task("a" * 16)
         parent = self.clone(task_dir, "parent")
@@ -359,7 +378,7 @@ class PruneTest(unittest.TestCase):
         args = type("Args", (), {"apply": True, "unsaved_after_days": 7})()
         task = json.loads((task_dir / "task.json").read_text())
         result = prune.prune_task(task_dir, task, args, self.root,
-                                  datetime.now(timezone.utc), set())
+                                  datetime.now(timezone.utc), {})
         self.assertTrue(repo.exists(), "the edit made after the save was deleted")
         self.assertIn("second edit", (repo / "a.txt").read_text())
         self.assertEqual([e["error"] for e in result["errors"]], ["changed since inspection"])

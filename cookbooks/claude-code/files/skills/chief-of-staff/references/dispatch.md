@@ -1406,8 +1406,10 @@ Workers clone and build inside the task directory, and nothing else removes thos
 checkouts: 704 tasks reached 108G by 2026-11-23. `scripts/prune.py` reclaims what
 a terminal task no longer needs. It removes a git checkout only when it holds no
 uncommitted change, untracked file, stash, or commit missing from its remotes,
-and no other repository under the state root borrows its objects through
-`objects/info/alternates` (a `git clone --shared` of it). It also removes
+and no other repository under the state root depends on its objects: through
+`objects/info/alternates` (a `git clone --shared` of it), or as the local-path
+promisor remote of a partial clone (`git clone --filter=... file://<it>`), which
+fetches missing blobs from it on demand. It also removes
 directories carrying a signed `CACHEDIR.TAG`, with everything below them (Cargo
 `target/`, the registry and git caches of a task-local Cargo home, uv), and
 `node_modules`. A directory is never removed because its name contains "cache":
