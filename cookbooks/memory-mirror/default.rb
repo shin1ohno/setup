@@ -14,8 +14,8 @@
 # The secret lives outside ~/.claude so the agent never reads it
 # (settings.json also denies Read on ~/.config/memory-mirror/**).
 #
-# Hosts: pro-dev, mini, and neo (FLEET label). air and sh1-cloud are excluded
-# on purpose; every other host (work Macs, CI runners) is skipped. The doc_key
+# Hosts: pro-dev, mini, and neo (FLEET label). The work hosts (air, work-pro,
+# sh1-cloud) are excluded on purpose; every other host is skipped. The doc_key
 # prefix is written into the config (`host`) because a Mac's gethostname is
 # not stable.
 #
@@ -31,7 +31,7 @@
 # hand the profile over through the process environment, so the generator must
 # run without an `execute ... user` (see the gate below).
 
-excluded_labels = %w[air sh1-cloud]
+excluded_labels = %w[air work-pro sh1-cloud]
 mirror_hostnames = %w[mini pro-dev]
 mirror_user = "shin1ohno"
 

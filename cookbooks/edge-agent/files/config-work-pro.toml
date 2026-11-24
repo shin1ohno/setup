@@ -1,0 +1,29 @@
+# edge-agent config for the "work-pro" macOS host. Nuimo (BLE) controller;
+# Roon lives on pro. weave-server runs on PVE CT 109
+# (`weave.home.local`, 192.168.1.74), listening on host port 8888.
+#
+# Hostname `weave.home.local` is safe here because the LXC is a single-purpose
+# host with one NIC. If resolution turns flaky, fall back to the LAN IP.
+
+edge_id = "work-pro"
+config_server_url = "ws://weave.home.local:8888/ws/edge"
+
+[roon]
+extension_id = "com.shin1ohno.edge-agent.work-pro"
+display_name = "edge-agent (work-pro)"
+# Pin to the RoonServer ("home", core_id b38d8cfc-...) on pro rather than rely
+# on SOOD, which non-deterministically picks between RoonServer and the bundled
+# RoonAppliance (ba89a1de-...) — the Appliance has no zones and leaves the UI
+# empty. Can be dropped once roon-api learns `prefer_core_id` (tracked in
+# weave/edge-agent TODO).
+host = "192.168.1.20"
+port = 9330
+
+[nuimo]
+# No ble_address pin — use the first Nuimo discovered on this host.
+
+[hue]
+# Hue enabled. Token defaults to $XDG_STATE_HOME/edge-agent/hue-token.json,
+# populated by `edge-agent pair-hue` the first time. The resolver re-discovers
+# the bridge's IP via mDNS / cloud on every start, so the token stays valid
+# across DHCP rotations without re-pairing.

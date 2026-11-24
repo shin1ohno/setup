@@ -13,6 +13,11 @@
 # servers (no `desktop:` flag) are skipped (they are claude.ai connectors).
 
 claude_path = "#{node[:setup][:home]}/.local/bin/claude"
+# The script fetches /mcp/* SSM parameters (darwin). It runs through
+# as_user_aws_env.sh instead of `user`: mitamae's `sudo -H -u` wrap would drop
+# AWS_PROFILE and friends, and the auth gate in darwin.rb checks with the same
+# wrapper, so both see one identity.
+as_setup_user = "bash #{File.join(File.dirname(__FILE__), "files", "as_user_aws_env.sh").shellescape} #{node[:setup][:user].shellescape}"
 register_script = File.join(File.dirname(__FILE__), "files", "register_claude_code.sh")
 yaml_path = File.join(File.dirname(__FILE__), "files", "servers.yml")
 
@@ -26,16 +31,11 @@ execute "register MCP servers into Claude Code (user scope)" do
   # `platforms: [darwin]` — e.g. obsidian-mcp-tools, whose command lives under
   # the macOS iCloud Drive path and cannot exist here.
   command <<~CMD.strip
-    bash -c '
+    #{as_setup_user} bash -c '
       set -euo pipefail
       export PATH="#{node[:setup][:home]}/.local/share/mise/shims:/usr/local/bin:$PATH"
       PLATFORM=#{platform_value(darwin: "darwin", linux: "linux")} bash #{register_script} #{yaml_path}
     '
   CMD
-  # No `user`: mitamae would wrap it in `sudo -H -u <user>`, whose env_reset
-  # drops AWS_PROFILE, so register_claude_code.sh could not resolve the /mcp/*
-  # SSM parameters under the gate's auto-discovered profile. mitamae already
-  # runs as node[:setup][:user], so the resource inherits its environment. See
-  # the matching note in darwin.rb.
   only_if "test -x #{claude_path}"
 end
