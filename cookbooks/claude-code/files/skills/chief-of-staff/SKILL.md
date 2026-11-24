@@ -185,8 +185,8 @@ owner gave through the question tool.
 A local worker reports through its task inbox (`scripts/inbox.py post`) and then
 types only the fixed doorbell; the controller reads with `tasks.py inbox`, which
 re-validates each message against the current attempt and its nonce, and runs
-`inbox-ack` only after relaying or acting on it (dispatch.md, "Worker inbox and
-doorbell"). The inbox exists so that a cooperating worker's reports arrive
+`inbox-ack` on a later turn, after the report relaying it has gone out — never in
+the turn that first reads it (dispatch.md, "Worker inbox and doorbell"). The inbox exists so that a cooperating worker's reports arrive
 structured and attributable to a task and attempt. It does not shrink the trust
 boundary against a hostile worker: the worker runs as the same OS user, so it can
 still type into the controller pane and write files in the state directory. A

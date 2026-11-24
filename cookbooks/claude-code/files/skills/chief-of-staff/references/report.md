@@ -41,7 +41,9 @@ names it, it does not replace the question.
   - what, starting with exactly one of `Q:` (an open question), `dialog:` (a
     dialog and its exact command), `done:` (the verified result), `error:` (an
     API error, failed check or abnormal exit), `on <who>:` (waiting on someone or
-    something), `step i/n:` (progress), `next:` (the controller's next step);
+    something), `step i/n:` (progress against a plan the worker posted; never a
+    bare `step:`), `next:` (the controller's next step, also for progress with
+    no posted plan);
   - the age of that state, as `45s`, `12m`, `3h` or `2d`.
 - A wake report lists only the lines that changed since the last report, under
   their section names, and ends the fence with `· 他 N 件は変化なし` (N = the
