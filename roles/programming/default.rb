@@ -31,6 +31,7 @@ include_cookbook "berkeley-db"
 include_platform_cookbook "libffi"  # darwin additionally exports LDFLAGS/CPPFLAGS for the keg-only brew libffi
 include_cookbook "libyaml"
 include_cookbook "readline"
+include_cookbook "openssl3" if node[:platform] == "darwin" # keg rbenv builds Ruby's openssl ext against; Linux uses distro -dev
 # ncurses / zlib are Linux-only (cookbooks/<name>/platform marker): macOS
 # builds Ruby against the copies in the SDK.
 unless node[:platform] == "darwin"
