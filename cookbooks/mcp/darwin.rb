@@ -50,10 +50,18 @@ require_external_auth(
   check_command: "aws ssm get-parameter --name /mcp/obsidian-api-key --with-decryption --query Parameter.Value --output text --region ${AWS_REGION:-ap-northeast-1} >/dev/null 2>&1",
   instructions: "On a fresh machine: aws configure (or aws configure --profile <name> + export AWS_PROFILE=<name>). Then press Enter to retry.",
 ) do
-  # Generate config to temporary location in setup root
+  # Generate config to temporary location in setup root.
+  #
+  # No `user` on this resource: mitamae turns `user` into
+  # `sudo -H -u <user> -- sh -c ...`, and sudo's env_reset drops AWS_PROFILE,
+  # which is the only place this bare gate's auto-discovered profile travels.
+  # On a Mac whose only credentials live under a named profile the generator
+  # then fails with "Unable to locate credentials" (2026-11-24). mitamae already
+  # runs as the operator (node[:setup][:user]), so the resource inherits its
+  # environment instead. The same applies to the register resource included
+  # below.
   execute "generate claude_desktop_config.json" do
     command "bash #{generator_script} #{yaml_path} #{temp_path}"
-    user node[:setup][:user]
   end
 
   include_recipe "register"

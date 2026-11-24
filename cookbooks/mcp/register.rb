@@ -32,6 +32,10 @@ execute "register MCP servers into Claude Code (user scope)" do
       PLATFORM=#{platform_value(darwin: "darwin", linux: "linux")} bash #{register_script} #{yaml_path}
     '
   CMD
-  user node[:setup][:user]
+  # No `user`: mitamae would wrap it in `sudo -H -u <user>`, whose env_reset
+  # drops AWS_PROFILE, so register_claude_code.sh could not resolve the /mcp/*
+  # SSM parameters under the gate's auto-discovered profile. mitamae already
+  # runs as node[:setup][:user], so the resource inherits its environment. See
+  # the matching note in darwin.rb.
   only_if "test -x #{claude_path}"
 end
