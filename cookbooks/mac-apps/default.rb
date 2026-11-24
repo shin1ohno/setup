@@ -11,10 +11,9 @@
   jetbrains-toolbox         karabiner-elements
   kiro                      launchcontrol
   microsoft-teams           monodraw
-  mqtt-explorer             obs
+  obs
   obsidian                  rapidapi
   tidal                     transmit
-  via
   zoom
 ).each do |app|
   execute "brew reinstall --cask #{app}" do
