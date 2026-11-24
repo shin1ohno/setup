@@ -74,7 +74,24 @@ class DarwinFixture
       yield if block_given?
     else
       puts "GATE failed (exit #{result.exit_status}); auth-gated block skipped"
+      puts "GATE diagnosis: #{diagnosis(check_command)}" if ENV["RENDER_DIAGNOSE"] == "1"
     end
+  end
+
+  # The TTY path of the real helper shows `_auth_diagnosis` when a gate fails.
+  # Evaluate the production RecipeHelper module (cookbooks/functions/default.rb,
+  # between `module RecipeHelper` and its closing `end`) on a bare object that
+  # runs commands through this fixture, and call it as the helper does.
+  def diagnosis(check_command)
+    functions = File.expand_path("../../functions/default.rb", __dir__)
+    source = File.read(functions, encoding: "UTF-8")
+    helper_source = source[/^module RecipeHelper\n.*?^end\n/m] or raise "RecipeHelper not found in #{functions}"
+    TOPLEVEL_BINDING.eval(helper_source) unless defined?(::RecipeHelper)
+    fixture = self
+    helper = Object.new
+    helper.extend(::RecipeHelper)
+    helper.define_singleton_method(:run_command) { |command, **options| fixture.run_command(command, **options) }
+    helper._auth_diagnosis(check_command, true)
   end
 
   def directory(path, &block)

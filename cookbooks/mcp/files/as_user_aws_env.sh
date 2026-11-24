@@ -20,7 +20,10 @@
 # mitamae's logs. With those the gate fails up front instead of the generator
 # failing half way — use a profile (aws configure --profile / aws sso login).
 #
-# Only variable NAMES are printed (stderr); values never are.
+# Prints nothing of its own: the first line of a failing check must be the AWS
+# error, because the auth gate's Diagnosis (`_auth_diagnosis`, TTY path) shows
+# the first output line of the check. Neither names nor values of the forwarded
+# variables are logged.
 #
 # bash 3.2 compatible (macOS /bin/bash).
 set -euo pipefail
@@ -34,18 +37,12 @@ target_user="$1"
 shift
 
 forwarded=()
-forwarded_names=""
 for name in AWS_PROFILE AWS_REGION AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE; do
   value="${!name:-}"
   if [ -n "$value" ]; then
     forwarded+=("${name}=${value}")
-    forwarded_names="${forwarded_names:+${forwarded_names},}${name}"
   fi
 done
-
-if [ -n "$forwarded_names" ]; then
-  echo "as_user_aws_env: forwarding ${forwarded_names} to ${target_user}" >&2
-fi
 
 # ${arr[@]+"${arr[@]}"}: an empty array expands to nothing under `set -u` on
 # bash 3.2 (a bare "${arr[@]}" is an unbound-variable error there).

@@ -77,7 +77,13 @@ nocred() {
 policy=$(dirname "$0")/aws.policy
 IFS= read -r mode < "$policy"
 value=$(sed -n 2p "$policy")
+case "$*" in
+  *"sts get-caller-identity"*) echo '{"Arn": "arn:aws:iam::000000000000:user/fixture"}'; exit 0 ;;
+esac
 case "$mode" in
+  not-found)
+    echo "An error occurred (ParameterNotFound) when calling the GetParameter operation:" >&2
+    exit 254 ;;
   require-profile) [ "${AWS_PROFILE-}" = "$value" ] || nocred ;;
   accept-env-key)  [ -n "${AWS_ACCESS_KEY_ID:-}" ] || nocred ;;
 esac
@@ -117,6 +123,7 @@ run_scenario() {
   for arg in "$@"; do
     case "$arg" in
       FAKE_AWS_REQUIRE_PROFILE=*) printf 'require-profile\n%s\n' "${arg#*=}" > "$stubs/aws.policy" ;;
+      FAKE_AWS_PARAMETER_NOT_FOUND=*) printf 'not-found\n' > "$stubs/aws.policy" ;;
       FAKE_AWS_ACCEPT_ENV_KEY=*) printf 'accept-env-key\n' > "$stubs/aws.policy" ;;
       *) env_args+=("$arg") ;;
     esac
@@ -244,8 +251,28 @@ env -i HOME="$work" PATH="$stubs:$PATH" CALLS="$CALLS" bash "$wrapper" someone t
 check "wrapper runs with no variable set (empty array under set -u)" '[ $? = 0 ]'
 env -i HOME="$work" PATH="$stubs:$PATH" bash "$wrapper" onlyuser >/dev/null 2>&1
 check "wrapper without a command exits 64" '[ $? = 64 ]'
-wlog=$(env -i HOME="$work" PATH="$stubs:$PATH" CALLS="$CALLS" AWS_PROFILE=secretish-name-0 bash "$wrapper" someone true 2>&1)
-check "wrapper names the forwarded variable but never prints its value" 'printf "%s" "$wlog" | grep -q "forwarding AWS_PROFILE" && ! printf "%s" "$wlog" | grep -q "secretish-name-0"'
+wlog=$(env -i HOME="$work" PATH="$stubs:$PATH" CALLS="$CALLS" AWS_PROFILE=secretish-name-0 AWS_REGION=secretish-region-0 bash "$wrapper" someone true 2>&1)
+check "wrapper prints nothing of its own (no variable name or value)" '[ -z "$wlog" ]'
+
+# --- 10. the TTY gate's Diagnosis shows the AWS error ------------------------------
+# On the interactive path the gate prints `_auth_diagnosis` (production helper,
+# evaluated by render-darwin.rb) whose last line of defence is the FIRST output
+# line of the failing check. A log line of the wrapper would hide the AWS error.
+
+run_scenario diagnosis "$RECIPE_DIR" AWS_PROFILE=$PROFILE FAKE_AWS_PARAMETER_NOT_FOUND=1 RENDER_DIAGNOSE=1
+check "diagnosis: gate fails on ParameterNotFound and the block is skipped" '[ "$rc" = 0 ] && printf "%s\n" "$out" | grep -q "^GATE failed" && [ "$(aws_calls)" -ge 1 ]'
+check "diagnosis: shows the AWS error (ParameterNotFound)" 'printf "%s\n" "$out" | grep "^GATE diagnosis:" | grep -q "the SSM parameter does not exist: An error occurred (ParameterNotFound)"'
+check "diagnosis: does not show a wrapper log line" '! printf "%s\n" "$out" | grep "^GATE diagnosis:" | grep -q "as_user_aws_env"'
+
+# Positive control: a wrapper that logs (the shape reviewed in PR 1252, head ae906bc)
+# must make the diagnosis check above fail.
+mutant=$work/mutant
+mkdir -p "$mutant"
+cp -R "$RECIPE_DIR/darwin.rb" "$RECIPE_DIR/register.rb" "$RECIPE_DIR/files" "$mutant/"
+awk '{print} /^shift$/ && !done {print "echo \"as_user_aws_env: forwarding AWS_PROFILE to ${target_user}\" >&2"; done=1}' \
+  "$RECIPE_DIR/files/as_user_aws_env.sh" > "$mutant/files/as_user_aws_env.sh"
+run_scenario diagnosis-mutant "$mutant" AWS_PROFILE=$PROFILE FAKE_AWS_PARAMETER_NOT_FOUND=1 RENDER_DIAGNOSE=1
+check "diagnosis: a wrapper that logs hides the AWS error (positive control)" 'printf "%s\n" "$out" | grep "^GATE diagnosis:" | grep -q "as_user_aws_env"'
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all checks passed"; else echo "$fails check(s) FAILED"; fi
