@@ -86,10 +86,11 @@ node.reverse_merge!(
 # Match rule mirrors cookbooks/ssh-keys/default.rb: a host matches a FLEET
 # entry when (hostname_override || key) OR any alias, downcased, equals the
 # live `hostname -s`. `hostname_override` covers Macs whose factory
-# serial-format short hostname is unrelated to the human label (air).
+# serial-format short hostname is unrelated to the human label (air, work-pro).
 fleet = {
   "pro" => {},
   "air" => { "hostname_override" => "xmhtm6qvqx" }, # MacBook Air factory serial
+  "work-pro" => { "hostname_override" => "dgyk09tw31" }, # work MacBook Pro factory serial
   "neo" => { "aliases" => ["ohnos-macbook"] },      # ohnos-macbook OS hostname
   "sh1-cloud" => { "hostname_override" => "sh1-dev-instance-1" }, # always-on cloud dev box (keyless, OS Login)
   # ES cluster nodes — `ip` is the node's own LAN transport_host, sourced here
@@ -108,7 +109,7 @@ end
 
 node.reverse_merge!(
   profile: {
-    label: label,             # "pro"/"air"/"neo"/"es-0".."es-2"; nil if not a fleet host
+    label: label,             # "pro"/"air"/"work-pro"/"neo"/"es-0".."es-2"; nil if not a fleet host
     hostname: current_hostname,
     ip: spec && spec["ip"],   # LAN IP for FLEET entries that carry one (es-*); else nil
   },

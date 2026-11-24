@@ -40,8 +40,8 @@
 #
 # Personal config: rendered only on the personal hosts, resolved the way
 # memory-mirror resolves them (host-profile label `neo`, or the hostnames
-# `mini` / `pro-dev`, which have no FLEET label). air and sh1-cloud are work
-# hosts: their config comes from the work-repo overlay, so nothing is rendered
+# `mini` / `pro-dev`, which have no FLEET label). air, work-pro and sh1-cloud are
+# work hosts: their config comes from the work-repo overlay, so nothing is rendered
 # there. Secrets come from SSM through a bare require_external_auth gate (same
 # profile handling as memory-mirror; listed in bin/lint-cookbooks BARE_OK):
 #   /memory/session-search-client-secret-<host>   Hydra client secret
@@ -50,7 +50,7 @@
 
 workstation_user = "shin1ohno"
 personal_hostnames = %w[mini pro-dev]
-work_labels = %w[air sh1-cloud]
+work_labels = %w[air work-pro sh1-cloud]
 
 label = node[:profile][:label]
 hostname = node[:profile][:hostname]
