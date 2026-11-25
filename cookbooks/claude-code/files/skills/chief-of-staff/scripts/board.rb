@@ -1014,9 +1014,13 @@ module Board
     .trace span.on{height:14px;background:var(--trace-on)}
     .trace span.lo{height:8px;background:var(--trace-on)}
 
-    /* expanded detail: label gutter, fixed order */
-    .detail{display:grid;grid-template-columns:7rem minmax(0,1fr);column-gap:var(--s-4);row-gap:var(--s-3);
-      padding:var(--s-1) var(--s-3) var(--s-5) calc(var(--s-3) + var(--edge));max-width:62rem}
+    /* expanded detail: one column by default (now, checklist, last report, timeline, facts);
+       two top-aligned columns from 900px: left = now, checklist, last report, facts; right = timeline */
+    .detail{display:grid;grid-template-columns:minmax(0,1fr);align-items:start;column-gap:var(--s-6);row-gap:var(--s-3);
+      padding:var(--s-1) var(--s-3) var(--s-5) calc(var(--s-3) + var(--edge));max-width:84rem}
+    .dleft,.dright{display:contents}
+    .part{display:grid;grid-template-columns:7rem minmax(0,1fr);column-gap:var(--s-4);min-width:0;overflow-wrap:anywhere}
+    .p-now{order:1}.p-check{order:2}.p-report{order:3}.p-timeline{order:4}.p-facts{order:5}
     .detail.fresh{animation:reveal .16s ease-out}
     @keyframes reveal{from{opacity:0}to{opacity:1}}
     .detail h3{margin:0;font-size:var(--fs-2);font-weight:500;color:var(--text-2);padding-top:var(--s-0)}
@@ -1041,13 +1045,19 @@ module Board
     .t-amber{background:var(--st-needs)}.t-grey{background:var(--st-idle)}.t-teal,.t-purple{background:var(--link)}
     .tl .text{line-height:var(--lh)}
     dl{display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:var(--s-4);row-gap:var(--s-0);margin:0}
-    dt{color:var(--text-2)}dd{margin:0}
+    dt{color:var(--text-2)}dd{margin:0;min-width:0}
     dd .pr{margin-right:var(--s-3)}
 
     .foot{margin-top:var(--s-5)}
     #errors{color:var(--text);font-size:var(--fs-2);padding-bottom:var(--s-5)}
     #errors div{border-left:var(--edge) solid var(--st-failed);padding-left:var(--s-3);margin:var(--s-1) 0}
 
+    @media (min-width:900px){
+      .detail{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}
+      .dleft{display:flex;flex-direction:column;row-gap:var(--s-3);min-width:0}
+      .dright{display:block;min-width:0}
+      .p-timeline{grid-template-columns:minmax(0,1fr);row-gap:var(--s-1)}
+    }
     @media (max-width:760px){
       .top,main,#errors{padding-left:var(--s-3);padding-right:var(--s-3)}
       .status{margin-left:0;flex-basis:100%}
@@ -1063,7 +1073,8 @@ module Board
       .ghead .counts{margin-left:0;flex-basis:100%}
       .ghead .fold{position:absolute;right:var(--s-3);top:var(--s-3)}
       .ghead{position:relative;padding-right:calc(var(--s-6) + var(--s-5))}
-      .detail{grid-template-columns:minmax(0,1fr);row-gap:var(--s-1)}
+      .detail{row-gap:var(--s-1)}
+      .part{grid-template-columns:minmax(0,1fr)}
       .detail h3{padding-top:var(--s-2)}
       .sub{flex-wrap:wrap}
     }
@@ -1261,8 +1272,11 @@ module Board
         return wrap;
       }
 
-      // --- the detail: now, checklist, last report, timeline, facts (fixed order)
-      function part(box, label, body) { add(box, el("h3", null, label), add(el("div", "body"), body)); }
+      // --- the detail: two columns when wide (left: now, checklist, last report, facts; right: timeline),
+      // one column in the order now, checklist, last report, timeline, facts when narrow (CSS order)
+      function part(col, name, label, body) {
+        col.appendChild(add(el("div", "part p-" + name), el("h3", null, label), add(el("div", "body"), body)));
+      }
       function checkItems(row, items, path) {
         var ul = el("ul", path ? null : "check");
         items.forEach(function (item, i) {
@@ -1286,6 +1300,8 @@ module Board
       }
       function detail(row) {
         var box = el("div", "detail" + (fresh[row.id] ? " fresh" : ""));
+        var left = el("div", "dleft"), right = el("div", "dright");
+        add(box, left, right);
         delete fresh[row.id];
         var t = row.tasks, p = t.progress;
 
@@ -1294,7 +1310,7 @@ module Board
         var status = row.facts.filter(function (f) { return f.label === "Status"; })[0];
         if (status) now.appendChild(el("p", "meta", "Status file: " + status.value + (status.at ? " " + ago(status.at) + " ago" : "")));
         if (row.activity_at) now.appendChild(el("p", "meta", "Last recorded activity " + ago(row.activity_at) + " ago, at " + hhmm(row.activity_at)));
-        part(box, "Now", now);
+        part(left, "now", "Now", now);
 
         var list = el("div");
         var summary;
@@ -1318,7 +1334,7 @@ module Board
             : "Show all " + t.items.length + " items", "checklist:" + row.id,
             function () { longChecklist[row.id] = !longChecklist[row.id]; })));
         }
-        part(box, t.source === "checklist" ? "Checklist" : "Checklist: acceptance criteria", list);
+        part(left, "check", t.source === "checklist" ? "Checklist" : "Checklist: acceptance criteria", list);
 
         var report = el("div");
         if (row.last_report) {
@@ -1327,7 +1343,7 @@ module Board
         } else {
           report.appendChild(el("p", "meta", "None yet."));
         }
-        part(box, "Last report", report);
+        part(left, "report", "Last report", report);
 
         var tl = el("div");
         var limit = longTimeline[row.id] ? row.timeline.length : TIMELINE_SHOWN;
@@ -1335,19 +1351,20 @@ module Board
           tl.appendChild(el("p", "meta", longTimeline[row.id] ? "All " + row.timeline.length + " events, newest first"
             : "Newest " + TIMELINE_SHOWN + " of " + row.timeline.length + " events"));
         }
+        if (!row.timeline.length) tl.appendChild(el("p", "meta", "No events recorded yet."));
         var ul = el("ul", "tl");
         row.timeline.slice(0, limit).forEach(function (entry) {
           var time = el("time", null, hhmm(entry.at));
           time.setAttribute("datetime", entry.at);
           ul.appendChild(add(el("li"), time, el("span", "mark t-" + entry.color), el("span", "text", entry.text)));
         });
-        tl.appendChild(ul);
+        if (row.timeline.length) tl.appendChild(ul);
         if (row.timeline.length > TIMELINE_SHOWN) {
           tl.appendChild(add(el("div", "more"), button("ghost", longTimeline[row.id] ? "Show the newest " + TIMELINE_SHOWN
             : "Show all " + row.timeline.length + " events", "timeline:" + row.id,
             function () { longTimeline[row.id] = !longTimeline[row.id]; })));
         }
-        part(box, "Timeline", tl);
+        part(right, "timeline", "Timeline", tl);
 
         var dl = el("dl");
         var prs = el("dd");
@@ -1361,7 +1378,7 @@ module Board
           if (f.label === "Status") return;
           add(dl, el("dt", null, f.label), el("dd", null, f.value + (f.at ? " " + ago(f.at) + " ago" : "")));
         });
-        part(box, "Facts", dl);
+        part(left, "facts", "Facts", dl);
         return box;
       }
 
