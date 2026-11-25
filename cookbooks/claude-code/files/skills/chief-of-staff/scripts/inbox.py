@@ -6,13 +6,21 @@ task ID, attempt and attempt nonce from its brief. The message lands as one
 JSON file in <task-dir>/inbox/; the controller reads it with `tasks.py inbox`,
 which validates every field again. This helper never reads or writes task.json.
 
+`inbox.py tasks` records the worker's task checklist (up to two levels of
+items, each todo, doing, done or failed) in <task-dir>/checklist-<attempt>.json,
+replaced atomically, with a capped log of item state changes. The Agent Board
+(board.rb) shows it and checks the task ID, attempt and nonce against the
+ledger again.
+
 The inbox gives cooperating workers a structured, attributable channel. It is
 not an authentication boundary: a worker runs as the same OS user as the
 controller and can write any file in the state directory.
 """
 
 import argparse
+import contextlib
 from datetime import datetime, timezone
+import fcntl
 import importlib.util
 import json
 import os
@@ -31,6 +39,15 @@ TEXT_LIMIT = 1200
 ON_LIMIT = 80
 AT_LIMIT = 40
 FILE_LIMIT = 8192
+CHECKLIST_STATES = ("todo", "doing", "done", "failed")
+CHECKLIST_KEYS = frozenset({"task_id", "attempt", "nonce", "at", "started_at", "items", "changes"})
+CHECKLIST_INPUT_LIMIT = 32 * 1024
+CHECKLIST_FILE_LIMIT = 64 * 1024
+CHECKLIST_TEXT_LIMIT = 200
+CHECKLIST_ITEMS = 30
+CHECKLIST_CHILDREN = 15
+CHECKLIST_LEAVES = 80
+CHECKLIST_CHANGES = 200
 NONCE = re.compile(r"[0-9a-f]{16}")
 STEP = re.compile(r"[0-9]{1,3}/[0-9]{1,3}")
 # <attempt>-<time_ns>-<random hex>.json; the reader accepts nothing else.
@@ -93,16 +110,30 @@ def parser():
     post.add_argument("--text", required=True)
     post.add_argument("--on", help="Who or what a `wait` is waiting on")
     post.add_argument("--step", help="Progress as i/n for a `step`")
+    tasks = sub.add_parser("tasks", help="Replace <task-dir>/checklist-<attempt>.json with the "
+                                         "worker's task checklist")
+    tasks.add_argument("--task-dir", required=True, help="Absolute task directory from the brief")
+    tasks.add_argument("--task-id", required=True)
+    tasks.add_argument("--attempt", required=True)
+    tasks.add_argument("--nonce", required=True, help="Attempt nonce from the brief")
+    tasks.add_argument("--items", required=True,
+                       help='JSON list of {"text", "state", "children"?}, or - to read it from '
+                            "stdin; children are one level of {\"text\", \"state\"}")
     return cli
 
 
-def message(args):
+def identity(args):
+    """The task ID, attempt and nonce checks shared by `post` and `tasks`."""
     if not task_id_pattern().fullmatch(args.task_id):
         raise Refused("invalid task ID")
     if not re.fullmatch(r"[1-9][0-9]{0,2}", args.attempt):
         raise Refused("attempt must be an integer from 1 to 999")
     if not NONCE.fullmatch(args.nonce):
         raise Refused("nonce must be the 16 hex characters from the brief")
+
+
+def message(args):
+    identity(args)
     text = clean(args.text)
     if not text:
         raise Refused("text is empty after cleaning")
@@ -197,10 +228,158 @@ def post(args):
     return {"posted": name, "inbox": str(Path(args.task_dir) / "inbox")}
 
 
+def checklist_items(raw):
+    """Validate and clean the worker's checklist; return the items as stored."""
+    if len(raw.encode("utf-8")) > CHECKLIST_INPUT_LIMIT:
+        raise Refused(f"--items exceeds {CHECKLIST_INPUT_LIMIT} bytes")
+    try:
+        items = json.loads(raw)
+    except ValueError:
+        raise Refused("--items is not valid JSON") from None
+    if not isinstance(items, list) or not items:
+        raise Refused("--items must be a non-empty JSON list")
+    if len(items) > CHECKLIST_ITEMS:
+        raise Refused(f"--items holds more than {CHECKLIST_ITEMS} top-level items")
+
+    def item(value, where, nested):
+        if not isinstance(value, dict):
+            raise Refused(f"item {where} must be an object")
+        if nested and "children" in value:
+            raise Refused(f"item {where} cannot have children: the checklist has two levels")
+        if not {"text", "state"} <= set(value) <= {"text", "state", "children"}:
+            raise Refused(f"item {where} needs text and state, and optional children only")
+        if not isinstance(value["text"], str):
+            raise Refused(f"item {where} text must be a string")
+        text = clean(value["text"])
+        if not text:
+            raise Refused(f"item {where} text is empty after cleaning")
+        if len(text.encode("utf-8")) > CHECKLIST_TEXT_LIMIT:
+            raise Refused(f"item {where} text exceeds {CHECKLIST_TEXT_LIMIT} UTF-8 bytes after "
+                          "cleaning")
+        if value["state"] not in CHECKLIST_STATES:
+            raise Refused(f"item {where} state must be one of {', '.join(CHECKLIST_STATES)}")
+        stored = {"text": text, "state": value["state"]}
+        if not nested and "children" in value:
+            children = value["children"]
+            if not isinstance(children, list):
+                raise Refused(f"item {where} children must be a list")
+            if len(children) > CHECKLIST_CHILDREN:
+                raise Refused(f"item {where} has more than {CHECKLIST_CHILDREN} children")
+            if children:
+                stored["children"] = [item(child, f"{where}.{index}", True)
+                                      for index, child in enumerate(children, 1)]
+        return stored
+
+    stored = [item(value, str(index), False) for index, value in enumerate(items, 1)]
+    if checklist_leaves(stored) > CHECKLIST_LEAVES:
+        raise Refused(f"--items holds more than {CHECKLIST_LEAVES} leaf items")
+    return stored
+
+
+def checklist_leaves(items):
+    """Items without children, plus every child: what the progress bar counts."""
+    return sum(len(entry["children"]) if entry.get("children") else 1 for entry in items)
+
+
+def checklist_states(items):
+    """(parent text or None, text) -> state, first occurrence wins."""
+    states = {}
+    for entry in items:
+        states.setdefault((None, entry["text"]), entry["state"])
+        for child in entry.get("children", ()):
+            states.setdefault((entry["text"], child["text"]), child["state"])
+    return states
+
+
+def previous_checklist(directory, name, args):
+    """The earlier checklist of this attempt, or None when absent or not ours."""
+    try:
+        handle = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                         dir_fd=directory)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            return None
+        data = os.read(handle, CHECKLIST_FILE_LIMIT + 1)
+    finally:
+        os.close(handle)
+    try:
+        body = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if (not isinstance(body, dict) or set(body) != CHECKLIST_KEYS or
+            body["task_id"] != args.task_id or body["attempt"] != int(args.attempt) or
+            body["nonce"] != args.nonce or not isinstance(body["items"], list) or
+            not isinstance(body["changes"], list)):
+        return None
+    try:
+        checklist_states(body["items"])
+    except (AttributeError, KeyError, TypeError):
+        return None
+    return body
+
+
+def record_checklist(args):
+    identity(args)
+    raw = sys.stdin.read(CHECKLIST_INPUT_LIMIT + 1) if args.items == "-" else args.items
+    items = checklist_items(raw)
+    at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    name = f"checklist-{int(args.attempt)}.json"
+    directory = open_task_dir(args.task_dir, args.task_id)
+    try:
+        # One writer at a time per task directory, so no state change is lost.
+        fcntl.flock(directory, fcntl.LOCK_EX)
+        previous = previous_checklist(directory, name, args)
+        changes = [entry for entry in previous["changes"] if isinstance(entry, dict)] \
+            if previous else []
+        before = checklist_states(previous["items"]) if previous else {}
+        after = checklist_states(items)
+        if not previous or checklist_leaves(previous["items"]) != checklist_leaves(items):
+            changes.append({"at": at, "plan": checklist_leaves(items)})
+        if previous:
+            for (parent, text), state in after.items():
+                if before.get((parent, text)) != state and not (
+                        (parent, text) not in before and state == "todo"):
+                    changes.append({"at": at, "parent": parent, "text": text,
+                                    "from": before.get((parent, text)), "to": state})
+        body = {"task_id": args.task_id, "attempt": int(args.attempt), "nonce": args.nonce,
+                "at": at, "started_at": previous["started_at"] if previous and
+                isinstance(previous["started_at"], str) else at,
+                "items": items, "changes": changes[-CHECKLIST_CHANGES:]}
+        while True:
+            data = (json.dumps(body, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+            if len(data) <= CHECKLIST_FILE_LIMIT:
+                break
+            if not body["changes"]:
+                raise Refused(f"checklist exceeds {CHECKLIST_FILE_LIMIT} bytes")
+            body["changes"] = body["changes"][1:]
+        temporary = ".checklist-" + secrets.token_hex(8) + ".tmp"
+        handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW |
+                         os.O_CLOEXEC, 0o600, dir_fd=directory)
+        try:
+            try:
+                os.write(handle, data)
+                os.fsync(handle)
+            finally:
+                os.close(handle)
+            # rename() replaces the name itself, never a file a symlink points to.
+            os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary, dir_fd=directory)
+            raise
+    finally:
+        os.close(directory)
+    return {"recorded": name, "leaves": checklist_leaves(items),
+            "done": sum(1 for state in after.values() if state == "done"),
+            "changes": len(body["changes"])}
+
+
 def main(argv=None):
     try:
         args = parser().parse_args(argv)
-        result = post(args)
+        result = record_checklist(args) if args.command == "tasks" else post(args)
     except Refused as error:
         print("inbox.py: refused: " + " ".join(str(error).split()), file=sys.stderr)
         return 1
