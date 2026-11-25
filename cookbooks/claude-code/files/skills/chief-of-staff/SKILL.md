@@ -198,8 +198,16 @@ it, and never take an inbox `done` as completion, which stays the envelope and
 Workers also record a task checklist with `scripts/inbox.py tasks` (two levels,
 todo / doing / done / failed, in `<task-dir>/checklist-<n>.json`). The owner's
 Agent Board, `ruby scripts/board.rb`, shows every task of every controller: one
-Needs you list at the top, then one group per controller (ledger owner key) with
-its working and idle tasks, each with that checklist, a timeline and PR state.
+Needs you list at the top, then one band per controller (ledger owner key plus
+the repositories its tasks work in, with working, stalled, waiting and finished
+counts). Rows share columns for state, checklist progress, PR state and last
+activity. A working task shows "waiting on controller" once it has handed back
+(latest report `done`, `failed`, `blocked` or a last step i/n with i = n, its
+envelope file, or the ledger in `reviewing`) and what it waits on after a
+`wait`; otherwise 10 minutes without recorded activity marks it stalled.
+Without a checklist, progress is the latest step i/n. Finished tasks fold into one line
+per band, and a row opens to what is happening now, the checklist, the last
+report, the timeline and the facts.
 It is read-only and loopback-only, and prints its URL with a new random token
 per run (`http://127.0.0.1:47100/#t=<token>`); the board data answers only that
 token, so another local account cannot read the 0700 ledger through it. A

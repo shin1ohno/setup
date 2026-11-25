@@ -36,6 +36,8 @@ RECIPE = SCRIPTS.parents[3] / "chief-of-staff-skill.rb"
 RUBY = shutil.which("ruby")
 NODE = shutil.which("node")
 HOSTILE = "<img src=x onerror=alert(1)></script><script>alert(2)</script>&lt;\"'"
+# A cwd's last path component becomes the repository name, so its marker has no slash.
+REPO_MARK = "<img src=x onerror=alert(1)><script>alert(2)<script>&lt;\"'#repo"
 PR_RE = re.compile(r"^https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[0-9]+$")
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
 
@@ -173,7 +175,7 @@ def build(root, hostile=True):
     f.task(4, "waiting-owner", "running")
     f.inbox("waiting-owner", "wait", h("wait"), 3, on=f"the owner {HOSTILE}"[:80])
 
-    f.task(5, "codex", "running", kind="codex", owner="hc:default#t10",
+    f.task(5, "codex", "running", kind="codex", owner="hc:default#t10", cwd="/src/" + (REPO_MARK if hostile else "repo"),
            acceptance=[h("criterion"), "Second criterion"])
     f.inbox("codex", "question", "Which branch should I use?", 4)  # to the controller: still working
 
@@ -192,6 +194,131 @@ def build(root, hostile=True):
     f.write(f.root / task_id(10) / "checklist-1.json",
             {"task_id": task_id(10), "attempt": 1, "nonce": "0" * 16, "at": at(5), "started_at": at(5),
              "items": [{"text": "forged item", "state": "done"}], "changes": []})
+
+    f.task(11, "waiting-ci", "running", owner="hc:default#t10", updated=30)
+    f.inbox("waiting-ci", "wait", h("wait-text"), 20, on=h("waiting-on")[:80])
+    return f
+
+
+def events(fixture, name, minutes, attempt=1):
+    """Hook events at the given ages (minutes) in events-<n>.jsonl."""
+    lines = [json.dumps({"at": at(m), "event": "PostToolUse", "status": "working", "detail": f"invented {m}"})
+             for m in sorted(minutes, reverse=True)]
+    fixture.write(fixture.root / fixture.ids[name] / f"events-{attempt}.jsonl", "\n".join(lines) + "\n")
+
+
+LONG = ("Every pull request that the accepted plan defines is implemented on its own branch from the planned "
+        "base, pushed with an explicit refspec and opened as a draft whose description has Summary and Test plan")
+
+
+def demo(root):
+    """The design fixture: plain invented data covering every row shape the page draws.
+
+    Two controllers; a needs-you row, a stalled row, a waiting row, a row with a
+    two-level checklist, a row with only long acceptance criteria, finished rows
+    (one older than 24 h). Used by DemoTest and for screenshots.
+    """
+    f = Fixture(root)
+    desk_a, desk_b = "hc:default#t4", "hc:default#t9"
+    pr = lambda repo, n, minutes: {"url": f"https://github.com/example-org/{repo}/pull/{n}", "repo": f"example-org/{repo}",
+                                   "number": n, "added_at": at(minutes)}
+    f.task(1, "retry-budget", "running", owner=desk_a, cwd="/src/atlas-api", agent="cos-0000000000000001-1",
+           topic="Add a retry budget to the webhook sender so one slow receiver cannot starve the others",
+           pr=[pr("atlas-api", 41, 30)], updated=3)
+    events(f, "retry-budget", [0.5, 2, 4, 6, 9, 14, 18, 26, 33, 41, 47, 55])
+    f.checklist("retry-budget", [
+        {"text": "Read the sender and its tests", "state": "done"},
+        {"text": "Budget per receiver", "state": "doing",
+         "children": [{"text": "Failing test for a slow receiver", "state": "done"},
+                      {"text": "Token bucket in the dispatch loop", "state": "doing"},
+                      {"text": "Metrics for dropped retries", "state": "todo"}]},
+        {"text": "Open the draft PR and watch CI", "state": "todo"}])
+    f.inbox("retry-budget", "step", "Failing test for a slow receiver committed", 40, step="1/5", read=True)
+    f.inbox("retry-budget", "step", "Budget wired into the dispatch loop", 15, step="2/5", read=True)
+    f.inbox("retry-budget", "step", "Token bucket written; running the integration tests", 2, step="3/5")
+    f.state("retry-budget", updated_at=at(0.5), milestones=[
+        {"at": at(38), "kind": "commit", "sha": "1a2b3c4d5e", "subject": "webhooks: failing test for a slow receiver"},
+        {"at": at(14), "kind": "commit", "sha": "2b3c4d5e6f", "subject": "webhooks: per-receiver retry budget"},
+        {"at": at(8), "kind": "test-failed", "command": "make test-integration", "exit_code": 1},
+        {"at": at(3), "kind": "commit", "sha": "3c4d5e6f70", "subject": "webhooks: token bucket in the dispatch loop"}])
+
+    f.task(2, "session-store", "running", owner=desk_a, cwd="/src/atlas-api", agent="cos-0000000000000002-1",
+           topic="Migrate the session store to the v2 schema", updated=25)
+    f.state("session-store", updated_at=at(25))
+    events(f, "session-store", [25, 27, 31, 38, 52])
+    f.checklist("session-store", [{"text": "Write the migration", "state": "done"},
+                                  {"text": "Backfill in batches", "state": "doing"},
+                                  {"text": "Switch reads to v2", "state": "todo"}])
+    f.inbox("session-store", "step", "Backfill started for 1.2 M rows", 26, step="2/3")
+
+    f.task(3, "macos-flake", "running", owner=desk_a, cwd="/src/setup", agent="cos-0000000000000003-2",
+           topic="Fix the flaky login test on macOS runners", attempts=2, pr=[pr("setup", 88, 40)], updated=20)
+    f.state("macos-flake", attempt=2, updated_at=at(20))
+    events(f, "macos-flake", [20, 22, 24, 35], attempt=2)
+    f.inbox("macos-flake", "wait", "CI is queued on the macOS runner; nothing else to do until it starts", 19,
+            on="GitHub macOS runner", attempt=2)
+
+    f.task(4, "audit-log", "running", owner=desk_a, cwd="/src/atlas-api", kind="codex", agent="codex-audit-log",
+           topic="Write the audit log exporter", updated=4,
+           acceptance=[LONG + ".",
+                       "Each PR includes the plan's tests, including a mutation test for every new gate that fails "
+                       "when the gate is removed, and they pass, with output saved in the task directory.",
+                       "The repository gates pass on each PR's final head, with their output saved in the task "
+                       "directory, and nothing is merged, applied or pushed to main by the worker."])
+    f.inbox("audit-log", "note", "Exporter skeleton in place; writing the gate tests next", 4)
+
+    finished = [(5, "rate-limit", "accepted", 50, "Rate-limit the public search endpoint", 33),
+                (6, "docs-links", "accepted", 130, "Fix broken links in the operator guide", 34),
+                (7, "deps", "cancelled", 200, "Bump the HTTP client to 4.x", None),
+                (8, "flags", "accepted", 300, "Remove the expired feature flags", 35)]
+    for n, name, state, minutes, topic, number in finished:
+        f.task(n, name, state, owner=desk_a, cwd="/src/atlas-api", topic=topic, updated=minutes,
+               pr=[pr("atlas-api", number, minutes + 20)] if number else [],
+               acceptance=["Tests pass", "Docs updated"],
+               envelope={"criteria": [{"criterion": "Tests pass", "status": "pass"},
+                                      {"criterion": "Docs updated", "status": "pass"}]} if state == "accepted" else None)
+
+    f.task(9, "export-format", "needs-user", owner=desk_b, cwd="/src/notes-app", agent="cos-0000000000000009-1",
+           topic="Decide the export format for shared notebooks",
+           history=[{"at": at(90), "state": "running", "note": "dispatched"},
+                    {"at": at(6), "state": "needs-user",
+                     "note": "Keep the v1 export format for old clients, or drop it and ship only v2?"}],
+           updated=6)
+    f.state("export-format", status="idle", updated_at=at(6))
+    f.task(10, "release-notes", "running", owner=desk_b, cwd="/src/notes-app", agent="cos-000000000000000a-1",
+           topic="Draft the release notes for 2.4", updated=1)
+    f.state("release-notes", updated_at=at(1))
+    events(f, "release-notes", [1, 3, 5, 8, 12])
+    f.checklist("release-notes", [{"text": "Collect merged PRs since 2.3", "state": "done"},
+                                  {"text": "Group by area", "state": "done"},
+                                  {"text": "Write the highlights", "state": "doing"},
+                                  {"text": "Owner review", "state": "todo"}])
+    # Handed back to the controller: never stalled, whatever their age.
+    f.task(13, "handoff-done", "running", owner=desk_b, cwd="/src/notes-app", agent="cos-000000000000000d-1",
+           topic="Make sharing links expire after 30 days", pr=[pr("notes-app", 14, 50)], updated=31)
+    f.state("handoff-done", updated_at=at(30))
+    f.inbox("handoff-done", "step", "Expiry job and migration written", 45, step="2/3", read=True)
+    f.inbox("handoff-done", "done", "PR ready for merge: https://github.com/example-org/notes-app/pull/14 (CI green)", 30)
+    f.task(14, "envelope-written", "running", owner=desk_b, cwd="/src/notes-app", agent="cos-000000000000000e-1",
+           topic="Audit the notebook permissions model", updated=26)
+    f.state("envelope-written", updated_at=at(25))
+    f.write(f.root / task_id(14) / "envelope-1.json", {"task_id": task_id(14), "attempt": 1, "status": "done"})
+    f.task(15, "in-review", "reviewing", owner=desk_b, cwd="/src/notes-app", agent="cos-000000000000000f-1",
+           topic="Speed up the search index rebuild", updated=40)
+    f.state("in-review", updated_at=at(40))
+    f.task(16, "last-step", "running", owner=desk_b, cwd="/src/notes-app", agent="cos-0000000000000010-1",
+           topic="Translate the onboarding screens", updated=21)
+    f.state("last-step", updated_at=at(20))
+    f.inbox("last-step", "step", "All five locales reviewed; nothing left", 20, step="3/3")
+    # Quiet on a middle step with no checklist: stalled, progress from the step.
+    f.task(17, "quiet-step", "running", owner=desk_b, cwd="/src/notes-app", agent="cos-0000000000000011-1",
+           topic="Rotate the storage credentials", updated=16)
+    f.state("quiet-step", updated_at=at(15))
+    f.inbox("quiet-step", "step", "Old key revoked in staging", 15, step="1/4")
+    f.task(11, "sync-bug", "accepted", owner=desk_b, cwd="/src/notes-app", topic="Fix the sync conflict banner",
+           updated=180, pr=[pr("notes-app", 12, 200)])
+    f.task(12, "old-cleanup", "accepted", owner=desk_b, cwd="/src/notes-app", topic="Clean up the old build cache",
+           updated=3 * 24 * 60)
     return f
 
 
@@ -253,6 +380,10 @@ class BoardCase(unittest.TestCase):
             raise unittest.SkipTest("ruby is not on PATH")
 
     def setUp(self):
+        # Fixture ages are relative to NOW; refresh it so a long suite does not
+        # drift a row across the 10-minute stalled boundary.
+        global NOW
+        NOW = datetime.now(timezone.utc).replace(microsecond=0)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.base = Path(self.tmp.name)
@@ -281,12 +412,12 @@ class SectionTest(BoardCase):
         data = self.dump("--no-gh")
         ids = self.fixture.ids
         section = {row["id"]: row["section"] for row in self.rows(data).values()}
-        self.assertEqual(len(section), 10, "every ledger task, of every owner, appears once")
+        self.assertEqual(len(section), 11, "every ledger task, of every owner, appears once")
         count = len(data["needs_you"]) + sum(len(g["rows"]) for g in data["groups"])
-        self.assertEqual(count, 10, "no task is listed twice")
+        self.assertEqual(count, 11, "no task is listed twice")
         for name in ("needs", "blocked", "asking", "waiting-owner"):
             self.assertEqual(section[ids[name]], "needs_you", name)
-        for name in ("codex", "queued", "bad-nonce"):
+        for name in ("codex", "queued", "bad-nonce", "waiting-ci"):
             self.assertEqual(section[ids[name]], "working", name)
         for name in ("accepted-recent", "accepted-old", "cancelled"):
             self.assertEqual(section[ids[name]], "idle", name)
@@ -304,14 +435,20 @@ class SectionTest(BoardCase):
         tags = {names[r["id"]]: r["controller_tag"] for r in data["needs_you"]}
         self.assertEqual(tags, {"needs": mark("tag"), "blocked": "t1", "asking": "t1", "waiting-owner": "t1"})
         self.assertEqual([g["label"] for g in data["groups"]],
-                         ["hc:default#t10", "(no controller key)", mark("group"), "hc:default#t1"],
-                         "groups ordered by most recent update; tasks without a key share one group")
-        self.assertEqual([g["owner"] for g in data["groups"]][1], None)
+                         [mark("group"), "hc:default#t10", "(no controller key)", "hc:default#t1"],
+                         "stable order: groups with working rows first, keyed before unkeyed, then by key")
+        self.assertEqual([g["owner"] for g in data["groups"]][2], None)
         members = {g["label"]: [(names[r["id"]], r["section"]) for r in g["rows"]] for g in data["groups"]}
         self.assertEqual(members["hc:default#t10"],
-                         [("codex", "working"), ("accepted-recent", "idle"), ("cancelled", "idle")],
-                         "working rows first, then idle, each newest first")
+                         [("codex", "working"), ("waiting-ci", "working"), ("accepted-recent", "idle"),
+                          ("cancelled", "idle")],
+                         "working rows first by start time, then idle rows newest first")
         self.assertEqual(members["hc:default#t1"], [("accepted-old", "idle")])
+        groups = {g["label"]: g for g in data["groups"]}
+        self.assertEqual(groups["hc:default#t10"]["counts"],
+                         {"working": 1, "stalled": 0, "waiting": 1, "needs": 0, "idle": 2})
+        self.assertEqual(groups["hc:default#t1"]["counts"]["needs"], 3, "Needs you rows count for their controller")
+        self.assertEqual(groups["hc:default#t10"]["repos"], ["tmp", REPO_MARK], "repositories, most used first")
         for group in data["groups"]:
             self.assertTrue(all(r["owner"] == group["owner"] for r in group["rows"]))
             self.assertTrue(all(r["section"] != "needs_you" for r in group["rows"]))
@@ -334,6 +471,7 @@ class SectionTest(BoardCase):
         self.assertIn(mark("blocked"), blocked["need"])
         self.assertIn(mark("decide"), blocked["need"])
         facts = {f["label"]: f for f in needs["facts"]}
+        self.assertNotIn("PR", facts, "pull requests are drawn from row.prs, not a fact string")
         self.assertEqual(facts["Controller"]["value"], "hc:default#" + mark("tag"))
         self.assertIn(mark("terminal"), facts["Lane"]["value"])
         self.assertTrue(facts["Status"]["at"])
@@ -449,7 +587,7 @@ class ReadOnlyTest(BoardCase):
 class EscapingTest(BoardCase):
     FIELDS = ("topic", "agent", "tag", "group", "terminal", "need", "history", "controller-report", "prompt",
               "commit", "test-command", "step-read", "note-unread", "item", "child", "blocked", "decide",
-              "asking", "wait", "criterion")
+              "asking", "wait", "criterion", "wait-text", "waiting-on")
 
     def snapshot(self):
         out = self.base / "board.html"
@@ -472,6 +610,7 @@ class EscapingTest(BoardCase):
         collect(self.dump("--no-gh"))
         for field in self.FIELDS:
             self.assertTrue(any(mark(field) in value for value in strings), field)
+        self.assertIn(REPO_MARK, strings)
 
     def test_snapshot_html_has_no_raw_markup(self):
         _, html = self.snapshot()
@@ -500,15 +639,22 @@ class EscapingTest(BoardCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
         self.assertLessEqual(set(report["tags"]), {"DIV", "SPAN", "SECTION", "H2", "H3", "UL", "LI", "A", "P",
-                                                   "TIME", "DL", "DT", "DD", "BUTTON"})
-        self.assertLessEqual(set(report["attributes"]), {"role", "aria-expanded", "datetime", "title"})
+                                                   "TIME", "DL", "DT", "DD", "BUTTON", "B"})
+        self.assertLessEqual(set(report["attributes"]),
+                             {"role", "aria-expanded", "aria-hidden", "datetime", "title", "data-key"})
         self.assertIn("hc:default#" + mark("tag"), report["titles"], "the Needs you tag carries the full key as a title")
-        self.assertIn("[" + mark("tag") + "]", report["texts"])
+        self.assertIn(mark("tag"), report["texts"])
         self.assertIn(mark("group"), report["texts"], "the group heading shows the key as text")
-        self.assertIn("1 working \u00b7 2 idle", report["texts"])
+        self.assertIn(", ".join(["tmp", REPO_MARK]), report["texts"], "the heading names the repositories")
+        self.assertIn(REPO_MARK, report["texts"], "the detail names the repository")
+        self.assertIn("waiting on " + mark("waiting-on"), report["texts"], "a waiting row says what it waits on")
         self.assertNotIn("hc:default#t1", report["initial_groups"], "an all-hidden idle group is not shown")
         self.assertIn("hc:default#t1", report["final_groups"])
-        self.assertEqual(report["initial_groups"][0], "hc:default#t10")
+        self.assertEqual(report["initial_groups"][0], mark("group"))
+        self.assertEqual(report["initial_finished"], 0, "finished rows start folded")
+        self.assertEqual(report["needs_none"], False)
+        self.assertGreater(report["rows_before_fold"], 0)
+        self.assertEqual((report["rows_after_fold"], report["fold_state"]), (0, "false"), "a band collapses")
         self.assertTrue(report["hrefs"])
         for href in report["hrefs"]:
             self.assertRegex(href, PR_RE)
@@ -550,27 +696,308 @@ const document = { createElement: t => new El(t), getElementById: id => ids[id],
 new Function("document", "fetch", script)(document, () => { throw new Error("snapshot fetched"); });
 function walk(node, out) { out.push(node); node.children.forEach(c => walk(c, out)); return out; }
 function live() { return walk(ids.board, []); }
-const initial_groups = live().filter(n => n.className === "key").map(n => n.textContent);
+const initial_groups = live().filter(n => n.className === "gkey").map(n => n.textContent);
+const initial_finished = live().filter(n => /\bcompact\b/.test(n.className)).length;
+const needs_none = live().some(n => n.className === "needs none");
+const initial_texts = live().filter(n => n.text !== null).map(n => n.text);
 let expanded = 0;
-for (let guard = 0; guard < 500; guard++) {
-  const closed = live().find(n => n.attributes["aria-expanded"] === "false");
-  const more = live().find(n => n.tagName === "BUTTON" && /^Show (all idle|[0-9]+ more)/.test(n.textContent));
+const seen = new Set();
+for (let guard = 0; guard < 2000; guard++) {
+  const more = live().find(n => n.tagName === "BUTTON" && /^Show all /.test(n.textContent));
   if (more) { more.fire("click"); continue; }
+  const closed = live().find(n => n.attributes["aria-expanded"] === "false" && !/^group:/.test(n.attributes["data-key"] || ""));
   if (!closed) break;
   closed.fire("click"); expanded++;
+  live().forEach(n => { if (n.text !== null) seen.add(n.text); });
 }
-const groupKeys = () => live().filter(n => n.className === "key").map(n => n.textContent);
+const groupKeys = () => live().filter(n => n.className === "gkey").map(n => n.textContent);
 const final_groups = groupKeys();
 const nodes = live().concat(walk(ids.errors, []), [ids.count]);
+// Collapse the first controller band: its rows go, its heading stays.
+const bandRows = () => { const band = live().find(n => n.className === "group");
+  return walk(band, []).filter(n => /^row /.test(n.className)).length; };
+const rows_before_fold = bandRows();
+live().find(n => /^group:/.test(n.attributes["data-key"] || "")).fire("click");
+const rows_after_fold = bandRows();
+const fold_state = live().find(n => /^group:/.test(n.attributes["data-key"] || "")).attributes["aria-expanded"];
 const report = { tags: [...new Set(nodes.map(n => n.tagName))],
   attributes: [...new Set(nodes.flatMap(n => Object.keys(n.attributes)))],
   hrefs: nodes.filter(n => n.href !== undefined).map(n => n.href),
   texts: nodes.filter(n => n.text !== null).map(n => n.text), expanded, initial_groups, final_groups,
+  initial_finished, needs_none, initial_texts, seen: [...seen], rows_before_fold, rows_after_fold, fold_state,
+  detail_order: live().filter(n => n.tagName === "H3").map(n => n.textContent),
   titles: nodes.map(n => n.attributes.title).filter(Boolean) };
 for (const n of nodes) for (const key of Object.keys(n))
   if (/^on/i.test(key)) throw new Error("event handler property " + key);
 process.stdout.write(JSON.stringify(report));
 """
+
+
+NORD = {"2E3440", "3B4252", "434C5E", "4C566A", "D8DEE9", "E5E9F0", "ECEFF4", "8FBCBB", "88C0D0", "81A1C1",
+        "5E81AC", "BF616A", "D08770", "EBCB8B", "A3BE8C", "B48EAD"}
+SURFACES = ("bg", "surface")
+# Every foreground/background pair the page draws, from the CSS in board.rb.
+# Text needs 4.5:1 (WCAG 1.4.3); state marks, the trace and the focus ring are
+# non-text UI and need 3:1 (1.4.11). "Decorative" pairs carry no meaning the
+# text beside them does not already give, so they get no threshold.
+TEXT_PAIRS = [("text", "bg"), ("text", "surface"), ("text-2", "bg"), ("text-2", "surface"), ("link", "bg"),
+              ("accent", "bg"), ("st-needs", "bg")]
+UI_PAIRS = [(t, "bg") for t in ("st-working", "st-needs", "st-waiting", "st-stalled", "st-done", "st-failed",
+                                 "st-queued", "st-idle", "trace-on", "accent", "link")] + \
+           [(t, "surface") for t in ("st-working", "st-needs", "st-waiting", "st-stalled", "accent")]
+DECORATIVE_PAIRS = [("rule", "bg"), ("rule-strong", "bg"), ("trace-off", "bg"), ("st-done", "rule"),
+                    ("st-working", "rule"), ("st-failed", "rule")]
+
+
+def page_css():
+    source = BOARD.read_text(encoding="utf-8")
+    return source[source.index("CSS = <<~'CSS'"):source.index("\n  CSS\n")]
+
+
+def tokens(css=None):
+    css = css or page_css()
+    blocks = re.findall(r":root\{(.*?)\}", css, re.S)
+    assert len(blocks) == 1, "exactly one token block"
+    return dict(re.findall(r"--([a-z0-9-]+):([^;]+);", blocks[0]))
+
+
+def luminance(hex_value):
+    channels = [int(hex_value[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    channels = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def ratio(fg, bg):
+    a, b = sorted((luminance(fg), luminance(bg)), reverse=True)
+    return (a + 0.05) / (b + 0.05)
+
+
+def contrast_report():
+    """Every pair with its ratio; `python3 -c 'import test_board as t; print(t.contrast_report())'`."""
+    values = tokens()
+    lines = ["kind        need  ratio  foreground            background", "-" * 72]
+    for kind, need, pairs in (("text", 4.5, TEXT_PAIRS), ("ui-mark", 3.0, UI_PAIRS), ("decorative", 0, DECORATIVE_PAIRS)):
+        for fg, bg in pairs:
+            r = ratio(values[fg], values[bg])
+            verdict = "pass" if r >= need else "FAIL"
+            lines.append(f"{kind:<11} {need:>4}  {r:5.2f}  --{fg:<12} {values[fg]}  --{bg:<10} {values[bg]}  "
+                         f"{verdict if need else 'n/a'}")
+    return "\n".join(lines)
+
+
+class DesignTokenTest(unittest.TestCase):
+    def test_only_nord_colors_and_only_in_the_token_block(self):
+        css = page_css()
+        source = BOARD.read_text(encoding="utf-8")
+        page = source[source.index("def page(nonce"):source.index("# --- server")]
+        root = re.search(r":root\{.*?\}", css, re.S)
+        literals = list(re.finditer(r"#[0-9A-Fa-f]{3,8}\b", page))
+        self.assertTrue(literals, "positive control: the token block holds hex colors")
+        page_root = re.search(r":root\{.*?\}", page, re.S)
+        for match in literals:
+            self.assertTrue(page_root.start() <= match.start() < page_root.end(),
+                            f"color literal outside the token block: {match.group()}")
+            value = match.group()[1:].upper()
+            self.assertIn(len(value), (6, 8), match.group())
+            self.assertIn(value[:6], NORD, f"{match.group()} is not one of the 16 Nord colors")
+        for function in ("rgb(", "rgba(", "hsl(", "hsla(", "hwb(", "lab(", "lch(", "oklab(", "oklch(", "color("):
+            self.assertNotIn(function, page.lower(), function)
+        allowed = {"solid", "none", "dark", "underline", "transparent", "inherit", "auto"}
+        body = css[root.end():]
+        for prop, value in re.findall(r"([a-z-]+):([^;{}]+)", body):
+            if not re.search(r"(^|-)(color|background|border|outline|fill|stroke|shadow|decoration)", prop):
+                continue
+            if prop in ("border-radius", "border-width", "outline-offset"):
+                continue
+            words = re.findall(r"[A-Za-z][A-Za-z-]*", re.sub(r"var\(--[a-z0-9-]+\)|[0-9.]+(px|rem|em|%)?|!important", "", value))
+            self.assertLessEqual(set(words), allowed, f"{prop}:{value}")
+        self.assertEqual(tokens()["bg"], "#2E3440", "Polar Night background")
+
+    def test_type_and_space_come_from_tokens(self):
+        body = page_css()
+        body = body[re.search(r":root\{.*?\}", body, re.S).end():]
+        values = tokens()
+        for name in ("fs-1", "fs-2", "fs-3", "fs-4", "fs-5", "s-1", "s-2", "s-3", "s-4", "s-5", "s-6", "lh", "lh-tight"):
+            self.assertIn(name, values)
+        for prop, value in re.findall(r"(?<![a-z-])(font-size|line-height|margin(?:-[a-z]+)?|padding(?:-[a-z]+)?|"
+                                      r"gap|row-gap|column-gap):([^;{}]+)", body):
+            rest = re.sub(r"var\(--[a-z0-9-]+\)|calc\(|\)|[+]|\b0\b|auto|inherit|unset", " ", value)
+            self.assertEqual(rest.strip(), "", f"{prop}:{value} is not a token")
+        for fg, bg in TEXT_PAIRS + UI_PAIRS + DECORATIVE_PAIRS:
+            self.assertIn(fg, values)
+            self.assertIn(bg, values)
+
+    def test_contrast(self):
+        values = tokens()
+        for fg, bg in TEXT_PAIRS:
+            self.assertGreaterEqual(ratio(values[fg], values[bg]), 4.5, (fg, bg))
+        for fg, bg in UI_PAIRS:
+            self.assertGreaterEqual(ratio(values[fg], values[bg]), 3.0, (fg, bg))
+        css = page_css()
+        css = css[re.search(r":root\{.*?\}", css, re.S).end():]
+        text = {fg for fg, _ in TEXT_PAIRS}
+        marks = {fg for fg, _ in UI_PAIRS + DECORATIVE_PAIRS}
+        for token in re.findall(r"(?<![a-z-])color:var\(--([a-z0-9-]+)\)", css):
+            self.assertIn(token, text, f"text color --{token} has no checked pair")
+        for token in re.findall(r"(?:background|border(?:-[a-z]+)?|outline):[^;{}]*var\(--((?:st|trace)-[a-z]+|accent|link)\)", css):
+            self.assertIn(token, marks, f"mark color --{token} has no checked pair")
+        # The failed mark fails 3:1 on the surface band, so it never appears in a band.
+        self.assertLess(ratio(values["st-failed"], values["surface"]), 3.0, "positive control for the rule below")
+        self.assertNotIn(("st-failed", "surface"), UI_PAIRS)
+
+
+class DemoTest(BoardCase):
+    """The design fixture's rows: stalled, waiting, needs you, progress, groups."""
+
+    def setUp(self):
+        super().setUp()
+        self.demo_root = self.base / "demo"
+        self.demo = demo(self.demo_root)
+
+    def test_row_phases_and_now(self):
+        data = self.dump("--no-gh", root=self.demo_root)
+        rows = self.rows(data)
+        by = {name: rows[tid] for name, tid in self.demo.ids.items()}
+        self.assertEqual({n: r["phase"] for n, r in by.items() if r["section"] != "idle"},
+                         {"retry-budget": "working", "session-store": "stalled", "macos-flake": "waiting",
+                          "audit-log": "working", "release-notes": "working", "export-format": "needs",
+                          "handoff-done": "waiting", "envelope-written": "waiting", "in-review": "waiting",
+                          "last-step": "waiting", "quiet-step": "stalled"})
+        for name in ("handoff-done", "envelope-written", "in-review", "last-step"):
+            self.assertEqual((by[name]["waiting_on"], by[name]["stalled"]), ("controller", False), name)
+        self.assertEqual({n: (r["progress"]["source"], r["progress"]["done"], r["progress"]["total"])
+                          for n, r in by.items() if n in ("retry-budget", "handoff-done", "quiet-step", "audit-log")},
+                         {"retry-budget": ("checklist", 2, 5), "handoff-done": ("step", 2, 3),
+                          "quiet-step": ("step", 1, 4), "audit-log": ("none", 0, 0)})
+        self.assertTrue(by["session-store"]["stalled"])
+        self.assertFalse(by["macos-flake"]["stalled"], "a waiting worker shows what it waits on, not a stalled mark")
+        self.assertEqual(by["macos-flake"]["waiting_on"], "GitHub macOS runner")
+        self.assertEqual(by["retry-budget"]["now"], {"kind": "doing", "text": "Token bucket in the dispatch loop"})
+        self.assertEqual(by["audit-log"]["now"]["kind"], "report")
+        self.assertEqual(by["audit-log"]["tasks"]["source"], "acceptance")
+        self.assertEqual(by["retry-budget"]["repo"], "atlas-api")
+        self.assertEqual(len(by["retry-budget"]["trace"]), 12)
+        self.assertGreater(by["retry-budget"]["trace"][-1], 0, "the newest bin is on the right")
+        self.assertEqual(by["session-store"]["trace"][-4:], [0, 0, 0, 0], "no activity in the last 20 minutes")
+        self.assertEqual([r["id"] for r in data["needs_you"]], [self.demo.ids["export-format"]])
+        groups = {g["label"]: g for g in data["groups"]}
+        self.assertEqual(list(groups), ["hc:default#t4", "hc:default#t9"])
+        self.assertEqual(groups["hc:default#t4"]["repos"], ["atlas-api", "setup"])
+        self.assertEqual(groups["hc:default#t4"]["counts"],
+                         {"working": 2, "stalled": 1, "waiting": 1, "needs": 0, "idle": 4})
+        self.assertEqual(groups["hc:default#t9"]["counts"],
+                         {"working": 1, "stalled": 1, "waiting": 4, "needs": 1, "idle": 2},
+                         "handed-back rows count as waiting")
+
+    def test_stalled_boundary_and_sources(self):
+        root = self.base / "stall"
+        f = Fixture(root)
+        f.task(1, "nine", "running", updated=9)
+        f.state("nine", updated_at=at(9))
+        f.task(2, "eleven", "running", updated=11)
+        f.state("eleven", updated_at=at(11))
+        events(f, "eleven", [11, 30])
+        f.task(3, "event-fresh", "running", updated=30)
+        f.state("event-fresh", updated_at=at(30))
+        events(f, "event-fresh", [2])
+        f.task(4, "inbox-fresh", "running", updated=30)
+        f.state("inbox-fresh", updated_at=at(30))
+        f.inbox("inbox-fresh", "note", "still here", 3)
+        f.task(5, "ledger-fresh", "running", updated=2)
+        f.state("ledger-fresh", updated_at=at(30))
+        f.task(6, "state-fresh", "running", updated=30)
+        f.state("state-fresh", updated_at=at(1))
+        f.task(7, "finished", "accepted", updated=60)
+        f.task(8, "waits", "running", updated=40)
+        f.inbox("waits", "wait", "queued runner", 40, on="CI")
+        # Handed back to the controller, all quiet for 30 minutes.
+        for n, kind in ((9, "done"), (10, "failed"), (11, "blocked")):
+            f.task(n, kind, "running", updated=30)
+            f.inbox(kind, "step", "earlier step", 40, step="1/3")
+            f.inbox(kind, kind, f"{kind} report", 30)
+        f.task(12, "step-last", "running", updated=30)
+        f.inbox("step-last", "step", "last step", 30, step="3/3")
+        f.task(13, "step-middle", "running", updated=30)
+        f.inbox("step-middle", "step", "middle step", 30, step="2/3")
+        f.task(14, "envelope", "running", updated=30)
+        f.write(root / task_id(14) / "envelope-1.json", {"status": "done"})
+        f.task(15, "reviewing", "reviewing", updated=30)
+        f.task(16, "old-envelope", "running", attempts=2, updated=30)
+        f.write(root / task_id(16) / "envelope-1.json", {"status": "failed"})  # attempt 1's, not this attempt's
+        f.task(17, "done-then-note", "running", updated=30)
+        f.inbox("done-then-note", "done", "done report", 35)
+        f.inbox("done-then-note", "note", "one more thing", 30)  # the latest message is no longer finishing
+        rows = {name: self.rows(self.dump("--no-gh", root=root))[tid] for name, tid in f.ids.items()}
+        self.assertEqual({n: r["stalled"] for n, r in rows.items()},
+                         {"nine": False, "eleven": True, "event-fresh": False, "inbox-fresh": False,
+                          "ledger-fresh": False, "state-fresh": False, "finished": False, "waits": False,
+                          "done": False, "failed": False, "blocked": False, "step-last": False,
+                          "step-middle": True, "envelope": False, "reviewing": False, "old-envelope": True,
+                          "done-then-note": True})
+        self.assertEqual(rows["waits"]["phase"], "waiting")
+        self.assertEqual(rows["waits"]["waiting_on"], "CI", "an explicit wait keeps who it waits on")
+        self.assertEqual(rows["eleven"]["phase"], "stalled")
+        for name in ("done", "failed", "blocked", "step-last", "envelope", "reviewing"):
+            self.assertEqual((rows[name]["phase"], rows[name]["waiting_on"]), ("waiting", "controller"), name)
+        self.assertEqual(rows["reviewing"]["section"], "working")
+
+    def test_progress_without_a_checklist(self):
+        root = self.base / "progress"
+        f = Fixture(root)
+        f.task(1, "checklist", "running")
+        f.inbox("checklist", "step", "step text", 3, step="1/9")
+        f.checklist("checklist", [{"text": "a", "state": "done"}, {"text": "b", "state": "todo"}])
+        f.task(2, "steps", "running", acceptance=["A", "B", "C", "D", "E", "F", "G"])
+        f.inbox("steps", "step", "first", 20, step="1/3", read=True)
+        f.inbox("steps", "step", "second", 10, step="2/3")
+        f.inbox("steps", "note", "a note after the step", 5)
+        f.task(3, "neither", "running", acceptance=["A", "B", "C", "D", "E", "F", "G"])
+        f.inbox("neither", "note", "no step", 3)
+        f.task(4, "old-attempt-step", "running", attempts=2)
+        f.inbox("old-attempt-step", "step", "attempt one", 30, step="3/4", attempt=1)
+        rows = {name: self.rows(self.dump("--no-gh", root=root))[tid] for name, tid in f.ids.items()}
+        progress = {n: (r["progress"]["source"], r["progress"]["done"], r["progress"]["total"]) for n, r in rows.items()}
+        self.assertEqual(progress, {"checklist": ("checklist", 1, 2), "steps": ("step", 2, 3),
+                                    "neither": ("none", 0, 0), "old-attempt-step": ("none", 0, 0)},
+                         "acceptance criteria are never the progress denominator")
+        self.assertEqual(rows["neither"]["tasks"]["source"], "acceptance", "criteria stay listed in the detail")
+
+    @unittest.skipUnless(NODE, "node is not on PATH")
+    def test_rendered_demo(self):
+        out = self.base / "demo.html"
+        self.run_board("--snapshot", str(out), "--no-gh", "--state-dir", str(self.demo_root))
+        harness = self.base / "harness.js"
+        harness.write_text(DOM_HARNESS, encoding="utf-8")
+        result = subprocess.run([NODE, str(harness), str(out)], text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        texts = report["texts"]
+        self.assertTrue(any(re.fullmatch(r"stalled 2[5-9] min", t) for t in texts), "the stalled word carries its age")
+        self.assertIn("waiting on GitHub macOS runner", texts)
+        self.assertIn("waiting on controller", texts)
+        self.assertIn("no progress recorded", texts)
+        self.assertIn("2/3", texts, "step-based progress")
+        self.assertIn("state unknown", texts, "a PR without gh state says so")
+        self.assertIn("PR ready for merge", texts, "the second line stops before the first URL")
+        self.assertIn("PR ready for merge: https://github.com/example-org/notes-app/pull/14 (CI green)", texts,
+                      "the detail keeps the full text")
+        self.assertIn("Checklist: acceptance criteria", texts)
+        starts = lambda prefix: any(t.startswith(prefix) for t in texts)
+        self.assertTrue(starts("3 acceptance criteria, not yet checked by an envelope"))
+        self.assertTrue(starts("2 acceptance criteria: 2 pass, 0 fail, 0 unverified"), "marks once an envelope exists")
+        self.assertIn("atlas-api, setup", texts, "the band names its repositories")
+        self.assertIn("Newest 6 of 11 events", report["seen"], "the timeline is collapsed past 6 and says so")
+        self.assertIn("All 11 events, newest first", texts)
+        self.assertEqual(report["initial_finished"], 0, "finished rows start folded")
+        self.assertIn(LONG + ".", texts, "a long criterion keeps its full text")
+        self.assertIn("Now", texts)
+        order = report["detail_order"]
+        self.assertEqual(len(order) % 5, 0)
+        self.assertGreater(len(order), 5)
+        for i in range(0, len(order), 5):
+            self.assertIn(order[i + 1], ("Checklist", "Checklist: acceptance criteria"))
+            self.assertEqual([order[i], order[i + 2], order[i + 3], order[i + 4]],
+                             ["Now", "Last report", "Timeline", "Facts"], "every detail has one fixed order")
 
 
 class CommandLineTest(BoardCase):
@@ -585,10 +1012,10 @@ class CommandLineTest(BoardCase):
 
     def test_state_dir_falls_back_to_environment(self):
         result = self.run_board("--dump-json", "--no-gh", env={"COS_STATE_DIR": str(self.state)})
-        self.assertEqual(len(self.rows(json.loads(result.stdout))), 10)
+        self.assertEqual(len(self.rows(json.loads(result.stdout))), 11)
         explicit = self.run_board("--dump-json", "--no-gh", "--state-dir", str(self.state),
                                   env={"COS_STATE_DIR": str(self.base / "missing")})
-        self.assertEqual(len(self.rows(json.loads(explicit.stdout))), 10, "--state-dir wins")
+        self.assertEqual(len(self.rows(json.loads(explicit.stdout))), 11, "--state-dir wins")
 
 
 def webrick_env():
@@ -698,7 +1125,7 @@ class ServerTest(ServerBase):
         status, headers, body = self.request(port)
         self.assertEqual(status, 200)
         self.assertTrue(headers["Content-Type"].startswith("application/json"))
-        self.assertEqual(len(self.rows(json.loads(body))), 10)
+        self.assertEqual(len(self.rows(json.loads(body))), 11)
         self.assertEqual(self.request(port, path="/nope")[0], 404)
 
     def test_board_data_needs_the_run_token(self):
@@ -711,7 +1138,7 @@ class ServerTest(ServerBase):
             self.assertNotIn(self.token.encode(), body)
         status, _, body = self.request(port)
         self.assertEqual(status, 200)
-        self.assertEqual(len(self.rows(json.loads(body))), 10)
+        self.assertEqual(len(self.rows(json.loads(body))), 11)
         # The page shell needs no token and holds no data, nor the token.
         status, _, page = self.request(port, path="/", token=None)
         self.assertEqual(status, 200)
