@@ -726,6 +726,11 @@ const report = { tags: [...new Set(nodes.map(n => n.tagName))],
   texts: nodes.filter(n => n.text !== null).map(n => n.text), expanded, initial_groups, final_groups,
   initial_finished, needs_none, initial_texts, seen: [...seen], rows_before_fold, rows_after_fold, fold_state,
   detail_order: live().filter(n => n.tagName === "H3").map(n => n.textContent),
+  details: live().filter(n => /^detail\b/.test(n.className)).map(d => ({
+    children: d.children.map(c => c.className),
+    left: walk(d.children[0], []).filter(n => n.tagName === "H3").map(n => n.textContent),
+    right: walk(d.children[1], []).filter(n => n.tagName === "H3").map(n => n.textContent),
+    right_texts: walk(d.children[1], []).filter(n => n.text !== null).map(n => n.text) })),
   titles: nodes.map(n => n.attributes.title).filter(Boolean) };
 for (const n of nodes) for (const key of Object.keys(n))
   if (/^on/i.test(key)) throw new Error("event handler property " + key);
@@ -997,7 +1002,80 @@ class DemoTest(BoardCase):
         for i in range(0, len(order), 5):
             self.assertIn(order[i + 1], ("Checklist", "Checklist: acceptance criteria"))
             self.assertEqual([order[i], order[i + 2], order[i + 3], order[i + 4]],
-                             ["Now", "Last report", "Timeline", "Facts"], "every detail has one fixed order")
+                             ["Now", "Last report", "Facts", "Timeline"], "every detail has one fixed order")
+        self.assertEqual(len(report["details"]), len(order) // 5)
+        for detail in report["details"]:
+            self.assertEqual(detail["children"], ["dleft", "dright"], "a left and a right column, in that order")
+            self.assertEqual(detail["left"][0], "Now")
+            self.assertIn(detail["left"][1], ("Checklist", "Checklist: acceptance criteria"))
+            self.assertEqual(detail["left"][0:1] + detail["left"][2:], ["Now", "Last report", "Facts"])
+            self.assertEqual(detail["right"], ["Timeline"], "the right column holds the timeline only")
+
+
+class DetailColumnsTest(BoardCase):
+    """The expanded detail: two columns when wide, one in a fixed order when narrow."""
+
+    def css(self):
+        return page_css()
+
+    def test_two_columns_from_the_wide_breakpoint(self):
+        css = self.css()
+        wide = re.search(r"@media \(min-width:(\d+)px\)\{(.*?)\n    \}", css, re.S)
+        self.assertIsNotNone(wide, "a min-width block for the two-column detail")
+        self.assertGreaterEqual(int(wide.group(1)), 761)
+        self.assertLessEqual(int(wide.group(1)), 1024, "two columns at 1024px and wider")
+        self.assertRegex(wide.group(2), r"\.detail\{grid-template-columns:minmax\(0,3fr\) minmax\(0,2fr\)\}")
+        self.assertIn(".dleft{display:flex;flex-direction:column", wide.group(2))
+        self.assertIn(".dright{display:block", wide.group(2))
+        base = css[:css.index(wide.group(0))]
+        self.assertRegex(base, r"\.detail\{display:grid;grid-template-columns:minmax\(0,1fr\);align-items:start")
+        self.assertIn(".dleft,.dright{display:contents}", base, "narrow: the columns dissolve into one")
+
+    def test_one_column_order_when_narrow(self):
+        css = self.css()
+        orders = dict(re.findall(r"\.p-([a-z]+)\{order:(\d)\}", css))
+        self.assertEqual(sorted(orders, key=orders.get), ["now", "check", "report", "timeline", "facts"])
+        phone = re.search(r"@media \(max-width:(\d+)px\)", css)
+        self.assertLessEqual(int(phone.group(1)), 760)
+        self.assertGreaterEqual(int(phone.group(1)), 600, "one column at 600px and narrower")
+        self.assertLess(int(phone.group(1)), 900, "the phone rule ends before the wide rule starts")
+
+    def test_long_text_stays_in_its_column(self):
+        css = self.css()
+        self.assertRegex(css, r"\.part\{[^}]*min-width:0[^}]*overflow-wrap:anywhere")
+        self.assertRegex(css, r"dd\{margin:0;min-width:0\}")
+        self.assertNotIn("min-width:100%", css)
+
+    @unittest.skipUnless(NODE, "node is not on PATH")
+    def test_empty_timeline_says_so_in_the_right_column(self):
+        out = self.base / "board.html"
+        self.run_board("--snapshot", str(out), "--no-gh", "--state-dir", str(self.state))
+        html = out.read_text(encoding="utf-8")
+        pattern = r'(<script id="board-data" type="application/json">)(.*?)(</script>)'
+        data = json.loads(re.search(pattern, html, re.S).group(2))
+
+        def clear(value):
+            if isinstance(value, dict):
+                if "timeline" in value:
+                    value["timeline"] = []
+                for item in value.values():
+                    clear(item)
+            elif isinstance(value, list):
+                for item in value:
+                    clear(item)
+
+        clear(data)
+        raw = json.dumps(data).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+        out.write_text(re.sub(pattern, lambda m: m.group(1) + raw + m.group(3), html, flags=re.S), encoding="utf-8")
+        harness = self.base / "harness.js"
+        harness.write_text(DOM_HARNESS, encoding="utf-8")
+        result = subprocess.run([NODE, str(harness), str(out)], text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(report["details"])
+        for detail in report["details"]:
+            self.assertEqual(detail["right"], ["Timeline"])
+            self.assertIn("No events recorded yet.", detail["right_texts"])
 
 
 class CommandLineTest(BoardCase):
