@@ -756,7 +756,7 @@ module Board
     letter-spacing:0;color:var(--fg)}.group h2 .n{color:var(--dim);font-weight:400;letter-spacing:0;margin-left:10px}
     .tag{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--amber);white-space:nowrap}
     .row{display:grid;grid-template-columns:14px 1fr auto;gap:10px;padding:7px 18px;border-top:1px solid var(--line);cursor:pointer}
-    .row:hover,.row.open{background:var(--panel)}.row:focus{outline:1px solid var(--blue);outline-offset:-1px}
+    .row>div{min-width:0}.row:hover,.row.open{background:var(--panel)}.row:focus{outline:1px solid var(--blue);outline-offset:-1px}
     .dot{width:9px;height:9px;border-radius:50%;margin-top:5px;background:var(--grey)}
     .green{background:var(--green)}.blue{background:var(--blue)}.red{background:var(--red)}.amber{background:var(--amber)}
     .grey{background:var(--grey)}.teal{background:var(--teal)}.purple{background:var(--purple)}
