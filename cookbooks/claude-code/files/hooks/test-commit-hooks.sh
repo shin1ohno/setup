@@ -72,7 +72,13 @@
 # also after `cd failrepo &&`, `watch '...'`, `git rebase -x '...'` /
 # `--exec='...'`: the documented skip), while `flock L bash -c '...'` stays
 # tested; a cd in a `function NAME { ...; }` definition (also one a trap
-# runs) does not move the tested directory.
+# runs) does not move the tested directory. A commit that concludes a
+# conflict-free `git merge --no-commit` (in the cwd or through git -C) runs
+# no `make test` and prints exactly one skip line; a merge resolved by hand
+# (ort, and -s resolve, which writes no AUTO_MERGE), a clean merge with a
+# staged or an unstaged (`git commit -a`) hand edit, a MERGE_MSG that records
+# a conflict, a plain commit, and `git merge --no-commit && git commit` in one
+# command (the hook runs before the merge) are all tested.
 #
 # The git-command.rb sections check each commit's effective directory, its
 # dir_candidates / certain flags, the path keys of writes under an
@@ -803,7 +809,8 @@ expect_allow "function NAME { git commit ...; }: the definition is skipped (as a
 expect_allow "function NAME { git commit ...; } [clean]" "function ci { git commit -m fix -m \"$OK_T\"; }; ci"
 
 echo "== pre-commit-test: tests run in each commit's effective directory"
-precommit() { # precommit <name> <want-rc> <command-template> <cwd> [stderr-substring] [make-log-substring|NOMAKE]
+precommit() { # precommit <name> <want-rc> <command-template> <cwd> [stderr-substring] [make-log-substring|NOMAKE|NOTEST]
+  # NOMAKE: make never ran; NOTEST: `make test` did not run (the project guard's `make -n test` may have).
   : > "$D/make.log"
   hook "$PRECOMMIT" "$(fill "$3")" "$4"
   local why=""
@@ -813,6 +820,7 @@ precommit() { # precommit <name> <want-rc> <command-template> <cwd> [stderr-subs
   case "${6:-}" in
     "") ;;
     NOMAKE) [ -s "$D/make.log" ] && why="$why; make was called: $(tr '\n' ' ' < "$D/make.log")" ;;
+    NOTEST) grep -q '|test$' "$D/make.log" && why="$why; make test ran: $(tr '\n' ' ' < "$D/make.log")" ;;
     *) grep -qF -- "$(fill "$6")" "$D/make.log" || why="$why; make log lacks '$(fill "$6")'" ;;
   esac
   if [ -z "$why" ]; then ok "$1" "rc=$rc"; else bad "$1" "$why :: $err"; fi
@@ -974,6 +982,66 @@ precommit "git rebase --exec='git -C failrepo commit --amend' (uncertain): no ma
 out=$(printf 'not-json' | HOME="$D/home" "$RUBY" -E UTF-8 "$PRECOMMIT" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "malformed payload (pre-commit hook)" "rc=0" \
   || bad "malformed payload (pre-commit hook)" "rc=$rc :: $out"
+
+echo "== pre-commit-test: a commit that concludes a merge"
+# mg <repo> <git args>: git in $D/<repo> with a throwaway identity.
+mg() { git -C "$D/$1" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false "${@:2}"; }
+# mrepo <repo> <main's line 3 of f | ->: a repo whose `make test` fails, with
+# branch side changing line 3 of f. main changes that line too (a conflict)
+# or, given "-", only file h (no conflict).
+mrepo() {
+  git init -q -b main "$D/$1" || return 1
+  printf 'test:\n\t@echo FAILING-SUITE-MARKER; exit 1\n' > "$D/$1/Makefile"
+  printf 'a\nb\nc\n' > "$D/$1/f"; printf 'x\n' > "$D/$1/h"
+  mg "$1" add -A && mg "$1" commit -qm base || return 1
+  mg "$1" checkout -qb side && printf 'a\nb\nSIDE\n' > "$D/$1/f" && mg "$1" commit -qam side || return 1
+  mg "$1" checkout -q main || return 1
+  if [ "$2" = - ]; then printf 'y\n' > "$D/$1/h"; else printf 'a\nb\n%s\n' "$2" > "$D/$1/f"; fi
+  mg "$1" commit -qam main
+}
+# A conflict-free merge stopped before its commit (git merge --no-commit).
+mrepo mclean - && mg mclean merge -q --no-commit side >/dev/null 2>&1 \
+  || { echo "FAIL precondition: clean merge"; exit 1; }
+# A conflicted merge, resolved by hand and staged.
+mrepo mconf MAIN && { mg mconf merge -q side >/dev/null 2>&1; [ -f "$D/mconf/.git/MERGE_HEAD" ]; } \
+  && printf 'a\nb\nRESOLVED\n' > "$D/mconf/f" && mg mconf add f \
+  || { echo "FAIL precondition: conflicted merge"; exit 1; }
+# The same under -s resolve, which writes no AUTO_MERGE (git 2.56.1).
+mrepo mresolve MAIN && { mg mresolve merge -q -s resolve side >/dev/null 2>&1; [ -f "$D/mresolve/.git/MERGE_HEAD" ]; } \
+  && printf 'a\nb\nRESOLVED\n' > "$D/mresolve/f" && mg mresolve add f \
+  || { echo "FAIL precondition: resolve-strategy merge"; exit 1; }
+# Conflict-free merges with a hand edit on top: staged, and only in the work tree.
+mrepo medit - && mg medit merge -q --no-commit side >/dev/null 2>&1 && printf 'edited\n' > "$D/medit/h" && mg medit add h \
+  || { echo "FAIL precondition: edited merge"; exit 1; }
+mrepo munstaged - && mg munstaged merge -q --no-commit side >/dev/null 2>&1 && printf 'edited\n' > "$D/munstaged/h" \
+  || { echo "FAIL precondition: unstaged merge"; exit 1; }
+# A conflict-free merge whose MERGE_MSG records a conflict (negative control
+# for the hint check: merge-tree alone would call it clean).
+mrepo mhint - && mg mhint merge -q --no-commit side >/dev/null 2>&1 && printf '\n# Conflicts:\n#\tf\n' >> "$D/mhint/.git/MERGE_MSG" \
+  || { echo "FAIL precondition: hinted merge"; exit 1; }
+# A plain commit with no merge in progress.
+mrepo mnormal - || { echo "FAIL precondition: plain repo"; exit 1; }
+SKIPPED='pre-commit-test: skipped `make test` in @D@/mclean: this commit concludes a merge of'
+precommit "conflict-free merge --no-commit, then git commit: skipped, one line" 0 \
+  'git commit -m x' "$D/mclean" "$SKIPPED" NOTEST
+[ "$(printf '%s\n' "$err" | wc -l | tr -d ' ')" = 1 ] && ok "  ... prints exactly one line" "lines=1" \
+  || bad "  ... prints exactly one line" "stderr: $err"
+precommit "git -C mclean commit from another cwd: skipped" 0 \
+  'git -C @D@/mclean commit --no-edit' "$D/work" "$SKIPPED" NOTEST
+precommit "conflicted merge resolved by hand: tested" 2 \
+  'git commit --no-edit' "$D/mconf" "FAILING-SUITE-MARKER" "@D@/mconf|test"
+precommit "-s resolve conflict resolved by hand (no AUTO_MERGE): tested" 2 \
+  'git commit --no-edit' "$D/mresolve" "FAILING-SUITE-MARKER" "@D@/mresolve|test"
+precommit "conflict-free merge plus a staged hand edit: tested" 2 \
+  'git commit --no-edit' "$D/medit" "FAILING-SUITE-MARKER" "@D@/medit|test"
+precommit "conflict-free merge plus an unstaged edit, git commit -a: tested" 2 \
+  'git commit -a --no-edit' "$D/munstaged" "FAILING-SUITE-MARKER" "@D@/munstaged|test"
+precommit "MERGE_MSG records a conflict: tested" 2 \
+  'git commit --no-edit' "$D/mhint" "FAILING-SUITE-MARKER" "@D@/mhint|test"
+precommit "plain commit, no merge in progress: tested" 2 \
+  'git commit -m x' "$D/mnormal" "FAILING-SUITE-MARKER" "@D@/mnormal|test"
+precommit "git merge --no-commit && git commit in one command: tested (hook runs first)" 2 \
+  'git merge --no-commit side && git commit --no-edit' "$D/mnormal" "FAILING-SUITE-MARKER" "@D@/mnormal|test"
 
 echo "== git-command.rb: effective directory resolution"
 dirs() { # dirs <name> <command> <expected space-joined dirs of commit invocations>
@@ -1224,6 +1292,8 @@ expect_allow "2.6: python3 -c 'print(\"git commit ... trailer\")'" "python3 -c '
 expect_allow "2.6: perl -lne 'print(...)'" "perl -lne 'print(\"$PEX\")'"
 precommit "2.6: function f { cd failrepo; }; git commit: no make" 0 \
   'function f { cd failrepo; }; git commit -m x' "$D" "" NOMAKE
+precommit "2.6: conflict-free merge: skipped" 0 'git commit -m x' "$D/mclean" "$SKIPPED" NOTEST
+precommit "2.6: conflicted merge resolved by hand: tested" 2 'git commit --no-edit' "$D/mconf" "FAILING-SUITE-MARKER"
 PRELOAD=()
 
 echo "---- pass=$pass fail=$fail"
