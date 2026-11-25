@@ -16,29 +16,50 @@ execute "brew install eternal-terminal" do
   not_if { brew_formula?("et") }
 end
 
-# --- libsodium runtime dependency (issue #1178) ----------------------------
+# --- et runtime dependencies (issue #1178) ---------------------------------
 #
-# etserver/etterminal link against #{prefix}/opt/libsodium/lib/libsodium.26.dylib
-# (the formula's `depends_on "libsodium"`). The guard above only checks the et
-# formula itself, so a host where libsodium disappeared out from under et stays
-# dead: etserver aborts in dyld (`launchctl print` shows OS_REASON_DYLD) and
-# et-watchdog's kickstart just repeats the same abort. On mini this surfaced at
-# the 2026-11-09 reboot — the long-running etserver had kept the old dylib
-# mapped. The likely removal path is a manual `brew autoremove` while the
-# MisterTea/et tap is untrusted: brew cannot load et's formula, cannot see its
-# dependency, and treats libsodium as an orphan.
+# etserver/etterminal link against #{prefix}/opt/<dep>/lib/*.dylib for every
+# runtime `depends_on` of the MisterTea/et formula. The guard above only checks
+# the et formula itself, so a host where a dependency disappeared out from
+# under et stays dead: etserver aborts in dyld (`launchctl print` shows
+# OS_REASON_DYLD) and et-watchdog's kickstart just repeats the same abort.
+# dyld reports only the FIRST missing library, so on mini libsodium surfaced at
+# the 2026-11-09 reboot and libcurl only after libsodium came back (11-23).
 #
-# Guard on the opt link (present iff the formula is installed) rather than the
-# brew-cache predicate, which is a snapshot from the start of the run. If the
-# installed libsodium ever ships a different soname, et itself needs a rebuild
+# The removal path is `brew autoremove` while the MisterTea/et tap is
+# untrusted: brew refuses to load et's formula (`brew deps MisterTea/et/et`
+# fails with "untrusted tap"), cannot see its dependencies, and treats every
+# one that is installed only as a dependency as an orphan. So each dependency
+# is (1) installed when missing and (2) marked installed-on-request with
+# `brew tab`, which takes it out of autoremove's reach. Transitive deps (curl's
+# own libraries) stay protected through their homebrew/core parents.
+#
+# Keep this list in sync with the non-:build `depends_on` lines of
+# #{prefix}/Library/Taps/mistertea/homebrew-et/et.rb (et 7.0.0_2 at tap 5401b93;
+# the same five are what `otool -L etserver` references in et 6.2.11_2).
+#
+# Guards read the opt link and its INSTALL_RECEIPT.json rather than the
+# brew-cache predicate, which is a snapshot from the start of the run. If an
+# installed dependency ever ships a different soname, et itself needs a rebuild
 # (`brew reinstall MisterTea/et/et`) — that is a separate failure, not this one.
-execute "brew install libsodium (et runtime dependency)" do
-  user node[:setup][:user]
-  command "brew install libsodium"
-  not_if "test -d #{node[:homebrew][:prefix]}/opt/libsodium/lib"
-  # etserver is not running while the library is missing; reload the daemon
-  # so recovery does not depend on the watchdog's next 60 s tick.
-  notifies :run, "execute[reload etserver daemon]", :delayed
+%w[abseil curl libsodium openssl@3 protobuf].each do |dep|
+  dep_opt = "#{node[:homebrew][:prefix]}/opt/#{dep}"
+
+  execute "brew install #{dep} (et runtime dependency)" do
+    user node[:setup][:user]
+    command "brew install #{dep}"
+    not_if "test -d #{dep_opt}/lib"
+    # etserver is not running while a library is missing; reload the daemon
+    # so recovery does not depend on the watchdog's next 60 s tick.
+    notifies :run, "execute[reload etserver daemon]", :delayed
+  end
+
+  execute "mark #{dep} installed on request (et runtime dependency)" do
+    user node[:setup][:user]
+    command "brew tab --installed-on-request #{dep}"
+    only_if "test -f #{dep_opt}/INSTALL_RECEIPT.json"
+    not_if "grep -q '\"installed_on_request\": *true' #{dep_opt}/INSTALL_RECEIPT.json"
+  end
 end
 
 # --- etterminal on the non-interactive ssh PATH (issue #741) ---------------
