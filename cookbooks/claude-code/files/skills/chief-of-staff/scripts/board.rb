@@ -420,7 +420,28 @@ module Board
     # newest hook event, the newest inbox message and the ledger update.
     activity_at = [status_at, events.max, current.last&.dig(:at), time(task["updated_at"])].compact.max
     last_message = current.last
-    waiting = section == "working" && last_message && last_message[:kind] == "wait" ? last_message : nil
+    # Waiting: an explicit `wait --on <who>`, or the worker has handed back to
+    # the controller (a finishing report, a last step i/n with i == n, its
+    # envelope file, or the ledger in review). Waiting is never stalled.
+    finished_step = last_message && last_message[:kind] == "step" &&
+                    (m = last_message[:step].to_s.match(%r{\A([0-9]+)/([0-9]+)\z})) && m[1] == m[2]
+    envelope_file = number.positive? && begin
+      File.lstat(File.join(dir, "envelope-#{number}.json")).file?
+    rescue SystemCallError
+      false
+    end
+    waiting = nil
+    if section == "working"
+      if last_message && last_message[:kind] == "wait"
+        waiting = { on: last_message[:on] || "someone", text: last_message[:text] }
+      elsif last_message && %w[done failed blocked].include?(last_message[:kind]) || finished_step
+        waiting = { on: "controller", text: last_message[:text] }
+      elsif envelope_file
+        waiting = { on: "controller", text: "The worker wrote its envelope." }
+      elsif state == "reviewing"
+        waiting = { on: "controller", text: "The controller is reviewing the result." }
+      end
+    end
     stalled = section == "working" && !waiting && activity_at && (now - activity_at) >= STALL_SECONDS ? true : false
     phase = if section == "needs_you" then "needs"
             elsif state == "accepted" then "done"
@@ -548,10 +569,21 @@ module Board
                     { at: iso(time(digest["at"])), text: did, kind: "digest" }
                   end
 
+    # --- the row's progress: the checklist, else the latest step i/n of this
+    # attempt, else nothing (acceptance criteria are not progress)
+    step = current.reverse.find { |m| m[:kind] == "step" }
+    row_progress = if list && !list[:items].empty?
+                     tasks[:progress].merge(source: "checklist")
+                   elsif step && (m = step[:step].to_s.match(%r{\A([0-9]+)/([0-9]+)\z})) && m[2].to_i.positive?
+                     done = [m[1].to_i, m[2].to_i].min
+                     { source: "step", done: done, total: m[2].to_i, doing: 0, failed: 0, todo: m[2].to_i - done }
+                   else
+                     { source: "none", done: 0, total: 0, doing: 0, failed: 0, todo: 0 }
+                   end
+
     # --- what is happening now, in priority order
     doing = leaves(list ? list[:items] : []).find { |i| i[:state] == "doing" } ||
             (list ? list[:items] : []).find { |i| i[:state] == "doing" }
-    step = current.reverse.find { |m| m[:kind] == "step" }
     now_line = if need then { kind: "need", text: need }
                elsif waiting then { kind: "waiting", text: waiting[:text], on: waiting[:on] }
                elsif section == "working" && doing then { kind: "doing", text: doing[:text] }
@@ -587,7 +619,8 @@ module Board
       agent: str(attempt["agent"], 120) || str(attempt["kind"], 20) || "(no worker yet)",
       kind: str(attempt["kind"], 20), attempt: number,
       repo: task["cwd"].is_a?(String) ? str(File.basename(task["cwd"].sub(%r{/+\z}, "")), 80) : nil,
-      phase: phase, stalled: stalled, waiting_on: waiting ? (waiting[:on] || "someone") : nil,
+      phase: phase, stalled: stalled, waiting_on: waiting && waiting[:on],
+      progress: row_progress,
       now: now_line, started_at: iso(started), activity_at: iso(activity_at), trace: trace,
       updated_at: iso(updated), working: working ? true : false,
       recent: section != "idle" || (updated && (now - updated) < IDLE_WINDOW) ? true : false,
@@ -1139,6 +1172,14 @@ module Board
         if (row.phase === "stalled") return "stalled " + ago(row.activity_at);
         return WORDS[row.phase] || row.state;
       }
+      // The row's second line: the text before the first URL (the detail keeps
+      // the full text), without a dangling ":" or "(".
+      function brief(text) {
+        var cut = text.search(/https?:\/\//);
+        if (cut < 0) return text;
+        var head = text.slice(0, cut).replace(/[\s:;,(\[-]+$/, "");
+        return head || text;
+      }
       function nowText(now) {
         if (!now) return "";
         if (now.kind === "waiting") return "Waiting on " + (now.on || "someone") + ": " + now.text;
@@ -1164,23 +1205,29 @@ module Board
           sub.appendChild(tag);
         }
         // The state column already names who a worker waits on.
-        if (!inNeeds && row.now) sub.appendChild(el("span", "now", row.now.kind === "waiting" ? row.now.text : nowText(row.now)));
+        if (!inNeeds && row.now) sub.appendChild(el("span", "now", brief(row.now.kind === "waiting" ? row.now.text : nowText(row.now))));
         sub.appendChild(el("span", "worker", row.agent));
         title.appendChild(sub);
         if (inNeeds && row.need) title.appendChild(el("div", "need", row.need));
 
         var state = add(el("div", "c-state"), mark(row.phase), el("span", "word", stateWord(row)));
-        var p = row.tasks.progress;
+        // The checklist, else the latest step i/n; acceptance criteria are not progress.
+        var p = row.progress;
         var prog = el("div", "c-prog");
-        if (p.total) add(prog, bar(p), el("span", "frac", p.done + "/" + p.total));
-        else prog.appendChild(el("span", "none", "no checklist"));
+        if (p && p.total) {
+          var frac = el("span", "frac", p.done + "/" + p.total);
+          if (p.source === "step") frac.setAttribute("title", "latest step");
+          add(prog, bar(p), frac);
+        } else {
+          prog.appendChild(el("span", "none", "no progress recorded"));
+        }
 
         var prCell = el("div", "c-pr");
         if (row.prs.length) {
           var pr = row.prs[row.prs.length - 1];
           var label = pr.label.slice(pr.label.lastIndexOf("#"));
           prCell.appendChild(prLink(pr, label));
-          if (pr.status) prCell.appendChild(el("span", "prs", pr.status));
+          prCell.appendChild(el("span", "prs", pr.status || "state unknown"));
           if (pr.ci) {
             var ci = mark(pr.ci);
             ci.setAttribute("title", "CI " + pr.ci);
@@ -1250,7 +1297,17 @@ module Board
         part(box, "Now", now);
 
         var list = el("div");
-        var summary = p.total ? p.done + " of " + p.total + " done" : "No items";
+        var summary;
+        if (t.source === "checklist") {
+          summary = p.total ? p.done + " of " + p.total + " done" : "No items";
+        } else {
+          var marked = t.items.filter(function (i) { return i.mark; });
+          summary = plural(t.items.length, "acceptance criterion", "acceptance criteria") + (marked.length
+            ? ": " + ["pass", "fail", "unverified"].map(function (m) {
+                return marked.filter(function (i) { return i.mark === m; }).length + " " + m;
+              }).join(", ")
+            : ", not yet checked by an envelope");
+        }
         if (t.started_at) summary += ", " + (t.ended_at ? "took " : "running for ") + span(t.started_at, t.ended_at);
         list.appendChild(el("p", "meta", summary));
         if (t.note) list.appendChild(el("p", "meta", t.note));
@@ -1261,7 +1318,7 @@ module Board
             : "Show all " + t.items.length + " items", "checklist:" + row.id,
             function () { longChecklist[row.id] = !longChecklist[row.id]; })));
         }
-        part(box, t.source === "checklist" ? "Checklist" : "Acceptance criteria", list);
+        part(box, t.source === "checklist" ? "Checklist" : "Checklist: acceptance criteria", list);
 
         var report = el("div");
         if (row.last_report) {

@@ -293,6 +293,28 @@ def demo(root):
                                   {"text": "Group by area", "state": "done"},
                                   {"text": "Write the highlights", "state": "doing"},
                                   {"text": "Owner review", "state": "todo"}])
+    # Handed back to the controller: never stalled, whatever their age.
+    f.task(13, "handoff-done", "running", owner=desk_b, cwd="/src/notes-app", agent="cos-000000000000000d-1",
+           topic="Make sharing links expire after 30 days", pr=[pr("notes-app", 14, 50)], updated=31)
+    f.state("handoff-done", updated_at=at(30))
+    f.inbox("handoff-done", "step", "Expiry job and migration written", 45, step="2/3", read=True)
+    f.inbox("handoff-done", "done", "PR ready for merge: https://github.com/example-org/notes-app/pull/14 (CI green)", 30)
+    f.task(14, "envelope-written", "running", owner=desk_b, cwd="/src/notes-app", agent="cos-000000000000000e-1",
+           topic="Audit the notebook permissions model", updated=26)
+    f.state("envelope-written", updated_at=at(25))
+    f.write(f.root / task_id(14) / "envelope-1.json", {"task_id": task_id(14), "attempt": 1, "status": "done"})
+    f.task(15, "in-review", "reviewing", owner=desk_b, cwd="/src/notes-app", agent="cos-000000000000000f-1",
+           topic="Speed up the search index rebuild", updated=40)
+    f.state("in-review", updated_at=at(40))
+    f.task(16, "last-step", "running", owner=desk_b, cwd="/src/notes-app", agent="cos-0000000000000010-1",
+           topic="Translate the onboarding screens", updated=21)
+    f.state("last-step", updated_at=at(20))
+    f.inbox("last-step", "step", "All five locales reviewed; nothing left", 20, step="3/3")
+    # Quiet on a middle step with no checklist: stalled, progress from the step.
+    f.task(17, "quiet-step", "running", owner=desk_b, cwd="/src/notes-app", agent="cos-0000000000000011-1",
+           topic="Rotate the storage credentials", updated=16)
+    f.state("quiet-step", updated_at=at(15))
+    f.inbox("quiet-step", "step", "Old key revoked in staging", 15, step="1/4")
     f.task(11, "sync-bug", "accepted", owner=desk_b, cwd="/src/notes-app", topic="Fix the sync conflict banner",
            updated=180, pr=[pr("notes-app", 12, 200)])
     f.task(12, "old-cleanup", "accepted", owner=desk_b, cwd="/src/notes-app", topic="Clean up the old build cache",
@@ -838,7 +860,15 @@ class DemoTest(BoardCase):
         by = {name: rows[tid] for name, tid in self.demo.ids.items()}
         self.assertEqual({n: r["phase"] for n, r in by.items() if r["section"] != "idle"},
                          {"retry-budget": "working", "session-store": "stalled", "macos-flake": "waiting",
-                          "audit-log": "working", "release-notes": "working", "export-format": "needs"})
+                          "audit-log": "working", "release-notes": "working", "export-format": "needs",
+                          "handoff-done": "waiting", "envelope-written": "waiting", "in-review": "waiting",
+                          "last-step": "waiting", "quiet-step": "stalled"})
+        for name in ("handoff-done", "envelope-written", "in-review", "last-step"):
+            self.assertEqual((by[name]["waiting_on"], by[name]["stalled"]), ("controller", False), name)
+        self.assertEqual({n: (r["progress"]["source"], r["progress"]["done"], r["progress"]["total"])
+                          for n, r in by.items() if n in ("retry-budget", "handoff-done", "quiet-step", "audit-log")},
+                         {"retry-budget": ("checklist", 2, 5), "handoff-done": ("step", 2, 3),
+                          "quiet-step": ("step", 1, 4), "audit-log": ("none", 0, 0)})
         self.assertTrue(by["session-store"]["stalled"])
         self.assertFalse(by["macos-flake"]["stalled"], "a waiting worker shows what it waits on, not a stalled mark")
         self.assertEqual(by["macos-flake"]["waiting_on"], "GitHub macOS runner")
@@ -856,7 +886,8 @@ class DemoTest(BoardCase):
         self.assertEqual(groups["hc:default#t4"]["counts"],
                          {"working": 2, "stalled": 1, "waiting": 1, "needs": 0, "idle": 4})
         self.assertEqual(groups["hc:default#t9"]["counts"],
-                         {"working": 1, "stalled": 0, "waiting": 0, "needs": 1, "idle": 2})
+                         {"working": 1, "stalled": 1, "waiting": 4, "needs": 1, "idle": 2},
+                         "handed-back rows count as waiting")
 
     def test_stalled_boundary_and_sources(self):
         root = self.base / "stall"
@@ -879,12 +910,57 @@ class DemoTest(BoardCase):
         f.task(7, "finished", "accepted", updated=60)
         f.task(8, "waits", "running", updated=40)
         f.inbox("waits", "wait", "queued runner", 40, on="CI")
+        # Handed back to the controller, all quiet for 30 minutes.
+        for n, kind in ((9, "done"), (10, "failed"), (11, "blocked")):
+            f.task(n, kind, "running", updated=30)
+            f.inbox(kind, "step", "earlier step", 40, step="1/3")
+            f.inbox(kind, kind, f"{kind} report", 30)
+        f.task(12, "step-last", "running", updated=30)
+        f.inbox("step-last", "step", "last step", 30, step="3/3")
+        f.task(13, "step-middle", "running", updated=30)
+        f.inbox("step-middle", "step", "middle step", 30, step="2/3")
+        f.task(14, "envelope", "running", updated=30)
+        f.write(root / task_id(14) / "envelope-1.json", {"status": "done"})
+        f.task(15, "reviewing", "reviewing", updated=30)
+        f.task(16, "old-envelope", "running", attempts=2, updated=30)
+        f.write(root / task_id(16) / "envelope-1.json", {"status": "failed"})  # attempt 1's, not this attempt's
+        f.task(17, "done-then-note", "running", updated=30)
+        f.inbox("done-then-note", "done", "done report", 35)
+        f.inbox("done-then-note", "note", "one more thing", 30)  # the latest message is no longer finishing
         rows = {name: self.rows(self.dump("--no-gh", root=root))[tid] for name, tid in f.ids.items()}
         self.assertEqual({n: r["stalled"] for n, r in rows.items()},
                          {"nine": False, "eleven": True, "event-fresh": False, "inbox-fresh": False,
-                          "ledger-fresh": False, "state-fresh": False, "finished": False, "waits": False})
+                          "ledger-fresh": False, "state-fresh": False, "finished": False, "waits": False,
+                          "done": False, "failed": False, "blocked": False, "step-last": False,
+                          "step-middle": True, "envelope": False, "reviewing": False, "old-envelope": True,
+                          "done-then-note": True})
         self.assertEqual(rows["waits"]["phase"], "waiting")
+        self.assertEqual(rows["waits"]["waiting_on"], "CI", "an explicit wait keeps who it waits on")
         self.assertEqual(rows["eleven"]["phase"], "stalled")
+        for name in ("done", "failed", "blocked", "step-last", "envelope", "reviewing"):
+            self.assertEqual((rows[name]["phase"], rows[name]["waiting_on"]), ("waiting", "controller"), name)
+        self.assertEqual(rows["reviewing"]["section"], "working")
+
+    def test_progress_without_a_checklist(self):
+        root = self.base / "progress"
+        f = Fixture(root)
+        f.task(1, "checklist", "running")
+        f.inbox("checklist", "step", "step text", 3, step="1/9")
+        f.checklist("checklist", [{"text": "a", "state": "done"}, {"text": "b", "state": "todo"}])
+        f.task(2, "steps", "running", acceptance=["A", "B", "C", "D", "E", "F", "G"])
+        f.inbox("steps", "step", "first", 20, step="1/3", read=True)
+        f.inbox("steps", "step", "second", 10, step="2/3")
+        f.inbox("steps", "note", "a note after the step", 5)
+        f.task(3, "neither", "running", acceptance=["A", "B", "C", "D", "E", "F", "G"])
+        f.inbox("neither", "note", "no step", 3)
+        f.task(4, "old-attempt-step", "running", attempts=2)
+        f.inbox("old-attempt-step", "step", "attempt one", 30, step="3/4", attempt=1)
+        rows = {name: self.rows(self.dump("--no-gh", root=root))[tid] for name, tid in f.ids.items()}
+        progress = {n: (r["progress"]["source"], r["progress"]["done"], r["progress"]["total"]) for n, r in rows.items()}
+        self.assertEqual(progress, {"checklist": ("checklist", 1, 2), "steps": ("step", 2, 3),
+                                    "neither": ("none", 0, 0), "old-attempt-step": ("none", 0, 0)},
+                         "acceptance criteria are never the progress denominator")
+        self.assertEqual(rows["neither"]["tasks"]["source"], "acceptance", "criteria stay listed in the detail")
 
     @unittest.skipUnless(NODE, "node is not on PATH")
     def test_rendered_demo(self):
@@ -898,6 +974,17 @@ class DemoTest(BoardCase):
         texts = report["texts"]
         self.assertTrue(any(re.fullmatch(r"stalled 2[5-9] min", t) for t in texts), "the stalled word carries its age")
         self.assertIn("waiting on GitHub macOS runner", texts)
+        self.assertIn("waiting on controller", texts)
+        self.assertIn("no progress recorded", texts)
+        self.assertIn("2/3", texts, "step-based progress")
+        self.assertIn("state unknown", texts, "a PR without gh state says so")
+        self.assertIn("PR ready for merge", texts, "the second line stops before the first URL")
+        self.assertIn("PR ready for merge: https://github.com/example-org/notes-app/pull/14 (CI green)", texts,
+                      "the detail keeps the full text")
+        self.assertIn("Checklist: acceptance criteria", texts)
+        starts = lambda prefix: any(t.startswith(prefix) for t in texts)
+        self.assertTrue(starts("3 acceptance criteria, not yet checked by an envelope"))
+        self.assertTrue(starts("2 acceptance criteria: 2 pass, 0 fail, 0 unverified"), "marks once an envelope exists")
         self.assertIn("atlas-api, setup", texts, "the band names its repositories")
         self.assertIn("Newest 6 of 11 events", report["seen"], "the timeline is collapsed past 6 and says so")
         self.assertIn("All 11 events, newest first", texts)
@@ -908,7 +995,7 @@ class DemoTest(BoardCase):
         self.assertEqual(len(order) % 5, 0)
         self.assertGreater(len(order), 5)
         for i in range(0, len(order), 5):
-            self.assertIn(order[i + 1], ("Checklist", "Acceptance criteria"))
+            self.assertIn(order[i + 1], ("Checklist", "Checklist: acceptance criteria"))
             self.assertEqual([order[i], order[i + 2], order[i + 3], order[i + 4]],
                              ["Now", "Last report", "Timeline", "Facts"], "every detail has one fixed order")
 

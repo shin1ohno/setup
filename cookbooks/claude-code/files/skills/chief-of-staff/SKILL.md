@@ -201,8 +201,11 @@ Agent Board, `ruby scripts/board.rb`, shows every task of every controller: one
 Needs you list at the top, then one band per controller (ledger owner key plus
 the repositories its tasks work in, with working, stalled, waiting and finished
 counts). Rows share columns for state, checklist progress, PR state and last
-activity; a working task with no recorded activity for 10 minutes is marked
-stalled unless its latest report is a `wait`. Finished tasks fold into one line
+activity. A working task shows "waiting on controller" once it has handed back
+(latest report `done`, `failed`, `blocked` or a last step i/n with i = n, its
+envelope file, or the ledger in `reviewing`) and what it waits on after a
+`wait`; otherwise 10 minutes without recorded activity marks it stalled.
+Without a checklist, progress is the latest step i/n. Finished tasks fold into one line
 per band, and a row opens to what is happening now, the checklist, the last
 report, the timeline and the facts.
 It is read-only and loopback-only, and prints its URL with a new random token
