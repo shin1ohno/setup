@@ -61,6 +61,12 @@
 # later commit is tested in (`function cleanup { cd X; }; trap cleanup EXIT;
 # git commit` tests the cwd).
 #
+# A commit that concludes a conflict-free merge in its directory (MERGE_HEAD
+# is set, git recorded no conflict and the index is git's own merge result)
+# runs no tests and prints one stderr line saying so; see clean_merge. The
+# hook runs before the command, so `git merge --no-commit X && git commit` in
+# one command is still tested: the merge has not happened yet.
+#
 # Fail-open: any internal error exits 0; only a failing test run exits 2.
 
 require "json"
@@ -106,9 +112,65 @@ def tail(text)
   text.length > OUTPUT_TAIL_CHARS ? text[-OUTPUT_TAIL_CHARS..] : text
 end
 
+OID = /\A\h{40}(?:\h{24})?\z/.freeze
+
+# git -C dir <args>: stdout when git exits 0, else nil.
+def git_out(dir, *args)
+  stdout, _, status = Open3.capture3("git", "-C", dir, *args)
+  status.success? ? stdout : nil
+end
+
+def git_ok?(dir, *args)
+  _, _, status = Open3.capture3("git", "-C", dir, *args)
+  status.success?
+end
+
+def git_file(dir, name)
+  path = git_out(dir, "rev-parse", "--path-format=absolute", "--git-path", name)
+  path && File.file?(path.chomp) ? File.read(path.chomp) : nil
+end
+
+# A commit that concludes a conflict-free merge commits the tree git merged on
+# its own, so its tests are skipped. Every condition must hold, or the tests
+# run (a merge resolved by hand, a hand edit on top of a clean merge, an
+# octopus merge, a git without merge-tree --write-tree, any git error):
+#   - MERGE_HEAD names exactly one commit;
+#   - MERGE_MSG carries no Conflicts hint, which git merge writes after a
+#     conflict under any strategy (also -s resolve, which merge-tree's ort
+#     may merge cleanly);
+#   - `git merge-tree --write-tree HEAD MERGE_HEAD` (git 2.38+) exits 0, no
+#     conflict;
+#   - the index is that tree, and no tracked file has unstaged changes, which
+#     `git commit -a` would add.
+# AUTO_MERGE is not used: git 2.56.1 writes it after a conflict-free `git
+# merge --no-commit` too, and not after a -s resolve conflict.
+# Returns why the tests are skipped, or nil to run them.
+def clean_merge(dir)
+  heads = git_file(dir, "MERGE_HEAD").to_s.split
+  return nil unless heads.size == 1 && OID.match?(heads[0])
+
+  message = git_file(dir, "MERGE_MSG")
+  return nil if message.nil? || message.match?(/^#?\s*Conflicts:/)
+
+  tree = git_out(dir, "merge-tree", "--write-tree", "HEAD", heads[0]).to_s.lines.first.to_s.chomp
+  return nil unless OID.match?(tree)
+  return nil unless git_ok?(dir, "diff", "--cached", "--quiet", tree, "--")
+  return nil unless git_ok?(dir, "diff", "--quiet", "--")
+
+  "this commit concludes a merge of #{heads[0][0, 12]} with no conflicts " \
+    "(merge-tree reports none and the index is its result)"
+rescue SystemCallError, IOError, ArgumentError
+  nil
+end
+
 def run_tests(dir)
   RUNNERS.each do |marker, guard, test_cmd|
     next unless File.exist?(File.join(dir, marker)) && guard.call(dir)
+
+    if (reason = clean_merge(dir))
+      warn "pre-commit-test: skipped `#{test_cmd}` in #{dir}: #{reason}"
+      break
+    end
 
     stdout, stderr, status = Open3.capture3(test_cmd, chdir: dir)
 
