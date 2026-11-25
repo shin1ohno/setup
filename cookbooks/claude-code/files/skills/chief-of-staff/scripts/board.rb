@@ -11,7 +11,12 @@
 # cookbook installs it) and answers GET / (the page) and GET /api/board (JSON
 # the page polls every POLL_SECONDS). It binds only to a loopback address,
 # refuses a request whose Host header is not a loopback name (DNS rebinding)
-# and answers every other method with 405.
+# and answers every other method with 405. /api/board also needs the per-run
+# token: board.rb prints the URL as http://127.0.0.1:PORT/#t=<token>, the page
+# sends the fragment back as an X-Board-Token header, and any other request
+# gets 403. The fragment never reaches the server, so no request line or log
+# holds the token, and another local OS account that can reach the loopback
+# port still cannot read the 0700 ledger through the board.
 #
 # It never writes, renames or deletes anything under the state directory:
 # every file is opened read-only, without following symlinks, non-blocking (a
@@ -768,9 +773,13 @@ module Board
       var opened = {}, longTimeline = {}, showAllIdle = false, last = null, receivedAt = 0;
       var MARKS = { done: "\u2713", doing: "\u25d0", todo: "\u25cb", failed: "\u2715" };
       var PR = /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/pull\/[0-9]+$/;
-      // board.html#<task-id> opens that task's row.
-      var hash = typeof location === "undefined" ? "" : location.hash.slice(1);
-      if (/^[0-9a-f]{16}$/.test(hash)) opened[hash] = true;
+      // #t=<token> is the per-run token board.rb printed; #<task-id> (also
+      // after the token, as #t=...&<task-id>) opens that task's row.
+      var token = "";
+      (typeof location === "undefined" ? "" : location.hash.slice(1)).split("&").forEach(function (part) {
+        if (/^t=[0-9a-f]{32}$/.test(part)) token = part.slice(2);
+        else if (/^[0-9a-f]{16}$/.test(part)) opened[part] = true;
+      });
 
       function el(tag, cls, text) {
         var node = document.createElement(tag);
@@ -926,8 +935,16 @@ module Board
       }
       function status(text) { document.getElementById("status").textContent = text; }
       function poll() {
-        fetch("api/board", { cache: "no-store", credentials: "same-origin" })
-          .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        if (!token) {
+          status("open the URL board.rb printed: it carries this run's access token (#t=...)");
+          return;
+        }
+        fetch("api/board", { cache: "no-store", credentials: "same-origin", headers: { "X-Board-Token": token } })
+          .then(function (r) {
+            if (r.status === 403) throw new Error("token refused; open the URL board.rb printed for this run");
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.json();
+          })
           .then(function (data) {
             last = data; receivedAt = Date.now(); render(data);
             status("live \u00b7 refreshed " + hhmm(data.generated_at) + " \u00b7 every " + data.poll_seconds + " s" + (data.gh ? "" : " \u00b7 gh off"));
@@ -956,7 +973,16 @@ module Board
     res["Content-Security-Policy"] = nonce ? "#{csp(nonce)}; frame-ancestors 'none'" : "default-src 'none'; frame-ancestors 'none'"
   end
 
-  def handle(req, res, root, prs)
+  # Constant time for equal lengths; the token's length (32 hex) is public.
+  def token_match?(given, token)
+    return false unless given.is_a?(String) && token.is_a?(String) && given.bytesize == token.bytesize
+
+    diff = 0
+    given.bytes.zip(token.bytes) { |a, b| diff |= a ^ b }
+    diff.zero?
+  end
+
+  def handle(req, res, root, prs, token)
     unless loopback_host?(req["host"])
       headers(res, "text/plain; charset=utf-8")
       res.status = 403
@@ -976,6 +1002,12 @@ module Board
       headers(res, "text/html; charset=utf-8", nonce)
       res.body = page(nonce)
     when "/api/board"
+      unless token_match?(req["x-board-token"], token)
+        headers(res, "text/plain; charset=utf-8")
+        res.status = 403
+        res.body = "missing or wrong X-Board-Token; open the URL board.rb printed\n"
+        return
+      end
       headers(res, "application/json; charset=utf-8")
       res.body = JSON.generate(board(root, prs))
     else
@@ -993,10 +1025,12 @@ module Board
       exit 1
     end
 
+    # 128 bits, generated here and printed once; never in argv, a file or a log.
+    token = SecureRandom.hex(16)
     # Every request, including `OPTIONS *` that WEBrick would answer itself,
-    # goes through handle(): Host check first, then GET only.
+    # goes through handle(): Host check, then GET only, then the token.
     server_class = Class.new(WEBrick::HTTPServer) do
-      define_method(:service) { |req, res| Board.handle(req, res, root, prs) }
+      define_method(:service) { |req, res| Board.handle(req, res, root, prs, token) }
     end
     server = server_class.new(
       BindAddress: options[:bind], Port: options[:port], DoNotReverseLookup: true,
@@ -1005,7 +1039,7 @@ module Board
     port = server.listeners.first.addr[1]
     host = options[:bind].include?(":") ? "[#{options[:bind]}]" : options[:bind]
     %w[INT TERM].each { |signal| trap(signal) { server.shutdown } }
-    $stdout.puts "Agent Board: http://#{host}:#{port}/ (state #{root}; #{prs.enabled? ? 'gh on' : 'gh off'}; Ctrl-C stops)"
+    $stdout.puts "Agent Board: http://#{host}:#{port}/#t=#{token} (state #{root}; #{prs.enabled? ? 'gh on' : 'gh off'}; Ctrl-C stops)"
     $stdout.flush
     server.start
   ensure

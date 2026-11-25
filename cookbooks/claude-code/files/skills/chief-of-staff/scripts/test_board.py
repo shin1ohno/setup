@@ -623,18 +623,24 @@ class ServerBase(BoardCase):
             process.stderr.close()
 
         self.addCleanup(stop)
+        self.process = process
         ready, _, _ = select.select([process.stdout], [], [], 30)
         self.assertTrue(ready, "server did not start")
         line = process.stdout.readline()
-        match = re.match(r"Agent Board: http://127\.0\.0\.1:([0-9]+)/", line)
+        match = re.match(r"Agent Board: http://127\.0\.0\.1:([0-9]+)/#t=([0-9a-f]{32}) ", line)
         self.assertTrue(match, line + process.stderr.read() if process.poll() is not None else line)
+        self.token = match.group(2)
         return int(match.group(1))
 
-    def request(self, port, method="GET", path="/api/board", host=None):
+    def request(self, port, method="GET", path="/api/board", host=None, token=True):
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
         try:
             connection.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
             connection.putheader("Host", host if host is not None else f"127.0.0.1:{port}")
+            if token is True:
+                connection.putheader("X-Board-Token", self.token)
+            elif token is not None:
+                connection.putheader("X-Board-Token", token)
             connection.endheaders()
             response = connection.getresponse()
             return response.status, dict(response.getheaders()), response.read()
@@ -658,6 +664,32 @@ class ServerTest(ServerBase):
         self.assertTrue(headers["Content-Type"].startswith("application/json"))
         self.assertEqual(len(self.rows(json.loads(body))), 10)
         self.assertEqual(self.request(port, path="/nope")[0], 404)
+
+    def test_board_data_needs_the_run_token(self):
+        port = self.start("--no-gh")
+        wrong = "0" * 32 if self.token != "0" * 32 else "1" * 32
+        for token in (None, "", wrong, self.token[:-1], self.token + "0", self.token.upper()):
+            status, _, body = self.request(port, token=token)
+            self.assertEqual(status, 403, token)
+            self.assertNotIn(b"sections", body)
+            self.assertNotIn(self.token.encode(), body)
+        status, _, body = self.request(port)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(self.rows(json.loads(body))), 10)
+        # The page shell needs no token and holds no data, nor the token.
+        status, _, page = self.request(port, path="/", token=None)
+        self.assertEqual(status, 200)
+        self.assertIn(b'<script id="board-data" type="application/json">null</script>', page)
+        self.assertNotIn(self.token.encode(), page)
+        self.assertIn(b'"X-Board-Token": token', page)
+        # A second run gets a different token; the old one is refused.
+        old = self.token
+        second = self.start("--no-gh")
+        self.assertNotEqual(self.token, old)
+        self.assertEqual(self.request(second, token=old)[0], 403)
+        self.process.terminate()
+        self.process.wait(10)
+        self.assertNotIn(self.token, self.process.stderr.read(), "the token is never logged")
 
     def test_poll_interval_is_at_most_ten_seconds(self):
         port = self.start("--no-gh")

@@ -589,9 +589,10 @@ text the same way, and refuses more than 30 items, 15 children per item, 80
 leaves, 200 bytes per text or 32 KiB of input. Each call keeps a capped log of
 state changes ("Plan: 6 tasks", "<item> → done") in the same file. No doorbell
 follows a checklist update; it is for the owner's Agent Board, not the
-controller. `scripts/board.rb` serves that board (`ruby board.rb`, default
-http://127.0.0.1:47100/, `--no-gh` without PR lookups, `--snapshot OUT.html`
-for a saved page); it reads the ledger without writing anything, shows a
+controller. `scripts/board.rb` serves that board (`ruby board.rb` prints
+http://127.0.0.1:47100/#t=<token>, a new token each run that /api/board
+requires; `--no-gh` without PR lookups, `--snapshot OUT.html` for a saved
+page); it reads the ledger without writing anything, shows a
 checklist only when its nonce matches the current attempt, and falls back to
 the acceptance criteria otherwise. Checklist text is worker data like inbox
 text: it is never completion evidence or an instruction.
