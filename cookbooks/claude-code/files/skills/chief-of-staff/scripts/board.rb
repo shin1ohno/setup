@@ -44,6 +44,9 @@ module Board
   GH_TIMEOUT = 10
   IDLE_WINDOW = 24 * 3600
   WORKING_WINDOW = 15 * 60
+  STALL_SECONDS = 10 * 60
+  TRACE_BINS = 12
+  TRACE_BIN_SECONDS = 5 * 60
   TIMELINE_LIMIT = 200
   INBOX_LIMIT = 400
 
@@ -63,7 +66,7 @@ module Board
 
   LIMITS = {
     task: 4 * 1024 * 1024, state: 512 * 1024, inbox: 8192, checklist: 64 * 1024,
-    digest: 16 * 1024, prompt: 16 * 1024
+    digest: 16 * 1024, prompt: 16 * 1024, events: 64 * 1024
   }.freeze
 
   # The same cleaning as inbox.py clean(): escapes, controls (line breaks fold to
@@ -160,6 +163,45 @@ module Board
     JSON.parse(data, max_nesting: 20)
   rescue JSON::ParserError
     raise Unreadable, "#{File.basename(path)} is not valid JSON (truncated or mid-rewrite)"
+  end
+
+  # The last `limit` bytes of a regular file (an append-only log), nil when
+  # absent; the same no-symlink, no-FIFO discipline as read_file.
+  def read_tail(path, limit)
+    info = File.lstat(path)
+    raise Unreadable, "#{File.basename(path)} is not a regular file" unless info.file?
+
+    File.open(path, File::RDONLY | File::NOFOLLOW | File::NONBLOCK) do |file|
+      stat = file.stat
+      raise Unreadable, "#{File.basename(path)} is not a regular file" unless stat.file?
+
+      offset = [stat.size - limit, 0].max
+      file.seek(offset)
+      data = (file.read(limit) || +"").force_encoding("UTF-8").scrub("")
+      offset.positive? ? data.sub(/\A[^\n]*\n?/, "") : data
+    end
+  rescue Errno::ENOENT, Errno::ENOTDIR
+    nil
+  rescue Errno::ELOOP, Errno::EACCES, Errno::EISDIR, Errno::ENXIO, Errno::EAGAIN => e
+    raise Unreadable, "#{File.basename(path)}: #{e.class.name.split('::').last}"
+  end
+
+  # Times of the hook events in events-<n>.jsonl (newest 64 KiB). Only the
+  # timestamps are used; the event text never reaches the page.
+  def event_times(dir, number)
+    data = begin
+      read_tail(File.join(dir, "events-#{number}.jsonl"), LIMITS[:events])
+    rescue Unreadable
+      nil
+    end
+    return [] unless data
+
+    data.each_line.filter_map do |line|
+      body = JSON.parse(line, max_nesting: 5)
+      body.is_a?(Hash) ? time(body["at"]) : nil
+    rescue JSON::ParserError
+      nil
+    end
   end
 
   # Component files degrade to nil: one bad state file must not hide the task.
@@ -338,6 +380,8 @@ module Board
     status_at = state_file && time(state_file["updated_at"])
     digest = number.positive? ? soft_json(File.join(dir, "digest-#{number}.json"), LIMITS[:digest]) : nil
     digest = nil unless digest.is_a?(Hash) && digest["attempt"] == number
+    events = number.positive? ? event_times(dir, number) : []
+    milestones = state_file && state_file["milestones"].is_a?(Array) ? state_file["milestones"] : []
 
     messages = inbox_messages(dir, task)
     current = messages.select { |m| m[:attempt] == number }
@@ -372,6 +416,35 @@ module Board
     stamps = [time(task["updated_at"]), status_at, current.last&.dig(:at), list&.dig(:at)].compact
     updated = stamps.max
     working = section == "working" && status == "working" && status_at && (now - status_at) < WORKING_WINDOW
+    # Last recorded activity, the stalled rule's clock: the state file, the
+    # newest hook event, the newest inbox message and the ledger update.
+    activity_at = [status_at, events.max, current.last&.dig(:at), time(task["updated_at"])].compact.max
+    last_message = current.last
+    waiting = section == "working" && last_message && last_message[:kind] == "wait" ? last_message : nil
+    stalled = section == "working" && !waiting && activity_at && (now - activity_at) >= STALL_SECONDS ? true : false
+    phase = if section == "needs_you" then "needs"
+            elsif state == "accepted" then "done"
+            elsif state == "cancelled" then "cancelled"
+            elsif waiting then "waiting"
+            elsif status == "error" then "error"
+            elsif state == "retry" then "retry"
+            elsif stalled then "stalled"
+            elsif state == "queued" then "queued"
+            else "working"
+            end
+    started = time(attempt["created_at"]) || time(task["created_at"])
+
+    # --- activity trace: the same sources as activity_at, counted per
+    # TRACE_BIN_SECONDS over the last hour, oldest bin first
+    trace = Array.new(TRACE_BINS, 0)
+    marks = events + current.map { |m| m[:at] } + [status_at, time(task["updated_at"])].compact
+    marks.each do |t|
+      age = now - t
+      next if age < -60 # a clock far ahead is not activity
+
+      bin = (age.clamp(0, Float::INFINITY) / TRACE_BIN_SECONDS).floor
+      trace[TRACE_BINS - 1 - bin] += 1 if bin < TRACE_BINS
+    end
 
     # --- tasks block
     tasks = if list
@@ -387,7 +460,7 @@ module Board
 
     # --- pull requests
     records = pr_records(task)
-    (state_file && state_file["milestones"].is_a?(Array) ? state_file["milestones"] : []).each do |m|
+    milestones.each do |m|
       next unless m.is_a?(Hash) && m["kind"] == "pr" && m["url"].is_a?(String) && (match = PR_URL.match(m["url"]))
       next if records.any? { |r| r[:url] == m["url"] }
 
@@ -395,7 +468,8 @@ module Board
     end
     pr_list = records.map do |r|
       info = prs.lookup(r[:url])
-      { url: r[:url], label: r[:label], state: info && info[:text], merged: info && info[:merged] }
+      { url: r[:url], label: r[:label], state: info && info[:text], merged: info && info[:merged],
+        status: info && info[:status], ci: info && info[:ci] }
     end
 
     # --- timeline
@@ -438,7 +512,7 @@ module Board
         timeline << { at: c[:at], color: CHECK_COLOR[c[:to]], text: "#{c[:text]} → #{c[:to]}" }
       end
     end
-    (state_file && state_file["milestones"].is_a?(Array) ? state_file["milestones"] : []).last(40).each do |m|
+    milestones.last(40).each do |m|
       next unless m.is_a?(Hash) && (at = time(m["at"]))
 
       case m["kind"]
@@ -474,20 +548,30 @@ module Board
                     { at: iso(time(digest["at"])), text: did, kind: "digest" }
                   end
 
-    # --- facts
+    # --- what is happening now, in priority order
+    doing = leaves(list ? list[:items] : []).find { |i| i[:state] == "doing" } ||
+            (list ? list[:items] : []).find { |i| i[:state] == "doing" }
+    step = current.reverse.find { |m| m[:kind] == "step" }
+    now_line = if need then { kind: "need", text: need }
+               elsif waiting then { kind: "waiting", text: waiting[:text], on: waiting[:on] }
+               elsif section == "working" && doing then { kind: "doing", text: doing[:text] }
+               elsif section == "working" && step then { kind: "step", text: step[:text], step: step[:step] }
+               elsif last_report then { kind: "report", text: last_report[:text] }
+               end
+
+    # --- facts (pull requests are in the row and in the detail's PR list)
     route = str(attempt["route"], 20)
     terminal = str(attempt["terminal_id"], 80) || str(attempt["pane"], 80)
     facts = []
-    facts << { label: "PR", value: pr_list.empty? ? "none recorded" : pr_list.map { |p| [p[:label], p[:state]].compact.join(" · ") }.join(", ") }
-    facts << { label: "Lane", value: [route || "?", terminal ? "terminal #{terminal}" : nil].compact.join(" · ") }
+    facts << { label: "Lane", value: [route || "?", terminal ? "terminal #{terminal}" : nil].compact.join(", ") }
     facts << if state_file
-               { label: "Status", value: "#{status || 'unknown'} · file updated", at: iso(status_at) }
+               { label: "Status", value: "#{status || 'unknown'}, file updated", at: iso(status_at) }
              elsif str(attempt["kind"], 20) == "codex"
                { label: "Status", value: "no state file (Codex worker)" }
              else
                { label: "Status", value: "no state file" }
              end
-    facts << { label: "Ledger", value: "#{state} · attempt #{number} of #{task['max_attempts'].is_a?(Integer) ? task['max_attempts'] : '?'}" }
+    facts << { label: "Ledger", value: "#{state}, attempt #{number} of #{task['max_attempts'].is_a?(Integer) ? task['max_attempts'] : '?'}" }
     facts << { label: "Controller", value: owner || "(no controller key)" }
     facts << { label: "Task", value: id }
     facts << { label: "Checklist", value: checklist_error } if checklist_error
@@ -502,6 +586,9 @@ module Board
              end,
       agent: str(attempt["agent"], 120) || str(attempt["kind"], 20) || "(no worker yet)",
       kind: str(attempt["kind"], 20), attempt: number,
+      repo: task["cwd"].is_a?(String) ? str(File.basename(task["cwd"].sub(%r{/+\z}, "")), 80) : nil,
+      phase: phase, stalled: stalled, waiting_on: waiting ? (waiting[:on] || "someone") : nil,
+      now: now_line, started_at: iso(started), activity_at: iso(activity_at), trace: trace,
       updated_at: iso(updated), working: working ? true : false,
       recent: section != "idle" || (updated && (now - updated) < IDLE_WINDOW) ? true : false,
       prs: pr_list, tasks: tasks, last_report: last_report, timeline: timeline, facts: facts
@@ -533,15 +620,25 @@ module Board
       end
     end
     recency = ->(r) { time(r[:updated_at])&.to_f || 0 }
+    start = ->(r) { time(r[:started_at])&.to_f || 0 }
     needs, others = rows.partition { |r| r[:section] == "needs_you" }
-    # One group per controller (ledger owner key), newest update first;
-    # inside a group, working rows before idle rows, each newest first.
+    # One group per controller (ledger owner key). The order is stable under
+    # polling: groups with working rows first, then by key; inside a group,
+    # working rows newest start first, then idle rows newest update first.
     groups = others.group_by { |r| r[:owner] }.map do |owner, list|
+      live, idle = list.partition { |r| r[:section] != "idle" }
+      mine = list + needs.select { |r| r[:owner] == owner }
+      repos = mine.filter_map { |r| r[:repo] }.tally.sort_by { |name, n| [-n, name] }.map(&:first)
+      # Disjoint: a stalled or waiting row is not also counted as working.
+      counts = { working: live.count { |r| !%w[stalled waiting].include?(r[:phase]) },
+                 stalled: live.count { |r| r[:phase] == "stalled" },
+                 waiting: live.count { |r| r[:phase] == "waiting" },
+                 needs: needs.count { |r| r[:owner] == owner }, idle: idle.size }
       { owner: owner, label: owner || "(no controller key)", tag: controller_tag(owner),
-        latest: list.map(&recency).max,
-        rows: list.sort_by { |r| [r[:section] == "idle" ? 1 : 0, -recency.call(r)] } }
+        repos: repos.first(8), counts: counts,
+        rows: live.sort_by { |r| [-start.call(r), r[:id]] } + idle.sort_by { |r| [-recency.call(r), r[:id]] } }
     end
-    groups = groups.sort_by { |g| -g[:latest] }.each { |g| g.delete(:latest) }
+    groups = groups.sort_by { |g| [g[:rows].any? { |r| r[:section] != "idle" } ? 0 : 1, g[:owner] ? 0 : 1, g[:label]] }
     { generated_at: iso(now), poll_seconds: POLL_SECONDS, state_dir: File.basename(root),
       gh: prs.enabled?, needs_you: needs.sort_by { |r| -recency.call(r) }, groups: groups,
       errors: errors }
@@ -672,6 +769,7 @@ module Board
       return nil unless data.is_a?(Hash)
 
       parts = []
+      ci = nil
       merged = data["state"] == "MERGED" || data["mergedAt"].is_a?(String)
       if merged
         parts << "merged"
@@ -685,7 +783,8 @@ module Board
                    "CHANGES_REQUESTED" => "changes requested" }[data["reviewDecision"]]
         parts << review if review
       end
-      { text: parts.join(" · "), merged: merged }
+      { text: parts.join(" · "), merged: merged, status: parts.first,
+        ci: ci && { "CI failing" => "failing", "CI pending" => "pending", "CI passing" => "passing" }[ci] }
     end
 
     def ci_summary(rollup)
@@ -733,7 +832,7 @@ module Board
       <style nonce="#{nonce}">#{CSS}</style>
       </head>
       <body>
-      <header><h1>Agent Board</h1><div id="count" class="count"></div><div id="status" class="status"></div></header>
+      <header class="top"><h1>Agent Board</h1><p id="count" class="summary"></p><p id="status" class="status"></p></header>
       <main id="board"></main>
       <footer id="errors"></footer>
       <script id="board-data" type="application/json">#{data ? embed(data) : 'null'}</script>
@@ -743,44 +842,201 @@ module Board
     HTML
   end
 
-  CSS = <<~CSS
-    :root{color-scheme:dark;--bg:#0f1115;--panel:#161a21;--line:#252b35;--fg:#d7dce4;--dim:#8a93a3;
-    --green:#3fb950;--blue:#4c8dff;--red:#f05252;--amber:#e3a008;--grey:#5b6472;--teal:#2bb3a3;--purple:#a371f7}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
-    font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-    header{display:flex;align-items:baseline;gap:14px;padding:14px 18px;border-bottom:1px solid var(--line)}
-    h1{font-size:16px;margin:0}.count,.status{color:var(--dim)}.status{margin-left:auto;font-size:12px}
-    main{padding:6px 0 20px}section{margin-top:14px}
-    h2{font-size:11px;letter-spacing:.08em;color:var(--dim);margin:0;padding:4px 18px;font-weight:600}
-    h2 .n{margin-left:6px;color:var(--fg)}h2 .key{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    letter-spacing:0;color:var(--fg)}.group h2 .n{color:var(--dim);font-weight:400;letter-spacing:0;margin-left:10px}
-    .tag{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--amber);white-space:nowrap}
-    .row{display:grid;grid-template-columns:14px 1fr auto;gap:10px;padding:7px 18px;border-top:1px solid var(--line);cursor:pointer}
-    .row>div{min-width:0}.row:hover,.row.open{background:var(--panel)}.row:focus{outline:1px solid var(--blue);outline-offset:-1px}
-    .dot{width:9px;height:9px;border-radius:50%;margin-top:5px;background:var(--grey)}
-    .green{background:var(--green)}.blue{background:var(--blue)}.red{background:var(--red)}.amber{background:var(--amber)}
-    .grey{background:var(--grey)}.teal{background:var(--teal)}.purple{background:var(--purple)}
-    .need{color:var(--amber);font-weight:600}.line{display:flex;gap:10px;min-width:0}
-    .agent{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--dim);white-space:nowrap}
-    .topic{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .prog{display:flex;align-items:center;gap:8px;margin-top:4px}
-    .bar{display:flex;height:4px;width:160px;background:var(--line);border-radius:2px;overflow:hidden}
-    .bar.big{width:100%;height:6px}.bar span{height:100%}.leaf{color:var(--dim);font-size:11px}
-    .right{text-align:right;white-space:nowrap;font-size:12px}.right a{color:var(--fg);text-decoration:none;
-    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.right a:hover{text-decoration:underline}
-    .prstate,.when{color:var(--dim)}.when.on{color:var(--blue)}
-    .detail{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:10px 18px 16px 42px;background:var(--panel);
-    border-top:1px dashed var(--line)}
-    h3{font-size:11px;letter-spacing:.08em;color:var(--dim);margin:10px 0 6px;font-weight:600}
-    ul{list-style:none;margin:0;padding:0}ul ul{padding-left:18px}li{margin:2px 0}
-    .mark{display:inline-block;width:16px;color:var(--dim)}.mark.done{color:var(--green)}.mark.doing{color:var(--blue)}
-    .mark.failed{color:var(--red)}.meta{color:var(--dim);font-size:12px}
-    .tl li{display:grid;grid-template-columns:10px 44px 1fr;gap:6px;align-items:start}
-    .tl .dot{width:7px;height:7px;margin-top:6px}.tl time{color:var(--dim);font-size:12px}
-    button{background:none;border:1px solid var(--line);color:var(--dim);border-radius:4px;padding:2px 8px;font:inherit;cursor:pointer}
-    dl{display:grid;grid-template-columns:90px 1fr;gap:3px 10px;margin:0}dt{color:var(--dim)}dd{margin:0;word-break:break-word}
-    footer{padding:10px 18px;color:var(--red);font-size:12px}.empty{padding:6px 18px;color:var(--dim)}
-    @media (max-width:760px){.detail{grid-template-columns:1fr;padding-left:18px}.bar{width:100px}}
+  # Every color, type size and space on the page comes from this one :root
+  # block, and every color is one of the 16 Nord values (an alpha byte is
+  # allowed). test_board.py checks both and computes each text and mark pair's
+  # WCAG contrast from it; change a token there, not inline.
+  CSS = <<~'CSS'
+    :root{
+      color-scheme:dark;
+      --bg:#2E3440;--surface:#3B4252;--rule:#434C5E;--rule-strong:#4C566A;
+      --text:#ECEFF4;--text-2:#D8DEE9;--accent:#88C0D0;--link:#8FBCBB;
+      --st-working:#88C0D0;--st-needs:#EBCB8B;--st-waiting:#B48EAD;--st-stalled:#D08770;
+      --st-done:#A3BE8C;--st-failed:#BF616A;--st-queued:#81A1C1;--st-idle:#D8DEE9;
+      --trace-off:#434C5E;--trace-on:#88C0D0;
+      --font:"Avenir Next","Avenir","Hiragino Sans","Segoe UI","Noto Sans",system-ui,sans-serif;
+      --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+      --fs-1:12px;--fs-2:13px;--fs-3:15px;--fs-4:18px;--fs-5:22px;
+      --lh-tight:1.3;--lh:1.5;
+      --s-0:2px;--s-1:4px;--s-2:8px;--s-3:12px;--s-4:16px;--s-5:24px;--s-6:32px;
+      --edge:3px;--mark:9px;--page:1360px;
+      --cols:minmax(0,1fr) 8.5rem 8.5rem 9.5rem 7.5rem;
+    }
+    *{box-sizing:border-box}
+    html{background:var(--bg)}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:var(--fs-3);
+      line-height:var(--lh-tight);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+    .top,main,#errors{max-width:var(--page);padding-left:var(--s-5);padding-right:var(--s-5)}
+    .top{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:var(--s-5);row-gap:var(--s-1);
+      padding-top:var(--s-5);padding-bottom:var(--s-4)}
+    h1{font-size:var(--fs-5);font-weight:600;margin:0;letter-spacing:-0.01em}
+    .summary{margin:0;color:var(--text-2);font-size:var(--fs-3)}
+    .summary b{color:var(--text);font-weight:600}
+    .summary .sep{margin-right:var(--s-3)}
+    .status{margin:0 0 0 auto;color:var(--text-2);font-size:var(--fs-2)}
+    main{padding-bottom:var(--s-6)}
+    button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;text-align:left}
+    a{color:var(--link);text-decoration:none}
+    a:hover{text-decoration:underline}
+    :focus{outline:none}
+    :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+    .row:focus-visible{outline-offset:-2px}
+    .ghost{border:1px solid var(--rule-strong);border-radius:4px;padding:var(--s-1) var(--s-3);color:var(--text-2);
+      font-size:var(--fs-2)}
+    .ghost:hover{border-color:var(--text-2);color:var(--text)}
+
+    /* needs you: above every controller, one line when empty */
+    .needs{margin:0 0 var(--s-5);border-left:var(--edge) solid var(--st-needs);padding:var(--s-2) 0 var(--s-2) var(--s-4)}
+    .needs.none{border-left-color:var(--rule-strong);color:var(--text-2);font-size:var(--fs-2);padding:var(--s-1) 0 var(--s-1) var(--s-4)}
+    .needs h2{margin:0 0 var(--s-2);font-size:var(--fs-4);font-weight:600;color:var(--st-needs)}
+    .needs .row{border-top:0}
+    .needs .row::before{display:none}
+    .need{color:var(--text);line-height:var(--lh);margin-top:var(--s-1)}
+    .tag{font-family:var(--mono);font-size:var(--fs-1);color:var(--text-2);border:1px solid var(--rule-strong);
+      border-radius:3px;padding:0 var(--s-1);margin-right:var(--s-2);white-space:nowrap}
+
+    /* shared columns: the column header and every row use --cols */
+    .cols,.row{display:grid;grid-template-columns:var(--cols);column-gap:var(--s-4);align-items:start}
+    .cols{color:var(--text-2);font-size:var(--fs-1);padding:0 var(--s-3) var(--s-1) calc(var(--s-3) + var(--edge))}
+    .cols .r,.c-act{text-align:right}
+
+    /* controller band */
+    .group{margin-top:var(--s-5)}
+    .group:first-of-type{margin-top:0}
+    .group h2{margin:0;font-size:inherit;font-weight:inherit}
+    .ghead{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:var(--s-4);row-gap:var(--s-1);width:100%;
+      background:var(--surface);border-radius:4px;padding:var(--s-3) var(--s-3) var(--s-3) var(--s-4)}
+    .ghead .gtag{font-size:var(--fs-4);font-weight:600;color:var(--text)}
+    .ghead .repos{font-size:var(--fs-3);color:var(--text)}
+    .ghead .gkey{font-family:var(--mono);font-size:var(--fs-1);color:var(--text-2)}
+    .ghead .counts{margin-left:auto;display:flex;flex-wrap:wrap;column-gap:var(--s-4);font-size:var(--fs-2);color:var(--text-2)}
+    .ghead .counts b{color:var(--text);font-weight:600}
+    .ghead .count{display:inline-flex;align-items:baseline;gap:var(--s-1)}
+    .ghead .fold{color:var(--text-2);font-size:var(--fs-2);min-width:4.5em;text-align:right}
+    .rows{margin-top:var(--s-1)}
+
+    /* one task row */
+    .row{position:relative;padding:var(--s-3) var(--s-3) var(--s-3) calc(var(--s-3) + var(--edge));
+      border-top:1px solid var(--rule);cursor:pointer}
+    .rows>.task:first-child>.row{border-top:0}
+    .row:hover .title{color:var(--accent)}
+    .row::before{content:"";position:absolute;left:0;top:var(--s-2);bottom:var(--s-2);width:var(--edge);border-radius:2px}
+    .row.ph-stalled::before{background:var(--st-stalled)}
+    .row.ph-needs::before{background:var(--st-needs)}
+    .row.ph-error::before,.row.ph-retry::before{background:var(--st-failed)}
+    .c-title{min-width:0}
+    .title{font-weight:500;line-height:var(--lh-tight);display:-webkit-box;-webkit-box-orient:vertical;
+      -webkit-line-clamp:2;line-clamp:2;overflow:hidden}
+    .task.open .title{display:block;-webkit-line-clamp:unset}
+    .sub{display:flex;column-gap:var(--s-3);margin-top:var(--s-1);font-size:var(--fs-2);color:var(--text-2);min-width:0}
+    .sub .now{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:0 1 auto}
+    .worker{font-family:var(--mono);font-size:var(--fs-1);color:var(--text-2);white-space:nowrap;flex:0 0 auto}
+    .c-state{display:flex;align-items:baseline;gap:var(--s-2);font-size:var(--fs-2);min-width:0}
+    .c-state .word{min-width:0}
+    .c-prog{display:flex;align-items:center;gap:var(--s-2);font-size:var(--fs-2);padding-top:var(--s-1)}
+    .c-prog .frac{color:var(--text-2);white-space:nowrap}
+    .c-pr{font-size:var(--fs-2);display:flex;flex-wrap:wrap;align-items:baseline;column-gap:var(--s-2);min-width:0}
+    .c-pr .prs{color:var(--text-2)}
+    .c-pr .none,.c-prog .none{color:var(--text-2)}
+    .c-act{display:flex;justify-content:flex-end;align-items:center;gap:var(--s-2);font-size:var(--fs-2);
+      color:var(--text-2);padding-top:var(--s-0);white-space:nowrap}
+
+    /* finished rows: one line each, behind one fold per band */
+    .finished{display:block;width:100%;padding:var(--s-2) var(--s-3) var(--s-2) calc(var(--s-3) + var(--edge));
+      color:var(--text-2);font-size:var(--fs-2);border-top:1px solid var(--rule)}
+    .finished:hover{color:var(--text)}
+    .compact .row{padding-top:var(--s-2);padding-bottom:var(--s-2)}
+    .compact .title{-webkit-line-clamp:1;line-clamp:1;font-weight:400;font-size:var(--fs-2);color:var(--text-2)}
+    .compact .sub{display:none}
+    .compact.open .sub{display:flex}
+
+    /* state marks: shape and color together, never color alone */
+    .mark{flex:0 0 auto;display:inline-block;width:var(--mark);height:var(--mark);position:relative;top:0}
+    .m-working,.m-doing{border-radius:50%;background:var(--st-working)}
+    .m-queued{border-radius:50%;border:2px solid var(--st-queued)}
+    .m-waiting,.m-pending{border-radius:50%;border:2px solid var(--st-waiting)}
+    .m-pending{border-color:var(--st-needs)}
+    .m-stalled{background:var(--st-stalled);border-radius:1px}
+    .m-needs{background:var(--st-needs);transform:rotate(45deg) scale(.85);border-radius:1px}
+    .m-done,.m-passing{width:5px;height:10px;border:solid var(--st-done);border-width:0 2px 2px 0;
+      transform:translate(2px,-1px) rotate(45deg);margin-right:var(--s-0)}
+    .m-error,.m-retry,.m-failed,.m-failing{width:10px;height:10px}
+    .m-error::before,.m-error::after,.m-retry::before,.m-retry::after,.m-failed::before,.m-failed::after,
+    .m-failing::before,.m-failing::after{content:"";position:absolute;left:4px;top:-1px;width:2px;height:12px;
+      background:var(--st-failed);transform:rotate(45deg)}
+    .m-error::after,.m-retry::after,.m-failed::after,.m-failing::after{transform:rotate(-45deg)}
+    .m-cancelled{height:2px;background:var(--st-idle);top:-3px}
+    .m-todo{border-radius:50%;border:1.5px solid var(--st-idle)}
+
+    /* progress bar: supplementary to the done/total figure next to it */
+    .bar{display:flex;flex:0 0 auto;width:4.5rem;height:4px;background:var(--rule);border-radius:2px;overflow:hidden}
+    .bar span{height:100%}
+    .bar .b-done{background:var(--st-done)}.bar .b-doing{background:var(--st-working)}
+    .bar .b-failed{background:var(--st-failed)}
+
+    /* activity trace: one bin per 5 minutes over the last hour, oldest left */
+    .trace{display:inline-flex;gap:var(--s-0);align-items:flex-end;height:12px}
+    .trace{height:14px}
+    .trace span{width:4px;height:3px;background:var(--trace-off);border-radius:1px}
+    .trace span.on{height:14px;background:var(--trace-on)}
+    .trace span.lo{height:8px;background:var(--trace-on)}
+
+    /* expanded detail: label gutter, fixed order */
+    .detail{display:grid;grid-template-columns:7rem minmax(0,1fr);column-gap:var(--s-4);row-gap:var(--s-3);
+      padding:var(--s-1) var(--s-3) var(--s-5) calc(var(--s-3) + var(--edge));max-width:62rem}
+    .detail.fresh{animation:reveal .16s ease-out}
+    @keyframes reveal{from{opacity:0}to{opacity:1}}
+    .detail h3{margin:0;font-size:var(--fs-2);font-weight:500;color:var(--text-2);padding-top:var(--s-0)}
+    .detail .body{min-width:0;font-size:var(--fs-2)}
+    .detail p{margin:0;line-height:var(--lh)}
+    .detail .meta{color:var(--text-2);margin-bottom:var(--s-1)}
+    .detail .lead{font-size:var(--fs-3);color:var(--text);line-height:var(--lh)}
+    .detail ul{list-style:none;margin:0;padding:0}
+    .detail ul ul{padding-left:var(--s-5);margin-top:var(--s-1)}
+    .check li{display:flex;align-items:baseline;column-gap:var(--s-2);flex-wrap:wrap;margin:var(--s-0) 0}
+    .check li>ul{flex-basis:100%}
+    .check .text{flex:1 1 0;min-width:0;line-height:var(--lh)}
+    .check .text.clip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .check button.text:hover{color:var(--text)}
+    .check .res{color:var(--text-2)}
+    .more{margin-top:var(--s-2)}
+    .tl li{display:grid;grid-template-columns:3.2rem var(--mark) minmax(0,1fr);column-gap:var(--s-2);margin:var(--s-0) 0;
+      align-items:baseline}
+    .tl time{color:var(--text-2)}
+    .tl .mark{width:7px;height:7px;border-radius:50%}
+    .t-green{background:var(--st-done)}.t-blue{background:var(--st-working)}.t-red{background:var(--st-failed)}
+    .t-amber{background:var(--st-needs)}.t-grey{background:var(--st-idle)}.t-teal,.t-purple{background:var(--link)}
+    .tl .text{line-height:var(--lh)}
+    dl{display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:var(--s-4);row-gap:var(--s-0);margin:0}
+    dt{color:var(--text-2)}dd{margin:0}
+    dd .pr{margin-right:var(--s-3)}
+
+    .foot{margin-top:var(--s-5)}
+    #errors{color:var(--text);font-size:var(--fs-2);padding-bottom:var(--s-5)}
+    #errors div{border-left:var(--edge) solid var(--st-failed);padding-left:var(--s-3);margin:var(--s-1) 0}
+
+    @media (max-width:760px){
+      .top,main,#errors{padding-left:var(--s-3);padding-right:var(--s-3)}
+      .status{margin-left:0;flex-basis:100%}
+      .cols{display:none}
+      .row{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:var(--s-3);row-gap:var(--s-2)}
+      .row::after{content:"";order:2;flex-basis:100%;height:0}
+      .c-title{order:0;flex:1 1 0}.c-act{order:1;flex:0 0 auto;padding-top:0}
+      .c-state{order:3;flex:0 1 auto}.c-prog{order:4;padding-top:0}.c-pr{order:5;margin-left:auto}
+      .trace{display:none}
+      .compact .c-state,.compact .c-prog,.compact .c-pr,.compact .row::after{display:none}
+      .compact.open .c-state,.compact.open .c-prog,.compact.open .c-pr{display:flex}
+      .compact.open .row::after{display:block}
+      .ghead .counts{margin-left:0;flex-basis:100%}
+      .ghead .fold{position:absolute;right:var(--s-3);top:var(--s-3)}
+      .ghead{position:relative;padding-right:calc(var(--s-6) + var(--s-5))}
+      .detail{grid-template-columns:minmax(0,1fr);row-gap:var(--s-1)}
+      .detail h3{padding-top:var(--s-2)}
+      .sub{flex-wrap:wrap}
+    }
+    @media (prefers-reduced-motion:reduce){
+      *,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+    }
   CSS
 
   # Builds every node with createElement + textContent; never innerHTML.
@@ -788,10 +1044,13 @@ module Board
     (function () {
       "use strict";
       var POLL_MS = __POLL_MS__;
+      var TIMELINE_SHOWN = 6, CHECKLIST_SHOWN = 12, CLIP_CHARS = 90;
       var embedded = JSON.parse(document.getElementById("board-data").textContent);
-      var opened = {}, longTimeline = {}, showAllIdle = false, last = null, receivedAt = 0;
-      var MARKS = { done: "\u2713", doing: "\u25d0", todo: "\u25cb", failed: "\u2715" };
+      var opened = {}, fresh = {}, longTimeline = {}, longChecklist = {}, fullText = {};
+      var folded = {}, finishedOpen = {}, showAllIdle = false, last = null, receivedAt = 0, keyed = {};
       var PR = /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/pull\/[0-9]+$/;
+      var WORDS = { needs: "needs you", waiting: "waiting", stalled: "stalled", working: "working",
+                    queued: "queued", retry: "retrying", error: "error", done: "done", cancelled: "cancelled" };
       // #t=<token> is the per-run token board.rb printed; #<task-id> (also
       // after the token, as #t=...&<task-id>) opens that task's row.
       var token = "";
@@ -810,6 +1069,19 @@ module Board
         for (var i = 1; i < arguments.length; i++) if (arguments[i]) parent.appendChild(arguments[i]);
         return parent;
       }
+      // A control that keeps keyboard focus across the 5-second re-render.
+      function keyOf(node, key) {
+        node.setAttribute("data-key", key);
+        keyed[key] = node;
+        return node;
+      }
+      function button(cls, text, key, onClick, expanded) {
+        var b = keyOf(el("button", cls, text), key);
+        b.type = "button";
+        if (expanded !== undefined) b.setAttribute("aria-expanded", expanded ? "true" : "false");
+        b.addEventListener("click", function (e) { e.stopPropagation(); onClick(); render(last); });
+        return b;
+      }
       function nowMs() {
         var base = Date.parse(last && last.generated_at);
         return isNaN(base) ? Date.now() : base + (embedded ? 0 : Date.now() - receivedAt);
@@ -818,35 +1090,42 @@ module Board
         var t = Date.parse(iso);
         if (isNaN(t)) return "";
         var s = Math.max(0, Math.round((nowMs() - t) / 1000));
-        if (s < 60) return s + "s";
-        if (s < 3600) return Math.floor(s / 60) + "m";
-        if (s < 86400) return Math.floor(s / 3600) + "h";
-        return Math.floor(s / 86400) + "d";
+        if (s < 60) return s + " s";
+        if (s < 3600) return Math.floor(s / 60) + " min";
+        if (s < 86400) return Math.floor(s / 3600) + " h";
+        return Math.floor(s / 86400) + " d";
+      }
+      function stamp(iso) {
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2) + " " + hhmm(iso);
       }
       function hhmm(iso) {
         var d = new Date(iso);
         if (isNaN(d.getTime())) return "";
         return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
       }
-      function minutes(from, to) {
+      function span(from, to) {
         var a = Date.parse(from), b = to ? Date.parse(to) : nowMs();
         if (isNaN(a) || isNaN(b)) return "";
         var m = Math.max(0, Math.round((b - a) / 60000));
         return m < 120 ? m + " min" : Math.round(m / 60) + " h";
       }
-      function bar(p, big) {
-        var node = el("div", big ? "bar big" : "bar");
+      function plural(n, one, many) { return n + " " + (n === 1 ? one : many); }
+      function mark(kind) { return el("span", "mark m-" + kind); }
+      function bar(p) {
+        var node = el("div", "bar");
         if (!p || !p.total) return node;
-        [["done", "green"], ["doing", "blue"], ["failed", "red"], ["todo", "grey"]].forEach(function (pair) {
-          if (!p[pair[0]]) return;
-          var seg = el("span", pair[1]);
-          seg.style.width = (100 * p[pair[0]] / p.total) + "%";
+        ["done", "doing", "failed"].forEach(function (k) {
+          if (!p[k]) return;
+          var seg = el("span", "b-" + k);
+          seg.style.width = (100 * p[k] / p.total) + "%";
           node.appendChild(seg);
         });
         return node;
       }
-      function prLink(pr) {
-        var a = el("a", null, pr.label);
+      function prLink(pr, text) {
+        var a = el("a", "pr", text);
         if (PR.test(pr.url)) {
           a.href = pr.url;
           a.target = "_blank";
@@ -855,121 +1134,274 @@ module Board
         a.addEventListener("click", function (e) { e.stopPropagation(); });
         return a;
       }
-      function checklist(items) {
-        var ul = el("ul", "check");
-        items.forEach(function (item) {
-          var li = add(el("li"), el("span", "mark " + item.state, MARKS[item.state] || "?"), el("span", null, item.text));
-          if (item.mark) li.appendChild(el("span", "meta", " (" + item.mark + ")"));
-          if (item.children && item.children.length) li.appendChild(checklist(item.children));
+      function stateWord(row) {
+        if (row.phase === "waiting") return "waiting on " + row.waiting_on;
+        if (row.phase === "stalled") return "stalled " + ago(row.activity_at);
+        return WORDS[row.phase] || row.state;
+      }
+      function nowText(now) {
+        if (!now) return "";
+        if (now.kind === "waiting") return "Waiting on " + (now.on || "someone") + ": " + now.text;
+        if (now.kind === "step") return "Step " + now.step + ": " + now.text;
+        return now.text;
+      }
+
+      // --- the row: title, state, progress, pull request, activity
+      function rowNode(row, inNeeds) {
+        var isOpen = !!opened[row.id];
+        var wrap = el("div", "task" + (row.section === "idle" ? " compact" : "") + (isOpen ? " open" : ""));
+        var line = keyOf(el("div", "row ph-" + row.phase), "row:" + row.id);
+        line.tabIndex = 0;
+        line.setAttribute("role", "button");
+        line.setAttribute("aria-expanded", isOpen ? "true" : "false");
+
+        var title = el("div", "c-title");
+        title.appendChild(el("div", "title", row.topic));
+        var sub = el("div", "sub");
+        if (inNeeds) {
+          var tag = el("span", "tag", row.controller_tag);
+          tag.setAttribute("title", row.owner || "no controller key");
+          sub.appendChild(tag);
+        }
+        // The state column already names who a worker waits on.
+        if (!inNeeds && row.now) sub.appendChild(el("span", "now", row.now.kind === "waiting" ? row.now.text : nowText(row.now)));
+        sub.appendChild(el("span", "worker", row.agent));
+        title.appendChild(sub);
+        if (inNeeds && row.need) title.appendChild(el("div", "need", row.need));
+
+        var state = add(el("div", "c-state"), mark(row.phase), el("span", "word", stateWord(row)));
+        var p = row.tasks.progress;
+        var prog = el("div", "c-prog");
+        if (p.total) add(prog, bar(p), el("span", "frac", p.done + "/" + p.total));
+        else prog.appendChild(el("span", "none", "no checklist"));
+
+        var prCell = el("div", "c-pr");
+        if (row.prs.length) {
+          var pr = row.prs[row.prs.length - 1];
+          var label = pr.label.slice(pr.label.lastIndexOf("#"));
+          prCell.appendChild(prLink(pr, label));
+          if (pr.status) prCell.appendChild(el("span", "prs", pr.status));
+          if (pr.ci) {
+            var ci = mark(pr.ci);
+            ci.setAttribute("title", "CI " + pr.ci);
+            prCell.appendChild(ci);
+          }
+          if (row.prs.length > 1) prCell.appendChild(el("span", "prs", "+" + (row.prs.length - 1)));
+        } else {
+          prCell.appendChild(el("span", "none", "no PR"));
+        }
+
+        var act = el("div", "c-act");
+        var trace = el("span", "trace");
+        trace.setAttribute("aria-hidden", "true");
+        (row.trace || []).forEach(function (n) { trace.appendChild(el("span", n >= 3 ? "on" : n > 0 ? "lo" : null)); });
+        var when = el("time", null, ago(row.activity_at || row.updated_at));
+        if (row.activity_at || row.updated_at) when.setAttribute("datetime", row.activity_at || row.updated_at);
+        add(act, trace, when);
+
+        add(line, title, state, prog, prCell, act);
+        function toggle() {
+          opened[row.id] = !opened[row.id];
+          if (opened[row.id]) fresh[row.id] = true;
+          render(last);
+        }
+        line.addEventListener("click", toggle);
+        line.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+        });
+        wrap.appendChild(line);
+        if (isOpen) wrap.appendChild(detail(row));
+        return wrap;
+      }
+
+      // --- the detail: now, checklist, last report, timeline, facts (fixed order)
+      function part(box, label, body) { add(box, el("h3", null, label), add(el("div", "body"), body)); }
+      function checkItems(row, items, path) {
+        var ul = el("ul", path ? null : "check");
+        items.forEach(function (item, i) {
+          var key = row.id + ":" + path + i;
+          var li = el("li");
+          li.appendChild(mark(item.state));
+          var text;
+          if (item.text.length > CLIP_CHARS) {
+            text = button("text" + (fullText[key] ? "" : " clip"), item.text, "clip:" + key,
+                          function () { fullText[key] = !fullText[key]; }, !!fullText[key]);
+            text.setAttribute("title", fullText[key] ? "Show one line" : "Show the full text");
+          } else {
+            text = el("span", "text", item.text);
+          }
+          li.appendChild(text);
+          if (item.mark) li.appendChild(el("span", "res", item.mark));
+          if (item.children && item.children.length) li.appendChild(checkItems(row, item.children, path + i + "."));
           ul.appendChild(li);
         });
         return ul;
       }
       function detail(row) {
-        var box = el("div", "detail");
-        var left = el("div"), right = el("div");
+        var box = el("div", "detail" + (fresh[row.id] ? " fresh" : ""));
+        delete fresh[row.id];
         var t = row.tasks, p = t.progress;
-        add(left, el("h3", null, t.source === "checklist" ? "TASKS" : "TASKS (acceptance criteria)"), bar(p, true));
-        var pct = p.total ? Math.round(100 * p.done / p.total) + "%" : "no items";
-        add(left, el("div", "meta", pct + " \u00b7 " + p.done + "/" + p.total + (t.started_at ? " \u00b7 " + minutes(t.started_at, t.ended_at) : "")));
-        if (t.note) left.appendChild(el("div", "meta", t.note));
-        left.appendChild(checklist(t.items));
-        left.appendChild(el("h3", null, "LAST REPORT"));
-        if (row.last_report) {
-          add(left, el("div", "meta", hhmm(row.last_report.at) + " \u00b7 " + ago(row.last_report.at) + " ago \u00b7 " + row.last_report.kind),
-              el("p", null, row.last_report.text));
-        } else {
-          left.appendChild(el("div", "meta", "none yet"));
+
+        var now = el("div");
+        now.appendChild(el("p", "lead", row.now ? nowText(row.now) : "No report yet."));
+        var status = row.facts.filter(function (f) { return f.label === "Status"; })[0];
+        if (status) now.appendChild(el("p", "meta", "Status file: " + status.value + (status.at ? " " + ago(status.at) + " ago" : "")));
+        if (row.activity_at) now.appendChild(el("p", "meta", "Last recorded activity " + ago(row.activity_at) + " ago, at " + hhmm(row.activity_at)));
+        part(box, "Now", now);
+
+        var list = el("div");
+        var summary = p.total ? p.done + " of " + p.total + " done" : "No items";
+        if (t.started_at) summary += ", " + (t.ended_at ? "took " : "running for ") + span(t.started_at, t.ended_at);
+        list.appendChild(el("p", "meta", summary));
+        if (t.note) list.appendChild(el("p", "meta", t.note));
+        var items = longChecklist[row.id] ? t.items : t.items.slice(0, CHECKLIST_SHOWN);
+        list.appendChild(checkItems(row, items, ""));
+        if (t.items.length > CHECKLIST_SHOWN) {
+          list.appendChild(add(el("div", "more"), button("ghost", longChecklist[row.id] ? "Show the first " + CHECKLIST_SHOWN + " items"
+            : "Show all " + t.items.length + " items", "checklist:" + row.id,
+            function () { longChecklist[row.id] = !longChecklist[row.id]; })));
         }
-        right.appendChild(el("h3", null, "TIMELINE"));
-        var ul = el("ul", "tl"), limit = longTimeline[row.id] ? row.timeline.length : 8;
+        part(box, t.source === "checklist" ? "Checklist" : "Acceptance criteria", list);
+
+        var report = el("div");
+        if (row.last_report) {
+          report.appendChild(el("p", "meta", hhmm(row.last_report.at) + ", " + ago(row.last_report.at) + " ago, " + row.last_report.kind));
+          report.appendChild(el("p", null, row.last_report.text));
+        } else {
+          report.appendChild(el("p", "meta", "None yet."));
+        }
+        part(box, "Last report", report);
+
+        var tl = el("div");
+        var limit = longTimeline[row.id] ? row.timeline.length : TIMELINE_SHOWN;
+        if (row.timeline.length > TIMELINE_SHOWN) {
+          tl.appendChild(el("p", "meta", longTimeline[row.id] ? "All " + row.timeline.length + " events, newest first"
+            : "Newest " + TIMELINE_SHOWN + " of " + row.timeline.length + " events"));
+        }
+        var ul = el("ul", "tl");
         row.timeline.slice(0, limit).forEach(function (entry) {
           var time = el("time", null, hhmm(entry.at));
           time.setAttribute("datetime", entry.at);
-          ul.appendChild(add(el("li"), el("span", "dot " + entry.color), time, el("span", null, entry.text)));
+          ul.appendChild(add(el("li"), time, el("span", "mark t-" + entry.color), el("span", "text", entry.text)));
         });
-        right.appendChild(ul);
-        if (row.timeline.length > limit) {
-          var more = el("button", null, "Show " + (row.timeline.length - limit) + " more");
-          more.addEventListener("click", function (e) { e.stopPropagation(); longTimeline[row.id] = true; render(last); });
-          right.appendChild(more);
+        tl.appendChild(ul);
+        if (row.timeline.length > TIMELINE_SHOWN) {
+          tl.appendChild(add(el("div", "more"), button("ghost", longTimeline[row.id] ? "Show the newest " + TIMELINE_SHOWN
+            : "Show all " + row.timeline.length + " events", "timeline:" + row.id,
+            function () { longTimeline[row.id] = !longTimeline[row.id]; })));
         }
-        right.appendChild(el("h3", null, "FACTS"));
+        part(box, "Timeline", tl);
+
         var dl = el("dl");
-        row.facts.forEach(function (f) {
-          var value = f.value + (f.at ? " " + ago(f.at) + " ago (" + hhmm(f.at) + ")" : "");
-          add(dl, el("dt", null, f.label), el("dd", null, value));
-        });
-        right.appendChild(dl);
-        return add(box, left, right);
-      }
-      function rowNode(row) {
-        var wrap = el("div");
-        var line = el("div", "row" + (opened[row.id] ? " open" : ""));
-        line.tabIndex = 0;
-        line.setAttribute("role", "button");
-        line.setAttribute("aria-expanded", opened[row.id] ? "true" : "false");
-        var main = el("div");
-        if (row.need) main.appendChild(el("div", "need", "you: " + row.need));
-        var tag = null;
-        if (row.section === "needs_you") {
-          tag = el("span", "tag", "[" + row.controller_tag + "]");
-          tag.setAttribute("title", row.owner || "no controller key");
-        }
-        add(main, add(el("div", "line"), tag, el("span", "agent", row.agent), el("span", "topic", row.topic)));
-        var p = row.tasks.progress;
-        add(main, add(el("div", "prog"), bar(p, false), el("span", "leaf", p.done + "/" + p.total)));
-        var right = el("div", "right");
+        var prs = el("dd");
+        if (!row.prs.length) prs.textContent = "none recorded";
         row.prs.forEach(function (pr) {
-          add(right, add(el("div"), prLink(pr), pr.state ? el("span", "prstate", " " + pr.state) : null));
+          add(prs, add(el("span", "pr"), prLink(pr, pr.label), pr.state ? el("span", null, " " + pr.state) : null));
         });
-        right.appendChild(el("div", row.working ? "when on" : "when", row.working ? "working" : ago(row.updated_at)));
-        add(line, el("span", "dot " + row.color), main, right);
-        function toggle() { opened[row.id] = !opened[row.id]; render(last); }
-        line.addEventListener("click", toggle);
-        line.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
-        wrap.appendChild(line);
-        if (opened[row.id]) wrap.appendChild(detail(row));
-        return wrap;
+        add(dl, el("dt", null, "Pull requests"), prs, el("dt", null, "Worker"), el("dd", null, row.agent));
+        if (row.repo) add(dl, el("dt", null, "Repository"), el("dd", null, row.repo));
+        row.facts.forEach(function (f) {
+          if (f.label === "Status") return;
+          add(dl, el("dt", null, f.label), el("dd", null, f.value + (f.at ? " " + ago(f.at) + " ago" : "")));
+        });
+        part(box, "Facts", dl);
+        return box;
       }
+
+      // --- a controller band
+      function countSpan(n, word, kind) {
+        if (!n && kind !== "working") return null;
+        return add(el("span", "count"), kind ? mark(kind) : null, el("b", null, n), el("span", null, word));
+      }
+      function groupNode(group, rows) {
+        var key = group.owner || "";
+        var isFolded = !!folded[key];
+        var live = rows.filter(function (r) { return r.section !== "idle"; });
+        var idle = rows.filter(function (r) { return r.section === "idle"; });
+        var c = group.counts;
+        var sec = el("section", "group");
+        var head = button("ghead", null, "group:" + key, function () { folded[key] = !folded[key]; }, !isFolded);
+        var gtag = el("span", "gtag", group.tag);
+        var gkey = el("span", "gkey", group.label);
+        gkey.setAttribute("title", group.owner || "tasks without a controller key");
+        var counts = add(el("span", "counts"),
+          countSpan(c.working, "working", "working"), countSpan(c.stalled, "stalled", "stalled"),
+          countSpan(c.waiting, "waiting", "waiting"), countSpan(c.needs, "need you", "needs"),
+          countSpan(idle.length, "finished", null));
+        add(head, gtag, group.repos.length ? el("span", "repos", group.repos.join(", ")) : null, gkey, counts,
+            el("span", "fold", isFolded ? "Show" : "Hide"));
+        sec.appendChild(add(el("h2"), head));
+        if (isFolded) return sec;
+        var list = el("div", "rows");
+        live.forEach(function (row) { list.appendChild(rowNode(row, false)); });
+        if (idle.length) {
+          var anyOpen = idle.some(function (r) { return opened[r.id]; });
+          var showIdle = finishedOpen[key] || anyOpen;
+          list.appendChild(button("finished", (showIdle ? "Hide " : "Show ") + plural(idle.length, "finished task", "finished tasks") +
+            (showAllIdle ? "" : " from the last 24 hours"), "finished:" + key,
+            function () { finishedOpen[key] = !showIdle; idle.forEach(function (r) { if (showIdle) delete opened[r.id]; }); }, !!showIdle));
+          if (showIdle) idle.forEach(function (row) { list.appendChild(rowNode(row, false)); });
+        }
+        sec.appendChild(list);
+        return sec;
+      }
+
+      function columns() {
+        return add(el("div", "cols"), el("span", null, "Task"), el("span", null, "State"), el("span", null, "Progress"),
+                   el("span", null, "Pull request"), el("span", "r", "Last activity"));
+      }
+
       function render(data) {
         if (!data) return;
-        var shown = data.needs_you.length, hidden = 0;
-        var needs = el("section");
-        needs.appendChild(add(el("h2", null, "NEEDS YOU"), el("span", "n", data.needs_you.length)));
-        if (!data.needs_you.length) needs.appendChild(el("div", "empty", "none"));
-        data.needs_you.forEach(function (row) { needs.appendChild(rowNode(row)); });
-        var nodes = [needs];
-        // One group per controller; a group whose rows are all hidden idle rows is not shown.
-        data.groups.forEach(function (group) {
-          var rows = group.rows.filter(function (r) { return r.section !== "idle" || showAllIdle || r.recent; });
-          hidden += group.rows.length - rows.length;
-          if (!rows.length) return;
-          shown += rows.length;
-          var working = rows.filter(function (r) { return r.section !== "idle"; }).length;
-          var sec = el("section", "group");
-          var key = el("span", "key", group.label);
-          key.setAttribute("title", group.owner || "tasks without a controller key");
-          sec.appendChild(add(el("h2"), key, el("span", "n", working + " working \u00b7 " + (rows.length - working) + " idle")));
-          rows.forEach(function (row) { sec.appendChild(rowNode(row)); });
-          nodes.push(sec);
-        });
-        document.getElementById("count").textContent = shown + " agents \u00b7 " + data.needs_you.length + " needs you";
-        if (hidden || showAllIdle) {
-          var toggle = el("button", null, showAllIdle ? "Show only the last 24 hours" : "Show all idle (" + hidden + " older)");
-          toggle.addEventListener("click", function () { showAllIdle = !showAllIdle; render(last); });
-          nodes.push(add(el("section"), add(el("div", "empty"), toggle)));
+        var focusKey = document.activeElement && document.activeElement.getAttribute
+          ? document.activeElement.getAttribute("data-key") : null;
+        keyed = {};
+        var nodes = [], hidden = 0, totals = { working: 0, stalled: 0, waiting: 0 };
+
+        var needs = el("section", "needs" + (data.needs_you.length ? "" : " none"));
+        if (data.needs_you.length) {
+          needs.appendChild(el("h2", null, plural(data.needs_you.length, "task needs you", "tasks need you")));
+          data.needs_you.forEach(function (row) { needs.appendChild(rowNode(row, true)); });
+        } else {
+          needs.appendChild(el("p", null, "Nothing needs you right now."));
         }
+        nodes.push(needs);
+
+        var bands = [];
+        data.groups.forEach(function (group) {
+          var rows = group.rows.filter(function (r) { return r.section !== "idle" || showAllIdle || r.recent || opened[r.id]; });
+          hidden += group.rows.length - rows.length;
+          totals.working += group.counts.working;
+          totals.stalled += group.counts.stalled;
+          totals.waiting += group.counts.waiting;
+          if (!rows.length) return;
+          bands.push(groupNode(group, rows));
+        });
+        if (bands.length) nodes.push(columns());
+        nodes = nodes.concat(bands);
+        if (hidden || showAllIdle) {
+          nodes.push(add(el("div", "foot"), button("ghost", showAllIdle ? "Show only the last 24 hours"
+            : "Show all finished tasks (" + hidden + " older than 24 hours)", "idle",
+            function () { showAllIdle = !showAllIdle; })));
+        }
+
+        var count = document.getElementById("count");
+        count.replaceChildren(
+          add(el("span", "sep"), el("b", null, totals.working), el("span", null, " working")),
+          add(el("span", "sep"), el("b", null, totals.stalled), el("span", null, " stalled")),
+          add(el("span", "sep"), el("b", null, totals.waiting), el("span", null, " waiting")),
+          add(el("span", "sep"), el("b", null, data.needs_you.length), el("span", null, data.needs_you.length === 1 ? " needs you" : " need you")));
         var board = document.getElementById("board");
         board.replaceChildren.apply(board, nodes);
         var errors = document.getElementById("errors");
         errors.replaceChildren();
-        data.errors.forEach(function (e) { errors.appendChild(el("div", null, "unreadable " + e.task + ": " + e.reason)); });
+        data.errors.forEach(function (e) { errors.appendChild(el("div", null, "Unreadable task " + e.task + ": " + e.reason)); });
+        if (focusKey && keyed[focusKey] && keyed[focusKey].focus) keyed[focusKey].focus();
       }
       function status(text) { document.getElementById("status").textContent = text; }
       function poll() {
         if (!token) {
-          status("open the URL board.rb printed: it carries this run's access token (#t=...)");
+          status("Open the URL board.rb printed: it carries this run's access token (#t=...).");
           return;
         }
         fetch("api/board", { cache: "no-store", credentials: "same-origin", headers: { "X-Board-Token": token } })
@@ -980,15 +1412,15 @@ module Board
           })
           .then(function (data) {
             last = data; receivedAt = Date.now(); render(data);
-            status("live \u00b7 refreshed " + hhmm(data.generated_at) + " \u00b7 every " + data.poll_seconds + " s" + (data.gh ? "" : " \u00b7 gh off"));
+            status("Live, updated " + hhmm(data.generated_at) + ", every " + data.poll_seconds + " s" + (data.gh ? "" : ", PR state off"));
           })
-          .catch(function (e) { status("refresh failed (" + e.message + "); retrying"); })
+          .catch(function (e) { status("Refresh failed (" + e.message + "); retrying."); })
           .then(function () { setTimeout(poll, POLL_MS); });
       }
       if (embedded) {
         last = embedded;
         render(embedded);
-        status("snapshot " + embedded.generated_at + " (not live)");
+        status("Snapshot of " + stamp(embedded.generated_at) + ", not live");
       } else {
         poll();
       }
