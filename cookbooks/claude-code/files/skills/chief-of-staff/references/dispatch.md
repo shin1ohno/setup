@@ -586,7 +586,9 @@ list of `{"text", "state", "children"?}` where state is `todo`, `doing`, `done`
 or `failed` and children are one level of `{"text", "state"}`. It checks the
 task ID, attempt, nonce and task directory exactly as `post` does, cleans each
 text the same way, and refuses more than 30 items, 15 children per item, 80
-leaves, 200 bytes per text or 32 KiB of input. Each call keeps a capped log of
+leaves, 200 bytes per text or 32 KiB of input. It also refuses to replace a
+checklist of the same attempt that was recorded with another nonce; a new
+attempt starts its own file. Each call keeps a capped log of
 state changes ("Plan: 6 tasks", "<item> → done") in the same file. No doorbell
 follows a checklist update; it is for the owner's Agent Board, not the
 controller. `scripts/board.rb` serves that board (`ruby board.rb` prints

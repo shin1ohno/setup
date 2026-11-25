@@ -137,7 +137,7 @@ def build(root, hostile=True):
     f = Fixture(root)
     gh_url = "https://github.com/example-org/demo-repo/pull/12"
     merged_url = "https://github.com/example-org/demo-repo/pull/2"
-    f.task(1, "needs", "needs-user", topic=h("topic"), owner=h("owner"), agent=h("agent"),
+    f.task(1, "needs", "needs-user", topic=h("topic"), owner="hc:default#" + h("tag"), agent=h("agent"),
            terminal=h("terminal"),
            history=[{"at": at(110), "state": "running", "note": h("history")},
                     {"at": at(30), "state": "needs-user", "note": h("need")}],
@@ -168,15 +168,16 @@ def build(root, hostile=True):
              "decide": h("decide")})
 
     f.task(3, "asking", "running")
-    f.state("asking", status="asking", asking={"tool": None, "question": h("asking"), "at": at(2)})
+    f.state("asking", status="asking", updated_at=at(2), asking={"tool": None, "question": h("asking"), "at": at(2)})
 
     f.task(4, "waiting-owner", "running")
     f.inbox("waiting-owner", "wait", h("wait"), 3, on=f"the owner {HOSTILE}"[:80])
 
-    f.task(5, "codex", "running", kind="codex", acceptance=[h("criterion"), "Second criterion"])
+    f.task(5, "codex", "running", kind="codex", owner="hc:default#t10",
+           acceptance=[h("criterion"), "Second criterion"])
     f.inbox("codex", "question", "Which branch should I use?", 4)  # to the controller: still working
 
-    f.task(6, "accepted-recent", "accepted", updated=60,
+    f.task(6, "accepted-recent", "accepted", updated=60, owner="hc:default#t10",
            acceptance=["Passes A", "Passes B", "Passes C"],
            envelope={"task_id": task_id(6), "attempt": 1, "status": "done", "summary": "s", "artifacts": [],
                      "criteria": [{"criterion": "Passes A", "status": "pass", "evidence": "/x"},
@@ -184,10 +185,10 @@ def build(root, hostile=True):
                                   {"criterion": "Passes C", "status": "unverified", "evidence": "/x"}],
                      "open_questions": []})
     f.task(7, "accepted-old", "accepted", updated=3 * 24 * 60)
-    f.task(8, "cancelled", "cancelled", updated=90)
-    f.task(9, "queued", "queued", attempts=0)
+    f.task(8, "cancelled", "cancelled", updated=90, owner="hc:default#t10")
+    f.task(9, "queued", "queued", attempts=0, owner=None, updated=7)
 
-    f.task(10, "bad-nonce", "running")
+    f.task(10, "bad-nonce", "running", owner=h("group"), updated=8)
     f.write(f.root / task_id(10) / "checklist-1.json",
             {"task_id": task_id(10), "attempt": 1, "nonce": "0" * 16, "at": at(5), "started_at": at(5),
              "items": [{"text": "forged item", "state": "done"}], "changes": []})
@@ -271,15 +272,18 @@ class BoardCase(unittest.TestCase):
         return json.loads(result.stdout)
 
     def rows(self, data):
-        return {row["id"]: row for section in data["sections"].values() for row in section}
+        rows = data["needs_you"] + [row for group in data["groups"] for row in group["rows"]]
+        return {row["id"]: row for row in rows}
 
 
 class SectionTest(BoardCase):
     def test_every_owner_every_section(self):
         data = self.dump("--no-gh")
         ids = self.fixture.ids
-        section = {row["id"]: name for name, rows in data["sections"].items() for row in rows}
+        section = {row["id"]: row["section"] for row in self.rows(data).values()}
         self.assertEqual(len(section), 10, "every ledger task, of every owner, appears once")
+        count = len(data["needs_you"]) + sum(len(g["rows"]) for g in data["groups"])
+        self.assertEqual(count, 10, "no task is listed twice")
         for name in ("needs", "blocked", "asking", "waiting-owner"):
             self.assertEqual(section[ids[name]], "needs_you", name)
         for name in ("codex", "queued", "bad-nonce"):
@@ -290,6 +294,27 @@ class SectionTest(BoardCase):
         self.assertTrue(rows[ids["accepted-recent"]]["recent"])
         self.assertFalse(rows[ids["accepted-old"]]["recent"], "idle older than 24 h is hidden by default")
         self.assertEqual(data["errors"], [])
+
+    def test_grouped_by_controller(self):
+        data = self.dump("--no-gh")
+        ids = self.fixture.ids
+        names = {tid: name for name, tid in ids.items()}
+        self.assertEqual([names[r["id"]] for r in data["needs_you"]], ["needs", "blocked", "asking", "waiting-owner"],
+                         "one Needs you list across controllers, newest first")
+        tags = {names[r["id"]]: r["controller_tag"] for r in data["needs_you"]}
+        self.assertEqual(tags, {"needs": mark("tag"), "blocked": "t1", "asking": "t1", "waiting-owner": "t1"})
+        self.assertEqual([g["label"] for g in data["groups"]],
+                         ["hc:default#t10", "(no controller key)", mark("group"), "hc:default#t1"],
+                         "groups ordered by most recent update; tasks without a key share one group")
+        self.assertEqual([g["owner"] for g in data["groups"]][1], None)
+        members = {g["label"]: [(names[r["id"]], r["section"]) for r in g["rows"]] for g in data["groups"]}
+        self.assertEqual(members["hc:default#t10"],
+                         [("codex", "working"), ("accepted-recent", "idle"), ("cancelled", "idle")],
+                         "working rows first, then idle, each newest first")
+        self.assertEqual(members["hc:default#t1"], [("accepted-old", "idle")])
+        for group in data["groups"]:
+            self.assertTrue(all(r["owner"] == group["owner"] for r in group["rows"]))
+            self.assertTrue(all(r["section"] != "needs_you" for r in group["rows"]))
 
     def test_row_fields(self):
         rows = self.rows(self.dump("--no-gh"))
@@ -309,7 +334,7 @@ class SectionTest(BoardCase):
         self.assertIn(mark("blocked"), blocked["need"])
         self.assertIn(mark("decide"), blocked["need"])
         facts = {f["label"]: f for f in needs["facts"]}
-        self.assertEqual(facts["Owner"]["value"], mark("owner"))
+        self.assertEqual(facts["Controller"]["value"], "hc:default#" + mark("tag"))
         self.assertIn(mark("terminal"), facts["Lane"]["value"])
         self.assertTrue(facts["Status"]["at"])
 
@@ -422,7 +447,7 @@ class ReadOnlyTest(BoardCase):
 
 
 class EscapingTest(BoardCase):
-    FIELDS = ("topic", "agent", "owner", "terminal", "need", "history", "controller-report", "prompt",
+    FIELDS = ("topic", "agent", "tag", "group", "terminal", "need", "history", "controller-report", "prompt",
               "commit", "test-command", "step-read", "note-unread", "item", "child", "blocked", "decide",
               "asking", "wait", "criterion")
 
@@ -476,7 +501,14 @@ class EscapingTest(BoardCase):
         report = json.loads(result.stdout)
         self.assertLessEqual(set(report["tags"]), {"DIV", "SPAN", "SECTION", "H2", "H3", "UL", "LI", "A", "P",
                                                    "TIME", "DL", "DT", "DD", "BUTTON"})
-        self.assertLessEqual(set(report["attributes"]), {"role", "aria-expanded", "datetime"})
+        self.assertLessEqual(set(report["attributes"]), {"role", "aria-expanded", "datetime", "title"})
+        self.assertIn("hc:default#" + mark("tag"), report["titles"], "the Needs you tag carries the full key as a title")
+        self.assertIn("[" + mark("tag") + "]", report["texts"])
+        self.assertIn(mark("group"), report["texts"], "the group heading shows the key as text")
+        self.assertIn("1 working \u00b7 2 idle", report["texts"])
+        self.assertNotIn("hc:default#t1", report["initial_groups"], "an all-hidden idle group is not shown")
+        self.assertIn("hc:default#t1", report["final_groups"])
+        self.assertEqual(report["initial_groups"][0], "hc:default#t10")
         self.assertTrue(report["hrefs"])
         for href in report["hrefs"]:
             self.assertRegex(href, PR_RE)
@@ -518,6 +550,7 @@ const document = { createElement: t => new El(t), getElementById: id => ids[id],
 new Function("document", "fetch", script)(document, () => { throw new Error("snapshot fetched"); });
 function walk(node, out) { out.push(node); node.children.forEach(c => walk(c, out)); return out; }
 function live() { return walk(ids.board, []); }
+const initial_groups = live().filter(n => n.className === "key").map(n => n.textContent);
 let expanded = 0;
 for (let guard = 0; guard < 500; guard++) {
   const closed = live().find(n => n.attributes["aria-expanded"] === "false");
@@ -526,11 +559,14 @@ for (let guard = 0; guard < 500; guard++) {
   if (!closed) break;
   closed.fire("click"); expanded++;
 }
+const groupKeys = () => live().filter(n => n.className === "key").map(n => n.textContent);
+const final_groups = groupKeys();
 const nodes = live().concat(walk(ids.errors, []), [ids.count]);
 const report = { tags: [...new Set(nodes.map(n => n.tagName))],
   attributes: [...new Set(nodes.flatMap(n => Object.keys(n.attributes)))],
   hrefs: nodes.filter(n => n.href !== undefined).map(n => n.href),
-  texts: nodes.filter(n => n.text !== null).map(n => n.text), expanded };
+  texts: nodes.filter(n => n.text !== null).map(n => n.text), expanded, initial_groups, final_groups,
+  titles: nodes.map(n => n.attributes.title).filter(Boolean) };
 for (const n of nodes) for (const key of Object.keys(n))
   if (/^on/i.test(key)) throw new Error("event handler property " + key);
 process.stdout.write(JSON.stringify(report));

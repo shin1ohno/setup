@@ -72,6 +72,13 @@ class ChecklistTest(unittest.TestCase):
         self.assertEqual(body["changes"], [{"at": body["at"], "plan": 4}])
         self.assertEqual(oct(self.file.stat().st_mode & 0o777), "0o600")
 
+    def test_summary_counts_leaves(self):
+        items = [{"text": "Parent", "state": "done",
+                  "children": [{"text": "A", "state": "done"}, {"text": "B", "state": "todo"}]},
+                 {"text": "Leaf", "state": "done"}]
+        result = self.record(items)
+        self.assertEqual((result["leaves"], result["done"]), (3, 2), "a done parent is not a leaf")
+
     def test_change_log_records_state_changes(self):
         self.record()
         first = self.body()
@@ -172,14 +179,32 @@ class ChecklistTest(unittest.TestCase):
                          "a planted file is not taken as the previous checklist")
         self.assertEqual([p.name for p in self.dir.iterdir() if p.name.startswith(".checklist-")], [])
 
-    def test_foreign_previous_checklist_is_not_carried(self):
-        self.file.write_text(json.dumps({"task_id": self.task, "attempt": 1, "nonce": "0" * 16,
+    def test_other_nonce_of_the_same_attempt_is_refused(self):
+        self.record()
+        before = self.file.read_bytes()
+        other = "0" * 16 if self.nonce != "0" * 16 else "1" * 16
+        reason = self.record([{"text": "Replacement", "state": "done"}], ok=False, nonce=other)
+        self.assertIn("checklist-1.json was recorded with a different nonce for attempt 1; "
+                      "refusing to replace it", reason)
+        self.assertEqual(self.file.read_bytes(), before, "the recorded checklist is untouched")
+        self.assertEqual([p.name for p in self.dir.iterdir() if p.name.startswith(".checklist-")], [])
+        # The right nonce still updates it, and a new attempt starts its own file.
+        self.record([{"text": "Write the failing test", "state": "done"}])
+        self.assertEqual(self.body()["items"], [{"text": "Write the failing test", "state": "done"}])
+        self.assertEqual(self.record(attempt="2", nonce=other)["recorded"], "checklist-2.json")
+        self.assertTrue(self.file.is_file())
+
+    def test_unreadable_previous_checklist_is_replaced_not_carried(self):
+        self.file.write_text(json.dumps({"task_id": "f" * 16, "attempt": 1, "nonce": self.nonce,
                                          "at": "x", "started_at": "forged", "items": [],
                                          "changes": [{"at": "x", "plan": 99}]}))
         self.record()
         body = self.body()
         self.assertNotEqual(body["started_at"], "forged")
         self.assertEqual([c.get("plan") for c in body["changes"]], [4])
+        self.file.write_text("{ truncated")
+        self.record()
+        self.assertEqual(len(self.body()["items"]), 3)
 
     def test_existing_inbox_and_ledger_output_unchanged(self):
         post = self.run_script(INBOX, "post", "--task-dir", str(self.dir), "--task-id", self.task,

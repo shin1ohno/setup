@@ -488,12 +488,13 @@ module Board
                { label: "Status", value: "no state file" }
              end
     facts << { label: "Ledger", value: "#{state} · attempt #{number} of #{task['max_attempts'].is_a?(Integer) ? task['max_attempts'] : '?'}" }
-    facts << { label: "Owner", value: owner || "?" }
+    facts << { label: "Controller", value: owner || "(no controller key)" }
     facts << { label: "Task", value: id }
     facts << { label: "Checklist", value: checklist_error } if checklist_error
 
     {
-      id: id, topic: topic, owner: owner, state: state, section: section, need: need,
+      id: id, topic: topic, owner: owner, controller_tag: controller_tag(owner), state: state,
+      section: section, need: need,
       color: if section == "needs_you" then "amber"
              elsif status == "error" || state == "retry" then "red"
              elsif section == "working" then (working ? "blue" : "teal")
@@ -531,11 +532,27 @@ module Board
         errors << { task: name, reason: "#{e.class}: #{str(e.message, 200)}" }
       end
     end
-    rows.sort_by! { |r| [r[:working] ? 0 : 1, -(time(r[:updated_at])&.to_f || 0)] }
-    sections = { needs_you: [], working: [], idle: [] }
-    rows.each { |r| sections[r[:section].to_sym] << r }
+    recency = ->(r) { time(r[:updated_at])&.to_f || 0 }
+    needs, others = rows.partition { |r| r[:section] == "needs_you" }
+    # One group per controller (ledger owner key), newest update first;
+    # inside a group, working rows before idle rows, each newest first.
+    groups = others.group_by { |r| r[:owner] }.map do |owner, list|
+      { owner: owner, label: owner || "(no controller key)", tag: controller_tag(owner),
+        latest: list.map(&recency).max,
+        rows: list.sort_by { |r| [r[:section] == "idle" ? 1 : 0, -recency.call(r)] } }
+    end
+    groups = groups.sort_by { |g| -g[:latest] }.each { |g| g.delete(:latest) }
     { generated_at: iso(now), poll_seconds: POLL_SECONDS, state_dir: File.basename(root),
-      gh: prs.enabled?, sections: sections, errors: errors }
+      gh: prs.enabled?, needs_you: needs.sort_by { |r| -recency.call(r) }, groups: groups,
+      errors: errors }
+  end
+
+  # The short controller name for a Needs you row: what follows the first "#"
+  # of the owner key (hc:default#t10 -> t10, herdr:sock#w1:p1 -> w1:p1).
+  def controller_tag(owner)
+    return "no key" unless owner
+
+    str(owner.include?("#") ? owner.split("#", 2)[1] : owner, 80) || owner
   end
 
   # --- pull request state through gh -----------------------------------------------
@@ -735,7 +752,9 @@ module Board
     h1{font-size:16px;margin:0}.count,.status{color:var(--dim)}.status{margin-left:auto;font-size:12px}
     main{padding:6px 0 20px}section{margin-top:14px}
     h2{font-size:11px;letter-spacing:.08em;color:var(--dim);margin:0;padding:4px 18px;font-weight:600}
-    h2 .n{margin-left:6px;color:var(--fg)}
+    h2 .n{margin-left:6px;color:var(--fg)}h2 .key{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:0;color:var(--fg)}.group h2 .n{color:var(--dim);font-weight:400;letter-spacing:0;margin-left:10px}
+    .tag{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--amber);white-space:nowrap}
     .row{display:grid;grid-template-columns:14px 1fr auto;gap:10px;padding:7px 18px;border-top:1px solid var(--line);cursor:pointer}
     .row:hover,.row.open{background:var(--panel)}.row:focus{outline:1px solid var(--blue);outline-offset:-1px}
     .dot{width:9px;height:9px;border-radius:50%;margin-top:5px;background:var(--grey)}
@@ -892,7 +911,12 @@ module Board
         line.setAttribute("aria-expanded", opened[row.id] ? "true" : "false");
         var main = el("div");
         if (row.need) main.appendChild(el("div", "need", "you: " + row.need));
-        add(main, add(el("div", "line"), el("span", "agent", row.agent), el("span", "topic", row.topic)));
+        var tag = null;
+        if (row.section === "needs_you") {
+          tag = el("span", "tag", "[" + row.controller_tag + "]");
+          tag.setAttribute("title", row.owner || "no controller key");
+        }
+        add(main, add(el("div", "line"), tag, el("span", "agent", row.agent), el("span", "topic", row.topic)));
         var p = row.tasks.progress;
         add(main, add(el("div", "prog"), bar(p, false), el("span", "leaf", p.done + "/" + p.total)));
         var right = el("div", "right");
@@ -910,24 +934,33 @@ module Board
       }
       function render(data) {
         if (!data) return;
-        var s = data.sections, idle = s.idle.filter(function (r) { return showAllIdle || r.recent; });
-        var hidden = s.idle.length - idle.length;
-        var shown = s.needs_you.length + s.working.length + idle.length;
-        document.getElementById("count").textContent = shown + " agents \u00b7 " + s.needs_you.length + " needs you";
-        var board = document.getElementById("board");
-        var parts = [["NEEDS YOU", s.needs_you], ["WORKING", s.working], ["IDLE", idle]];
-        var nodes = parts.map(function (part) {
-          var sec = el("section");
-          sec.appendChild(add(el("h2", null, part[0]), el("span", "n", part[1].length)));
-          if (!part[1].length) sec.appendChild(el("div", "empty", "none"));
-          part[1].forEach(function (row) { sec.appendChild(rowNode(row)); });
-          return sec;
+        var shown = data.needs_you.length, hidden = 0;
+        var needs = el("section");
+        needs.appendChild(add(el("h2", null, "NEEDS YOU"), el("span", "n", data.needs_you.length)));
+        if (!data.needs_you.length) needs.appendChild(el("div", "empty", "none"));
+        data.needs_you.forEach(function (row) { needs.appendChild(rowNode(row)); });
+        var nodes = [needs];
+        // One group per controller; a group whose rows are all hidden idle rows is not shown.
+        data.groups.forEach(function (group) {
+          var rows = group.rows.filter(function (r) { return r.section !== "idle" || showAllIdle || r.recent; });
+          hidden += group.rows.length - rows.length;
+          if (!rows.length) return;
+          shown += rows.length;
+          var working = rows.filter(function (r) { return r.section !== "idle"; }).length;
+          var sec = el("section", "group");
+          var key = el("span", "key", group.label);
+          key.setAttribute("title", group.owner || "tasks without a controller key");
+          sec.appendChild(add(el("h2"), key, el("span", "n", working + " working \u00b7 " + (rows.length - working) + " idle")));
+          rows.forEach(function (row) { sec.appendChild(rowNode(row)); });
+          nodes.push(sec);
         });
+        document.getElementById("count").textContent = shown + " agents \u00b7 " + data.needs_you.length + " needs you";
         if (hidden || showAllIdle) {
           var toggle = el("button", null, showAllIdle ? "Show only the last 24 hours" : "Show all idle (" + hidden + " older)");
           toggle.addEventListener("click", function () { showAllIdle = !showAllIdle; render(last); });
-          nodes[2].appendChild(add(el("div", "empty"), toggle));
+          nodes.push(add(el("section"), add(el("div", "empty"), toggle)));
         }
+        var board = document.getElementById("board");
         board.replaceChildren.apply(board, nodes);
         var errors = document.getElementById("errors");
         errors.replaceChildren();

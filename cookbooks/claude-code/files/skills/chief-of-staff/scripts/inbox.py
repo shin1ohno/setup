@@ -276,9 +276,13 @@ def checklist_items(raw):
     return stored
 
 
-def checklist_leaves(items):
+def checklist_leaf_items(items):
     """Items without children, plus every child: what the progress bar counts."""
-    return sum(len(entry["children"]) if entry.get("children") else 1 for entry in items)
+    return [leaf for entry in items for leaf in (entry.get("children") or [entry])]
+
+
+def checklist_leaves(items):
+    return len(checklist_leaf_items(items))
 
 
 def checklist_states(items):
@@ -291,8 +295,8 @@ def checklist_states(items):
     return states
 
 
-def previous_checklist(directory, name, args):
-    """The earlier checklist of this attempt, or None when absent or not ours."""
+def existing_checklist(directory, name):
+    """The parsed checklist file now at `name`, or None when absent or unreadable."""
     try:
         handle = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
                          dir_fd=directory)
@@ -308,7 +312,12 @@ def previous_checklist(directory, name, args):
         body = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
         return None
-    if (not isinstance(body, dict) or set(body) != CHECKLIST_KEYS or
+    return body if isinstance(body, dict) else None
+
+
+def previous_checklist(body, args):
+    """The earlier checklist of this attempt, or None when absent or not ours."""
+    if (body is None or set(body) != CHECKLIST_KEYS or
             body["task_id"] != args.task_id or body["attempt"] != int(args.attempt) or
             body["nonce"] != args.nonce or not isinstance(body["items"], list) or
             not isinstance(body["changes"], list)):
@@ -330,7 +339,14 @@ def record_checklist(args):
     try:
         # One writer at a time per task directory, so no state change is lost.
         fcntl.flock(directory, fcntl.LOCK_EX)
-        previous = previous_checklist(directory, name, args)
+        existing = existing_checklist(directory, name)
+        # Another nonce for the same attempt is not this worker's brief: keep
+        # the recorded checklist instead of replacing it.
+        if (existing is not None and existing.get("attempt") == int(args.attempt) and
+                isinstance(existing.get("nonce"), str) and existing["nonce"] != args.nonce):
+            raise Refused(f"{name} was recorded with a different nonce for attempt "
+                          f"{int(args.attempt)}; refusing to replace it")
+        previous = previous_checklist(existing, args)
         changes = [entry for entry in previous["changes"] if isinstance(entry, dict)] \
             if previous else []
         before = checklist_states(previous["items"]) if previous else {}
@@ -372,7 +388,7 @@ def record_checklist(args):
     finally:
         os.close(directory)
     return {"recorded": name, "leaves": checklist_leaves(items),
-            "done": sum(1 for state in after.values() if state == "done"),
+            "done": sum(1 for leaf in checklist_leaf_items(items) if leaf["state"] == "done"),
             "changes": len(body["changes"])}
 
 
