@@ -1136,7 +1136,7 @@ jobs:
         # All devices must have a `kind` from the schema enum
         jq -e '
           .devices | to_entries | all(
-            .value.kind | IN("linux-bare-metal","macos","ec2-tailscale","pve-host","lxc","ios-client")
+            .value.kind | IN("linux-bare-metal","macos","ec2-tailscale","pve-host","lxc","ios-client","app-client")
           )
         ' /tmp/devices.json > /dev/null
 
@@ -1176,9 +1176,10 @@ jobs:
           )
         ' /tmp/devices.json > /dev/null
 
-        # iOS clients must be flagged client_only: true
+        # Client key slots (ios-client: an iOS device's key; app-client: a
+        # key an app generated on some host) must be flagged client_only: true
         jq -e '
-          .devices | to_entries | map(select(.value.kind == "ios-client")) | all(
+          .devices | to_entries | map(select(.value.kind | IN("ios-client","app-client"))) | all(
             .value.client_only == true
           )
         ' /tmp/devices.json > /dev/null
