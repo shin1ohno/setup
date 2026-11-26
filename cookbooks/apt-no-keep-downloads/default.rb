@@ -73,8 +73,52 @@ end
 # it evaluates correctly whether mitamae is running as root (LXC) or as the
 # operator user (bare metal). `ls` on a non-matching glob exits non-zero,
 # which is exactly the "nothing to do" signal wanted here.
+#
+# The guard also skips, at WARN, while another apt process holds a lock that
+# `apt-get clean` needs. It takes both /var/cache/apt/archives/lock and
+# /var/lib/apt/lists/lock (fcntl F_SETLK, apt 2.8.4 strace and apt 3.0.3
+# source) and exits 100 if either is held, which aborts the whole converge.
+# unattended-upgrades holds the archives lock while its downloaded .debs sit
+# in archives and deletes them after a successful install
+# (Keep-Debs-After-Install defaults to false), so its .debs and its lock
+# exist at the same moment; sh1-cloud's linux.rb apply stopped at this
+# resource that way on 2026-11-26. The lists lock is held by apt-daily's
+# `apt-get update`. Skipping loses nothing: the .debs stay and the next
+# converge retries.
+#
+# The guard does not try the lock itself: a trial lock would contend with the
+# apt run it is trying to avoid. It reads /proc/locks instead, the kernel's
+# lock table (0444; stat needs only search permission on the 0755 lock
+# directories), and matches the lock file's device and inode on a POSIX or
+# OFD line. The device comes from `stat %d` with glibc's dev_t split rather
+# than %Hd/%Ld so it does not depend on the coreutils version. If the probe
+# cannot run, the guard reports "not held" and the old behaviour returns. A
+# lock taken in the milliseconds between guard and command still fails the
+# run, as before.
+apt_clean_locks = {
+  "/var/cache/apt/archives/lock" => "usually unattended-upgrades downloading",
+  "/var/lib/apt/lists/lock" => "usually apt-daily's apt-get update",
+}
+
 execute "reclaim /var/cache/apt/archives" do
   command "apt-get clean"
   user node[:setup][:system_user]
-  only_if { run_command("ls /var/cache/apt/archives/*.deb >/dev/null 2>&1", error: false).exit_status == 0 }
+  only_if do
+    debs = run_command("ls /var/cache/apt/archives/*.deb >/dev/null 2>&1", error: false).exit_status == 0
+    held = apt_clean_locks.keys.select do |lock|
+      probe = <<~SH
+        set -- $(stat -c '%d %i' #{lock} 2>/dev/null) && [ $# -eq 2 ] || exit 1
+        dev=$(printf '%02x:%02x' $(( ($1 >> 8) & 0xfff )) $(( ($1 & 0xff) | (($1 >> 12) & 0xfff00) )))
+        grep -qE "^[0-9]+: (-> )?(POSIX|OFDLCK) .* $dev:$2 " /proc/locks
+      SH
+      run_command(probe, error: false).exit_status == 0
+    end
+    if debs && !held.empty?
+      MItamae.logger.warn(
+        "apt-no-keep-downloads: " + held.map { |lock| "#{lock} held (#{apt_clean_locks[lock]})" }.join(", ") +
+        " — /var/cache/apt/archives NOT reclaimed this run; the next converge retries."
+      )
+    end
+    debs && held.empty?
+  end
 end
