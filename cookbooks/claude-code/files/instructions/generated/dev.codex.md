@@ -127,6 +127,30 @@ Detail: see `~/.claude/docs/debugging-detail.md#read-the-source-before-researchi
 Before caching/throttling a script suspected from source of driving cost or load, probe the target: `find`, `pgrep -a -f`, crontabs, `systemctl list-timers --all`. All absent → find the real driver (CloudTrail, `ps aux`, container logs).
 
 Detail: see `~/.claude/docs/debugging-detail.md#confirm-suspected-driver-deployed`.
+
+## Wait on a PID or a done-file, never on `pgrep -f`
+
+A background wait loop waits on a PID (`wait $pid`, `kill -0 $pid`) or on a done-marker file that the awaited job writes, never on `pgrep -f <pattern>`. A launcher that carries the script text (`bash -c`, `zsh -c`, a heredoc, `ssh host '…'`, an agent's shell tool) holds the pattern in an ancestor's argv, so the loop matches its own parent forever. Bound every wait loop with `timeout` or a counter, and probe it once about a minute after launch.
+
+Detail: see `~/.claude/docs/debugging-detail.md#background-wait-pid-not-pgrep`.
+
+## Comparison harnesses — prove a difference belongs to the implementation
+
+Before calling a mismatch between two implementations real (shadow run, differential oracle), follow three steps:
+
+1. Run each implementation against itself 2–3 times. If it differs from itself, the cause is the environment or server (tie order, replicas), not the code.
+2. Order the calls so both sides meet the same server states. Interleave A B B A, because strict A B A pairs each side with one replica of an alternating backend.
+3. Excuse a difference only when every answer from one side is an answer the other side also got.
+
+Comparison code that changed substantially after its review gets reviewed again.
+
+Detail: see `~/.claude/docs/debugging-detail.md#comparison-harness-differences`.
+
+## Check every ancestor's mode before an owner-only probe
+
+Before a token, cache or credential probe, or a fixture that relies on 0700 directories, check the modes along the whole path (`namei -m <path>`, `stat`), not just the shell umask. A directory created earlier under umask 002 stays 0775, and owner-only checks under it then refuse silently, or with a warning that changes the result.
+
+Detail: see `~/.claude/docs/debugging-detail.md#ancestor-mode-before-owner-only-probe`.
 # Git Commit Format
 
 Start the summary with a `{component}: ` prefix; explain the "why", not just the "what". Keep the subject within 72 characters including the prefix and move the rest to the body; a PR title obeys the same limit because a squash merge makes it the subject. Shortening techniques: `~/.claude/docs/git-commit-detail.md#commit-subject-length`.

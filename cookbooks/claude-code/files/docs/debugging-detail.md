@@ -228,9 +228,56 @@ Probe sequence (30 seconds, avoids the full investigation arc on a ghost process
 
 ```bash
 ssh root@<host> "find /root /etc/cron.d /etc/cron.* /var/spool/cron -name '<pattern>' 2>/dev/null"
-ssh root@<host> "pgrep -a -f '<script-name>' || echo NOT_RUNNING"
+ssh root@<host> "pgrep -a -f '[s]cript-name' || echo NOT_RUNNING"
 ssh root@<host> "grep -rs '<script-name>' /etc/cron* /var/spool/cron || echo NO_CRON"
 ssh root@<host> "systemctl list-timers --all | grep '<name>' || echo NO_TIMER"
 ```
 
+Bracket the first letter of the pgrep pattern (`'[s]cript-name'` for `script-name`). The remote shell that ssh starts holds the command string, pattern included, in its own argv. A plain pattern therefore always matches that shell and prints a process even when the script is not running. See [background-wait-pid-not-pgrep](#background-wait-pid-not-pgrep).
+
 Origin: 2026-06-10 optimized a script not deployed on target.
+
+## background-wait-pid-not-pgrep
+
+Use one of these instead of a pattern search:
+
+```bash
+job & pid=$!
+wait "$pid"                                        # same shell: exact, no polling
+
+for i in $(seq 240); do [ -e "$D/lines.done" ] && break; sleep 30; done   # at most 2 h; the job ends with: touch "$D/lines.done"
+
+timeout 2h bash -c 'while kill -0 '"$pid"' 2>/dev/null; do sleep 30; done'   # from another shell, at most 2 h
+```
+
+`pgrep -f <pattern>` excludes only its own process, not its ancestors. Any wrapper that embeds the script text keeps the pattern in its argv for as long as the script runs, so a `while pgrep -f …` loop inside that script can never end. Such wrappers include `bash -c '…'`, `zsh -c '…'`, a heredoc fed to a shell, `ssh host '…'`, and an agent's shell tool, which runs each command through `eval`. If a pattern search cannot be avoided, bracket a letter (`pgrep -f '[l]ines.py'`) and run `pgrep -af` once to see what it matches before relying on it.
+
+A background loop that has no bound and is never probed fails silently. The probe is cheap: about a minute after launch, check that the progress file or the process list changes in the expected way.
+
+Origin: 2026-11-27, session-search S3 shadow run on pro-dev. `pro-dev-run-2.sh` was written by a heredoc and started inside the same `zsh -c` command. It waited for another job with `while pgrep -f 'tools/shadow/lines.py'`. The wrapping zsh's argv held that text, so the loop matched it for 14 hours after the awaited job had finished, and the read comparison behind it never started. Nobody probed the loop until the results were missing.
+
+## comparison-harness-differences
+
+A mismatch in a comparison harness has three possible owners: the implementation under test, the server or environment, or the harness itself. The three steps in the rule separate them.
+
+- **Self-comparison first.** If implementation A disagrees with itself across 2–3 runs, a difference between A and B says nothing about B. Typical causes are a server ranking with no tie-break sort, a search backend that alternates between replicas with slightly different statistics, live data changing between runs, and timing fields.
+- **Meet the same server states.** With a backend that alternates replicas on every call, the sequence A B A puts both A runs on one replica and B on the other, every time. Rerun so that each side sees both states (A B A A B A B …), then group the answers by state.
+- **Excuse with evidence only.** Treat a difference as the server's only when every answer B gave is one A also got, or when B's own answers vary in the same way. "Some answer matched once" is not enough, because a real B bug can still show in the runs that did not match.
+- **Normalise in the raw bytes.** Blank only the volatile tokens (timings, recomputed scores) in the raw output. Re-serialising parsed JSON hides escapes, separators and number formatting. In Python, `1 == 1.0`, so dict equality hides int/float differences.
+- **Gate on positive controls.** Every enabled mode must show at least one genuinely equal comparison. A gate that counts only "compared" passes when every case was excused.
+- **Review again after changes.** A review covers the code it saw. Comparison code changed after its review gets another one.
+
+Origin: 2026-11-28, session-search S3 (`tools/shadow/read.py`).
+- Online preview snippets came back in a different order because the server's preview ranking has no tie-break sort.
+- Online search alternated between two replicas. Python and Rust answered identically on the same replica, but the A B A order paired them with different replicas.
+- A second review of comparison code written after the first review found 4 real bugs: re-serialised JSON, int/float equality, a crash on `sessions: null`, and a gate that passed with zero equal results.
+
+## ancestor-mode-before-owner-only-probe
+
+```bash
+namei -m "$HOME/.local/state/s3-shadow/snapshots/home-x/.config/session-search"   # Linux; on macOS walk up with: stat -f '%Lp %N'
+```
+
+Owner-only checks (a token cache directory that must be 0700, `ssh` key directories, the `O_NOFOLLOW` walk in `ccs`'s token cache) refuse when any ancestor is group- or world-writable. Root-owned sticky directories such as `/tmp` are the usual exception. The shell's umask applies only to directories created from now on. A parent directory created earlier, under umask 002 (this fleet's interactive default), stays 0775, so the probe runs on a different code path from production even though every new directory is 0700.
+
+Origin: 2026-11-28, session-search S3 on pro-dev. The snapshot HOME was 0700, but its parent `~/.local/state/chief-of-staff/s3-shadow` was 0775. Rust `ccs` therefore skipped its disk token cache and printed `token cache unavailable or unsafe` on stderr, and all 26 online comparisons mismatched on that line. The memory note about umask already existed, but it described the umask, not the mode of directories that already existed. The tools now refuse such a location (`tools/shadow/common.py` `writable_ancestor`).
