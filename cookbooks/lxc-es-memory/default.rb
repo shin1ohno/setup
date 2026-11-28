@@ -72,6 +72,36 @@ ai_memory_marker   = "#{base_dir}/DEPLOYED_SHA"
 ai_memory_pin = File.read(File.join(File.dirname(__FILE__), "files", "ai-memory.pin")).strip
 raise "ai-memory.pin must be one 40-hex SHA" unless ai_memory_pin =~ /\A[0-9a-f]{40}\z/
 
+# Compiled ai-memory binaries (ADR 0013 Decision 8, binary track). files/ai-memory-bin.pin
+# is empty until the first release, and every resource of the track is declared only
+# when it holds a pin, so an empty or missing file leaves this recipe as before.
+#   source_sha=<40 hex, equal to ai-memory.pin>
+#   <name> <64-hex sha256>        one line per asset of release bin-<source_sha>
+# Each name must be listed here with the unit that runs it from bin/current/<name>;
+# the unit file comes from the ai-memory checkout's systemd/ directory.
+ai_memory_bin_units = {
+  "ai-memory-noop" => "ai-memory-noop.service",
+}
+ai_memory_bin_script = "#{base_dir}/ai-memory-bin.sh"
+ai_memory_bins = {}
+ai_memory_bin_pin_path = File.join(File.dirname(__FILE__), "files", "ai-memory-bin.pin")
+ai_memory_bin_lines = File.exist?(ai_memory_bin_pin_path) ? File.read(ai_memory_bin_pin_path).split("\n").map(&:strip).reject(&:empty?) : []
+unless ai_memory_bin_lines.empty?
+  source_line = /\Asource_sha=([0-9a-f]{40})\z/.match(ai_memory_bin_lines.shift)
+  raise "ai-memory-bin.pin must start with source_sha=<40 hex>" unless source_line
+  raise "ai-memory-bin.pin source_sha must equal ai-memory.pin (#{ai_memory_pin})" unless source_line[1] == ai_memory_pin
+  ai_memory_bin_lines.each do |line|
+    asset = /\A(ai-memory-[a-z-]+) ([0-9a-f]{64})\z/.match(line)
+    raise "ai-memory-bin.pin line is not '<name> <64-hex sha256>': #{line}" unless asset
+    raise "ai-memory-bin.pin lists #{asset[1]} twice" if ai_memory_bins.key?(asset[1])
+    raise "ai-memory-bin.pin lists #{asset[1]}, which has no unit in this recipe" unless ai_memory_bin_units.key?(asset[1])
+    ai_memory_bins[asset[1]] = asset[2]
+  end
+  raise "ai-memory-bin.pin lists no binary" if ai_memory_bins.empty?
+end
+ai_memory_bin_assets = ai_memory_bins.map { |name, sha| "#{name}=#{sha}" }.join(" ")
+ai_memory_bin_restart = ai_memory_bins.keys.map { |name| "#{ai_memory_bin_units[name]}=#{name}" }.join(" ")
+
 staged_user  = node[:setup][:user]
 staged_group = node[:setup][:group]
 ai_memory_placements = [
@@ -98,7 +128,29 @@ end
 ].each do |unit|
   ai_memory_placements << ["systemd/#{unit}", "#{units_staging}/#{unit}", "644", staged_user, staged_group]
 end
+ai_memory_bins.each_key do |name|
+  unit = ai_memory_bin_units[name]
+  ai_memory_placements << ["systemd/#{unit}", "#{units_staging}/#{unit}", "644", staged_user, staged_group]
+end
 ai_memory_place_lines = ai_memory_placements.map { |src, dest, mode, own, grp| "place #{src} #{dest} #{mode} #{own} #{grp}" }.join("\n")
+
+# Binaries are staged BEFORE the source placement: the placement writes DEPLOYED_SHA
+# and its notify fires only when it runs, so a binary failure after it would make the
+# next converge skip the placement and lose the restart. Failing here stops the
+# converge with DEPLOYED_SHA, current and the running units unchanged.
+unless ai_memory_bins.empty?
+  remote_file ai_memory_bin_script do
+    source "files/ai-memory-bin.sh"
+    owner "root"
+    group "root"
+    mode "755"
+  end
+
+  execute "stage ai-memory binaries" do
+    command "/bin/bash #{ai_memory_bin_script} stage #{ai_memory_pin} #{base_dir} #{ai_memory_bin_assets}"
+    not_if "/bin/bash #{ai_memory_bin_script} check-staged #{ai_memory_pin} #{base_dir} #{ai_memory_bin_assets}"
+  end
+end
 
 # One execute, evaluated at converge time: nothing in the checkout is read while
 # the recipe compiles. The global and system git config are ignored so a host's
@@ -150,6 +202,15 @@ execute "place ai-memory at the pinned SHA" do
           ai_memory_placements.map { |_, dest, _, _, _| "test -f #{dest}" }).join(" && ")
   notifies :run, "execute[restart memory-mcp-v2]"
   notifies :run, "execute[restart memory-v2-proxy]"
+end
+
+# The guard compares the link with the pin, not DEPLOYED_SHA, so a converge that
+# stopped between the placement and this switch finishes it next time.
+unless ai_memory_bins.empty?
+  execute "activate ai-memory binaries" do
+    command "/bin/bash #{ai_memory_bin_script} activate #{ai_memory_pin} #{base_dir}"
+    not_if "/bin/bash #{ai_memory_bin_script} check-active #{ai_memory_pin} #{base_dir}"
+  end
 end
 
 # Shared venv base requirements ---------------------------------------------
@@ -477,6 +538,23 @@ end
 
   systemd_unit "#{svc}.service" do
     staging_path staged
+  end
+end
+
+# Units that run a compiled binary from bin/current. systemd_unit restarts a unit
+# only when its file changes; a new binary under an unchanged unit is picked up by
+# the execute after it, which compares the running executable with current.
+ai_memory_bins.each_key do |name|
+  unit = ai_memory_bin_units[name]
+  systemd_unit unit do
+    staging_path "#{units_staging}/#{unit}"
+  end
+end
+
+unless ai_memory_bins.empty?
+  execute "restart units running a stale ai-memory binary" do
+    command "/bin/bash #{ai_memory_bin_script} restart-stale #{base_dir} #{ai_memory_bin_restart}"
+    only_if "/bin/bash #{ai_memory_bin_script} stale #{base_dir} #{ai_memory_bin_restart}"
   end
 end
 
