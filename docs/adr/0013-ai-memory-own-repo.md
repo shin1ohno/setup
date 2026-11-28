@@ -1,6 +1,6 @@
 # ADR 0013: ai-memory（memory-v2）を独立リポ `shin1ohno/ai-memory` へ移し、setup は取得・配置・設定を持つ
 
-**Status**: Accepted（2026-09-28、ユーザー決定）
+**Status**: Accepted（2026-09-28、ユーザー決定）。2026-11-28 に Decision 8・決定事項 2・S3 (i)(iii)(v)・S4・Rejected alternatives を改訂（ai-memory の Rust 移行計画 W2。改訂は所有者の承認で有効になる）
 
 ## Context
 
@@ -92,9 +92,21 @@ agent-pilot の factory ループ（L1）に、L2（Linear ラベル `repo:<name
 
 初回の中身は setup@SHA と (mode, OID) が一致する写しで、L4 の import 種別で入れる（決定事項 5、S5）。
 
-### 8. 版は setup に SHA で pin し、git checkout で取得する
+### 8. 版は setup に SHA で pin し、スクリプト類は git checkout、コンパイル成果物は sha256 で取得する（2026-11-28 改訂）
 
 setup が ai-memory の 40 桁の SHA を 1 つの pin ファイルに持ち、取得と配置を 1 つの `execute` で行う。checkout は `/root/setup` の外、かつ `/opt/es-memory/app*`（retire execute が毎 converge 消す `app` と、配置先の `app-v2`）の外に置く（結合 5）。MANIFEST は converge 時に読み（結合 1）、配置先に ai-memory の SHA を書いた印（DEPLOYED_SHA）を置いて稼働中の版の正とする（handoff §9）。tag は pin に使わない（S3 (i)）。checkout の前に `$GIT_DIR/info/attributes` へ `* -text -eol -ident -filter -working-tree-encoding` を書いて変換を止め、配置した bytes の `git hash-object --no-filters` が `ls-tree` の OID と一致することを確かめてから DEPLOYED_SHA を書く。pin は ai-memory main の祖先でなければ配置しない（S3 (v)）。
+
+git checkout と blob の照合は、スクリプト、unit、keeper、索引定義に引き続き使う。コンパイル成果物（Rust のバイナリ）は
+2 つ目の pin ファイル `cookbooks/lxc-es-memory/files/ai-memory-bin.pin` の sha256 で照合する。形式は 1 行目が
+`source_sha=<40 桁>`、以降が `<名前> <sha256 の 64 桁>` で、名前は `ai-memory-[a-z-]+` に限る。`source_sha` は
+`ai-memory.pin` と一致させ、成果物はその SHA の main で動いた ai-memory の `release.yml` が release `bin-<source_sha>`
+に載せたものだけを使う。CT 119 は資格情報を持たないので（Decision 3）、release を匿名の HTTPS で取得し、pin の sha256
+だけを照合する。出所（provenance attestation）の検査は setup の CI（`bin/check-ai-memory-pin`）で行う。pin が空の
+あいだ、cookbook は成果物の resource を宣言しない。
+
+この改訂で、CI をビルド主体として信頼するという判断が新たに生じる。緩和は 2 つで、setup の CI が `gh attestation
+verify` で「ai-memory の `release.yml` が `source_sha` の main で GitHub ホストのランナー上で作った」ことを確かめる
+ことと、`.github/` が人間だけの変更である（ai-memory の `AGENTS.md`「Changed by humans only」）ことである。
 
 ### 9. unit・env/health のスクリプト・クライアント側も ai-memory に置き、サイト値は setup が注入する
 
@@ -117,12 +129,12 @@ ai-memory の切り出し（Linear SH1-13）は、切替に要る作業を facto
 - **S1 既存の露出（setup では本 ADR の後も残る）**: fleet 各デバイスの GitHub user key（アカウント全体への push 権）は home-monitor が登録し（`ssh-devices.tf:117-120`）、秘密鍵は SSM `/ssh-keys/devices/*` にあって、fleet 共有の `pve-bootstrap-ssm` が読める（`pve-bootstrap-iam.tf:107-127`）。setup main には ruleset も branch protection も無い（2026-09-28 の読み取り probe: `gh api repos/shin1ohno/setup/rulesets` が 0 件、`branches/main/protection` が 404「Branch not protected」）。fleet のどの LXC を取られても setup main へ直接 push でき、それが fleet 全体への root での deploy になる。ai-memory を既定設定のまま作ると同じ状態を 2 つ目のリポにも作るので、ai-memory には作成時から ruleset を掛ける（S4）。setup main には ruleset を掛けない（Decision 10）ので、S1 の鍵による setup main への直接 push の経路は残る。L6 で App が開く setup の PR にも merge 前のレビューを機械的に強制するものは無く、所有者の手動 merge が唯一のレビューである（overlay の workflow には merge の手順を置かない）。self-heal-resolve の自律 merge（S3 (iii)）も残る。fleet 鍵の修正は別トラックで進める（setup `TODO.md` 先頭の項目、home-monitor の apply はユーザーの許可制）。F1 の adversarial review（`review-f1.md`）は deploy key を採らず、共有 principal の読み取りを公開鍵だけに縮め、GitHub の鍵を対話用の開発機 4 台分だけログイン鍵から切り離して作り直す案に決めた（F2 が home-monitor、F3 が setup の追従）。本 ADR の段取りはそれを待たない
 - **S2 不採用にした (b) 浮動 ref の帰結**: ai-memory main への push（S1 の鍵、factory の書き込み token、loop-facts:24）が setup の commit も canary も経ずに、最長約 72 分で CT 119 へ root で載る（「反映経路の変化」）
 - **S3 (a) pin が統制として効く条件**（Decision 8 はこれを前提にする）: 次のどれかが欠けると (b) に近づく。
-  (i) SHA で pin する。tag を pin して git checkout で取ると、tag を動かせる者が setup の commit なしで reconcile 時に CT 119 を変えうる [推測: 取得の実装次第]。先例の roon-mcp は tag pin である（`lxc-roon-mcp/default.rb:30,146`、`#v0.5.7`）。Decision 8 は SHA に決めた。
+  (i) SHA で pin する。tag を pin して git checkout で取ると、tag を動かせる者が setup の commit なしで reconcile 時に CT 119 を変えうる [推測: 取得の実装次第]。先例の roon-mcp は tag pin である（`lxc-roon-mcp/default.rb:30,146`、`#v0.5.7`）。Decision 8 は SHA に決めた。コンパイル成果物の pin も SHA と sha256 で、tag `bin-<source_sha>` は取得 URL の一部にすぎず、内容は sha256 が固定する（2026-11-28 改訂）。
   (ii) bump PR の差分は 40 文字の SHA だけで、ai-memory 側のコード差分がレビュー面に出ない。PR 本文に `compare/<old>...<new>` を必須にする。L3 の pin 上げ種別（`bump-pin-v1`）は、信頼されたステップが SHA を解決して compare リンクを書き、fleet deploy の経路に LLM を入れない。
-  (iii) setup には人間の merge を経ない経路が既にある。self-heal-resolve は class A/B を merge まで自律で行う（`claude-code/files/skills/self-heal-resolve/SKILL.md:7,60-61`）。ai-memory の pin と MANIFEST をその対象から外す（class D 扱い、L6 の前提）。
+  (iii) setup には人間の merge を経ない経路が既にある。self-heal-resolve は class A/B を merge まで自律で行う（`claude-code/files/skills/self-heal-resolve/SKILL.md:7,60-61`）。ai-memory の pin と MANIFEST をその対象から外す（class D 扱い、L6 の前提）。2026-11-28 の改訂で `ai-memory-bin.pin` も class D に加える。
   (iv) L3・L6 で agent が bump PR を書く場合は human merge を必須にする。setup には ruleset が無いので、これを機械的に強制するものは無い（S1）
-  (v) pin は ai-memory main の祖先に限る。同じリポの未 merge のブランチにある commit も SHA で取得できるので、SHA pin だけでは未レビューの commit を指せる。`bump-pin-v1` は `git ls-remote … refs/heads/main` で SHA を解決し、CT 119 の配置（C31）と setup の CI（C33）は `git merge-base --is-ancestor <pin> refs/remotes/origin/main` で確かめる
-- **S4 ai-memory の ruleset（リポ作成時に 2 段で掛ける）**: 第 1 段はリポ作成時で、ai-memory への App の install と secret の投入より前に掛ける。main への変更は PR 必須、code owner（所有者）の承認 1、所有者の bypass は PR 経由だけとし、tag は別の ruleset で作成・変更・削除を止める（承認 1 で bypass が無いと、所有者自身の PR が merge できない。loop-options §1 の 8）。承認 1 が縛るのは所有者以外が作った PR で、承認者は code owner に限る（Decision 6）。第 2 段は初回 import の後で、`guard` と CI の job（`ai-memory-ci`）を required checks にする bypass の無い別の ruleset を足す（import 前の main には対象ファイルが無く CI が通らないので、先に足すと scaffold の PR を merge できない）。CT 119 が ai-memory から取得を始めるのは setup の切替からなので、両段ともそれより前に入る。ruleset の変更には Administration 権限が要り、user key（git 操作のみ）も App（Administration を持たせない、R1）もそれを持たない [推測: GitHub の権限モデルからの推論、未実測]。S1 の鍵による直接 push は第 1 段で止まる
+  (v) pin は ai-memory main の祖先に限る。同じリポの未 merge のブランチにある commit も SHA で取得できるので、SHA pin だけでは未レビューの commit を指せる。`bump-pin-v1` は `git ls-remote … refs/heads/main` で SHA を解決し、CT 119 の配置（C31）と setup の CI（C33）は `git merge-base --is-ancestor <pin> refs/remotes/origin/main` で確かめる。コンパイル成果物の `source_sha` にも同じ条件を適用し、setup の CI が provenance の検査と併せて確かめる（2026-11-28 改訂）
+- **S4 ai-memory の ruleset（リポ作成時に 2 段で掛ける）**: 第 1 段はリポ作成時で、ai-memory への App の install と secret の投入より前に掛ける。main への変更は PR 必須、code owner（所有者）の承認 1、所有者の bypass は PR 経由だけとし、tag は別の ruleset で作成・変更・削除を止める（承認 1 で bypass が無いと、所有者自身の PR が merge できない。loop-options §1 の 8）。2026-11-28 の改訂で、この tag の ruleset から `refs/tags/bin-*` だけを外し、release workflow が `bin-<source_sha>` を作れるようにする。その前提として Immutable Releases を有効にし、公開後の release の資産と tag を変えられないようにする。承認 1 が縛るのは所有者以外が作った PR で、承認者は code owner に限る（Decision 6）。第 2 段は初回 import の後で、`guard` と CI の job（`ai-memory-ci`）を required checks にする bypass の無い別の ruleset を足す（import 前の main には対象ファイルが無く CI が通らないので、先に足すと scaffold の PR を merge できない）。CT 119 が ai-memory から取得を始めるのは setup の切替からなので、両段ともそれより前に入る。ruleset の変更には Administration 権限が要り、user key（git 操作のみ）も App（Administration を持たせない、R1）もそれを持たない [推測: GitHub の権限モデルからの推論、未実測]。S1 の鍵による直接 push は第 1 段で止まる
 - **S5 個人データ**: unit の `ALLOWED_SUBS` に個人メール 2 件（`memory-v2-proxy.service:32`、値は伏せる）、テストにメール 1 件、`eval/golden_set.jsonl:1-3` に身体属性がある（survey `runtime-code.risks`）。setup で既に公開済みである。fresh（Decision 7）なので setup の履歴は持ち込まないが、初回 import は setup@SHA と同一なので、unit とテストのメールは ai-memory にも載り、サイト値を注入へ移した後も ai-memory の履歴に残る。身体属性を含む `eval/golden_set.jsonl`（38 行中 3 行）と `eval/reconcile_cases.jsonl`（20 行中 5 行）は import の対応表から外し、2 つ目の public リポには載せない（決定事項 6）
 - **S6 資格情報**: 計画全体で新設・変更されるものは Consequences「新規・権限変更される資格情報」に並べた
 
@@ -134,7 +146,7 @@ handoff §5 の 10 項目は次のとおり決まった（`decisions-2026-09-28.
 | # | 問い | 決定 | 理由（1 行） |
 |---|---|---|---|
 | 1 | 版の取得 | SHA を pin する（Decision 8） | S2 の経路を閉じ、起点が setup の commit 1 つに保たれ、pin した SHA が setup の履歴に残る。tag pin は tag を動かせる者に経路を開く（S3 (i)）。代償は 1 変更あたり PR 2 本と S3 の運用条件 |
-| 2 | 配布形式 | pin した SHA の git checkout + ファイル配置。取得と配置は 1 つの `execute`、checkout は `/root/setup` と `/opt/es-memory/app*` の外（Decision 8） | release workflow が要らず CT 119 は匿名 HTTPS で読める。wheel は keeper が prompts を `__file__` 相対で読む（`reconcile.py:40`、`consolidate.py:58`）ので flat py-modules では配れず、PyPI の公開トークンも要らない。結合 1・2・5 はこの形で解く |
+| 2 | 配布形式 | 2 系統（2026-11-28 改訂）。スクリプト・unit・keeper・索引定義は pin した SHA の git checkout + ファイル配置で、取得と配置は 1 つの `execute`、checkout は `/root/setup` と `/opt/es-memory/app*` の外。コンパイル成果物は `ai-memory-bin.pin` の sha256 で照合し、`source_sha` は `ai-memory.pin` と一致させる（Decision 8） | release workflow が要らず CT 119 は匿名 HTTPS で読める。wheel は keeper が prompts を `__file__` 相対で読む（`reconcile.py:40`、`consolidate.py:58`）ので flat py-modules では配れず、PyPI の公開トークンも要らない。結合 1・2・5 はこの形で解く。コンパイル成果物は ai-memory の `release.yml` を要するが、CT 119 は引き続き匿名 HTTPS で取得し、pin の sha256 だけを照合する（2026-11-28 改訂） |
 | 3 | unit 8 本・`generate_env_v2.sh`・`memory-keeper-health.sh`・`requirements*.txt` の置き場とサイト値 | ai-memory に置き、サイト値は setup が env で注入する（Decision 9） | 4 スイートが無修正で動き（結合 3）、requirements がコードと同じリポにあるので依存より先に新しい版が届く crash-loop（ADR 0010:43-46 の型）を避ける。今の直書き（`generate_env_v2.sh:30,34`、`memory-v2-proxy.service:11-12,27,32,35`）は注入へ移し、health の metric 名は lxc-monitoring の alert との契約として残る |
 | 4 | クライアント側（hook・テスト・`register-memory-mirror`）の置き場 | ai-memory。claude-code cookbook が pin した ai-memory から hook を取得して配る（Decision 9） | 契約定数（結合 6）をサーバと同じ PR で変えられ、hook の変更もループに載る。hook は memory-work も使う（survey `client-side.open_questions`）ので W0 が前提（決定事項 7） |
 | 5 | 履歴 | fresh（1 commit、Decision 7） | 履歴を入れるには main への直接 push か rebase merge が要り handoff §10 とぶつかる。filter-repo（13 spec で 35 本、移すコードに絞ると 29）も subtree split（30）も全 commit が squash merge で `(#N)` と gpgsig を持ち、パスを絞ると gpgsig は無効になり、履歴に S5 の個人データも入る。`(#N)` の書き換えと Co-Authored-By trailer（11 commit・21 行）の除去も不要になる |
@@ -329,7 +341,7 @@ PR と hook の取得元の切替は出さず、長引くなら互換用の複�
 - **cookbook ごと ai-memory へ移す**: recipe が setup の helper・host-profile・aws-config に依存し、新リポ単体では
   動かない（survey `cross-refs.couplings` helper-call）。setup を取得・配置の役に残す決定（handoff §1）とも合わない
 - **浮動 ref（main）を converge ごとに取得**: ai-memory への push が canary も setup の commit も経ずに CT 119 へ root で載る（S2）
-- **tag pin・release tarball・wheel**: tag は動かせる者に経路を開き（S3 (i)）、tarball は release workflow を、wheel はパッケージ構成の変更を先に要する（決定事項 2）
+- **tag pin・release tarball・wheel**: tag は動かせる者に経路を開き（S3 (i)）、tarball は release workflow を、wheel はパッケージ構成の変更を先に要する（決定事項 2）。2026-11-28 の改訂で、コンパイル成果物に限り release の資産を採る。不採用の理由だった release workflow は、Rust 移行（W2）で ai-memory の `release.yml` として作るので解消した。tag を pin に使わない点（S3 (i)）は変えず、内容は sha256 で固定する。スクリプト類の tarball は引き続き採らない
 - **履歴を持ち込む（filter-repo・subtree split）**: main への直接 push か rebase merge が要り、gpgsig は無効になり、S5 の個人データも入る（決定事項 5）
 - **所有者の PAT で agent の PR を開く**: 所有者が作者になり承認 1 が効かないか、所有者を bypass に入れて実質承認 0 になる（Decision 6）。machine account の classic PAT も承認は効くが、アカウントと PAT の期限の管理が増え、L2 でリポが増えるなら App が有利である（loop-options §6 Q6）
 - **setup main に ruleset を掛ける**: 所有者を bypass に入れないと self-heal-resolve の自律 merge が止まり、所有者の認証で開いた PR は承認もできない。bypass に入れると所有者の一存で merge でき、掛けないのと実質同じになる（loop-options §6 Q10）。ユーザーは掛けないことを選んだ（Decision 10、帰結は S1）
