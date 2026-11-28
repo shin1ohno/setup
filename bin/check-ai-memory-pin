@@ -8,6 +8,18 @@
 # 4. While setup still carries its copies, every mapped file equals the pin by
 #    (mode, OID). A pin switch must not change a byte on CT 119. Removed together
 #    with the copies in SH1-48.
+# 5. The binary track's hermetic tests pass (working tree, not TREE-ISH):
+#    cookbooks/lxc-es-memory/test/test_ai_memory_bin.py.
+# 6. When cookbooks/lxc-es-memory/files/ai-memory-bin.pin holds a pin (it is empty
+#    until the first release, and then nothing below runs):
+#    a. the recipe compiles with it, so the format is valid and every name has a unit;
+#    b. its source_sha equals ai-memory.pin, which 2 proved is on ai-memory main;
+#    c. the names equal rust/MANIFEST at the pin, and each unit at the pin runs
+#       /opt/es-memory/bin/current/<name>;
+#    d. the release's SHA256SUMS lists exactly the pinned names and sha256s;
+#    e. each downloaded asset has the pinned sha256 and a provenance attestation
+#       from ai-memory's release.yml run at source_sha on main (gh attestation
+#       verify; needs GH_TOKEN). CT 119 checks only the sha256 (ADR 0013 Decision 3).
 #
 # Usage: bin/check-ai-memory-pin [TREE-ISH]     # default HEAD; exit 1 on any failure
 #        MEMORY_MCP_PYTHON=.venv/bin/python bin/check-ai-memory-pin
@@ -15,7 +27,10 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TREE="${1:-HEAD}"
 PIN_PATH=cookbooks/lxc-es-memory/files/ai-memory.pin
-T=$(mktemp -d "${TMPDIR:-/tmp}/ai-memory-pin.XXXXXX"); trap 'rm -rf "$T"' EXIT
+BIN_PIN_PATH=cookbooks/lxc-es-memory/files/ai-memory-bin.pin
+T=$(mktemp -d "${TMPDIR:-/tmp}/ai-memory-pin.XXXXXX")
+B=$(mktemp -d "${TMPDIR:-/tmp}/ai-memory-bin.XXXXXX")
+trap 'rm -rf "$T" "$B"' EXIT
 
 die() { echo "FAIL  $*" >&2; exit 1; }
 
@@ -82,3 +97,71 @@ done
 [ "$different" -eq 0 ] || die "$different mapped files differ from the pin"
 [ "$equal" -gt 0 ] || die "the path map matched no files"
 echo "PASS  $equal mapped files equal the pin by (mode, OID)"
+
+python3 "$REPO/cookbooks/lxc-es-memory/test/test_ai_memory_bin.py" > "$B/hermetic.log" 2>&1 \
+  || { sed 's/^/      /' "$B/hermetic.log" >&2; die "binary track hermetic tests"; }
+echo "PASS  binary track hermetic tests ($(grep -c '^PASS' "$B/hermetic.log") checks)"
+
+bin_body=""
+if git -C "$REPO" cat-file -e "$TREE:$BIN_PIN_PATH" 2>/dev/null; then
+  bin_body=$(git -C "$REPO" show "$TREE:$BIN_PIN_PATH")
+fi
+if [ -z "$(printf '%s' "$bin_body" | tr -d '[:space:]')" ]; then
+  echo "SKIP  $BIN_PIN_PATH is empty or missing: the binary track is inactive"
+  exit 0
+fi
+
+# a. Compile the recipe at TREE with its pins; it raises on any format error.
+mkdir -p "$B/cookbooks/lxc-es-memory/files" "$B/cookbooks/ssh-keys/files"
+git -C "$REPO" show "$TREE:cookbooks/lxc-es-memory/default.rb" > "$B/cookbooks/lxc-es-memory/default.rb"
+git -C "$REPO" show "$TREE:cookbooks/ssh-keys/files/aws-config.json" > "$B/cookbooks/ssh-keys/files/aws-config.json"
+printf '%s\n' "$pin" > "$B/cookbooks/lxc-es-memory/files/ai-memory.pin"
+printf '%s\n' "$bin_body" > "$B/cookbooks/lxc-es-memory/files/ai-memory-bin.pin"
+ruby "$REPO/cookbooks/lxc-es-memory/test/render-recipe.rb" "$B/cookbooks/lxc-es-memory/default.rb" \
+  "$B/cookbooks/lxc-es-memory/files" > "$B/render.jsonl" 2> "$B/render.err" \
+  || { sed 's/^/      /' "$B/render.err" >&2; die "the recipe does not compile with $BIN_PIN_PATH"; }
+# unit=name pairs, exactly as the recipe passes them to the restart guard.
+pairs=$(ruby -rjson -e 'STDIN.each_line { |l| r = JSON.parse(l); puts r["attrs"]["command"].split(" ").drop(4) if r["name"] == "restart units running a stale ai-memory binary" }' < "$B/render.jsonl")
+[ -n "$pairs" ] || die "the recipe declares no binary unit for an active $BIN_PIN_PATH"
+echo "PASS  the recipe compiles with $BIN_PIN_PATH"
+
+# b. Same format the recipe enforces; the recipe has already raised on anything else.
+src=$(printf '%s\n' "$bin_body" | grep -v '^[[:space:]]*$' | head -1 | sed -n 's/^[[:space:]]*source_sha=\([0-9a-f]\{40\}\)[[:space:]]*$/\1/p')
+[ "$src" = "$pin" ] || die "source_sha in $BIN_PIN_PATH ($src) is not ai-memory.pin ($pin)"
+printf '%s\n' "$bin_body" | grep -v '^[[:space:]]*$' | tail -n +2 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort > "$B/pinned"
+cut -d' ' -f1 "$B/pinned" > "$B/pinned-names"
+echo "PASS  source_sha equals ai-memory.pin, which is on ai-memory main"
+
+# c. The asset set is declared in ai-memory at the pin.
+[ -f "$T/rust/MANIFEST" ] || die "rust/MANIFEST does not exist at the pin"
+sed 's/\r$//; s/^[[:space:]]*//; s/[[:space:]]*$//' "$T/rust/MANIFEST" | grep -vE '^(#|$)' | sort > "$B/manifest"
+cmp -s "$B/manifest" "$B/pinned-names" \
+  || die "the pinned names ($(tr '\n' ' ' < "$B/pinned-names")) differ from rust/MANIFEST at the pin ($(tr '\n' ' ' < "$B/manifest"))"
+for p in $pairs; do
+  unit=${p%%=*} name=${p#*=}
+  [ -f "$T/systemd/$unit" ] || die "systemd/$unit does not exist at the pin"
+  grep -Eq "^ExecStart=/opt/es-memory/bin/current/$name( |\$)" "$T/systemd/$unit" \
+    || die "systemd/$unit at the pin does not run /opt/es-memory/bin/current/$name"
+done
+echo "PASS  pinned names equal rust/MANIFEST, and their units run bin/current"
+
+# d. and e. The release, read anonymously like CT 119 reads it, then provenance.
+url="https://github.com/shin1ohno/ai-memory/releases/download/bin-$pin"
+fetch() { curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 --max-time 300 "$1" -o "$2"; }
+fetch "$url/SHA256SUMS" "$B/SHA256SUMS" || die "$url/SHA256SUMS cannot be fetched anonymously"
+awk '{ n = $2; sub(/^\*/, "", n); print n " " $1 }' "$B/SHA256SUMS" | sort > "$B/released"
+[ "$(awk '{ print $1 " " $2 }' "$B/released")" = "$(awk '{ print $1 " " $2 }' "$B/pinned")" ] \
+  || die "SHA256SUMS of bin-$pin differs from $BIN_PIN_PATH"
+echo "PASS  SHA256SUMS of bin-$pin lists exactly the pinned assets"
+help=$(gh attestation verify --help) || die "gh attestation verify is unavailable"
+grep -q -- '--source-digest' <<< "$help" || die "upgrade gh: attestation verify --source-digest is required"
+while read -r name sha; do
+  fetch "$url/$name" "$B/$name" || die "$url/$name cannot be fetched anonymously"
+  [ "$(sha256sum "$B/$name" | cut -d' ' -f1)" = "$sha" ] || die "$name does not have the pinned sha256"
+  gh attestation verify "$B/$name" --repo shin1ohno/ai-memory \
+    --signer-workflow shin1ohno/ai-memory/.github/workflows/release.yml \
+    --signer-digest "$pin" --source-digest "$pin" --source-ref refs/heads/main \
+    --deny-self-hosted-runners > "$B/$name.attestation" 2>&1 \
+    || { sed 's/^/      /' "$B/$name.attestation" >&2; die "$name has no valid provenance for $pin"; }
+  echo "PASS  $name: sha256 and provenance (release.yml at $pin on main)"
+done < "$B/pinned"
