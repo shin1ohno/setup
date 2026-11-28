@@ -140,10 +140,22 @@ default_trust_paths = [
 trust_paths = node.dig(:mise, :trust_paths) || default_trust_paths
 
 trust_paths.each do |path|
+  trust_root = File.dirname(path)
   execute "mise trust #{path}" do
     command "$HOME/.local/bin/mise trust '#{path}'"
     user node[:setup][:user]
     only_if "test -f '#{path}'"
-    not_if "$HOME/.local/bin/mise trust --show 2>&1 | grep -qF '#{path}'"
+    # `mise trust --show` lists only the configs in the cwd and its parents,
+    # so -C points it at the repo. Each line reads `<trust root>: trusted`:
+    # the trust root is the config's directory (the file itself in paranoid
+    # mode), and mise prints a $HOME prefix as `~` on both Linux and macOS
+    # (mise src/cli/trust.rs `show`, crates/mise-util/src/path.rs
+    # `display_user`). Expand the `~` back and match the whole line.
+    not_if <<~SH
+      d='#{trust_root}' f='#{path}'
+      $HOME/.local/bin/mise -C "$d" trust --show 2>/dev/null |
+        sed "s|^~/|$HOME/|" |
+        grep -qxF -e "$d: trusted" -e "$f: trusted"
+    SH
   end
 end
