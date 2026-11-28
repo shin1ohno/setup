@@ -5,13 +5,13 @@ acb19242f1dad3daf45bf9847b4c7e9aaf797e364f1354bf78c1aef33fff57a0  cookbooks/clau
 ea841e78dafb55cb053319912706c7a30688b49aed01d147ca6b8f73fc395c72  cookbooks/claude-code/files/instructions/generated/common.codex.md
 0d7ab586bf2f3a216c7331197754dbbae86e6f9d994f35f538eb39495bc16f5c  cookbooks/claude-code/files/instructions/generated/cos.claude.md
 5323af17f497e195b32483893eb9f203f0ca06e49a9169ddf89a3d9005158349  cookbooks/claude-code/files/instructions/generated/cos.codex.md
-b2bf7c4e7fb996aa164d1775df48dd1e2d726cef24408e33069ea75b96be48a5  cookbooks/claude-code/files/instructions/generated/dev.claude.md
-92d5489794e3f04dbb265b36b2f9fd10eeffd4e1af2497be4cc64a25f2f905fd  cookbooks/claude-code/files/instructions/generated/dev.codex.md
+d60b0691f2501707da625e7a43eb576866a8d43ef599c821655f0dae55441fda  cookbooks/claude-code/files/instructions/generated/dev.claude.md
+e836605b59e6aac102147a39b3e4ba49af35d5ccb439544bf55805aab54bb5ae  cookbooks/claude-code/files/instructions/generated/dev.codex.md
 cc194e84f783f40c88925f7ce1b11810c397a51b53bccce81016e85111711168  cookbooks/claude-code/files/instructions/generated/writing.claude.md
 8d4a017d923cf5ac26dec84d850db267212fb8535df1327290c5cfd1b44ea64a  cookbooks/claude-code/files/instructions/generated/writing.codex.md
 f57343ad47659010b082a1614a19420e19745cf273f2acaed6d9f9baa5c1f3cd  cookbooks/claude-code/files/rules/adversarial-review.md
 2de9f2121b3a27b15ec7d169b5b36b8f2cded9ba2dc4cfaa7f61691bad67dcfc  cookbooks/claude-code/files/rules/ask-user-question.md
-440761475d2484214a665e20c6b666fa950b1a5a0b562b2e4a7e12ac039f5b98  cookbooks/claude-code/files/rules/debugging.md
+2c4f2f6418cc094fe881fbdd53a7782a23fc82eea48ce55ec7cc6d140c017c20  cookbooks/claude-code/files/rules/debugging.md
 38fd248ff0b2271e3ba686343e8305c6c50804f944ddc0f57821d3742cb97e1f  cookbooks/claude-code/files/rules/editing.md
 0130bd628389e7e683788930ea3cccd55f399cde9af750ff25c6c409dfbe027f  cookbooks/claude-code/files/rules/git-commit.md
 ddc58d9c2c4f79e41776bc410bf99bc60f58073eb6bd7f5cde1e96bf83c5fcf3  cookbooks/claude-code/files/rules/mcp-config.md
@@ -96,12 +96,15 @@ section claude-writing-self-review-pass writing CLAUDE.md 0320 claude n
 section debugging-adapter-layer-tests dev rules/debugging.md 0070 neutral n
 section debugging-auth-boundary-errors dev rules/debugging.md 0080 neutral n
 section debugging-auth-gate-live-token dev rules/debugging.md 0050 neutral n
+section debugging-background-wait dev rules/debugging.md 0170 neutral n
 section debugging-chain-verify-fix dev rules/debugging.md 0150 claude n
+section debugging-comparison-harness dev rules/debugging.md 0180 neutral n
 section debugging-failure-class dev rules/debugging.md 0130 claude n
 section debugging-fix-loop-escalation dev rules/debugging.md 0100 claude n
 section debugging-no-repro-push dev rules/debugging.md 0090 neutral n
 section debugging-noisy-non-failure dev rules/debugging.md 0030 neutral n
 section debugging-observation-tooling dev rules/debugging.md 0060 neutral n
+section debugging-path-mode dev rules/debugging.md 0190 neutral n
 section debugging-read-source-first dev rules/debugging.md 0120 neutral n
 section debugging-remediation-feasible dev rules/debugging.md 0140 claude n
 section debugging-silent-failure dev rules/debugging.md 0020 neutral n
