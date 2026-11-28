@@ -51,8 +51,11 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # Audience is what the OAuth token's `aud` claim must include for the
 # server's JWT validator to accept it.
 #
-# Transport (verified 2026-05-12):
-#   - memory     → Streamable HTTP at /memory/mcp (single POST endpoint)
+# Transport (verified 2026-05-12; memory path and session re-verified 2026-11-28
+# against ai-memory 33b362e, mcp 1.30.0, starlette 1.10.0):
+#   - memory     → stateful Streamable HTTP at /memory/mcp, exactly that path.
+#                  `/memory/mcp/` is answered 307 by Starlette and auth-proxy
+#                  turns the redirect into 502, so never append a slash.
 #   - roon-mcp   → SSE 2-endpoint at /roon/sse (legacy, not yet migrated)
 #
 # For SSE: the messages URL is read out of the SSE `endpoint` event's data
@@ -212,33 +215,78 @@ def post_jsonrpc(base_url: str, messages_path: str, session_id: str, token: str,
         return 0, now() - t0, f"exception: {e}"
 
 
-def post_streamable_http(base_url: str, mcp_path: str, token: str, payload: dict):
-    """POST a JSON-RPC method to a Streamable HTTP MCP endpoint.
+MCP_SESSION_HEADER = "Mcp-Session-Id"
 
-    Streamable HTTP transport uses a single endpoint (typically /mcp) and
-    returns the JSON-RPC response inline (status 200 with body containing
-    either application/json or text/event-stream chunks). FastMCP requires
-    a trailing slash to avoid a 307 redirect, so we ensure one is present.
 
-    Returns (status_code, latency, error).
+def _header(headers: dict, name: str) -> str | None:
+    """Case-insensitive lookup in the dict _http() returns."""
+    lname = name.lower()
+    for k, v in headers.items():
+        if k.lower() == lname:
+            return v
+    return None
+
+
+def _jsonrpc_result(raw: bytes) -> bool:
+    """True when the body carries a JSON-RPC `result`, as a JSON body or in an
+    SSE `data:` line. A 200 whose message is a JSON-RPC `error` is a failure."""
+    text = raw.decode(errors="replace")
+    candidates = [line[len("data:"):].strip() for line in text.splitlines()
+                  if line.startswith("data:")] or [text]
+    for chunk in candidates:
+        try:
+            msg = json.loads(chunk)
+        except ValueError:
+            continue
+        if isinstance(msg, dict) and "result" in msg:
+            return True
+    return False
+
+
+def post_streamable_http(base_url: str, mcp_path: str, token: str, payload: dict,
+                         session_id: str | None = None, method: str = "POST"):
+    """Send one JSON-RPC message to a Streamable HTTP MCP endpoint.
+
+    Streamable HTTP uses a single endpoint and answers a request inline
+    (200 with an application/json or text/event-stream body) and a
+    notification with 202. `mcp_path` is used exactly as given: the memory
+    server routes `/mcp` and redirects `/mcp/` (307), and auth-proxy turns
+    that redirect into a 502, so no slash is added here.
+
+    The memory server is stateful: initialize returns an Mcp-Session-Id that
+    every later message must carry, or the server answers 400 "Missing
+    session ID". Pass it as `session_id`; `method="DELETE"` with no payload
+    ends the session.
+
+    Returns (status_code, response_headers, latency, error). error is None
+    when the status is the expected one (202 for a notification, 200 with a
+    JSON-RPC result for a request, any 2xx for DELETE).
     """
     t0 = now()
     url = base_url.rstrip("/") + mcp_path
-    if not url.endswith("/"):
-        url += "/"
-    body = json.dumps(payload).encode()
+    body = json.dumps(payload).encode() if payload is not None else None
     headers = {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    if session_id:
+        headers[MCP_SESSION_HEADER] = session_id
     try:
-        status, _, raw = _http("POST", url, headers=headers, body=body)
-        if status != 200:
-            return status, now() - t0, f"http_{status}: {raw[:200].decode(errors='replace')}"
-        return status, now() - t0, None
+        status, resp_headers, raw = _http(method, url, headers=headers, body=body)
     except Exception as e:
-        return 0, now() - t0, f"exception: {e}"
+        return 0, {}, now() - t0, f"exception: {e}"
+    latency = now() - t0
+    if method == "DELETE":
+        ok = 200 <= status < 300
+    elif payload is not None and "id" not in payload:
+        ok = status == 202
+    else:
+        ok = status == 200 and _jsonrpc_result(raw)
+    if not ok:
+        return status, resp_headers, latency, f"http_{status}: {raw[:200].decode(errors='replace')}"
+    return status, resp_headers, latency, None
 
 
 def write_textfile(metrics: list[str], out_path: str) -> None:
@@ -285,6 +333,7 @@ def probe_one(server: tuple[str, str, str, str], token_url: str, client_id: str,
             "clientInfo": {"name": "mcp-fleet-prober", "version": "0.1"},
         },
     }
+    initialized_payload = {"jsonrpc": "2.0", "method": "notifications/initialized"}
     tools_payload = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
 
     # Phase 1: auth (transport-agnostic)
@@ -297,19 +346,41 @@ def probe_one(server: tuple[str, str, str, str], token_url: str, client_id: str,
         return metrics
 
     if transport == "http":
-        # Streamable HTTP: skip SSE handshake, POST initialize + tools/list directly.
-        status, lat_init, err = post_streamable_http(base_url, path, token, init_payload)
-        init_ok = 1 if status == 200 else 0
+        # Streamable HTTP: skip SSE handshake. initialize opens a session;
+        # notifications/initialized and tools/list carry its Mcp-Session-Id.
+        # The initialize latency metric covers the initialize POST alone.
+        _status, resp_headers, lat_init, err = post_streamable_http(base_url, path, token, init_payload)
+        session_id = _header(resp_headers, MCP_SESSION_HEADER) if err is None else None
+        init_ok = 1 if err is None else 0
+        if err:
+            sys.stderr.write(f"{name} initialize: {err}\n")
         metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "initialize"}, init_ok))
         metrics.append(m("mcp_probe_phase_latency_seconds", {"server": name, "phase": "initialize"}, f"{lat_init:.4f}"))
         if not init_ok:
             metrics.append(m("mcp_probe_e2e_success", {"server": name}, 0))
             return metrics
 
-        status, lat_tools, err = post_streamable_http(base_url, path, token, tools_payload)
-        tools_ok = 1 if status == 200 else 0
-        metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "tools_list"}, tools_ok))
-        metrics.append(m("mcp_probe_phase_latency_seconds", {"server": name, "phase": "tools_list"}, f"{lat_tools:.4f}"))
+        try:
+            # A stateless server sends no session id; the flow still works
+            # because session_id=None simply omits the header.
+            _status, _h, _lat, err = post_streamable_http(
+                base_url, path, token, initialized_payload, session_id=session_id)
+            if err is None:
+                _status, _h, lat_tools, err = post_streamable_http(
+                    base_url, path, token, tools_payload, session_id=session_id)
+            else:
+                lat_tools = _lat
+            tools_ok = 1 if err is None else 0
+            if err:
+                sys.stderr.write(f"{name} tools_list: {err}\n")
+            metrics.append(m("mcp_probe_phase_success", {"server": name, "phase": "tools_list"}, tools_ok))
+            metrics.append(m("mcp_probe_phase_latency_seconds", {"server": name, "phase": "tools_list"}, f"{lat_tools:.4f}"))
+        finally:
+            # One probe per minute must not leave one server session behind
+            # each time. Best effort: the outcome does not affect e2e.
+            if session_id:
+                post_streamable_http(base_url, path, token, None,
+                                     session_id=session_id, method="DELETE")
 
         e2e = 1 if (auth_ok and init_ok and tools_ok) else 0
         metrics.append(m("mcp_probe_e2e_success", {"server": name}, e2e))
