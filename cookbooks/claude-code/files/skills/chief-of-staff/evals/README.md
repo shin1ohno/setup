@@ -75,3 +75,9 @@ arguments it rebuilds every case and every task ID changes. Review the diff of
   with the skill 3 of 5 cases passed and every case scored higher than without it
   (Δ +0.25 to +0.50). The two misses were graders that rejected a correct
   "Would run ... in the background" line in the final message.
+- Third run (2026-11-28, 8 cases, `--runs 1`, $5.06): with the skill 5 of 8 passed
+  and inbox-question's ack timing was fixed. The rest were the harness, not the
+  skill: graders that required `receive` to execute although `./state` is
+  read-only here (they now accept "Would run"), and a read-order grader the eval
+  cannot represent (the pane-tail stand-in is a free file, unlike `herdr agent
+  read`), now dropped. The remaining behavior miss was report section order.

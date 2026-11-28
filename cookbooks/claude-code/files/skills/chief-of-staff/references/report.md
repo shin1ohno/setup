@@ -27,6 +27,8 @@ names it, it does not replace the question.
 - Line 1 is `▶` and the one item that most needs the owner now, usually the first
   `要対応` line restated as the action wanted. With nothing for the owner, write
   `▶ 要対応なし`.
+- Before sending, check the section order against this list; a wrong order is
+  the most common slip.
 - The sections always come in this order: `要対応` (needs the owner: a question,
   a dialog, a blocker that needs authorization, credentials or budget, a merge
   handed to the owner), `待ち` (waiting on CI, another task, a person or a
