@@ -1,0 +1,13 @@
+# Managed by setup cookbooks/lxc-es-memory. The services write through an fd that
+# systemd (PID 1) opened with StandardOutput=append:, so copytruncate is required.
+/var/log/es-memory/*.log {
+    daily
+    rotate 14
+    maxsize 100M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su root root
+}
