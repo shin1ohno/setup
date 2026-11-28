@@ -28,7 +28,7 @@ Addy Osmani「無人ループは無人でミスするループ」への答え＝
    issue は原則触らない（人間待ち）。**唯一の例外**: owner（`shin1ohno`）の未処理ユーザー信号を持つ
    issue は needs-human でも再着手し、その信号を GO 承認として扱う（後述
    「ユーザー信号と identity 判定」）。ユーザー信号は needs-human の**評価ゲートのみ**を解除し、
-   境界 2–8 のハード境界は一切 waive しない。1 回の実行で **1 issue だけ**処理する（fleet 同時変更を避ける）。
+   境界 2–9 のハード境界は一切 waive しない。1 回の実行で **1 issue だけ**処理する（fleet 同時変更を避ける）。
 2. **CI green まで merge しない**。`gh pr checks <n> --watch` が全 pass してから `gh pr merge`。
 3. **破壊的操作禁止**: `rm -rf` 相当 / `terraform destroy` / DB drop / `git push --force` /
    `git push origin main`（直 push）/ snapshot 削除 / リソース削除を**自動で行わない**。
@@ -50,6 +50,16 @@ Addy Osmani「無人ループは無人でミスするループ」への答え＝
    token scope 自体（memory/cpu 以外・allowlist 外 CT を物理的に触れない）+ wrapper の least-priv（pve-resize、
    admin 拒否）+ floor/ceiling + increase-only + budget（`docs/self-heal-phase3-security-review.md`）。
    IAM/SG/リソース作成削除/rootfs/decrease/CT lifecycle/その他 TF は needs-human のまま。それ以外は setup cookbook の範囲で自律。
+9. **ai-memory の pin は人間だけが変える（class D 固定、`docs/adr/0013-ai-memory-own-repo.md` S3 (iii)）**:
+   次のパスは、このループが作る branch・commit・PR に含めず、これらを変える PR は（誰が作ったものでも）merge しない。
+   - `cookbooks/lxc-es-memory/files/ai-memory.pin`
+   - `cookbooks/lxc-es-memory/files/ai-memory-bin.pin`
+
+   pin を上げる merge は、そのまま CT 119 への ai-memory の deploy になる（ADR 0013 S3）。根本原因が pin に
+   あると判断したら、上げる先の SHA と `compare/<old>...<new>` を診断 comment に書き、`self-heal-needs-human`
+   を付けて停止する。owner のユーザー信号（境界 1）もこの境界を解除しない。pin の PR は owner が作って merge する。
+   merge の直前に `gh pr diff <pr> --repo shin1ohno/setup --name-only` を読み、上のパスが 1 つでもあれば
+   merge せず needs-human を付けて停止する（Step 0 の dup-guard と Step 4）。
 
 ## remediation class と自律可否
 
@@ -61,7 +71,7 @@ Addy Osmani「無人ループは無人でミスするループ」への答え＝
 | **B. cookbook 設定修正** | 誤った閾値 / stale な process 名で es-query rule が誤発火 → cookbook/alert rule を修正 | ✅ 自律（merge→auto-mitamae） |
 | **C'. known-safe kick（allowlist）** | `self-heal-probe.sh` が `wedge-suspect`（target refused, ssh open）= listener 無しと判定した既知サービスを、allowlist の recovery_command で kick（etserver wedge #567 の `launchctl kickstart -k` 等） | ✅ 限定自律（**PR 無し**、`self-heal-remediate.sh <host> <service>` 経由のみ、後述） |
 | **C. transient restart** | OOM 等で一時 crash、再起動で復旧かつ flap でない既知サービス | ⚠️ 限定自律（`pct exec systemctl restart`、前後 comment + 機能 verify、flap_count を見て 2 回目以降は B/needs-human） |
-| **D. 新規設計 / 破壊的 / auth / infra / 原因不明 / 複数候補** | 新コンポーネント追加、IAM、データ移行、home-monitor TF、原因が割れる | ❌ needs-human（PR/診断を残す） |
+| **D. 新規設計 / 破壊的 / auth / infra / 原因不明 / 複数候補** | 新コンポーネント追加、IAM、データ移行、home-monitor TF、ai-memory の pin（`ai-memory.pin`・`ai-memory-bin.pin`、境界 9。PR も作らない）、原因が割れる | ❌ needs-human（PR/診断を残す） |
 
 **判定に迷ったら D**（needs-human）。長期間（数週間）`active` の alert は transient ではない —
 C で雑に restart せず、まず「本当に落ちているか／alert 自体が stale か」を観測で切り分ける。
@@ -214,6 +224,9 @@ dup ガード + partial-state recovery）:
    - **まず class を再判定**。linked PR が **class D（propose-only / major・破壊的変更 / body に class-D 指示）**で
      **user-GO が無い**なら **絶対に auto-merge しない** → `self-heal-needs-human` を付与して STOP（dup-guard の
      merge は class A/B の自動修正 PR、または user-GO 済みに限る。CI green は merge 許可の十分条件ではない）。
+   - **linked PR が境界 9 の pin（`ai-memory.pin`・`ai-memory-bin.pin`）を変える**なら、class や user-GO に
+     関わらず merge しない（`gh pr diff <pr> --repo shin1ohno/setup --name-only` で判定）→ `self-heal-needs-human`
+     を付与して STOP。
    - class A/B（または user-GO 済み）かつ CI green → **Step 4（merge + 検証）へ直行**（再調査しない）
    - CI red / conflict → diagnose して `self-heal-needs-human`
    - CI 進行中 → 今回はスキップ（次サイクルで再評価）
@@ -234,8 +247,9 @@ owner の未処理ユーザー信号で選ばれた issue は、その信号を 
    `gh issue edit <n> --repo shin1ohno/setup --remove-label self-heal-needs-human`
 3. ユーザーコメント本文を**追加の文脈・指示**として Step 2 以降を実行する。**class D でも GO 済みなら
    実装まで進む**（新規 cookbook 追加等）。
-4. **ハード境界は不変**（境界 2–8）。CI green まで merge しない／破壊的操作・auth/secret/IAM/KMS の
-   自動修正禁止／適用は PR→auto-mitamae 経由のみ／home-monitor TF は needs-human／3 回失敗で停止。
+4. **ハード境界は不変**（境界 2–9）。CI green まで merge しない／破壊的操作・auth/secret/IAM/KMS の
+   自動修正禁止／適用は PR→auto-mitamae 経由のみ／home-monitor TF は needs-human／3 回失敗で停止／
+   ai-memory の pin（`ai-memory.pin`・`ai-memory-bin.pin`）は変えない。
    これらに抵触したら `self-heal-needs-human` を**再付与**して停止（理由を bot マーカー付き comment で残す）。
    **ユーザーのコメントはハード境界を waive しない** — needs-human の評価ゲートだけを解除した。
 
@@ -334,9 +348,17 @@ es_get "/self-heal-state/_doc/<sha1>"   # status / first_seen / flap_count / occ
 
 ### Step 4. 適用（A/B のみ）
 
-`gh pr checks <n> --watch` が全 pass → green を確認してから:
+`gh pr checks <n> --watch` が全 pass → green を確認し、境界 9 の pin が差分に無いことを確かめてから:
 ```bash
-gh pr merge <pr> --repo shin1ohno/setup --squash --delete-branch
+# 境界 9: pin を変える PR は merge しない。差分の一覧が取れないときも merge しない（fail-closed）
+files=$(gh pr diff <pr> --repo shin1ohno/setup --name-only) || { echo "PR の差分一覧が取れない → merge しない"; exit 1; }
+if printf '%s\n' "$files" | grep -Fx \
+     -e cookbooks/lxc-es-memory/files/ai-memory.pin \
+     -e cookbooks/lxc-es-memory/files/ai-memory-bin.pin; then
+  gh issue edit <n> --repo shin1ohno/setup --add-label self-heal-needs-human   # 理由を bot マーカー付き comment に残して STOP
+else
+  gh pr merge <pr> --repo shin1ohno/setup --squash --delete-branch
+fi
 ```
 auto-mitamae orchestrator（CT115 cron, 5min, canary→fleet）が `origin/main` を取り込み適用する。
 即時反映したい場合のみ canary host で先行 dry-run 済みなら手動 trigger 可。**canary gate が
