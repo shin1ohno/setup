@@ -50,11 +50,14 @@ Addy Osmani「無人ループは無人でミスするループ」への答え＝
    token scope 自体（memory/cpu 以外・allowlist 外 CT を物理的に触れない）+ wrapper の least-priv（pve-resize、
    admin 拒否）+ floor/ceiling + increase-only + budget（`docs/self-heal-phase3-security-review.md`）。
    IAM/SG/リソース作成削除/rootfs/decrease/CT lifecycle/その他 TF は needs-human のまま。それ以外は setup cookbook の範囲で自律。
-9. **ai-memory の pin は人間だけが変える（class D 固定、`docs/adr/0013-ai-memory-own-repo.md` S3 (iii)）**:
+9. **ai-memory の pin と MANIFEST は人間だけが変える（class D 固定、`docs/adr/0013-ai-memory-own-repo.md` S3 (iii)）**:
    次のパスは、このループが作る branch・commit・PR に含めず、これらを変える PR は（誰が作ったものでも）merge しない。
    - `cookbooks/lxc-es-memory/files/ai-memory.pin`
    - `cookbooks/lxc-es-memory/files/ai-memory-bin.pin`
+   - `cookbooks/lxc-es-memory/files/memory-mcp/MANIFEST`
+   - `cookbooks/lxc-es-memory/files/memory-keeper/MANIFEST`
 
+   MANIFEST は CT 119 に配るファイルの一覧で、pin と組で ai-memory の配布の境界を決める（ADR 0013 S3 (iii)）。
    pin を上げる merge は、そのまま CT 119 への ai-memory の deploy になる（ADR 0013 S3）。根本原因が pin に
    あると判断したら、上げる先の SHA と `compare/<old>...<new>` を診断 comment に書き、`self-heal-needs-human`
    を付けて停止する。owner のユーザー信号（境界 1）もこの境界を解除しない。pin の PR は owner が作って merge する。
@@ -71,7 +74,7 @@ Addy Osmani「無人ループは無人でミスするループ」への答え＝
 | **B. cookbook 設定修正** | 誤った閾値 / stale な process 名で es-query rule が誤発火 → cookbook/alert rule を修正 | ✅ 自律（merge→auto-mitamae） |
 | **C'. known-safe kick（allowlist）** | `self-heal-probe.sh` が `wedge-suspect`（target refused, ssh open）= listener 無しと判定した既知サービスを、allowlist の recovery_command で kick（etserver wedge #567 の `launchctl kickstart -k` 等） | ✅ 限定自律（**PR 無し**、`self-heal-remediate.sh <host> <service>` 経由のみ、後述） |
 | **C. transient restart** | OOM 等で一時 crash、再起動で復旧かつ flap でない既知サービス | ⚠️ 限定自律（`pct exec systemctl restart`、前後 comment + 機能 verify、flap_count を見て 2 回目以降は B/needs-human） |
-| **D. 新規設計 / 破壊的 / auth / infra / 原因不明 / 複数候補** | 新コンポーネント追加、IAM、データ移行、home-monitor TF、ai-memory の pin（`ai-memory.pin`・`ai-memory-bin.pin`、境界 9。PR も作らない）、原因が割れる | ❌ needs-human（PR/診断を残す） |
+| **D. 新規設計 / 破壊的 / auth / infra / 原因不明 / 複数候補** | 新コンポーネント追加、IAM、データ移行、home-monitor TF、ai-memory の pin と MANIFEST（`ai-memory.pin`・`ai-memory-bin.pin`・2 つの `MANIFEST`、境界 9。PR も作らない）、原因が割れる | ❌ needs-human（PR/診断を残す） |
 
 **判定に迷ったら D**（needs-human）。長期間（数週間）`active` の alert は transient ではない —
 C で雑に restart せず、まず「本当に落ちているか／alert 自体が stale か」を観測で切り分ける。
@@ -224,7 +227,7 @@ dup ガード + partial-state recovery）:
    - **まず class を再判定**。linked PR が **class D（propose-only / major・破壊的変更 / body に class-D 指示）**で
      **user-GO が無い**なら **絶対に auto-merge しない** → `self-heal-needs-human` を付与して STOP（dup-guard の
      merge は class A/B の自動修正 PR、または user-GO 済みに限る。CI green は merge 許可の十分条件ではない）。
-   - **linked PR が境界 9 の pin（`ai-memory.pin`・`ai-memory-bin.pin`）を変える**なら、class や user-GO に
+   - **linked PR が境界 9 のパス（2 つの pin と 2 つの `MANIFEST`）を変える**なら、class や user-GO に
      関わらず merge しない（`gh pr diff <pr> --repo shin1ohno/setup --name-only` で判定）→ `self-heal-needs-human`
      を付与して STOP。
    - class A/B（または user-GO 済み）かつ CI green → **Step 4（merge + 検証）へ直行**（再調査しない）
@@ -249,7 +252,7 @@ owner の未処理ユーザー信号で選ばれた issue は、その信号を 
    実装まで進む**（新規 cookbook 追加等）。
 4. **ハード境界は不変**（境界 2–9）。CI green まで merge しない／破壊的操作・auth/secret/IAM/KMS の
    自動修正禁止／適用は PR→auto-mitamae 経由のみ／home-monitor TF は needs-human／3 回失敗で停止／
-   ai-memory の pin（`ai-memory.pin`・`ai-memory-bin.pin`）は変えない。
+   ai-memory の pin と MANIFEST（境界 9 の 4 パス）は変えない。
    これらに抵触したら `self-heal-needs-human` を**再付与**して停止（理由を bot マーカー付き comment で残す）。
    **ユーザーのコメントはハード境界を waive しない** — needs-human の評価ゲートだけを解除した。
 
@@ -348,13 +351,15 @@ es_get "/self-heal-state/_doc/<sha1>"   # status / first_seen / flap_count / occ
 
 ### Step 4. 適用（A/B のみ）
 
-`gh pr checks <n> --watch` が全 pass → green を確認し、境界 9 の pin が差分に無いことを確かめてから:
+`gh pr checks <n> --watch` が全 pass → green を確認し、境界 9 のパスが差分に無いことを確かめてから:
 ```bash
-# 境界 9: pin を変える PR は merge しない。差分の一覧が取れないときも merge しない（fail-closed）
+# 境界 9: pin や MANIFEST を変える PR は merge しない。差分の一覧が取れないときも merge しない（fail-closed）
 files=$(gh pr diff <pr> --repo shin1ohno/setup --name-only) || { echo "PR の差分一覧が取れない → merge しない"; exit 1; }
 if printf '%s\n' "$files" | grep -Fx \
      -e cookbooks/lxc-es-memory/files/ai-memory.pin \
-     -e cookbooks/lxc-es-memory/files/ai-memory-bin.pin; then
+     -e cookbooks/lxc-es-memory/files/ai-memory-bin.pin \
+     -e cookbooks/lxc-es-memory/files/memory-mcp/MANIFEST \
+     -e cookbooks/lxc-es-memory/files/memory-keeper/MANIFEST; then
   gh issue edit <n> --repo shin1ohno/setup --add-label self-heal-needs-human   # 理由を bot マーカー付き comment に残して STOP
 else
   gh pr merge <pr> --repo shin1ohno/setup --squash --delete-branch
