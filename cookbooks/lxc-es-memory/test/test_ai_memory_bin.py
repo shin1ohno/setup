@@ -31,7 +31,11 @@ RENDER = HERE / "render-recipe.rb"
 PIN = (COOKBOOK / "files/ai-memory.pin").read_text().strip()
 NAME = "ai-memory-noop"
 UNIT = "ai-memory-noop.service"
-SLEEP = shutil.which("sleep")
+# A copy of bash stands in for the binary: it answers --version, stays running as
+# itself (`-c "kill -STOP $$"`), and does not dispatch on argv[0] the way a
+# multicall coreutils (uutils) sleep does.
+BASH = os.path.realpath(shutil.which("bash"))
+PARK = ["-c", "kill -STOP $$"]
 failures = 0
 
 
@@ -145,9 +149,9 @@ is-active) [ "$(cut -d' ' -f1 "$f" 2>/dev/null)" = active ] ;;
 show) cut -d' ' -f2 "$f" ;;
 restart)
   read -r _ pid exe < "$f"
-  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  kill -9 "$pid" 2>/dev/null
   echo "$*" >> "$FIXTURE_UNITS/restarts"
-  setsid "$exe" 1000 >/dev/null 2>&1 < /dev/null &
+  setsid "$exe" -c 'kill -STOP $$' >/dev/null 2>&1 < /dev/null &
   echo "active $! $exe" > "$f" ;;
 *) exit 9 ;;
 esac
@@ -169,7 +173,7 @@ def script_tests(work):
     def publish(src, content=None):
         d = release / src; d.mkdir(exist_ok=True)
         if content is None:
-            shutil.copy(SLEEP, d / NAME)  # GNU sleep answers --version and runs for real
+            shutil.copy(BASH, d / NAME)
         else:
             (d / NAME).write_bytes(content); (d / NAME).chmod(0o755)
         return sha256(d / NAME)
@@ -209,7 +213,7 @@ def script_tests(work):
 
     # a running unit on the first version
     exe0 = str(d0 / NAME)
-    proc = subprocess.Popen([exe0, "1000"], start_new_session=True)
+    proc = subprocess.Popen([exe0] + PARK, start_new_session=True)
     (units / UNIT).write_text("active %d %s\n" % (proc.pid, str(bin_dir / "current" / NAME)))
     pair = "%s=%s" % (UNIT, NAME)
     run("stale", base, pair, expect=1, label="a unit running current is not stale")
@@ -281,7 +285,7 @@ def script_tests(work):
     for f in units.iterdir():
         if f.name.endswith(".service") and f.read_text().startswith("active"):
             try:
-                os.kill(int(f.read_text().split()[1]), signal.SIGTERM)
+                os.kill(int(f.read_text().split()[1]), signal.SIGKILL)
             except ProcessLookupError:
                 pass
     proc.wait(timeout=5)
