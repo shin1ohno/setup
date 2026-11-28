@@ -532,6 +532,80 @@ file "#{proxy_allowed_subs_dropdir}/allowed-subs.conf" do
   notifies :run, "execute[reload systemd and restart memory-v2-proxy]"
 end
 
+# Persistent logs for both v2 services -------------------------------------
+# lxc-core masks journald in every LXC (lxc-mask-unsupported-units), and the PVE host
+# does not capture container output either (`journalctl --machine=119` fails), so the
+# units' StandardOutput=journal ends at /dev/null and no line survives. A drop-in points
+# stdout at an append-only file instead; StandardError=inherit puts stderr (logging,
+# the print(..., file=sys.stderr) AUDIT lines, uvicorn) in the same file. The ai-memory
+# unit files stay untouched: they are human-only paths in that repository.
+#   append:, not file: -- file: truncates on every start, which loses the lines that
+#   explain a crash loop. systemd opens the file as PID 1 with O_APPEND.
+#   0600 in a 0700 directory -- the lines carry subjects (email addresses), request
+#   paths and audit records. systemd creates a missing append: target 0644, so the
+#   files are created here first; systemd and logrotate's copytruncate keep the mode.
+# Reading (root in the CT): tail -F /var/log/es-memory/memory-v2-proxy.log
+es_memory_log_dir = "/var/log/es-memory"
+mcp_v2_dropdir    = "/etc/systemd/system/memory-mcp-v2.service.d"
+
+# Same shape as the proxy's reload+restart above: a changed drop-in needs daemon-reload
+# BEFORE the restart, and one execute keeps the two in that order.
+execute "reload systemd and restart memory-mcp-v2" do
+  command "sudo systemctl daemon-reload && sudo systemctl restart memory-mcp-v2.service"
+  action :nothing
+  only_if "systemctl cat memory-mcp-v2.service >/dev/null 2>&1"
+end
+
+directory es_memory_log_dir do
+  owner "root"
+  group "root"
+  mode "700"
+  action :create
+end
+
+directory mcp_v2_dropdir do
+  owner "root"
+  group "root"
+  mode "755"
+  action :create
+end
+
+{
+  "memory-mcp-v2"   => mcp_v2_dropdir,
+  "memory-v2-proxy" => proxy_allowed_subs_dropdir,
+}.each do |svc, dropdir|
+  log_file = "#{es_memory_log_dir}/#{svc}.log"
+
+  execute "create #{log_file}" do
+    command "install -m 600 -o root -g root /dev/null #{log_file}"
+    not_if "test -f #{log_file}"
+  end
+
+  # A file systemd created before this block existed (0644) is tightened in place.
+  execute "restrict #{log_file} to root" do
+    command "chown root:root #{log_file} && chmod 600 #{log_file}"
+    not_if "test \"$(stat -c '%U:%G %a' #{log_file})\" = 'root:root 600'"
+  end
+
+  file "#{dropdir}/50-log-file.conf" do
+    content "[Service]\nStandardOutput=append:#{log_file}\nStandardError=inherit\n"
+    owner "root"
+    group "root"
+    mode "644"
+    notifies :run, "execute[reload systemd and restart #{svc}]"
+  end
+end
+
+# copytruncate because the fd belongs to PID 1 and neither service can reopen its log;
+# the few lines written between the copy and the truncate are lost. Bound: 14 days plus
+# the live file, about 150 MB at the worst-case proxy rate.
+remote_file "/etc/logrotate.d/es-memory" do
+  source "files/logrotate-es-memory"
+  owner "root"
+  group "root"
+  mode "644"
+end
+
 # v2 systemd units (units_staging is declared above).
 %w[memory-mcp-v2 memory-v2-proxy].each do |svc|
   staged = "#{units_staging}/#{svc}.service"
